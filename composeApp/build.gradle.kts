@@ -51,7 +51,17 @@ kotlin {
 compose.desktop {
     application {
         mainClass = "com.programmersbox.scrcpyviewer.MainKt"
+        // Release tasks (packageReleaseDmg, runRelease, ...) shrink with ProGuard; plain tasks don't.
+        buildTypes.release.proguard {
+            isEnabled.set(true)
+            // Shrink only. Obfuscation hurts stack traces; the optimizer breaks Navigation3 (VerifyError in NavDisplay).
+            obfuscate.set(false)
+            optimize.set(false)
+            configurationFiles.from(project.file("proguard-rules.pro"))
+        }
         nativeDistributions {
+            // From suggestRuntimeModules: JavaCPP and coroutines need these on top of the defaults.
+            modules("java.instrument", "java.management", "jdk.unsupported")
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "ScrcpyViewer"
             packageVersion = "1.1.0"

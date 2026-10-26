@@ -20,13 +20,13 @@ jobs:
       matrix:
         include:
           - os: macos-14
-            task: packageDmg
+            task: packageReleaseDmg
             ext: dmg
           - os: windows-latest
-            task: packageMsi
+            task: packageReleaseMsi
             ext: msi
           - os: ubuntu-latest
-            task: packageDeb
+            task: packageReleaseDeb
             ext: deb
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +65,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ScrcpyViewer-${{ matrix.ext }}
-          path: composeApp/build/compose/binaries/main/${{ matrix.ext }}/*.${{ matrix.ext }}
+          path: composeApp/build/compose/binaries/main-release/${{ matrix.ext }}/*.${{ matrix.ext }}
           if-no-files-found: error
 
   release:
