@@ -14,9 +14,12 @@ concurrency:
 jobs:
   # Tests run per OS in parallel with packaging, so no runner does test + package back to back.
   # Screenshot (-Pscreenshots) and device (-PdeviceTests) tests are excluded by default.
+  # On a v* tag each OS also attaches its test report to the release; the release itself does not wait on tests.
   test:
     name: ${{ matrix.os }} (jvmTest)
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -52,6 +55,27 @@ jobs:
           name: test-reports-${{ matrix.os }}
           path: composeApp/build/reports/tests/
           if-no-files-found: ignore
+
+      # Passing or failing, attach the report once the release job has created the release.
+      - name: Attach test report to release
+        if: always() && startsWith(github.ref, 'refs/tags/v') && hashFiles('composeApp/build/reports/tests/**') != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          archive="test-reports-${{ runner.os }}.tar.gz"
+          tar -czf "$archive" -C composeApp/build/reports tests
+          # Wait up to 60 minutes for the release; it never appears if packaging failed.
+          for _ in $(seq 120); do
+            if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+              gh release upload "$TAG" "$archive" --clobber --repo "${{ github.repository }}"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::Release $TAG not found after 60 minutes; test report not attached."
+          exit 1
 
   build:
     name: ${{ matrix.os }} (${{ matrix.task }})
@@ -96,7 +120,7 @@ jobs:
 
   release:
     name: Release
-    needs: [test, build]
+    needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
