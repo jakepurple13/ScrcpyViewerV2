@@ -4,6 +4,8 @@ import com.programmersbox.scrcpyviewer.adb.AdbOutcome
 import com.programmersbox.scrcpyviewer.adb.FakeWirelessAdb
 import com.programmersbox.scrcpyviewer.adb.MdnsService
 import com.programmersbox.scrcpyviewer.adb.MdnsType
+import com.programmersbox.scrcpyviewer.adb.NetworkScanner
+import com.programmersbox.scrcpyviewer.adb.Subnet
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
@@ -182,5 +184,69 @@ class WifiPairingViewModelTest {
         val after = polls.get()
         delay(60)
         assertEquals(after, polls.get())
+    }
+
+    private fun scanVm(vararg alive: String, probedPorts: MutableList<Int> = mutableListOf()) = WifiPairingViewModel(
+        wireless, random = Random(1), pollMs = 10, connectWaitMs = 100,
+        scanner = NetworkScanner(
+            subnets = { listOf(Subnet(NetworkScanner.ipToLong("192.168.1.10"), 24)) },
+            probe = { host, port, _ -> synchronized(probedPorts) { probedPorts += port }; host in alive },
+        ),
+        scope = scope,
+    )
+
+    @Test
+    fun `scan with one hit fills in the address`() = runBlocking {
+        val vm = scanVm("192.168.1.42")
+        vm.startScan()
+        awaitState(vm) { !it.scanning && it.scanResults != null }
+        val s = vm.state.value
+        assertEquals(listOf("192.168.1.42"), s.scanResults)
+        assertEquals("192.168.1.42", s.ip)
+        assertEquals(253, s.scanTotal)
+        assertEquals(253, s.scanDone)
+    }
+
+    @Test
+    fun `scan with several hits lists them and leaves the address alone`() = runBlocking {
+        val vm = scanVm("192.168.1.42", "192.168.1.7")
+        vm.startScan()
+        awaitState(vm) { !it.scanning && it.scanResults != null }
+        val s = vm.state.value
+        assertEquals(listOf("192.168.1.7", "192.168.1.42"), s.scanResults)
+        assertEquals("", s.ip)
+    }
+
+    @Test
+    fun `scan with no hits reports an empty result and uses the entered port`() = runBlocking {
+        val ports = mutableListOf<Int>()
+        val vm = scanVm(probedPorts = ports)
+        vm.setPort("6000")
+        vm.startScan()
+        awaitState(vm) { !it.scanning && it.scanResults != null }
+        assertEquals(emptyList(), vm.state.value.scanResults)
+        assertTrue(ports.isNotEmpty() && ports.all { it == 6000 })
+    }
+
+    @Test
+    fun `scan with an empty port shows an error and does not scan`() {
+        val ports = mutableListOf<Int>()
+        val vm = scanVm(probedPorts = ports)
+        vm.setPort("")
+        vm.startScan()
+        val s = vm.state.value
+        assertEquals("Enter a port from 1 to 65535", s.portError)
+        assertFalse(s.scanning)
+        assertNull(s.scanResults)
+        assertTrue(ports.isEmpty())
+    }
+
+    @Test
+    fun `scan uses port 5555 by default`() = runBlocking {
+        val ports = mutableListOf<Int>()
+        val vm = scanVm(probedPorts = ports)
+        vm.startScan()
+        awaitState(vm) { !it.scanning && it.scanResults != null }
+        assertTrue(ports.isNotEmpty() && ports.all { it == 5555 })
     }
 }

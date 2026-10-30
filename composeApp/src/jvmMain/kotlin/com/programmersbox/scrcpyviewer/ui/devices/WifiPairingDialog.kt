@@ -14,6 +14,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -49,6 +51,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
@@ -67,11 +70,13 @@ data class WifiPairingActions(
     val setPairCode: (String) -> Unit = {},
     val submit: () -> Unit = {},
     val restartAdb: () -> Unit = {},
+    val startScan: () -> Unit = {},
 )
 
 fun WifiPairingViewModel.actions() = WifiPairingActions(
     selectTab = ::selectTab, choose = ::choose, setCode = ::setCode, setIp = ::setIp, setPort = ::setPort,
     setPairPort = ::setPairPort, setPairCode = ::setPairCode, submit = ::submit, restartAdb = ::restartAdb,
+    startScan = ::startScan,
 )
 
 private val PairingTabLabels = mapOf(PairingTab.Qr to "QR code", PairingTab.Code to "Pairing code", PairingTab.Ip to "IP address")
@@ -239,6 +244,7 @@ private fun IpTab(state: WifiPairingState, actions: WifiPairingActions) {
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+    ScanSection(state, actions)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
             state.ip, actions.setIp, singleLine = true, label = { Text("IP address") },
@@ -262,6 +268,54 @@ private fun IpTab(state: WifiPairingState, actions: WifiPairingActions) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(state.pairPort, actions.setPairPort, singleLine = true, label = { Text("Pairing port") }, modifier = Modifier.weight(1f))
             OutlinedTextField(state.pairCode, actions.setPairCode, singleLine = true, label = { Text("Code") }, modifier = Modifier.width(140.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ScanSection(state: WifiPairingState, actions: WifiPairingActions) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "Scan network for devices",
+            style = MaterialTheme.typography.bodyMedium.copy(textDecoration = TextDecoration.Underline),
+            color = if (state.scanning) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(enabled = !state.scanning, onClick = actions.startScan)
+                .padding(horizontal = 2.dp, vertical = 2.dp),
+        )
+        if (state.scanning) {
+            CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+            Text(
+                "${state.scanDone} / ${state.scanTotal}",
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    val results = state.scanResults ?: return
+    if (results.isEmpty()) {
+        if (!state.scanning) {
+            Text(
+                "Nothing answered on port ${state.port}. The device must be on this Wi-Fi network with " +
+                    "adb listening on that port (adb tcpip 5555).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        results.forEach { ip ->
+            val shape = RoundedCornerShape(8.dp)
+            Text(
+                ip,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainerLow)
+                    .then(if (ip == state.ip) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
+                    .clickable { actions.setIp(ip) }.padding(horizontal = 10.dp, vertical = 6.dp),
+            )
         }
     }
 }

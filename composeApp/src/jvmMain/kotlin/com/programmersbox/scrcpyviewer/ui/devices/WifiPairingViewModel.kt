@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.programmersbox.scrcpyviewer.adb.AdbOutcome
 import com.programmersbox.scrcpyviewer.adb.MdnsService
 import com.programmersbox.scrcpyviewer.adb.MdnsType
+import com.programmersbox.scrcpyviewer.adb.NetworkScanner
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
@@ -46,6 +47,12 @@ data class WifiPairingState(
     val error: String? = null,
     /** Shows a "Restart adb" button: macOS blocks the adb server another app started (see [WifiPairingViewModel.restartAdb]). */
     val canRestartAdb: Boolean = false,
+    /** True while the IP address tab's network scan runs; [scanDone] of [scanTotal] hosts probed so far. */
+    val scanning: Boolean = false,
+    val scanDone: Int = 0,
+    val scanTotal: Int = 0,
+    /** Addresses that answered on the port, or null before the first scan. */
+    val scanResults: List<String>? = null,
 ) {
     val primaryLabel: String get() = if (tab == PairingTab.Ip) "Connect" else "Pair"
 
@@ -68,6 +75,7 @@ class WifiPairingViewModel(
     random: Random = Random.Default,
     private val pollMs: Long = 1000,
     private val connectWaitMs: Long = 10_000,
+    private val scanner: NetworkScanner = NetworkScanner(),
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val _results = Channel<WifiNotice>(Channel.BUFFERED)
@@ -131,6 +139,41 @@ class WifiPairingViewModel(
                 viewModelScope.launch { pairAndConnect(service, s.code) }
             }
             PairingTab.Ip -> submitIp(s)
+        }
+    }
+
+    /**
+     * The IP address tab's "Scan network" link: looks for devices accepting connections on the entered port across
+     * this computer's networks. Fills in the address when exactly one answers.
+     */
+    fun startScan() {
+        if (_state.value.scanning) return
+        val port = _state.value.port.takeIf(::isPort)?.toInt()
+        if (port == null) {
+            _state.update { it.copy(portError = "Enter a port from 1 to 65535") }
+            return
+        }
+        _state.update { it.copy(scanning = true, scanDone = 0, scanTotal = 0, scanResults = emptyList(), error = null) }
+        viewModelScope.launch {
+            try {
+                val found = scanner.scan(
+                    port,
+                    onProgress = { done, total -> _state.update { it.copy(scanDone = done, scanTotal = total) } },
+                    onFound = { host -> _state.update { it.copy(scanResults = it.scanResults.orEmpty() + host) } },
+                )
+                _state.update {
+                    it.copy(
+                        scanning = false,
+                        scanResults = found,
+                        ip = if (found.size == 1) found.single() else it.ip,
+                        port = if (found.size == 1) port.toString() else it.port,
+                        ipError = if (found.size == 1) null else it.ipError,
+                    )
+                }
+            } catch (e: CancellationException) {
+                _state.update { it.copy(scanning = false) }
+                throw e
+            }
         }
     }
 
