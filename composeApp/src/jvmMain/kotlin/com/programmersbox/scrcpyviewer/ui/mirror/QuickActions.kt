@@ -21,13 +21,15 @@ enum class QuickToggle(val label: String, val readCommand: String) {
     DarkMode("Dark mode", "cmd uimode night"),
     WiFi("Wi-Fi", "settings get global wifi_on"),
     AirplaneMode("Airplane mode", "settings get global airplane_mode_on"),
-    ShowTaps("Show taps", "settings get system show_touches");
+    ShowTaps("Show taps", "settings get system show_touches"),
+    AutoRotate("Auto-rotate", "settings get system accelerometer_rotation");
 
     fun setCommand(on: Boolean): String = when (this) {
         DarkMode -> "cmd uimode night ${if (on) "yes" else "no"}"
         WiFi -> "svc wifi ${if (on) "enable" else "disable"}"
         AirplaneMode -> "cmd connectivity airplane-mode ${if (on) "enable" else "disable"}"
         ShowTaps -> "settings put system show_touches ${if (on) 1 else 0}"
+        AutoRotate -> "settings put system accelerometer_rotation ${if (on) 1 else 0}"
     }
 
     /** The setting's state from the output of [readCommand]; null when the output is not understood. */
@@ -46,6 +48,12 @@ enum class QuickToggle(val label: String, val readCommand: String) {
             AirplaneMode, ShowTaps -> when (text) {
                 "1" -> true
                 "0", "null" -> false
+                else -> null
+            }
+            // Unset reads "null", and its default differs between devices: unknown.
+            AutoRotate -> when (text) {
+                "1" -> true
+                "0" -> false
                 else -> null
             }
         }
