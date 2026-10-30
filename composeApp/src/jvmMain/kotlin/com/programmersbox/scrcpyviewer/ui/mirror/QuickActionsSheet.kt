@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeveloperMode
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.ScreenLockRotation
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
@@ -77,7 +79,12 @@ private val toggleIcons = mapOf(
     QuickToggle.WiFi to Icons.Filled.Wifi,
     QuickToggle.AirplaneMode to Icons.Filled.AirplanemodeActive,
     QuickToggle.ShowTaps to Icons.Filled.TouchApp,
+    QuickToggle.AutoRotate to Icons.Filled.ScreenRotation,
 )
+
+/** [toggle]'s icon; auto-rotate shows a locked rotation while off, like Android's quick settings tile. */
+private fun toggleIcon(toggle: QuickToggle, value: Boolean?): ImageVector =
+    if (toggle == QuickToggle.AutoRotate && value == false) Icons.Filled.ScreenLockRotation else toggleIcons.getValue(toggle)
 
 /**
  * The quick actions sheet docked right of the side toolbar, animating its own width (taken from the stage). The
@@ -130,7 +137,7 @@ private fun RowScope.SheetContent(state: QuickActionsUiState, onEvent: (QuickAct
             val value = state.toggles[toggle]
             val enabled = state.enabled && toggle !in state.pending
             ActionRow(
-                icon = toggleIcons.getValue(toggle),
+                icon = toggleIcon(toggle, value),
                 title = toggle.label,
                 command = toggle.setCommand(value != true),
                 modifier = Modifier.toggleable(

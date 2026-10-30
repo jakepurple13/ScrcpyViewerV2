@@ -48,6 +48,9 @@ class QuickActionsTest {
         assertEquals(false, QuickToggle.AirplaneMode.parse("null"))
         assertEquals(true, QuickToggle.ShowTaps.parse("1"))
         assertNull(QuickToggle.ShowTaps.parse(""))
+        assertEquals(true, QuickToggle.AutoRotate.parse("1\n"))
+        assertEquals(false, QuickToggle.AutoRotate.parse("0"))
+        assertNull(QuickToggle.AutoRotate.parse("null"))
     }
 
     @Test
@@ -56,14 +59,18 @@ class QuickActionsTest {
         assertEquals("svc wifi disable", QuickToggle.WiFi.setCommand(false))
         assertEquals("cmd connectivity airplane-mode enable", QuickToggle.AirplaneMode.setCommand(true))
         assertEquals("settings put system show_touches 0", QuickToggle.ShowTaps.setCommand(false))
+        assertEquals("settings put system accelerometer_rotation 1", QuickToggle.AutoRotate.setCommand(true))
     }
 
     @Test
     fun `reads every toggle in one shell call`() = runBlocking {
-        val adb = ScriptedAdb { "Night mode: yes\n__scrcpyviewer_sep__\n1\n__scrcpyviewer_sep__\n0\n__scrcpyviewer_sep__\nnull\n" }
+        val adb = ScriptedAdb { "Night mode: yes\n__scrcpyviewer_sep__\n1\n__scrcpyviewer_sep__\n0\n__scrcpyviewer_sep__\nnull\n__scrcpyviewer_sep__\n0\n" }
         val states = DeviceQuickActions(adb, "SER").read()
         assertEquals(
-            mapOf(QuickToggle.DarkMode to true, QuickToggle.WiFi to true, QuickToggle.AirplaneMode to false, QuickToggle.ShowTaps to false),
+            mapOf(
+                QuickToggle.DarkMode to true, QuickToggle.WiFi to true, QuickToggle.AirplaneMode to false, QuickToggle.ShowTaps to false,
+                QuickToggle.AutoRotate to false,
+            ),
             states,
         )
         assertEquals(1, adb.commands.size)

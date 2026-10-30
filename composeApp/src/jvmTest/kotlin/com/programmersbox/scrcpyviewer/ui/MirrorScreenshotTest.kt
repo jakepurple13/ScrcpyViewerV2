@@ -237,7 +237,7 @@ class MirrorScreenshotTest {
     private val quickActionsOpen = QuickActionsUiState(
         open = true,
         enabled = true,
-        toggles = mapOf(QuickToggle.DarkMode to false, QuickToggle.WiFi to true, QuickToggle.AirplaneMode to false, QuickToggle.ShowTaps to null),
+        toggles = mapOf(QuickToggle.DarkMode to false, QuickToggle.WiFi to true, QuickToggle.AirplaneMode to false, QuickToggle.ShowTaps to null, QuickToggle.AutoRotate to false),
         pending = setOf(QuickToggle.AirplaneMode),
     )
 
