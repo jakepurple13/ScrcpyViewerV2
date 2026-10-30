@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhotoCamera
@@ -54,6 +57,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -79,6 +83,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -163,13 +168,14 @@ enum class MirrorAction(val label: String, val keycode: Int? = null) {
     VolumeDown("Volume down", InputMapper.KEYCODE_VOLUME_DOWN),
     Rotate("Rotate"),
     Power("Power", InputMapper.KEYCODE_POWER),
+    QuickActions("Quick actions"),
     Screenshot("Screenshot"),
     Record("Record"),
     InstallApk("Install APK…"),
     PushFile("Push file…"),
 }
 
-/** Control messages for a toolbar action; Screenshot, Record, InstallApk and PushFile send nothing (the window handles them). */
+/** Control messages for a toolbar action; Screenshot, Record, QuickActions, InstallApk and PushFile send nothing (the window handles them). */
 fun MirrorAction.messages(): List<ControlMessage> = when {
     keycode != null -> listOf(
         ControlMessage.InjectKeycode(InputMapper.KEY_ACTION_DOWN, keycode, 0, 0),
@@ -217,6 +223,8 @@ data class MirrorUiState(
     val transferLabel: String? = null,
     /** Set while files are dragged over the window. */
     val dropHint: DropHint? = null,
+    /** The quick actions sheet right of the toolbar. */
+    val quickActions: QuickActionsUiState = QuickActionsUiState(),
 ) {
     val fit: Boolean get() = zoom == null
 }
@@ -379,6 +387,7 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
+    val quickActions = rememberQuickActions(serial, session, adb, ::notify)
 
     val orientation = remember(values) { DisplayOrientation.forOptions(values) }
     // The window is sized for the image as displayed (turned by display-orientation).
@@ -501,6 +510,7 @@ fun MirrorWindow(
         transferEnabled = transfers.enabled,
         transferLabel = transfers.progressLabel,
         dropHint = transfers.hint,
+        quickActions = quickActions.uiState,
     )
 
     AppWindow(
@@ -534,6 +544,10 @@ fun MirrorWindow(
             val dispatcher = KeyEventDispatcher { ev ->
                 val inWindow = ev.component === awtWindow || SwingUtilities.getWindowAncestor(ev.component) === awtWindow
                 if (!inWindow) return@KeyEventDispatcher false
+                if (quickActions.open && ev.keyCode == AwtKeyEvent.VK_ESCAPE) {
+                    if (ev.id == AwtKeyEvent.KEY_PRESSED) quickActions.close()
+                    return@KeyEventDispatcher true
+                }
                 // Zoom shortcuts belong to the window: never forwarded to the device (any keyboard mode).
                 if (zoomKeys.handle(ev.id, ev.keyCode, ev.modifiersEx) { currentApplyZoom(it) }) return@KeyEventDispatcher true
                 if ("no-control" in e) return@KeyEventDispatcher false
@@ -601,6 +615,9 @@ fun MirrorWindow(
         LaunchedEffect(stage, displayedSize, fit) {
             val fs = displayedSize ?: return@LaunchedEffect
             if (stage == IntSize.Zero || windowState.placement != WindowPlacement.Floating) return@LaunchedEffect
+            // Correcting the size on every step of a drag fights the drag (the window jitters): restarted by each new
+            // stage size, this only goes on once the size has held still.
+            if (autoSized) delay(ASPECT_SETTLE_MS)
             val target: IntSize? = when {
                 !autoSized -> {
                     autoSized = true
@@ -624,6 +641,34 @@ fun MirrorWindow(
             }
         }
 
+        // The quick actions sheet grows the window to the right instead of taking width from the stage. While it opens
+        // or closes the stage is pinned to its width (px), so the image never changes size, and the window's right
+        // edge animates out to uncover the panel, which does not move. One setBounds per frame moves and resizes the
+        // window atomically (moved left when it would leave the screen, back on close). Maximized and fullscreen
+        // windows cannot grow: there the sheet takes its width from the stage.
+        var pinnedStage by remember { mutableStateOf<Int?>(null) }
+        val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
+        var baseBounds by remember { mutableStateOf<java.awt.Rectangle?>(null) }
+        LaunchedEffect(quickActions.open) {
+            val open = quickActions.open
+            if (windowState.placement != WindowPlacement.Floating && sheetGrowth.value == 0f) return@LaunchedEffect
+            val base = baseBounds ?: awtWindow.bounds.also { baseBounds = it }
+            val screenRight = awtWindow.graphicsConfiguration.bounds.let { it.x + it.width }
+            pinnedStage = stage.width
+            sheetGrowth.animateTo(if (open) QUICK_ACTIONS_WIDTH.value else 0f, quickActionsSpec(open)) {
+                val width = base.width + value.roundToInt()
+                val overflow = (base.x + width - screenRight).coerceAtLeast(0)
+                awtWindow.setBounds(base.x - overflow, awtWindow.y, width, awtWindow.height)
+            }
+            if (!open) {
+                baseBounds = null
+                // Keep the pin until the native window has shrunk, or the stage widens for a frame.
+                var frames = 0
+                while (awtWindow.width > base.width + 1 && frames++ < 30) withFrameNanos { }
+            }
+            pinnedStage = null // not when cancelled: a reversed toggle keeps the pin through its own animation
+        }
+
         ScrcpyViewerTheme(themeMode) {
             Box(Modifier.fillMaxSize()) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
@@ -640,6 +685,7 @@ fun MirrorWindow(
                                 MirrorAction.Record -> toggleRecording()
                                 MirrorAction.InstallApk -> transfers.start(fileDialogs.chooseApks(awtWindow))
                                 MirrorAction.PushFile -> transfers.start(fileDialogs.chooseFiles(awtWindow, transfers.pushTarget))
+                                MirrorAction.QuickActions -> quickActions.toggleSheet()
                                 else -> send(action.messages())
                             }
                         },
@@ -656,6 +702,8 @@ fun MirrorWindow(
                         },
                         onViewSize = { viewSize = it },
                         onStageSize = { stage = it },
+                        onQuickAction = quickActions::onEvent,
+                        pinnedStageWidth = pinnedStage,
                         onStageBounds = { stageBounds = it },
                         clickIndicator = clickIndicator,
                     )
@@ -666,6 +714,9 @@ fun MirrorWindow(
         }
     }
 }
+
+/** How long the stage size must hold still before the aspect ratio lock corrects the window. */
+private const val ASPECT_SETTLE_MS = 150L
 
 /**
  * Stage size that keeps the frame's aspect ratio after the user resized the stage from [old] to [new]: the
@@ -705,14 +756,22 @@ fun MirrorContent(
     onStageBounds: (Rect) -> Unit = {},
     /** False when the window draws [TopStrip] as its title bar; the divider below it stays. */
     showTopStrip: Boolean = true,
+    onQuickAction: (QuickActionEvent) -> Unit = {},
+    /**
+     * Set while the window grows or shrinks for the quick actions sheet: the stage keeps this width (px) and the sheet
+     * shows in whatever width is left. Null: the sheet animates its own width, taken from the stage.
+     */
+    pinnedStageWidth: Int? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Column(modifier.fillMaxSize()) {
         if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom)
         HorizontalDivider(color = colors.outlineVariant)
         Row(Modifier.weight(1f).fillMaxWidth()) {
+            val density = LocalDensity.current
             Box(
-                Modifier.weight(1f).fillMaxHeight()
+                (if (pinnedStageWidth != null) Modifier.width(with(density) { pinnedStageWidth.toDp() }) else Modifier.weight(1f))
+                    .fillMaxHeight()
                     .background(state.background ?: colors.surfaceDim)
                     .onSizeChanged(onStageSize)
                     .onGloballyPositioned { onStageBounds(it.boundsInWindow()) },
@@ -737,6 +796,17 @@ fun MirrorContent(
                 }
             }
             SideToolbar(state, onAction)
+            if (pinnedStageWidth != null) {
+                // The panel stays put; the growing window uncovers it.
+                Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
+                    QuickActionsPanel(
+                        state.quickActions, onQuickAction,
+                        Modifier.align(Alignment.CenterStart).wrapContentWidth(Alignment.Start, unbounded = true),
+                    )
+                }
+            } else {
+                QuickActionsSheet(state.quickActions, onQuickAction)
+            }
         }
         HorizontalDivider(color = colors.outlineVariant)
         StatusLine(state)
@@ -1048,6 +1118,7 @@ private val toolbarIcons: Map<MirrorAction, ImageVector> = mapOf(
     MirrorAction.VolumeDown to Icons.AutoMirrored.Filled.VolumeDown,
     MirrorAction.Rotate to Icons.Filled.ScreenRotation,
     MirrorAction.Power to Icons.Filled.PowerSettingsNew,
+    MirrorAction.QuickActions to Icons.Filled.Bolt,
     MirrorAction.Screenshot to Icons.Filled.PhotoCamera,
     MirrorAction.Record to Icons.Filled.FiberManualRecord,
     MirrorAction.InstallApk to Icons.Filled.Android,
@@ -1064,7 +1135,7 @@ private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) 
     ) {
         val groups = listOf(
             listOf(MirrorAction.Back, MirrorAction.Home, MirrorAction.Recents),
-            listOf(MirrorAction.VolumeUp, MirrorAction.VolumeDown, MirrorAction.Rotate, MirrorAction.Power),
+            listOf(MirrorAction.VolumeUp, MirrorAction.VolumeDown, MirrorAction.Rotate, MirrorAction.Power, MirrorAction.QuickActions),
             listOf(MirrorAction.Screenshot, MirrorAction.Record),
             listOf(MirrorAction.InstallApk, MirrorAction.PushFile),
         )
@@ -1076,12 +1147,14 @@ private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) 
                     MirrorAction.Screenshot -> state.screenshotEnabled
                     MirrorAction.Record -> state.recordEnabled
                     MirrorAction.InstallApk, MirrorAction.PushFile -> state.transferEnabled
+                    MirrorAction.QuickActions -> state.quickActions.enabled
                     else -> state.actionsEnabled
                 }
                 ToolbarButton(
                     action, enabled,
                     label = if (recording) "Stop recording" else action.label,
                     tint = if (recording) colors.error else null,
+                    selected = action == MirrorAction.QuickActions && state.quickActions.open,
                 ) { onAction(action) }
             }
         }
@@ -1090,7 +1163,7 @@ private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ToolbarButton(action: MirrorAction, enabled: Boolean, label: String, tint: Color?, onClick: () -> Unit) {
+private fun ToolbarButton(action: MirrorAction, enabled: Boolean, label: String, tint: Color?, selected: Boolean = false, onClick: () -> Unit) {
     TooltipArea(
         tooltip = {
             Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
@@ -1103,7 +1176,13 @@ private fun ToolbarButton(action: MirrorAction, enabled: Boolean, label: String,
             }
         },
     ) {
-        IconButton(onClick = onClick, enabled = enabled) {
+        val colors = MaterialTheme.colorScheme
+        val buttonColors = if (selected) {
+            IconButtonDefaults.iconButtonColors(containerColor = colors.primaryContainer, contentColor = colors.onPrimaryContainer)
+        } else {
+            IconButtonDefaults.iconButtonColors()
+        }
+        IconButton(onClick = onClick, enabled = enabled, colors = buttonColors) {
             Icon(
                 toolbarIcons.getValue(action),
                 contentDescription = label,
