@@ -19,6 +19,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorContent
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorUiState
+import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsUiState
+import com.programmersbox.scrcpyviewer.ui.mirror.QuickToggle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.dropHint
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
@@ -231,4 +233,17 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror zoom 50`() = render("mirror-zoom-50.png", ThemeMode.Light, state.copy(zoom = 0.5f))
+
+    private val quickActionsOpen = QuickActionsUiState(
+        open = true,
+        enabled = true,
+        toggles = mapOf(QuickToggle.DarkMode to false, QuickToggle.WiFi to true, QuickToggle.AirplaneMode to false, QuickToggle.ShowTaps to null),
+        pending = setOf(QuickToggle.AirplaneMode),
+    )
+
+    @Test
+    fun `mirror quick actions open`() = render("mirror-quick-actions.png", ThemeMode.Light, state.copy(quickActions = quickActionsOpen))
+
+    @Test
+    fun `mirror quick actions open dark`() = render("mirror-quick-actions-dark.png", ThemeMode.Dark, state.copy(quickActions = quickActionsOpen))
 }
