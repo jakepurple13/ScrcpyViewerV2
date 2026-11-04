@@ -111,12 +111,12 @@ class QuickActionsCustomTest {
     private fun quickActions(
         adb: ShellAdb = ShellAdb { "" },
         memory: QuickActionsMemory = QuickActionsMemory(),
-        managed: MutableList<String?> = mutableListOf(),
+        managed: MutableList<Pair<String?, Boolean>> = mutableListOf(),
         readTimeoutMs: Long = 30_000,
     ): QuickActions {
         val qa = QuickActions(
             DeviceQuickActions(adb, "SER", readTimeoutMs), eager, serial = "SER", store = store, runner = runner, console = console,
-            memory = memory, onManage = { managed += it },
+            memory = memory, onManage = { id, new -> managed += id to new },
         ) { messages += it }
         eager.launch { qa.watchActions() }
         return qa
@@ -393,16 +393,17 @@ class QuickActionsCustomTest {
     @Test
     fun `manage, duplicate and delete`() {
         store.upsert(noRead)
-        val managed = mutableListOf<String?>()
+        val managed = mutableListOf<Pair<String?, Boolean>>()
         val qa = quickActions(managed = managed)
 
         qa.onEvent(QuickActionEvent.Manage(null))
+        qa.onEvent(QuickActionEvent.Manage(null, new = true))
         qa.onEvent(QuickActionEvent.Manage("plain"))
         qa.onEvent(QuickActionEvent.Duplicate("plain"))
         assertEquals(listOf("Plain", "Plain (2)"), qa.uiState.custom.map { it.name })
         qa.onEvent(QuickActionEvent.Delete("plain"))
         assertEquals(listOf("Plain (2)"), qa.uiState.custom.map { it.name })
-        assertEquals(listOf(null, "plain"), managed)
+        assertEquals(listOf(null to false, null to true, "plain" to false), managed)
 
         qa.onEvent(QuickActionEvent.Duplicate("gone"))
         qa.onEvent(QuickActionEvent.Delete("gone"))

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -31,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
@@ -60,6 +62,7 @@ private val TopLevelRoute.label: String
     get() = when (this) {
         TopLevelRoute.Devices -> "Devices"
         TopLevelRoute.Presets -> "Presets"
+        TopLevelRoute.Actions -> "Actions"
         TopLevelRoute.Settings -> "Settings"
     }
 
@@ -67,6 +70,7 @@ private val TopLevelRoute.icon: ImageVector
     get() = when (this) {
         TopLevelRoute.Devices -> Icons.Filled.PhoneAndroid
         TopLevelRoute.Presets -> Icons.Filled.Tune
+        TopLevelRoute.Actions -> Icons.Filled.Bolt
         TopLevelRoute.Settings -> Icons.Filled.Settings
     }
 
@@ -85,6 +89,7 @@ fun App(
     updateViewModel: UpdateViewModel = koinViewModel(),
     mirrorController: MirrorController = koinInject(),
     appSettings: AppSettings = koinInject(),
+    actionsNavigation: ActionsNavigation = koinInject(),
 ) {
     val update by updateViewModel.state.collectAsState()
     // Read from the store, not the ViewModel's state, so the first frame already has the saved theme.
@@ -97,6 +102,12 @@ fun App(
         mirrorController.recordingResults
             .filter { it.serial !in mirrorController.open.value }
             .collect { snackbar.showSnackbar(recordResultMessage(it.result)) }
+    }
+    // A mirror window asked for the Actions screen. Task 12 also forwards the request to the Actions view model here.
+    LaunchedEffect(actionsNavigation, navigator) {
+        actionsNavigation.requests.collect { _ ->
+            navigator.select(TopLevelRoute.Actions)
+        }
     }
     ScrcpyViewerTheme(settings.themeMode) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
@@ -131,6 +142,11 @@ fun App(
                                     fileDialogs,
                                     panes = presetsPanes
                                 )
+
+                                // Placeholder until the Actions screen lands.
+                                TopLevelRoute.Actions -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("Actions", style = MaterialTheme.typography.titleMedium)
+                                }
 
                                 TopLevelRoute.Settings -> SettingsScreen(
                                     settingsViewModel,

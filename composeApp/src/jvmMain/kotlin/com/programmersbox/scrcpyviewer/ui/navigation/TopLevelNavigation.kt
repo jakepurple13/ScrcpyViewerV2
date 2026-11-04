@@ -33,11 +33,14 @@ sealed interface TopLevelRoute : NavKey {
     data object Presets : TopLevelRoute
 
     @Serializable
+    data object Actions : TopLevelRoute
+
+    @Serializable
     data object Settings : TopLevelRoute
 
     companion object {
         /** Rail order. */
-        val all: List<TopLevelRoute> get() = listOf(Devices, Presets, Settings)
+        val all: List<TopLevelRoute> get() = listOf(Devices, Presets, Actions, Settings)
     }
 }
 

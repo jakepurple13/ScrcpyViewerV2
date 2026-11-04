@@ -19,6 +19,7 @@ import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
@@ -118,6 +119,10 @@ class AdbModule {
 class MirrorModule {
     @Singleton
     fun mirrorRequests(): MirrorRequests = MirrorRequests()
+
+    /** Mirror windows ask the main window to open the Actions screen through this. */
+    @Singleton
+    fun actionsNavigation(): ActionsNavigation = ActionsNavigation()
 
     /** Typed shell commands, shared by every mirror window's console. */
     @Singleton

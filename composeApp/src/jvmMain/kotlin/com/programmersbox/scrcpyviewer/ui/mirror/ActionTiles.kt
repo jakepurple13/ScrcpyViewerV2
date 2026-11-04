@@ -142,7 +142,7 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
             add(GridTile(NewTileKey) {
                 ActionTile(
                     icon = Icons.Filled.Add, title = "New action", dashed = true,
-                    onClick = { onEvent(QuickActionEvent.Manage(null)) },
+                    onClick = { onEvent(QuickActionEvent.Manage(null, new = true)) },
                 )
             })
         }

@@ -4,10 +4,14 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.unit.Density
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsRequest
 import com.programmersbox.scrcpyviewer.ui.devices.DevicesViewModel
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavigator
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
 import com.programmersbox.scrcpyviewer.withFakeAppKoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.koin.compose.viewmodel.koinViewModel
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -54,5 +58,39 @@ class AppNavigationTest {
                 driver.scene.close()
             }
         }
+    }
+
+    @Test
+    fun `an Actions request from a mirror window selects the Actions tab`() = withFakeAppKoin { koin ->
+        val navigator = TopLevelNavigator()
+        val actionsNavigation = koin.get<ActionsNavigation>()
+        onEdt {
+            val driver = SceneDriver(ImageComposeScene(1280, 800, Density(1f)) {
+                App(navigator = navigator, actionsNavigation = actionsNavigation)
+            })
+            try {
+                driver.frames(10)
+                assertEquals(TopLevelRoute.Devices, navigator.current)
+                actionsNavigation.open("id")
+                driver.frames(10)
+                assertEquals(TopLevelRoute.Actions, navigator.current)
+            } finally {
+                driver.scene.close()
+            }
+        }
+    }
+
+    @Test
+    fun `open emits a request with the action id and the new flag`() {
+        val nav = ActionsNavigation()
+        val got = mutableListOf<ActionsRequest>()
+        runBlocking {
+            val job = launch(kotlinx.coroutines.Dispatchers.Unconfined) { nav.requests.collect { got += it } }
+            nav.open("a")
+            nav.open(null, new = true)
+            nav.open(null)
+            job.cancel()
+        }
+        assertEquals(listOf(ActionsRequest("a", false), ActionsRequest(null, true), ActionsRequest(null, false)), got)
     }
 }

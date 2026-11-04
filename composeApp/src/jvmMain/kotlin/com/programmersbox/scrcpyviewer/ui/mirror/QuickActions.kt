@@ -225,8 +225,8 @@ sealed interface QuickActionEvent {
     data object PromptConfirm : QuickActionEvent
     data object PromptCancel : QuickActionEvent
 
-    /** Opens the Actions editor in the main window: on [actionId], or blank / no selection when null. */
-    data class Manage(val actionId: String?) : QuickActionEvent
+    /** Opens the Actions editor in the main window: on [actionId], on a blank new action when [new], else just the screen. */
+    data class Manage(val actionId: String?, val new: Boolean = false) : QuickActionEvent
     data class Duplicate(val id: String) : QuickActionEvent
 
     /** Deletes at once; the sheet asks for confirmation before sending it. */
@@ -252,7 +252,7 @@ class QuickActions internal constructor(
     /** The window's shell console; it outlives tabs and closing the sheet, but its command stops when the sheet closes. */
     val console: ShellConsole? = null,
     private val memory: QuickActionsMemory = QuickActionsMemory(),
-    private val onManage: (actionId: String?) -> Unit = {},
+    private val onManage: (actionId: String?, new: Boolean) -> Unit = { _, _ -> },
     private val notify: (String) -> Unit,
 ) {
     var open by mutableStateOf(false)
@@ -329,7 +329,7 @@ class QuickActions internal constructor(
             }
             QuickActionEvent.PromptConfirm -> prompt?.takeIf { !it.needsValues }?.let(::execute)
             QuickActionEvent.PromptCancel -> prompt = null
-            is QuickActionEvent.Manage -> onManage(event.actionId)
+            is QuickActionEvent.Manage -> onManage(event.actionId, event.new)
             is QuickActionEvent.Duplicate -> editStore("Could not duplicate the action") { duplicate(event.id) }
             is QuickActionEvent.Delete -> editStore("Could not delete the action") { delete(event.id) }
             is QuickActionEvent.LoadPackages -> loadPackages(event.includeSystem)
@@ -507,7 +507,7 @@ class QuickActions internal constructor(
 
 /**
  * The quick actions of [serial]: disabled without adb or while the session is disconnected. [onManage] opens the
- * Actions editor in the main window (on an action, or none for null).
+ * Actions editor in the main window (on an action, a blank new one, or just the screen).
  */
 @Composable
 fun rememberQuickActions(
@@ -515,7 +515,7 @@ fun rememberQuickActions(
     session: ScrcpySession,
     adb: AdbClient?,
     notify: (String) -> Unit,
-    onManage: (actionId: String?) -> Unit = {},
+    onManage: (actionId: String?, new: Boolean) -> Unit = { _, _ -> },
     store: ActionStore = koinInject(),
     memory: QuickActionsMemory = koinInject(),
     history: ShellHistory = koinInject(),
@@ -533,7 +533,7 @@ fun rememberQuickActions(
             runner = runner,
             console = ShellConsole(runner, history, scope, { currentNotify(it) }),
             memory = memory,
-            onManage = { currentOnManage(it) },
+            onManage = { id, new -> currentOnManage(id, new) },
         ) { currentNotify(it) }
     }
     LaunchedEffect(actions) { actions.watchActions() }

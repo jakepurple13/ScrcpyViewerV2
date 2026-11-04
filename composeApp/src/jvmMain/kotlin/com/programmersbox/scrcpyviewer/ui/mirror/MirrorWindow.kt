@@ -130,7 +130,9 @@ import com.programmersbox.scrcpyviewer.scrcpy.DeviceMessage
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.scrcpy.StreamProtocol
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
+import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
 import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
@@ -300,6 +302,8 @@ fun MirrorWindow(
     /** Runs `adb install` / `adb push` for dropped files and the Install APK… / Push file… buttons; null disables them. */
     adb: AdbClient? = null,
     fileDialogs: TransferFileDialogs = AwtTransferFileDialogs,
+    /** "+ New action", "Edit…" and "Manage actions…" ask the main window to open the Actions screen through this. */
+    actionsNavigation: ActionsNavigation = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -388,7 +392,7 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
-    val quickActions = rememberQuickActions(serial, session, adb, ::notify)
+    val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
 
     val orientation = remember(values) { DisplayOrientation.forOptions(values) }
     // The window is sized for the image as displayed (turned by display-orientation).
