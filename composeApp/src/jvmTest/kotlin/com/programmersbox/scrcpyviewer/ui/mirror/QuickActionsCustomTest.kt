@@ -243,6 +243,21 @@ class QuickActionsCustomTest {
     }
 
     @Test
+    fun `a command that ends the shell without an exit code is not a failure`() {
+        store.upsert(RunOnceAction(id = "r", name = "Reboot", command = "reboot"))
+        store.upsert(RunOnceAction(id = "n", name = "Quiet", command = "exit", output = OutputTarget.None))
+        val qa = quickActions()
+
+        runner.result = { ShellResult("", null, 2) }
+        qa.onEvent(QuickActionEvent.RunCustom("r"))
+        runner.result = { ShellResult("bye\n", null, 2) }
+        qa.onEvent(QuickActionEvent.RunCustom("r"))
+        qa.onEvent(QuickActionEvent.RunCustom("n"))
+
+        assertEquals(listOf("Done", "bye"), messages)
+    }
+
+    @Test
     fun `none output stays quiet unless it fails`() {
         store.upsert(RunOnceAction(id = "n", name = "Quiet", command = "x", output = OutputTarget.None))
         val qa = quickActions()

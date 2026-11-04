@@ -487,14 +487,15 @@ class QuickActions internal constructor(
     }
 
     private companion object {
-        /** Runs [cmd] buffered (30 s limit) and returns its output; throws with the device's last line when it fails. */
+        /**
+         * Runs [cmd] buffered (30 s limit) and returns its output; throws with the device's last line when it fails.
+         * No exit code (a command that ended the shell, like `reboot` or `exit`) counts as success.
+         */
         suspend fun ShellRunner.runChecked(cmd: String): String {
             val result = run(cmd)
-            if (result.exitCode != 0) {
-                throw IOException(
-                    result.output.lineSequence().lastOrNull { it.isNotBlank() }?.trim()
-                        ?: "exit code ${result.exitCode ?: "unknown"}",
-                )
+            val code = result.exitCode
+            if (code != null && code != 0) {
+                throw IOException(result.output.lineSequence().lastOrNull { it.isNotBlank() }?.trim() ?: "exit code $code")
             }
             return result.output
         }

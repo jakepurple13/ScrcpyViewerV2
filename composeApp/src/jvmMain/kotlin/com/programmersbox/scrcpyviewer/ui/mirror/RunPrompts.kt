@@ -27,16 +27,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
+import kotlinx.coroutines.flow.first
 import com.programmersbox.scrcpyviewer.actions.Variable
 import com.programmersbox.scrcpyviewer.actions.VariableKind
 
@@ -172,25 +176,37 @@ private fun AppField(
     val colors = MaterialTheme.colorScheme
     var query by remember { mutableStateOf("") }
     val matches = remember(packages, query) {
-        packages.orEmpty().filter { query.isBlank() || it.contains(query.trim(), ignoreCase = true) }
+        packages.orEmpty().filter { query.isBlank() || it.contains(query.trim(), ignoreCase = true) }.take(MAX_APP_ROWS)
+    }
+    val scroll = rememberScrollState()
+    var rowHeight by remember { mutableIntStateOf(0) }
+    // Bring the selected app (e.g. the last one used) into view when the list loads or the search changes,
+    // not on every pick, so a click does not move the row under the pointer.
+    val selectedIndex = matches.indexOf(selected)
+    LaunchedEffect(packages, query) {
+        if (selectedIndex < 0) return@LaunchedEffect
+        scroll.scrollTo(selectedIndex * snapshotFlow { rowHeight }.first { it > 0 })
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedTextField(
             query, { query = it }, Modifier.fillMaxWidth(), label = { Text(label) }, placeholder = { Text("Search apps") },
             singleLine = true,
+            // The search text is not the value: name the app that will run, so a prefilled one is never a surprise.
+            supportingText = { Text(if (selected.isEmpty()) "No app selected" else "Selected: $selected", maxLines = 1, overflow = TextOverflow.Ellipsis) },
         )
         Column(
             Modifier.fillMaxWidth().heightIn(max = 160.dp).clip(RoundedCornerShape(8.dp)).background(colors.surfaceContainer)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scroll),
         ) {
             when {
                 packages == null -> Text("Loading apps…", Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                 matches.isEmpty() -> Text("No apps found", Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-                else -> matches.take(MAX_APP_ROWS).forEach { pkg ->
+                else -> matches.forEach { pkg ->
                     val picked = pkg == selected
                     Text(
                         pkg,
-                        Modifier.fillMaxWidth().background(if (picked) colors.primaryContainer else colors.surfaceContainer)
+                        Modifier.fillMaxWidth().onSizeChanged { rowHeight = it.height }
+                            .background(if (picked) colors.primaryContainer else colors.surfaceContainer)
                             .clickable { onPick(pkg) }.padding(horizontal = 12.dp, vertical = 8.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = if (picked) colors.onPrimaryContainer else colors.onSurface,

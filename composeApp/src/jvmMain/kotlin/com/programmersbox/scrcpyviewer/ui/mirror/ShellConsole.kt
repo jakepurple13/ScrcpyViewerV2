@@ -46,7 +46,7 @@ sealed interface ConsoleLine {
  * a time; [notify] gets the refusal message when another starts. [runner] is null while the device is unreachable.
  *
  * Snapshot state is written on the UI thread: [scope] is the window's coroutine scope (Main), and the stream does its
- * own IO on another dispatcher. Every run has a generation; events from a run that was stopped or cleared are ignored.
+ * own IO on another dispatcher. Every run has a generation; events from a run that was stopped are ignored.
  */
 @Stable
 class ShellConsole(
