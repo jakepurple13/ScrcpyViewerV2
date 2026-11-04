@@ -14,7 +14,18 @@ import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.actions.ToggleAction
 import com.programmersbox.scrcpyviewer.actions.Variable
 import com.programmersbox.scrcpyviewer.actions.VariableKind
+import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.adb.ShellEvent
+import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.media.VideoFrame
+import com.programmersbox.scrcpyviewer.ui.mirror.ShellConsole
+import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
+import com.programmersbox.scrcpyviewer.ui.mirror.ShellTabContent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import com.programmersbox.scrcpyviewer.ui.mirror.PendingRun
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.ui.mirror.ClickIndicator
@@ -280,5 +291,70 @@ class MirrorScreenshotTest {
             "mirror-quick-actions-prompt.png", ThemeMode.Light,
             state.copy(quickActions = tilesState.copy(prompt = prompt, packages = packages)), height = 1000, settleMillis = 1000,
         )
+    }
+
+    /** Streams the scripted events for each command, then waits forever when [hang]. */
+    private class ScriptRunner(private val script: Map<String, List<ShellEvent>>, private val hang: Boolean = false) :
+        ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "serial") {
+        override fun stream(cmd: String): Flow<ShellEvent> = flow {
+            script[cmd].orEmpty().forEach { emit(it) }
+            if (hang) awaitCancellation()
+        }
+    }
+
+    private fun renderShell(name: String, mode: ThemeMode, console: ShellConsole, chips: List<RunOnceAction>) {
+        renderToPng(400, 640, outDir.resolve(name)) {
+            ScrcpyViewerTheme(mode) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainer) {
+                    ShellTabContent(console, chips) {}
+                }
+            }
+        }
+    }
+
+    private val shellChips = listOf(
+        RunOnceAction(id = "bugreport", name = "Bug report", command = "bugreportz"),
+        RunOnceAction(id = "clear", name = "Clear data", command = "pm clear {pkg}"),
+    )
+
+    @Test
+    fun `mirror shell finished`() {
+        val runner = ScriptRunner(
+            mapOf(
+                "wm size" to listOf(ShellEvent.Output("Physical size: 1344x2992\n"), ShellEvent.Exit(0, 48)),
+                "getprop ro.product.model" to listOf(ShellEvent.Output("Pixel 9 Pro\n"), ShellEvent.Exit(0, 31)),
+                "cat /missing" to listOf(ShellEvent.Output("cat: /missing: No such file or directory\n"), ShellEvent.Exit(1, 22)),
+            ),
+        )
+        val console = ShellConsole(runner, ShellHistory(), CoroutineScope(Dispatchers.Unconfined), {})
+        for (cmd in listOf("wm size", "getprop ro.product.model", "cat /missing")) {
+            console.input = cmd
+            console.submit()
+        }
+        renderShell("mirror-shell-finished.png", ThemeMode.Light, console, shellChips)
+        renderShell("mirror-shell-finished-dark.png", ThemeMode.Dark, console, shellChips)
+    }
+
+    @Test
+    fun `mirror shell streaming`() {
+        val runner = ScriptRunner(
+            mapOf(
+                "logcat" to listOf(
+                    ShellEvent.Output("I/ActivityManager( 612): Start proc 4121:com.example.notes/u0a212\n"),
+                    ShellEvent.Output("D/WindowManager( 612): Relayout Window{4f2a u0 com.example.notes}\n"),
+                    ShellEvent.Output("I/ActivityManager( 612): Start proc 4188:com.spotify.music/u0a198\n"),
+                    ShellEvent.Output("W/System( 4121): ClassLoader referenced unknown path\n"),
+                    ShellEvent.Output("I/ActivityManager( 612): Start proc 4230:com.android.chrome/u0a101\n"),
+                ),
+            ),
+            hang = true,
+        )
+        val console = ShellConsole(runner, ShellHistory(), CoroutineScope(Dispatchers.Unconfined), {})
+        console.input = "logcat"
+        console.submit()
+        console.filter = "Start proc"
+        renderShell("mirror-shell-streaming.png", ThemeMode.Light, console, shellChips)
+        renderShell("mirror-shell-streaming-dark.png", ThemeMode.Dark, console, shellChips)
+        console.stop()
     }
 }
