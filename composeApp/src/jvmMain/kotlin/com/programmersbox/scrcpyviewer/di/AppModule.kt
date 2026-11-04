@@ -22,6 +22,7 @@ import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.mirror.OpenMirrors
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
 import com.programmersbox.scrcpyviewer.update.NucleusUpdateBackend
@@ -131,6 +132,9 @@ class MirrorModule {
     /** Quick actions state kept for the life of the app across mirror windows (toggles, last values, last tab). */
     @Singleton
     fun quickActionsMemory(): QuickActionsMemory = QuickActionsMemory()
+
+    @Singleton
+    fun openMirrors(mirrors: Lazy<MirrorController>): OpenMirrors = OpenMirrors { mirrors.value.open.value.keys }
 
     @Singleton
     fun serverLauncher(client: AdbClient, tools: BundledTools): ServerLauncher = ServerLauncher(client, tools)

@@ -16,6 +16,8 @@ import com.programmersbox.scrcpyviewer.ui.devices.DevicesUiState
 import com.programmersbox.scrcpyviewer.ui.devices.PairingTab
 import com.programmersbox.scrcpyviewer.ui.devices.DeviceMenu
 import com.programmersbox.scrcpyviewer.ui.devices.RowActions
+import com.programmersbox.scrcpyviewer.ui.devices.RestartAdbDialog
+import com.programmersbox.scrcpyviewer.ui.devices.RestartAdbImpact
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -196,6 +198,37 @@ class DevicesScreenshotTest {
         }
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
     }
+
+    private fun renderRestart(name: String, mode: ThemeMode, impact: RestartAdbImpact) {
+        val out = outDir.resolve(name)
+        renderToPng(1280, 800, out, settleMillis = 1_000) {
+            ScrcpyViewerTheme(mode) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        state, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        panes = screenshotPanes(null, false),
+                    )
+                    RestartAdbDialog(impact, onConfirm = {}, onDismiss = {})
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `restart adb dialog with mirrors`() = renderRestart(
+        "restart-adb-light-mirrors.png", ThemeMode.Light,
+        RestartAdbImpact(mirrors = listOf("Pixel 8 Pro", "SM X710"), wifiDevices = listOf("SM X710")),
+    )
+
+    @Test
+    fun `restart adb dialog wifi only dark`() = renderRestart(
+        "restart-adb-dark-wifi.png", ThemeMode.Dark,
+        RestartAdbImpact(mirrors = emptyList(), wifiDevices = listOf("SM X710")),
+    )
+
+    @Test
+    fun `devices restarting adb`() = render("devices-light-restarting.png", ThemeMode.Light, state.copy(restartingAdb = true))
 
     @Test
     fun `wifi pairing dialog qr`() = renderDialog("wifi-light-qr.png", ThemeMode.Light, pairing)

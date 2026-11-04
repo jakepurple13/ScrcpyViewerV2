@@ -40,7 +40,11 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -154,7 +158,11 @@ fun DevicesScreen(
         onConnectWifi = viewModel::connectOverWifi,
         onDisconnect = viewModel::disconnect,
         canMirror = viewModel::canMirror,
+        onRestartAdb = viewModel::requestRestartAdb,
     )
+    state.restartConfirm?.let { impact ->
+        RestartAdbDialog(impact, onConfirm = viewModel::confirmRestartAdb, onDismiss = viewModel::cancelRestartAdb)
+    }
 }
 
 /** Narrowest device column that still shows a device row's dot, name and serial. */
@@ -189,6 +197,8 @@ fun DevicesContent(
     canMirror: (String) -> Boolean = { serial -> state.devices.any { it.serial == serial && it.state == DeviceState.Device } },
     /** Starts with this row's right-click menu open (for screenshots). */
     contextMenuSerial: String? = null,
+    /** The device column header's restart button. */
+    onRestartAdb: () -> Unit = {},
 ) {
     val rowActions = RowActions(onOpen = onOpen, onConnectWifi = onConnectWifi, onDisconnect = onDisconnect, canMirror = canMirror)
     Column(modifier.fillMaxSize()) {
@@ -206,7 +216,10 @@ fun DevicesContent(
             listPreferredWidth = DeviceListPreferredWidth,
             detailMinWidth = DEVICE_OPTIONS_MIN_WIDTH,
             list = {
-                DeviceColumn(state, onSelect = { onSelect(it); panes.navigation.openDetail() }, onSelect, rowActions, onPairWifi, contextMenuSerial)
+                DeviceColumn(
+                    state, onSelect = { onSelect(it); panes.navigation.openDetail() }, onSelect, rowActions, onPairWifi,
+                    contextMenuSerial, onRestartAdb,
+                )
             },
             detail = { onBack ->
                 Column(Modifier.fillMaxSize()) {
@@ -243,19 +256,23 @@ private fun DeviceColumn(
     actions: RowActions,
     onPairWifi: () -> Unit,
     contextMenuSerial: String?,
+    onRestartAdb: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            if (state.adbConnected) deviceSummary(state.devices) else "Devices",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 2.dp),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (state.adbConnected && !state.restartingAdb) deviceSummary(state.devices) else "Devices",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f).padding(start = 4.dp),
+            )
+            RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb)
+        }
         when {
-            !state.adbConnected -> Row(
+            !state.adbConnected || state.restartingAdb -> Row(
                 Modifier.padding(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -677,3 +694,64 @@ private fun SaveAsDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
     )
 }
+
+/** The device column header's "Restart adb server" icon; disabled with a spinner while a restart runs. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun RestartAdbButton(restarting: Boolean, onClick: () -> Unit) {
+    val label = if (restarting) "Restarting adb…" else "Restart adb server"
+    TooltipArea(
+        tooltip = {
+            Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
+                Text(
+                    label,
+                    Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.inverseOnSurface,
+                )
+            }
+        },
+    ) {
+        IconButton(onClick = onClick, enabled = !restarting, modifier = Modifier.size(32.dp)) {
+            if (restarting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            else Icon(Icons.Filled.Refresh, contentDescription = label, Modifier.size(20.dp))
+        }
+    }
+}
+
+/** Asks before restarting adb when that would close mirror windows or drop Wi-Fi devices. */
+@Composable
+internal fun RestartAdbDialog(impact: RestartAdbImpact, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    val closesMirrors = impact.mirrors.isNotEmpty()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Restart adb server?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Restarting adb will:")
+                if (closesMirrors) Text("• ${restartLine("Close", impact.mirrors, "open mirror")}")
+                if (impact.wifiDevices.isNotEmpty()) {
+                    Text("• ${restartLine("Disconnect", impact.wifiDevices, "Wi-Fi device")}. Reconnect ${if (impact.wifiDevices.size == 1) "it" else "them"} from Pair over Wi-Fi.")
+                }
+            }
+        },
+        confirmButton = {
+            if (closesMirrors) {
+                Button(
+                    onConfirm,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) { Text("Close mirrors and restart") }
+            } else {
+                TextButton(onConfirm) { Text("Restart") }
+            }
+        },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+    )
+}
+
+/** "Close 2 open mirrors (Pixel 8, Galaxy Tab)". */
+internal fun restartLine(verb: String, names: List<String>, noun: String): String =
+    "$verb ${names.size} $noun${if (names.size == 1) "" else "s"} (${names.joinToString()})"
