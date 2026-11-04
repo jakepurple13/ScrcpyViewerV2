@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.IosShare
@@ -83,8 +86,11 @@ private val introPages = listOf(
 
 private fun AnnotatedString.Builder.bold(text: String) = withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(text) }
 
-/** Height of the page area: the tallest page ("How a toggle knows it's on"), so the dialog does not jump between pages. */
+/** Height of the page area when the window allows: the tallest page ("How a toggle knows it's on"), so the dialog does not jump between pages. */
 private val PAGE_HEIGHT = 570.dp
+
+/** Room the dialog needs besides its page area: padding, the gap above the footer, the footer, and a margin to the window edge. */
+private val DIALOG_CHROME = 180.dp
 
 /** Number of pages in [ActionsIntroDialog]. */
 val ACTIONS_INTRO_PAGE_COUNT = introPages.size
@@ -93,6 +99,9 @@ val ACTIONS_INTRO_PAGE_COUNT = introPages.size
 @Composable
 fun ActionsIntroDialog(page: Int, onPage: (Int) -> Unit, onFinish: () -> Unit) {
     Dialog(onDismissRequest = onFinish, properties = DialogProperties(dismissOnClickOutside = false)) {
+      // A short window shrinks the page area and the page scrolls; the footer stays outside the scroll.
+      BoxWithConstraints {
+        val pageHeight = minOf(PAGE_HEIGHT, (maxHeight - DIALOG_CHROME).coerceAtLeast(120.dp))
         Surface(
             modifier = Modifier.width(560.dp),
             shape = MaterialTheme.shapes.extraLarge,
@@ -107,10 +116,10 @@ fun ActionsIntroDialog(page: Int, onPage: (Int) -> Unit, onFinish: () -> Unit) {
                         (slideInHorizontally { it / 4 * dir } + fadeIn()) togetherWith
                             (slideOutHorizontally { -it / 4 * dir } + fadeOut())
                     },
-                    modifier = Modifier.fillMaxWidth().height(PAGE_HEIGHT),
+                    modifier = Modifier.fillMaxWidth().height(pageHeight),
                 ) { p ->
                     val content = introPages[p]
-                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
                         IconBadge(content.icon)
                         Spacer(Modifier.height(16.dp))
                         Text(content.title, style = MaterialTheme.typography.headlineSmall)
@@ -130,5 +139,6 @@ fun ActionsIntroDialog(page: Int, onPage: (Int) -> Unit, onFinish: () -> Unit) {
                 }
             }
         }
+      }
     }
 }

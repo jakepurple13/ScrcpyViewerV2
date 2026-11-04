@@ -43,6 +43,7 @@ import kotlin.test.assertTrue
 private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = { error("no real adb in tests") }) {
     var answer: (String) -> String = { "" }
     var endless = false
+    var exitCode = 0
     /** Prints this many numbered lines at once, then ends, like a large `dumpsys`. */
     var flood = 0
     val commands: MutableList<String> = Collections.synchronizedList(mutableListOf())
@@ -75,7 +76,7 @@ private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = {
                 delay(5)
             }
         }
-        emit(answer(command) + "${ShellRunner.EXIT_MARKER}0\n")
+        emit(answer(command) + "${ShellRunner.EXIT_MARKER}$exitCode\n")
     }
 }
 
@@ -287,6 +288,40 @@ class ActionsViewModelTest {
         val off = vm.awaitTest()
         assertEquals("Counts as off", off.note)
         assertEquals(false, off.readOn)
+    }
+
+    @Test
+    fun `test read verdict clears when the read command or the rule changes`() {
+        store.upsert(stayAwake)
+        val edits = listOf<(ActionDraft) -> ActionDraft>(
+            { it.copy(read = "settings get global x") },
+            { it.copy(matchMode = MatchMode.Contains) },
+            { it.copy(matchValue = "8") },
+        )
+        for (change in edits) {
+            val adb = FakeAdb(listOf("SER1")).apply { answer = { "7\n" } }
+            val vm = vm(listOf("SER1"), adb)
+            vm.select("awake")
+            vm.testRead()
+            assertEquals(true, vm.awaitTest().readOn)
+            vm.edit { it.copy(on = "svc power stayon usb") }
+            assertEquals(true, vm.state.value.test?.readOn, "unrelated edit keeps the verdict")
+            vm.edit(change)
+            assertNull(vm.state.value.test)
+        }
+    }
+
+    @Test
+    fun `test read with a failing exit code has no verdict`() {
+        store.upsert(stayAwake)
+        val adb = FakeAdb(listOf("SER1")).apply { answer = { "boom\n" }; exitCode = 3 }
+        val vm = vm(listOf("SER1"), adb)
+        vm.select("awake")
+        vm.testRead()
+        val result = vm.awaitTest()
+        assertNull(result.readOn)
+        assertEquals(true, result.isRead)
+        assertEquals(3, result.exitCode)
     }
 
     @Test

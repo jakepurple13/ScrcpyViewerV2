@@ -207,12 +207,18 @@ private fun ToggleFields(
             OutlinedButton(onTestRead, enabled = state.testDevice != null && state.test?.running != true) { Text("Test read") }
         }
         Hint(onWhenSentence(draft.matchMode, draft.matchValue))
-        state.test?.readOn?.let { on ->
+        state.test?.takeIf { it.isRead && !it.running }?.let { test ->
             Text(
                 buildAnnotatedString {
-                    append("Test read: device printed ")
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(printedLine(state.test.output)) }
-                    append(" → counts as ${if (on) "On" else "Off"}")
+                    if (test.readOn == null) {
+                        append("Test read failed (exit ${test.exitCode})")
+                    } else {
+                        append("Test read: device printed ")
+                        val printed = printedLine(test.output)
+                        if (printed.isEmpty()) append("(nothing)")
+                        else withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) { append(printed) }
+                        append(" → counts as ${if (test.readOn) "On" else "Off"}")
+                    }
                 },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

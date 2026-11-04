@@ -64,9 +64,9 @@ class ActionsScreenshotTest {
         test = TestResult(running = false, output = "Success", exitCode = 0, note = null),
     )
 
-    private fun shot(name: String, mode: ThemeMode, content: @Composable () -> Unit) {
+    private fun shot(name: String, mode: ThemeMode, height: Int = 800, content: @Composable () -> Unit) {
         val out = outDir.resolve(name)
-        renderToPng(1280, 800, out, settleMillis = 1_000) {
+        renderToPng(1280, height, out, settleMillis = 1_000) {
             ScrcpyViewerTheme(mode) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) { content() } }
         }
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
@@ -94,7 +94,7 @@ class ActionsScreenshotTest {
                 dirty = true,
                 devices = emptyList(),
                 testDevice = null,
-                test = TestResult(running = false, output = "7", exitCode = 0, note = "Counts as on", readOn = true),
+                test = TestResult(running = false, output = "7", exitCode = 0, note = "Counts as on", isRead = true, readOn = true),
                 persistenceError = "actions.json is corrupt and was backed up",
             ),
         )
@@ -110,7 +110,7 @@ class ActionsScreenshotTest {
                     on = "svc power stayon true", off = "svc power stayon false",
                     read = "settings get global stay_on_while_plugged_in", matchValue = "7",
                 ),
-                test = TestResult(running = false, output = "7", exitCode = 0, note = "Counts as on", readOn = true),
+                test = TestResult(running = false, output = "7", exitCode = 0, note = "Counts as on", isRead = true, readOn = true),
             ),
         )
     }
@@ -138,6 +138,14 @@ class ActionsScreenshotTest {
 
     @Test
     fun `actions intro dialog page 3`() = shot("actions-intro-page3.png", ThemeMode.Light) {
+        Box(Modifier.fillMaxSize()) {
+            screen(state)
+            ActionsIntroDialog(page = 2, onPage = {}, onFinish = {})
+        }
+    }
+
+    @Test
+    fun `actions intro dialog short window`() = shot("actions-intro-short.png", ThemeMode.Light, height = 600) {
         Box(Modifier.fillMaxSize()) {
             screen(state)
             ActionsIntroDialog(page = 2, onPage = {}, onFinish = {})

@@ -80,7 +80,9 @@ data class TestResult(
     val exitCode: Int?,
     val note: String?,
     val shownLines: Int? = null,
-    /** For a finished Test read: whether the output counts as on. Null for any other result. */
+    /** True for a finished Test read. */
+    val isRead: Boolean = false,
+    /** For a Test read: whether the output counts as on; null when the read failed or this is not a read. */
     val readOn: Boolean? = null,
 )
 
@@ -298,7 +300,7 @@ class ActionsViewModel(
         if (draft.type != ActionType.Toggle || draft.read.isBlank()) return endTest("No read command")
         val onWhen = OnWhen(draft.matchMode, draft.matchValue)
         startTest { runner ->
-            bufferedTest(runner, draft.read, readOn = { output -> onWhen.matches(output) }) { output ->
+            bufferedTest(runner, draft.read, isRead = true, readOn = { output -> onWhen.matches(output) }) { output ->
                 if (onWhen.matches(output)) "Counts as on" else "Counts as off"
             }
         }
@@ -391,9 +393,13 @@ class ActionsViewModel(
     }
 
     private fun updateDraft(transform: (ActionDraft) -> ActionDraft) = editor.update { e ->
-        val draft = e.draft?.let(transform) ?: return@update e
+        val old = e.draft
+        val draft = old?.let(transform) ?: return@update e
+        // A Test read result describes the read command and rule it ran with; it goes when either changes.
+        val readChanged = draft.read != old.read || draft.matchMode != old.matchMode || draft.matchValue != old.matchValue
+        val test = if (readChanged && e.test?.isRead == true) null else e.test
         // Errors shown after a failed save clear as the fields are fixed.
-        e.copy(draft = draft, errors = if (e.errors.isEmpty) e.errors else validate(draft))
+        e.copy(draft = draft, test = test, errors = if (e.errors.isEmpty) e.errors else validate(draft))
     }
 
     private fun withVariables(draft: ActionDraft): ActionDraft {
@@ -444,6 +450,7 @@ class ActionsViewModel(
     private suspend fun bufferedTest(
         runner: ShellRunner,
         command: String,
+        isRead: Boolean = false,
         readOn: ((String) -> Boolean)? = null,
         note: (String) -> String?,
     ) {
@@ -452,7 +459,8 @@ class ActionsViewModel(
         setTest(
             TestResult(
                 running = false, output = output, exitCode = result.exitCode, note = note(result.output),
-                shownLines = shownLines, readOn = readOn?.invoke(result.output),
+                shownLines = shownLines, isRead = isRead,
+                readOn = if (result.exitCode.let { it == null || it == 0 }) readOn?.invoke(result.output) else null,
             ),
         )
     }
