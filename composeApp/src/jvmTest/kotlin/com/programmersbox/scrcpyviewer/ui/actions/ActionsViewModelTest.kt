@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.ui.actions
 
 import com.programmersbox.scrcpyviewer.actions.ActionCodec
 import com.programmersbox.scrcpyviewer.actions.ActionStore
+import com.programmersbox.scrcpyviewer.actions.ActionTemplates
 import com.programmersbox.scrcpyviewer.actions.MatchMode
 import com.programmersbox.scrcpyviewer.actions.OnWhen
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
@@ -657,5 +658,97 @@ class ActionsViewModelTest {
         vm.delete("logcat")
         assertEquals(listOf("Stay awake was deleted"), messages)
         collector.cancel()
+    }
+
+    private fun template(name: String) = ActionTemplates.all.first { it.name == name }
+
+    @Test
+    fun `newFromTemplate fills a run once draft exactly and is dirty with a banner`() {
+        val vm = vm()
+        val t = template("Grant permission")
+        vm.newFromTemplate(t)
+        val draft = assertNotNull(vm.state.value.draft)
+        val a = t.action as RunOnceAction
+        assertNull(draft.id)
+        assertEquals(ActionType.RunOnce, draft.type)
+        assertEquals("Grant permission", draft.name)
+        assertEquals("vpn_key", draft.icon)
+        assertEquals(a.command, draft.command)
+        assertEquals(a.variables, draft.variables)
+        assertEquals(OutputTarget.Toast, draft.output)
+        assertFalse(draft.confirm)
+        assertEquals("Grant permission", draft.fromTemplate)
+        assertTrue(vm.state.value.dirty)
+        assertEquals(emptyList(), store.actions.value, "nothing saved yet")
+    }
+
+    @Test
+    fun `newFromTemplate fills a toggle draft`() {
+        val vm = vm()
+        vm.newFromTemplate(template("Stay awake"))
+        val draft = vm.state.value.draft!!
+        assertEquals(ActionType.Toggle, draft.type)
+        assertEquals("svc power stayon true", draft.on)
+        assertEquals("svc power stayon false", draft.off)
+        assertEquals("settings get global stay_on_while_plugged_in", draft.read)
+        assertEquals(MatchMode.Equals, draft.matchMode)
+        assertEquals("7", draft.matchValue)
+        assertEquals("battery_full", draft.icon)
+    }
+
+    @Test
+    fun `newFromTemplate with unsaved changes asks to discard, then fills`() {
+        val vm = vm()
+        vm.new()
+        vm.edit { it.copy(name = "Mine") }
+        val t = template("Launch app")
+        vm.newFromTemplate(t)
+        assertEquals("Mine", vm.state.value.draft!!.name, "draft kept while asking")
+        assertEquals(ActionsRequest(null, new = true, template = t), vm.pendingDiscard.value)
+        vm.discardAndSelect(null)
+        assertNull(vm.pendingDiscard.value)
+        assertEquals("Launch app", vm.state.value.draft!!.name)
+        assertEquals("Launch app", vm.state.value.draft!!.fromTemplate)
+    }
+
+    @Test
+    fun `keeping the edit after a template request leaves the draft`() {
+        val vm = vm()
+        vm.new()
+        vm.edit { it.copy(name = "Mine") }
+        vm.newFromTemplate(template("Launch app"))
+        vm.keepEditing()
+        assertEquals("Mine", vm.state.value.draft!!.name)
+        assertNull(vm.state.value.draft!!.fromTemplate)
+    }
+
+    @Test
+    fun `a template replaces an unmodified blank draft without asking`() {
+        val vm = vm()
+        vm.new()
+        vm.newFromTemplate(template("Launch app"))
+        assertNull(vm.pendingDiscard.value)
+        assertEquals("Launch app", vm.state.value.draft!!.name)
+    }
+
+    @Test
+    fun `save clears the banner and stores the action`() {
+        val vm = vm()
+        vm.newFromTemplate(template("Force stop"))
+        assertTrue(vm.save())
+        assertNull(vm.state.value.draft!!.fromTemplate)
+        assertFalse(vm.state.value.dirty)
+        assertEquals("Force stop", store.actions.value.single().name)
+    }
+
+    @Test
+    fun `a template name that clashes shows the normal error`() {
+        store.upsert(RunOnceAction("mine", "Force stop", command = "x"))
+        val vm = vm()
+        vm.newFromTemplate(template("Force stop"))
+        assertFalse(vm.save())
+        assertEquals("Another action is already named Force stop", vm.state.value.errors.name)
+        assertEquals("Force stop", vm.state.value.draft!!.fromTemplate, "still from template")
+        assertEquals(1, store.actions.value.size)
     }
 }

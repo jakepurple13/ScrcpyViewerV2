@@ -24,8 +24,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AutoAwesomeMotion
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
@@ -62,6 +68,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionIcons
+import com.programmersbox.scrcpyviewer.actions.ActionTemplate
+import com.programmersbox.scrcpyviewer.actions.ActionTemplates
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
 import com.programmersbox.scrcpyviewer.actions.CustomAction
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
@@ -90,6 +98,10 @@ sealed interface ActionsEvent {
     /** Opens [id], asking to discard unsaved changes first. */
     data class Select(val id: String) : ActionsEvent
     data object New : ActionsEvent
+    /** Opens the template picker; handled by [ActionsContent] itself. */
+    data object BrowseTemplates : ActionsEvent
+    /** Starts an unsaved draft from [template], asking to discard unsaved changes first. */
+    data class NewFromTemplate(val template: ActionTemplate) : ActionsEvent
     data object Import : ActionsEvent
     /** Enters selection mode: tick the actions to export. */
     data object Export : ActionsEvent
@@ -147,6 +159,8 @@ fun ActionsScreen(
             when (event) {
                 is ActionsEvent.Select -> viewModel.handle(ActionsRequest(event.id, new = false))
                 ActionsEvent.New -> viewModel.handle(ActionsRequest(null, new = true))
+                ActionsEvent.BrowseTemplates -> Unit
+                is ActionsEvent.NewFromTemplate -> viewModel.newFromTemplate(event.template)
                 ActionsEvent.Import -> files.chooseImportFile()?.let { path -> io { viewModel.beginImport(Files.readString(path)) } }
                 ActionsEvent.Export -> viewModel.startExport()
                 ActionsEvent.ExportSelected -> {
@@ -206,6 +220,20 @@ fun ActionsContent(
     panes: ListDetailPanes = rememberListDetailPanes(),
     packages: List<String>? = null,
 ) {
+    var picker by remember { mutableStateOf(false) }
+    // The picker is this screen's own state; everything else goes to the caller.
+    val send: (ActionsEvent) -> Unit = { event ->
+        when (event) {
+            ActionsEvent.BrowseTemplates -> picker = true
+            is ActionsEvent.NewFromTemplate -> {
+                picker = false
+                onEvent(event)
+                panes.navigation.openDetail()
+            }
+            else -> onEvent(event)
+        }
+    }
+    if (picker) TemplatePickerDialog(onPick = { send(ActionsEvent.NewFromTemplate(it)) }, onDismiss = { picker = false })
     Column(modifier.fillMaxSize()) {
         state.persistenceError?.let { ErrorBanner("Actions can't be saved: $it") }
         ResizableListDetail(
@@ -218,7 +246,7 @@ fun ActionsContent(
                     state,
                     onSelect = { onEvent(ActionsEvent.Select(it)); panes.navigation.openDetail() },
                     onEvent = { event ->
-                        onEvent(event)
+                        send(event)
                         if (event == ActionsEvent.New) panes.navigation.openDetail()
                     },
                 )
@@ -231,7 +259,12 @@ fun ActionsContent(
                         draft != null -> key(draft.id ?: "new") { ActionEditor(state, draft, packages, onEvent, onBack) }
                         else -> {
                             if (onBack != null) DetailBackButton(onBack, Modifier.padding(start = 6.dp, top = 6.dp))
-                            if (state.actions.isEmpty()) EmptyState(onEvent, Modifier.align(Alignment.Center))
+                            if (state.actions.isEmpty()) EmptyState(
+                                { event ->
+                                    send(event)
+                                    if (event == ActionsEvent.New) panes.navigation.openDetail()
+                                },
+                                Modifier.align(Alignment.Center))
                             else Text(
                                 "Select an action to edit it, or create one with + New.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -265,7 +298,55 @@ private fun EmptyState(onEvent: (ActionsEvent) -> Unit, modifier: Modifier = Mod
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ onEvent(ActionsEvent.New) }) { Text("+ New") }
+            OutlinedButton({ onEvent(ActionsEvent.BrowseTemplates) }) { Text("Browse templates") }
             OutlinedButton({ onEvent(ActionsEvent.Import) }) { Text("Import") }
+        }
+        Text("Popular templates, one click to start", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            QUICK_START_TEMPLATES.forEach { name ->
+                ActionTemplates.all.firstOrNull { it.name == name }?.let { template ->
+                    AssistChip(
+                        { onEvent(ActionsEvent.NewFromTemplate(template)) },
+                        label = { Text(template.name) },
+                        leadingIcon = { Icon(ActionIcons.forName(template.action.icon, template.action.defaultIcon), contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** The empty page's one-click chips. */
+private val QUICK_START_TEMPLATES = listOf("Grant permission", "Start activity", "Send broadcast", "Stay awake")
+
+/** "+ New" with a drop-down arrow: the arrow offers a blank action or the template picker. */
+@Composable
+private fun SplitNewButton(onEvent: (ActionsEvent) -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        Button(
+            { onEvent(ActionsEvent.New) },
+            shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp, topEnd = 4.dp, bottomEnd = 4.dp),
+            contentPadding = ToolbarPadding,
+        ) { Text("+ New", maxLines = 1) }
+        Box {
+            Button(
+                { menu = true },
+                shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+            ) { Icon(Icons.Filled.ArrowDropDown, contentDescription = "More ways to create an action") }
+            DropdownMenu(menu, { menu = false }) {
+                DropdownMenuItem(
+                    text = { Text("New blank action") },
+                    leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    onClick = { menu = false; onEvent(ActionsEvent.New) },
+                )
+                DropdownMenuItem(
+                    text = { Text("From template…") },
+                    leadingIcon = { Icon(Icons.Filled.AutoAwesomeMotion, contentDescription = null) },
+                    onClick = { menu = false; onEvent(ActionsEvent.BrowseTemplates) },
+                )
+            }
         }
     }
 }
@@ -297,7 +378,7 @@ private fun ActionList(state: ActionsUiState, onSelect: (String) -> Unit, onEven
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             if (selection == null) {
-                Button({ onEvent(ActionsEvent.New) }, contentPadding = ToolbarPadding) { Text("+ New", maxLines = 1) }
+                SplitNewButton(onEvent)
                 OutlinedButton({ onEvent(ActionsEvent.Import) }, contentPadding = ToolbarPadding) { Text("Import") }
                 OutlinedButton({ onEvent(ActionsEvent.Export) }, enabled = state.actions.isNotEmpty(), contentPadding = ToolbarPadding) { Text("Export") }
             } else {

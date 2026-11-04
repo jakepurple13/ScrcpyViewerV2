@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionImportPlan
+import com.programmersbox.scrcpyviewer.actions.ActionTemplates
 import com.programmersbox.scrcpyviewer.actions.MatchMode
 import com.programmersbox.scrcpyviewer.actions.OnWhen
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
@@ -28,6 +29,7 @@ import com.programmersbox.scrcpyviewer.ui.actions.ActionsContent
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsIntroDialog
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsUiState
 import com.programmersbox.scrcpyviewer.ui.actions.IconPickerContent
+import com.programmersbox.scrcpyviewer.ui.actions.TemplatePickerContent
 import com.programmersbox.scrcpyviewer.ui.actions.TestResult
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
@@ -154,6 +156,36 @@ class ActionsScreenshotTest {
 
     @Test
     fun `actions empty`() = shot("actions-empty.png", ThemeMode.Light) { screen(ActionsUiState()) }
+
+    @Test
+    fun `actions template picker`() = shot("actions-template-picker.png", ThemeMode.Light, height = 900) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { TemplatePickerContent(onPick = {}, onDismiss = {}) }
+    }
+
+    @Test
+    fun `actions template picker search`() = shot("actions-template-picker-search.png", ThemeMode.Light, height = 900) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            TemplatePickerContent(onPick = {}, onDismiss = {}, initialQuery = "broad")
+        }
+    }
+
+    @Test
+    fun `actions editor from template`() {
+        val grant = ActionTemplates.all.first { it.name == "Grant permission" }.action as RunOnceAction
+        shot("actions-from-template.png", ThemeMode.Light) {
+            screen(
+                state.copy(
+                    selectedId = null,
+                    draft = ActionDraft(
+                        id = null, type = ActionType.RunOnce, name = grant.name, icon = grant.icon, command = grant.command,
+                        variables = grant.variables, output = grant.output, fromTemplate = grant.name,
+                    ),
+                    dirty = true,
+                    test = null,
+                ),
+            )
+        }
+    }
 
     @Test
     fun `actions icon picker`() = shot("actions-icon-picker.png", ThemeMode.Light) {

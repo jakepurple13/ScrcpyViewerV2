@@ -28,8 +28,8 @@ they fire over and over. Saved actions must be shareable between people, so they
 
 ## Anti-goals
 
-- Showing a saved action's command anywhere except the editor and the import preview. Tiles, tooltips, variable
-  prompts, and console output name the action, never its command.
+- Showing a saved action's command anywhere except the editor, the import preview, and the template picker. Tiles,
+  tooltips, variable prompts, and console output name the action, never its command.
 - Import running anything. Import only adds actions.
 - The sheet's tab switch jumping or resizing without animation.
 
@@ -217,6 +217,26 @@ Layout: list on the left, editor on the right, following the existing Presets sc
 - At run time a small dialog asks for every variable in one form, prefilled with the last value used for that action
   and variable on that device (in memory for the life of the app), else the default. It does not show the command.
 - Values are substituted as-is. The builder must quote nothing automatically; it is the user's command.
+
+## Templates
+
+Sixteen built-in templates (code only, read-only, never written to `actions.json`) give a starting point.
+
+- **Entry points**: the Actions list's "+ New" is a split button; its arrow menu offers "New blank action" and
+  "From template…". The empty Actions page has a "Browse templates" button and four quick-start chips (Grant
+  permission, Start activity, Send broadcast, Stay awake) that start a draft directly.
+- **Picker** ("Start from a template" dialog): search (name, description, command, case-insensitive), category chips
+  All, Apps, Intents, Device, Input, Debug (single select), then cards grouped under category headers in two
+  columns. A card shows the icon, name, a Toggle or Run once pill, the description, the command (toggles: `on:`,
+  `off:`, `read:`), and a chip per variable. The whole card is the button. Esc closes. No match shows
+  `No templates match "<query>".`
+- **Groups**: Apps (Grant permission, Revoke permission, Start activity, Launch app, Force stop, Clear app data),
+  Intents (Send broadcast, Send broadcast to app, Open link), Device (Stay awake, Animations off, Font scale,
+  Battery level), Input (Type text), Debug (Current activity, Logcat for app).
+- **Picking** closes the picker and opens a new, unsaved draft filled from the template, with a banner
+  `From template "<name>". Change anything, then Save.` Nothing is saved until Save. Unsaved changes in the open
+  draft go through the usual discard confirmation first. A name that clashes with an existing action shows the
+  normal "already named" error on Save; it is not renamed automatically.
 
 ## Import and export
 

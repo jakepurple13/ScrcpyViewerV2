@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AutoAwesomeMotion
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -109,6 +110,7 @@ fun ActionEditor(
         ) {
           // The test output sits outside the spaced column, so while collapsed it adds no gap.
           Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            draft.fromTemplate?.let { TemplateBanner(it) }
             Segments(typeLabels, draft.type) { onEvent(ActionsEvent.SetType(it)) }
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconButtonWithPicker(draft) { icon -> edit { it.copy(icon = icon) } }
@@ -165,6 +167,21 @@ fun ActionEditor(
             confirmButton = { TextButton({ confirmDelete = false; onEvent(ActionsEvent.Delete(draft.id)) }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton({ confirmDelete = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/** Says the unsaved draft came from a built-in template. */
+@Composable
+private fun TemplateBanner(name: String) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Filled.AutoAwesomeMotion, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(20.dp))
+            Text(
+                "From template \"$name\". Change anything, then Save.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+        }
     }
 }
 

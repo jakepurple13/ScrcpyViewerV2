@@ -8,6 +8,7 @@ import com.programmersbox.scrcpyviewer.actions.ActionIcons
 import com.programmersbox.scrcpyviewer.actions.ActionImportItem
 import com.programmersbox.scrcpyviewer.actions.ActionImportPlan
 import com.programmersbox.scrcpyviewer.actions.ActionStore
+import com.programmersbox.scrcpyviewer.actions.ActionTemplate
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
 import com.programmersbox.scrcpyviewer.actions.CustomAction
 import com.programmersbox.scrcpyviewer.actions.MatchMode
@@ -63,6 +64,8 @@ data class ActionDraft(
     val variables: Map<String, Variable> = emptyMap(),
     val output: OutputTarget = OutputTarget.Toast,
     val confirm: Boolean = false,
+    /** Name of the built-in template this unsaved draft started from, for the editor's banner; null once saved. */
+    val fromTemplate: String? = null,
 )
 
 /** Field errors from the last [ActionsViewModel.save]; null means the field is fine. */
@@ -202,9 +205,10 @@ class ActionsViewModel(
         when {
             !request.new && request.actionId == null -> Unit
             // Already showing what was asked for: keep the unsaved changes without asking.
-            request.new && e.draft != null && e.draft.id == null -> Unit
+            request.new && request.template == null && e.draft != null && e.draft.id == null -> Unit
             !request.new && request.actionId == e.selectedId && e.draft != null -> Unit
             dirty -> _pendingDiscard.value = request
+            request.template != null -> startFromTemplate(request.template)
             request.new -> new()
             else -> select(request.actionId!!)
         }
@@ -219,8 +223,13 @@ class ActionsViewModel(
 
     /** Drops unsaved changes, then opens [id], or a new action when [id] is null. */
     fun discardAndSelect(id: String?) {
+        val template = _pendingDiscard.value?.template
         _pendingDiscard.value = null
-        if (id == null) startNew() else load(id)
+        when {
+            id != null -> load(id)
+            template != null -> startFromTemplate(template)
+            else -> startNew()
+        }
     }
 
     /** Dismisses [pendingDiscard] and keeps the draft. */
@@ -230,6 +239,9 @@ class ActionsViewModel(
 
     /** Starts a blank toggle. The UI asks to discard unsaved changes first (see [select]). */
     fun new() = startNew()
+
+    /** Starts an unsaved draft filled from [template]; like [handle], asks to discard unsaved changes first. */
+    fun newFromTemplate(template: ActionTemplate) = handle(ActionsRequest(null, new = true, template = template))
 
     /** Applies [transform] to the draft, then re-derives the variables from the command. */
     fun edit(transform: (ActionDraft) -> ActionDraft) = updateDraft { withVariables(transform(it)) }
@@ -385,11 +397,15 @@ class ActionsViewModel(
 
     private fun startNew() = open(null, ActionDraft(id = null, type = ActionType.Toggle, name = "", icon = ActionIcons.TOGGLE_DEFAULT))
 
-    private fun open(id: String?, draft: ActionDraft) {
+    /** The draft has no baseline, so it counts as unsaved until Save. */
+    private fun startFromTemplate(template: ActionTemplate) =
+        open(null, template.action.toDraft().copy(id = null, fromTemplate = template.name), baseline = null)
+
+    private fun open(id: String?, draft: ActionDraft, baseline: ActionDraft? = draft) {
         cancelTest()
         variableMemory.clear()
         variableMemory.putAll(draft.variables)
-        editor.update { it.copy(selectedId = id, draft = draft, baseline = draft, errors = DraftErrors(), test = null) }
+        editor.update { it.copy(selectedId = id, draft = draft, baseline = baseline, errors = DraftErrors(), test = null) }
     }
 
     private fun updateDraft(transform: (ActionDraft) -> ActionDraft) = editor.update { e ->

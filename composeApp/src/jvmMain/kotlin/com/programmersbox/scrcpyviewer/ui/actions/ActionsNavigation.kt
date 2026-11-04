@@ -1,10 +1,14 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
+import com.programmersbox.scrcpyviewer.actions.ActionTemplate
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 
-/** Asks the main window's Actions screen to open on [actionId], or on a blank new action when [new]. */
-data class ActionsRequest(val actionId: String?, val new: Boolean)
+/**
+ * Asks the main window's Actions screen to open on [actionId], or on a blank new action when [new], or (with
+ * [template]) on a new action filled from that built-in template.
+ */
+data class ActionsRequest(val actionId: String?, val new: Boolean, val template: ActionTemplate? = null)
 
 /** Requests from mirror windows to open the Actions screen. Consumed by the main window (selects the tab, brings it to front). */
 class ActionsNavigation {
