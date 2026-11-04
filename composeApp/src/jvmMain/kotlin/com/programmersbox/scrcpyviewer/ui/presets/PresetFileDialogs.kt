@@ -15,16 +15,16 @@ interface PresetFileDialogs {
     fun chooseImportFile(): Path?
 }
 
-/** `java.awt.FileDialog` (the native dialog on macOS). */
-class AwtPresetFileDialogs(private val parent: () -> Frame? = { null }) : PresetFileDialogs {
+/** `java.awt.FileDialog` (the native dialog on macOS). [what] names the content in the titles ("presets", "actions"). */
+class AwtPresetFileDialogs(private val parent: () -> Frame? = { null }, private val what: String = "presets") : PresetFileDialogs {
     override fun chooseExportFile(suggestedName: String): Path? {
-        val dialog = FileDialog(parent(), "Export presets", FileDialog.SAVE)
+        val dialog = FileDialog(parent(), "Export $what", FileDialog.SAVE)
         dialog.file = suggestedName
         return show(dialog)
     }
 
     override fun chooseImportFile(): Path? {
-        val dialog = FileDialog(parent(), "Import presets", FileDialog.LOAD)
+        val dialog = FileDialog(parent(), "Import $what", FileDialog.LOAD)
         dialog.setFilenameFilter { _, name -> name.endsWith(".json", ignoreCase = true) }
         return show(dialog)
     }

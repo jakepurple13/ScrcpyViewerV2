@@ -67,17 +67,43 @@ private fun ConfirmRunDialog(prompt: PendingRun, onEvent: (QuickActionEvent) -> 
 private fun VariablesDialog(prompt: PendingRun, packages: List<String>?, onEvent: (QuickActionEvent) -> Unit) {
     val action = prompt.action
     val names = remember(action) { CommandTemplate.variables(action.command) }
-    val variables = names.associateWith { action.variables[it] ?: Variable(label = it) }
-    val values = remember(prompt) { mutableStateMapOf<String, String>().apply { putAll(prompt.values) } }
-    var showSystem by remember(prompt) { mutableStateOf(false) }
+    VariablesDialog(
+        title = action.name,
+        variables = names.associateWith { action.variables[it] ?: Variable(label = it) },
+        initialValues = prompt.values,
+        packages = packages,
+        onLoadPackages = { onEvent(QuickActionEvent.LoadPackages(includeSystem = it)) },
+        onRun = { onEvent(QuickActionEvent.PromptValues(it)) },
+        onCancel = { onEvent(QuickActionEvent.PromptCancel) },
+    )
+}
+
+/**
+ * Asks for every variable in one form, titled [title] (the action's name; never its command). [variables] is in
+ * command order. [packages] lists installed apps for an Installed app variable (null while loading);
+ * [onLoadPackages] asks for them, with system apps or not.
+ */
+@Composable
+fun VariablesDialog(
+    title: String,
+    variables: Map<String, Variable>,
+    initialValues: Map<String, String>,
+    packages: List<String>?,
+    onLoadPackages: (includeSystem: Boolean) -> Unit,
+    onRun: (Map<String, String>) -> Unit,
+    onCancel: () -> Unit,
+) {
+    val names = variables.keys.toList()
+    val values = remember(initialValues) { mutableStateMapOf<String, String>().apply { putAll(initialValues) } }
+    var showSystem by remember(initialValues) { mutableStateOf(false) }
     val hasApp = variables.values.any { it.kind == VariableKind.App }
-    LaunchedEffect(hasApp) { if (hasApp && packages == null) onEvent(QuickActionEvent.LoadPackages(includeSystem = false)) }
+    LaunchedEffect(hasApp) { if (hasApp && packages == null) onLoadPackages(false) }
     // A list or app variable must be chosen; free text may stay empty.
     val complete = names.all { variables.getValue(it).kind == VariableKind.Text || !values[it].isNullOrBlank() || (variables.getValue(it).kind == VariableKind.List && variables.getValue(it).choices.isNotEmpty()) }
 
     AlertDialog(
-        onDismissRequest = { onEvent(QuickActionEvent.PromptCancel) },
-        title = { Text(action.name) },
+        onDismissRequest = onCancel,
+        title = { Text(title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 names.forEach { name ->
@@ -92,7 +118,7 @@ private fun VariablesDialog(prompt: PendingRun, packages: List<String>?, onEvent
                             variable.label, value, packages, showSystem,
                             onShowSystem = {
                                 showSystem = it
-                                onEvent(QuickActionEvent.LoadPackages(includeSystem = it))
+                                onLoadPackages(it)
                             },
                         ) { values[name] = it }
                     }
@@ -107,11 +133,11 @@ private fun VariablesDialog(prompt: PendingRun, packages: List<String>?, onEvent
                     val entered = names.associateWith { name ->
                         values[name].orEmpty().ifEmpty { variables.getValue(name).choices.firstOrNull().orEmpty() }
                     }
-                    onEvent(QuickActionEvent.PromptValues(entered))
+                    onRun(entered)
                 },
             ) { Text("Run") }
         },
-        dismissButton = { TextButton(onClick = { onEvent(QuickActionEvent.PromptCancel) }) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
 }
 

@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsScreen
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsViewModel
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
@@ -84,6 +85,7 @@ fun App(
     navigator: TopLevelNavigator = remember { TopLevelNavigator() },
     devicesPanes: ListDetailPanes = rememberListDetailPanes(),
     presetsPanes: ListDetailPanes = rememberListDetailPanes(),
+    actionsPanes: ListDetailPanes = rememberListDetailPanes(),
     devicesViewModel: DevicesViewModel = koinViewModel(),
     presetsViewModel: PresetsViewModel = koinViewModel(),
     settingsViewModel: SettingsViewModel = koinViewModel(),
@@ -98,6 +100,7 @@ fun App(
     val settings by appSettings.settings.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val fileDialogs = remember { AwtPresetFileDialogs() }
+    val actionFileDialogs = remember { AwtPresetFileDialogs(what = "actions") }
     val settingsDialogs = remember { AwtSettingsFileDialogs() }
     // Recordings that end with no mirror window open for their device (closed window, app-wide view).
     LaunchedEffect(mirrorController) {
@@ -106,10 +109,12 @@ fun App(
             .collect { snackbar.showSnackbar(recordResultMessage(it.result)) }
     }
     // A mirror window asked for the Actions screen: show it and open the requested action.
-    LaunchedEffect(actionsNavigation, navigator, actionsViewModel) {
+    LaunchedEffect(actionsNavigation, navigator, actionsViewModel, actionsPanes) {
         actionsNavigation.requests.collect { request ->
             navigator.select(TopLevelRoute.Actions)
             actionsViewModel.handle(request)
+            // In the single-pane layout, an opened action shows the editor rather than the list.
+            if (request.new || request.actionId != null) actionsPanes.navigation.openDetail()
         }
     }
     ScrcpyViewerTheme(settings.themeMode) {
@@ -146,10 +151,11 @@ fun App(
                                     panes = presetsPanes
                                 )
 
-                                // Placeholder until the Actions screen lands.
-                                TopLevelRoute.Actions -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Text("Actions", style = MaterialTheme.typography.titleMedium)
-                                }
+                                TopLevelRoute.Actions -> ActionsScreen(
+                                    actionsViewModel,
+                                    actionFileDialogs,
+                                    panes = actionsPanes
+                                )
 
                                 TopLevelRoute.Settings -> SettingsScreen(
                                     settingsViewModel,

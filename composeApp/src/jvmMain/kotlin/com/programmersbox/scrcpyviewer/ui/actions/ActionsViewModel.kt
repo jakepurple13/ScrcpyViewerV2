@@ -17,11 +17,13 @@ import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.actions.ToggleAction
 import com.programmersbox.scrcpyviewer.actions.Variable
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceState
 import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.ShellEvent
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.presets.ConflictChoice
+import com.programmersbox.scrcpyviewer.ui.mirror.DeviceQuickActions
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -95,7 +97,7 @@ data class ActionImportUiState(val items: List<ActionImportItem> = emptyList(), 
 @KoinViewModel
 class ActionsViewModel(
     private val store: ActionStore,
-    tracker: DeviceTracker,
+    private val tracker: DeviceTracker,
     private val adb: AdbClient,
     scope: CoroutineScope = defaultViewModelScope(),
     /** Overall limit for Test run and Test read; the notes always say 30 s, the real limit. */
@@ -117,9 +119,9 @@ class ActionsViewModel(
     private val variableMemory = HashMap<String, Variable>()
 
     private var testJob: Job? = null
+    private var packagesJob: Job? = null
 
-    private val devices = tracker.devices
-        .map { list -> list.filter { it.state == DeviceState.Device }.map { it.serial } }
+    private val devices = tracker.devices.map(::connectedSerials)
 
     val state: StateFlow<ActionsUiState> = combine(
         store.actions, editor, devices, store.persistenceError,
@@ -131,7 +133,7 @@ class ActionsViewModel(
             dirty = e.draft != e.baseline,
             errors = e.errors,
             devices = serials,
-            testDevice = e.testDevice?.takeIf { it in serials } ?: serials.firstOrNull(),
+            testDevice = testDevice(e.testDevice, serials),
             test = e.test,
             persistenceError = error,
         )
@@ -145,6 +147,11 @@ class ActionsViewModel(
      */
     val pendingDiscard: StateFlow<ActionsRequest?> get() = _pendingDiscard
 
+    private val _packages = MutableStateFlow<List<String>?>(null)
+
+    /** Installed packages on the test device for an Installed app variable; null until [loadPackages] finishes. */
+    val packages: StateFlow<List<String>?> get() = _packages
+
     private val _importState = MutableStateFlow<ActionImportUiState?>(null)
     val importState: StateFlow<ActionImportUiState?> get() = _importState
 
@@ -156,8 +163,12 @@ class ActionsViewModel(
 
     /** A request from a mirror window: open an action, a new one, or (neither) just the list as it is. */
     fun handle(request: ActionsRequest) {
+        val e = editor.value
         when {
             !request.new && request.actionId == null -> Unit
+            // Already showing what was asked for: keep the unsaved changes without asking.
+            request.new && e.draft != null && e.draft.id == null -> Unit
+            !request.new && request.actionId == e.selectedId && e.draft != null -> Unit
             dirty -> _pendingDiscard.value = request
             request.new -> new()
             else -> select(request.actionId!!)
@@ -232,10 +243,12 @@ class ActionsViewModel(
      */
     fun testRun(values: Map<String, String>) {
         val draft = editor.value.draft ?: return
-        val command = when (draft.type) {
-            ActionType.RunOnce -> CommandTemplate.substitute(draft.command, values)
+        val template = when (draft.type) {
+            ActionType.RunOnce -> draft.command
             ActionType.Toggle -> draft.on
         }
+        if (template.isBlank()) return endTest(NOTHING_TO_RUN_NOTE)
+        val command = if (draft.type == ActionType.RunOnce) CommandTemplate.substitute(template, values) else template
         if (draft.type == ActionType.RunOnce && draft.output == OutputTarget.Shell) {
             startTest { runner -> streamTest(runner, command) }
         } else {
@@ -246,13 +259,30 @@ class ActionsViewModel(
     /** Runs a toggle's read command and says whether its output counts as on. */
     fun testRead() {
         val draft = editor.value.draft ?: return
-        if (draft.type != ActionType.Toggle || draft.read.isBlank()) {
-            editor.update { it.copy(test = TestResult(running = false, output = "", exitCode = null, note = "No read command")) }
-            return
-        }
+        if (draft.type != ActionType.Toggle || draft.read.isBlank()) return endTest("No read command")
         val onWhen = OnWhen(draft.matchMode, draft.matchValue)
         startTest { runner ->
             bufferedTest(runner, draft.read) { output -> if (onWhen.matches(output)) "Counts as on" else "Counts as off" }
+        }
+    }
+
+    /** Lists the test device's packages into [packages]; third-party only unless [includeSystem]. */
+    fun loadPackages(includeSystem: Boolean) {
+        packagesJob?.cancel()
+        _packages.value = null
+        val serial = currentTestDevice() ?: run {
+            _packages.value = emptyList()
+            return
+        }
+        packagesJob = viewModelScope.launch {
+            _packages.value = try {
+                DeviceQuickActions(adb, serial).packages(includeSystem)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _messages.tryEmit("Could not list apps: ${e.message ?: e}")
+                emptyList()
+            }
         }
     }
 
@@ -327,9 +357,18 @@ class ActionsViewModel(
         )
     }
 
-    private fun startTest(block: suspend (ShellRunner) -> Unit) {
+    /** The device tests run on, from the editor's choice and the tracker's current list (not the lagging [state]). */
+    private fun currentTestDevice(): String? = testDevice(editor.value.testDevice, connectedSerials(tracker.devices.value))
+
+    /** Stops any running test and shows [note] as its result. */
+    private fun endTest(note: String) {
         cancelTest()
-        val serial = state.value.testDevice ?: return
+        setTest(TestResult(running = false, output = "", exitCode = null, note = note))
+    }
+
+    private fun startTest(block: suspend (ShellRunner) -> Unit) {
+        val serial = currentTestDevice() ?: return endTest(NO_DEVICE_NOTE)
+        cancelTest()
         setTest(TestResult(running = true, output = "", exitCode = null, note = null))
         testJob = viewModelScope.launch {
             try {
@@ -380,6 +419,14 @@ class ActionsViewModel(
 
     private companion object {
         const val STOPPED_NOTE = "Stopped after 30 s"
+        const val NO_DEVICE_NOTE = "No device connected"
+        const val NOTHING_TO_RUN_NOTE = "Nothing to run"
+
+        fun connectedSerials(devices: List<Device>): List<String> =
+            devices.filter { it.state == DeviceState.Device }.map { it.serial }
+
+        /** [chosen] while it is still connected, else the first connected device, else null. */
+        fun testDevice(chosen: String?, serials: List<String>): String? = chosen?.takeIf { it in serials } ?: serials.firstOrNull()
 
         fun defaultIcon(type: ActionType) = when (type) {
             ActionType.Toggle -> ActionIcons.TOGGLE_DEFAULT

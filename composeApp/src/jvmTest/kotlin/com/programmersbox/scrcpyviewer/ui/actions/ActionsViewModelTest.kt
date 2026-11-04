@@ -13,6 +13,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.presets.ConflictChoice
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import java.util.Collections
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,8 +51,12 @@ private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = {
         awaitCancellation()
     }
 
-    // Only the tracker's device info query uses the one-shot shell.
-    override suspend fun shell(serial: String, cmd: String): String = "Pixel 8\n15\n35\n$serial\n"
+    // The tracker's device info query and the installed-app list use the one-shot shell.
+    override suspend fun shell(serial: String, cmd: String): String = when (cmd) {
+        "pm list packages -3" -> "package:com.b\npackage:com.a\n"
+        "pm list packages" -> "package:com.b\npackage:android\npackage:com.a\n"
+        else -> "Pixel 8\n15\n35\n$serial\n"
+    }
 
     override fun shellStream(serial: String, cmd: String): Flow<String> = flow {
         val command = cmd.substringBeforeLast("\necho ")
@@ -60,6 +68,21 @@ private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = {
             }
         }
         emit(answer(command) + "${ShellRunner.EXIT_MARKER}0\n")
+    }
+}
+
+/** Runs dispatched coroutines only when [drain] is called, so a test can see what the VM does before state catches up. */
+private class ManualDispatcher : CoroutineDispatcher() {
+    private val queue = LinkedBlockingQueue<Runnable>()
+
+    override fun dispatch(context: CoroutineContext, block: Runnable) {
+        queue.add(block)
+    }
+
+    /** Runs queued work until [done] or the timeout. */
+    fun drain(done: () -> Boolean = { false }) {
+        val end = System.currentTimeMillis() + 5_000
+        while (!done() && System.currentTimeMillis() < end) queue.poll(10, TimeUnit.MILLISECONDS)?.run()
     }
 }
 
@@ -369,5 +392,101 @@ class ActionsViewModelTest {
         assertEquals("awake", actions[0].id, "a replaced action keeps its id")
         assertEquals("svc power stayon usb", (actions[0] as ToggleAction).on)
         assertTrue(actions[1].id != "y", "an added action gets a new id")
+    }
+
+    @Test
+    fun `test run with no device connected says so and does not spin`() {
+        val vm = vm(serials = emptyList())
+        vm.new()
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(command = "ls") }
+        vm.testRun(emptyMap())
+        val test = assertNotNull(vm.state.value.test)
+        assertFalse(test.running)
+        assertEquals("No device connected", test.note)
+    }
+
+    @Test
+    fun `test read without a read command stops a running test`() {
+        val adb = FakeAdb(listOf("SER1")).apply { endless = true }
+        val vm = vm(listOf("SER1"), adb)
+        vm.new()
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(command = "sleep 100") }
+        vm.testRun(emptyMap())
+        assertTrue(vm.state.value.test!!.running)
+        vm.setType(ActionType.Toggle)
+        vm.testRead()
+        // Past the 300 ms test limit: a run left going would replace the note with its timeout.
+        Thread.sleep(600)
+        assertEquals("No read command", vm.state.value.test!!.note)
+        assertFalse(vm.state.value.test!!.running)
+    }
+
+    @Test
+    fun `test run uses the device just chosen even before state updates`() {
+        val adb = FakeAdb(listOf("SER1", "SER2")).apply { answer = { "ok\n" } }
+        val tracker = DeviceTracker(adb, scope)
+        runBlocking { withTimeout(5_000) { tracker.devices.first { it.size == 2 } } }
+        val dispatcher = ManualDispatcher()
+        val vmScope = CoroutineScope(SupervisorJob() + dispatcher)
+        try {
+            val vm = ActionsViewModel(store, tracker, adb, vmScope, testTimeoutMs = 300)
+            dispatcher.drain { vm.state.value.testDevice == "SER1" }
+            vm.new()
+            vm.setType(ActionType.RunOnce)
+            vm.edit { it.copy(command = "echo hi") }
+            vm.setTestDevice("SER2")
+            vm.testRun(emptyMap())
+            dispatcher.drain { adb.commands.isNotEmpty() }
+            assertEquals(listOf("SER2: echo hi"), adb.commands)
+        } finally {
+            vmScope.cancel()
+        }
+    }
+
+    @Test
+    fun `handle while dirty ignores a request for what is already open`() {
+        store.upsert(stayAwake)
+        val vm = vm()
+        vm.select("awake")
+        vm.edit { it.copy(name = "Changed") }
+        vm.handle(ActionsRequest("awake", new = false))
+        assertNull(vm.pendingDiscard.value, "the open action is already shown")
+        assertEquals("Changed", vm.state.value.draft!!.name)
+
+        vm.discardAndSelect(null)
+        vm.edit { it.copy(name = "Draft") }
+        vm.handle(ActionsRequest(null, new = true))
+        assertNull(vm.pendingDiscard.value, "an unsaved new draft is already a new action")
+        assertEquals("Draft", vm.state.value.draft!!.name)
+
+        vm.handle(ActionsRequest("awake", new = false))
+        assertEquals(ActionsRequest("awake", new = false), vm.pendingDiscard.value, "another action still asks")
+    }
+
+    @Test
+    fun `test run with a blank command says there is nothing to run`() {
+        val adb = FakeAdb(listOf("SER1"))
+        val vm = vm(listOf("SER1"), adb)
+        vm.new()
+        vm.testRun(emptyMap())
+        assertEquals("Nothing to run", vm.state.value.test!!.note, "a toggle without a Turn on command")
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(command = "  ") }
+        vm.testRun(emptyMap())
+        assertEquals("Nothing to run", vm.state.value.test!!.note)
+        assertFalse(vm.state.value.test!!.running)
+        assertEquals(emptyList(), adb.commands)
+    }
+
+    @Test
+    fun `installed apps load from the test device`() {
+        val vm = vm(listOf("SER1"))
+        assertNull(vm.packages.value)
+        vm.loadPackages(includeSystem = false)
+        assertEquals(listOf("com.a", "com.b"), runBlocking { withTimeout(5_000) { vm.packages.first { it != null } } })
+        vm.loadPackages(includeSystem = true)
+        assertEquals(listOf("android", "com.a", "com.b"), runBlocking { withTimeout(5_000) { vm.packages.first { it?.size == 3 } } })
     }
 }
