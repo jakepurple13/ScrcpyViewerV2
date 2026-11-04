@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -79,7 +80,7 @@ fun ActionsIntroDialog(page: Int, onPage: (Int) -> Unit, onFinish: () -> Unit) {
                         (slideInHorizontally { it / 4 * dir } + fadeIn()) togetherWith
                             (slideOutHorizontally { -it / 4 * dir } + fadeOut())
                     },
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp),
                 ) { p ->
                     val content = introPages[p]
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {

@@ -114,6 +114,14 @@ class ActionsScreenshotTest {
     }
 
     @Test
+    fun `actions intro dialog page 2`() = shot("actions-intro-page2.png", ThemeMode.Light) {
+        Box(Modifier.fillMaxSize()) {
+            screen(state)
+            ActionsIntroDialog(page = 1, onPage = {}, onFinish = {})
+        }
+    }
+
+    @Test
     fun `actions empty`() = shot("actions-empty.png", ThemeMode.Light) { screen(ActionsUiState()) }
 
     @Test

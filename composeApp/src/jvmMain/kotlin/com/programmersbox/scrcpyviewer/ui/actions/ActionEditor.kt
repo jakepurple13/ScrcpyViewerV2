@@ -43,7 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -103,8 +103,9 @@ fun ActionEditor(
         }
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+          // The test output sits outside the spaced column, so while collapsed it adds no gap.
+          Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Segments(typeLabels, draft.type) { onEvent(ActionsEvent.SetType(it)) }
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconButtonWithPicker(draft) { icon -> edit { it.copy(icon = icon) } }
@@ -118,7 +119,8 @@ fun ActionEditor(
                 ActionType.Toggle -> ToggleFields(draft, state, monospace, edit, onTestRead = { onEvent(ActionsEvent.TestRead) })
                 ActionType.RunOnce -> RunOnceFields(draft, errors, monospace, edit)
             }
-            AnimatedPresence(state.test) { TestOutput(it) }
+          }
+            AnimatedPresence(state.test) { TestOutput(it, Modifier.padding(top = 12.dp)) }
         }
         HorizontalDivider()
         Row(
@@ -236,15 +238,28 @@ private fun RunOnceFields(draft: ActionDraft, errors: DraftErrors, monospace: Te
  */
 @Composable
 private fun VariableRows(variables: Map<String, Variable>, monospace: TextStyle, onChange: (String, Variable) -> Unit) {
-    val leaving = remember { mutableStateMapOf<String, Variable>() }
+    // Plain collections: written during composition and read only by it, so typing does not trigger extra recomposition.
+    val lastSeen = remember { HashMap<String, Variable>() }
+    val order = remember { ArrayList<String>() }
     var settled by remember { mutableStateOf(false) }
-    LaunchedEffect(variables) {
-        leaving.putAll(variables)
-        settled = true
-    }
+    var finished by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { settled = true }
+    lastSeen.putAll(variables)
+    // Current variables in command order, with a leaving row staying at the index it had.
+    val rows = variables.keys.toMutableList()
+    order.forEachIndexed { index, name -> if (name !in variables && name in lastSeen) rows.add(index.coerceAtMost(rows.size), name) }
+    order.clear()
+    order.addAll(rows)
     Column {
-        (variables.keys + leaving.keys).forEach { name ->
-            key(name) { VariableRowItem(name, variables[name], leaving, settled, monospace, onChange) }
+        // Reading `finished` makes the list recompute once a row has finished leaving.
+        key(finished) {}
+        rows.forEach { name ->
+            key(name) {
+                VariableRowItem(name, variables[name], lastSeen[name], settled, monospace, onChange) {
+                    lastSeen.remove(name)
+                    finished++
+                }
+            }
         }
     }
 }
@@ -253,12 +268,13 @@ private fun VariableRows(variables: Map<String, Variable>, monospace: TextStyle,
 private fun VariableRowItem(
     name: String,
     live: Variable?,
-    leaving: MutableMap<String, Variable>,
+    lastSeen: Variable?,
     settled: Boolean,
     monospace: TextStyle,
     onChange: (String, Variable) -> Unit,
+    onGone: () -> Unit,
 ) {
-    val variable = live ?: leaving[name]
+    val variable = live ?: lastSeen
     val visible = remember { MutableTransitionState(!settled) }
     visible.targetState = live != null
     if (variable != null) {
@@ -266,7 +282,7 @@ private fun VariableRowItem(
             VariableRow(name, variable, monospace, Modifier.padding(top = 12.dp)) { onChange(name, it) }
         }
     }
-    if (live == null && visible.isIdle && !visible.currentState) LaunchedEffect(Unit) { leaving.remove(name) }
+    if (live == null && visible.isIdle && !visible.currentState) LaunchedEffect(Unit) { onGone() }
 }
 
 @Composable
@@ -360,9 +376,9 @@ private fun TestRunControl(state: ActionsUiState, onRun: () -> Unit, onDevice: (
 
 /** The latest Test run / Test read: output as it came, the exit code, and the note. */
 @Composable
-private fun TestOutput(test: TestResult) {
+private fun TestOutput(test: TestResult, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionLabel("Test output")
             if (test.running) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
