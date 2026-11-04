@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.di
 
 import com.programmersbox.scrcpyviewer.AppDataDir
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.actions.ActionStore
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
@@ -18,9 +19,12 @@ import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import com.programmersbox.scrcpyviewer.ui.mirror.OpenMirrors
+import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
+import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
 import com.programmersbox.scrcpyviewer.update.NucleusUpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateManager
@@ -76,6 +80,9 @@ class StorageModule {
     fun presetStore(dataDir: DataDir, scope: AppScope): PresetStore = PresetStore(dataDir.path.resolve("presets.json"), scope)
 
     @Singleton
+    fun actionStore(dataDir: DataDir): ActionStore = ActionStore(dataDir.path.resolve("actions.json"))
+
+    @Singleton
     fun deviceOptions(dataDir: DataDir, presets: PresetStore, scope: AppScope): DeviceOptionsStore =
         DeviceOptionsStore(dataDir.path.resolve("devices.json"), presets, scope)
 
@@ -113,6 +120,18 @@ class AdbModule {
 class MirrorModule {
     @Singleton
     fun mirrorRequests(): MirrorRequests = MirrorRequests()
+
+    /** Mirror windows ask the main window to open the Actions screen through this. */
+    @Singleton
+    fun actionsNavigation(): ActionsNavigation = ActionsNavigation()
+
+    /** Typed shell commands, shared by every mirror window's console. */
+    @Singleton
+    fun shellHistory(): ShellHistory = ShellHistory()
+
+    /** Quick actions state kept for the life of the app across mirror windows (toggles, last values, last tab). */
+    @Singleton
+    fun quickActionsMemory(): QuickActionsMemory = QuickActionsMemory()
 
     @Singleton
     fun openMirrors(mirrors: Lazy<MirrorController>): OpenMirrors = OpenMirrors { mirrors.value.open.value.keys }

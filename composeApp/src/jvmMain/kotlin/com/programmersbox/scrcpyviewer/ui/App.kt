@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
@@ -31,6 +32,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsScreen
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsViewModel
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
@@ -60,6 +64,7 @@ private val TopLevelRoute.label: String
     get() = when (this) {
         TopLevelRoute.Devices -> "Devices"
         TopLevelRoute.Presets -> "Presets"
+        TopLevelRoute.Actions -> "Actions"
         TopLevelRoute.Settings -> "Settings"
     }
 
@@ -67,6 +72,7 @@ private val TopLevelRoute.icon: ImageVector
     get() = when (this) {
         TopLevelRoute.Devices -> Icons.Filled.PhoneAndroid
         TopLevelRoute.Presets -> Icons.Filled.Tune
+        TopLevelRoute.Actions -> Icons.Filled.Bolt
         TopLevelRoute.Settings -> Icons.Filled.Settings
     }
 
@@ -79,24 +85,37 @@ fun App(
     navigator: TopLevelNavigator = remember { TopLevelNavigator() },
     devicesPanes: ListDetailPanes = rememberListDetailPanes(),
     presetsPanes: ListDetailPanes = rememberListDetailPanes(),
+    actionsPanes: ListDetailPanes = rememberListDetailPanes(),
     devicesViewModel: DevicesViewModel = koinViewModel(),
     presetsViewModel: PresetsViewModel = koinViewModel(),
     settingsViewModel: SettingsViewModel = koinViewModel(),
     updateViewModel: UpdateViewModel = koinViewModel(),
+    actionsViewModel: ActionsViewModel = koinViewModel(),
     mirrorController: MirrorController = koinInject(),
     appSettings: AppSettings = koinInject(),
+    actionsNavigation: ActionsNavigation = koinInject(),
 ) {
     val update by updateViewModel.state.collectAsState()
     // Read from the store, not the ViewModel's state, so the first frame already has the saved theme.
     val settings by appSettings.settings.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val fileDialogs = remember { AwtPresetFileDialogs() }
+    val actionFileDialogs = remember { AwtPresetFileDialogs(what = "actions") }
     val settingsDialogs = remember { AwtSettingsFileDialogs() }
     // Recordings that end with no mirror window open for their device (closed window, app-wide view).
     LaunchedEffect(mirrorController) {
         mirrorController.recordingResults
             .filter { it.serial !in mirrorController.open.value }
             .collect { snackbar.showSnackbar(recordResultMessage(it.result)) }
+    }
+    // A mirror window asked for the Actions screen: show it and open the requested action.
+    LaunchedEffect(actionsNavigation, navigator, actionsViewModel, actionsPanes) {
+        actionsNavigation.requests.collect { request ->
+            navigator.select(TopLevelRoute.Actions)
+            actionsViewModel.handle(request)
+            // In the single-pane layout, an opened action shows the editor rather than the list.
+            if (request.new || request.actionId != null) actionsPanes.navigation.openDetail()
+        }
     }
     ScrcpyViewerTheme(settings.themeMode) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
@@ -130,6 +149,14 @@ fun App(
                                     presetsViewModel,
                                     fileDialogs,
                                     panes = presetsPanes
+                                )
+
+                                TopLevelRoute.Actions -> ActionsScreen(
+                                    actionsViewModel,
+                                    actionFileDialogs,
+                                    introSeen = settings.actionsIntroSeen,
+                                    onIntroSeen = settingsViewModel::finishActionsIntro,
+                                    panes = actionsPanes
                                 )
 
                                 TopLevelRoute.Settings -> SettingsScreen(

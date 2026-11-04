@@ -4,6 +4,8 @@ import com.programmersbox.scrcpyviewer.Os
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -14,6 +16,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.nio.ByteBuffer
+import java.nio.CharBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
@@ -68,6 +73,62 @@ open class AdbClient(
             String(input.readBytes(), Charsets.UTF_8)
         }
     }
+
+    /**
+     * Runs `shell:<cmd>` on [serial] and emits its output as UTF-8 text chunks as they arrive. Unlike [shell] there
+     * is no read timeout and nothing is buffered. Cancelling the collector (or completion) closes the socket.
+     */
+    open fun shellStream(serial: String, cmd: String): Flow<String> = flow {
+        coroutineScope {
+            val socket = openSocket()
+            val closer = launch(Dispatchers.IO) {
+                try {
+                    awaitCancellation()
+                } finally {
+                    runCatching { socket.close() }
+                }
+            }
+            try {
+                socket.soTimeout = 0
+                val out = socket.getOutputStream()
+                val input = socket.getInputStream()
+                out.write(AdbWire.encodeRequest("host:transport:$serial"))
+                out.flush()
+                AdbWire.readStatus(input)
+                out.write(AdbWire.encodeRequest("shell:$cmd"))
+                out.flush()
+                AdbWire.readStatus(input)
+                // Bytes of a UTF-8 sequence split across reads stay in `bytes` until the rest arrives.
+                val decoder = Charsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPLACE)
+                    .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                val bytes = ByteBuffer.allocate(8192)
+                val chars = CharBuffer.allocate(8192)
+                while (true) {
+                    val n = try {
+                        input.read(bytes.array(), bytes.position(), bytes.remaining())
+                    } catch (e: IOException) {
+                        // The closer closes the socket on cancellation; that is a cancel, not a read failure.
+                        currentCoroutineContext().ensureActive()
+                        throw e
+                    }
+                    val eof = n < 0
+                    if (!eof) bytes.position(bytes.position() + n)
+                    bytes.flip()
+                    decoder.decode(bytes, chars, eof)
+                    if (eof) decoder.flush(chars)
+                    bytes.compact()
+                    chars.flip()
+                    if (chars.hasRemaining()) emit(chars.toString())
+                    chars.clear()
+                    if (eof) break
+                }
+            } finally {
+                closer.cancel()
+                runCatching { socket.close() }
+            }
+        }
+    }.flowOn(Dispatchers.IO)
 
     /** Runs the adb binary with [args] (push, reverse, forward...). Cancellable; no time limit. */
     open suspend fun exec(vararg args: String): ProcessResult = runAdb(args.toList(), null)

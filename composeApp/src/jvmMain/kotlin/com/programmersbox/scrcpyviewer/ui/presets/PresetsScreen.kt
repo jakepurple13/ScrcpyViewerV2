@@ -203,8 +203,9 @@ private val PresetListPreferredWidth = 390.dp
 /** Narrowest detail that still fits the action row and the two-column flag grid. */
 val PRESET_DETAIL_MIN_WIDTH = 600.dp
 
+/** A full-width error strip above a screen's content, e.g. when its store can't be saved. */
 @Composable
-private fun ErrorBanner(text: String) {
+internal fun ErrorBanner(text: String) {
     Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
         Text(text, color = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp))
     }

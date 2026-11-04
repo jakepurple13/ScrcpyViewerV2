@@ -103,6 +103,15 @@ class QuickActionsTest {
         assertEquals("error: device offline", assertFailsWith<IOException> { DeviceQuickActions(adb, "SER").reboot() }.message)
     }
 
+    @Test
+    fun `lists packages sorted without the prefix and third-party only by default`() = runBlocking {
+        val adb = ScriptedAdb { "package:com.b.app\r\npackage:com.a.app\n\npackage:com.b.app\n" }
+        assertEquals(listOf("com.a.app", "com.b.app"), DeviceQuickActions(adb, "SER").packages(includeSystem = false))
+        assertEquals("pm list packages -3", adb.commands.single())
+        DeviceQuickActions(adb, "SER").packages(includeSystem = true)
+        assertEquals("pm list packages", adb.commands.last())
+    }
+
     /** A [DeviceQuickActions] whose set waits for [setResult]. */
     private class FakeDevice : DeviceQuickActions(ScriptedAdb { "" }, "SER") {
         var states = mapOf<QuickToggle, Boolean?>(QuickToggle.WiFi to true, QuickToggle.ShowTaps to false)

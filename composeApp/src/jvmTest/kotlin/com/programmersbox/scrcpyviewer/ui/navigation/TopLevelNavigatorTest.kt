@@ -8,13 +8,14 @@ import kotlin.test.assertEquals
 class TopLevelNavigatorTest {
     private val D = TopLevelRoute.Devices
     private val P = TopLevelRoute.Presets
+    private val A = TopLevelRoute.Actions
     private val S = TopLevelRoute.Settings
 
     @Test
     fun `starts on Devices with every destination kept below it`() {
         val nav = TopLevelNavigator()
         assertEquals(D, nav.current)
-        assertEquals(listOf(P, S, D), nav.backStack.toList())
+        assertEquals(listOf(P, A, S, D), nav.backStack.toList())
     }
 
     @Test
@@ -22,13 +23,13 @@ class TopLevelNavigatorTest {
         val nav = TopLevelNavigator()
         nav.select(P)
         assertEquals(P, nav.current)
-        assertEquals(listOf(S, D, P), nav.backStack.toList())
+        assertEquals(listOf(A, S, D, P), nav.backStack.toList())
         nav.select(S)
-        assertEquals(listOf(D, P, S), nav.backStack.toList())
+        assertEquals(listOf(A, D, P, S), nav.backStack.toList())
         nav.select(D)
-        assertEquals(listOf(P, S, D), nav.backStack.toList())
+        assertEquals(listOf(A, P, S, D), nav.backStack.toList())
         nav.select(S)
-        assertEquals(listOf(P, D, S), nav.backStack.toList())
+        assertEquals(listOf(A, P, D, S), nav.backStack.toList())
     }
 
     @Test
@@ -45,7 +46,7 @@ class TopLevelNavigatorTest {
         val nav = TopLevelNavigator()
         listOf(S, P, P, D, S, D, P).forEach(nav::select)
         assertEquals(TopLevelRoute.all.toSet(), nav.backStack.toSet())
-        assertEquals(3, nav.backStack.size)
+        assertEquals(4, nav.backStack.size)
     }
 
     @Test
@@ -58,6 +59,6 @@ class TopLevelNavigatorTest {
 
     @Test
     fun `rail order lists every route once`() {
-        assertEquals(listOf(D, P, S), TopLevelRoute.all)
+        assertEquals(listOf(D, P, A, S), TopLevelRoute.all)
     }
 }

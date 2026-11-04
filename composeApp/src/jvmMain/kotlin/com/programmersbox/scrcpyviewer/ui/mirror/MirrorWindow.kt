@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
@@ -95,17 +94,22 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -129,7 +133,9 @@ import com.programmersbox.scrcpyviewer.scrcpy.DeviceMessage
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.scrcpy.StreamProtocol
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
+import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
 import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
@@ -140,6 +146,7 @@ import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
+import java.awt.Dimension
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.Toolkit
@@ -276,7 +283,8 @@ fun parseHexColor(value: String?): Color? {
 /**
  * One device's mirror window: [session] keeps running on the app scope; closing the window calls
  * [MirrorController.close]. Keys typed while the window is focused go to the device; Cmd+V (Ctrl+V off macOS)
- * pastes the computer clipboard through `SetClipboard(paste=true)` (or as text with `legacy-paste`).
+ * pastes the computer clipboard through `SetClipboard(paste=true)` (or as text with `legacy-paste`). Keys typed with
+ * focus in the quick actions sheet stay in the sheet ([keyTarget]); a click outside the sheet gives them back.
  *
  * `keyboard=uhid` and `mouse=uhid` create the HID devices on the session ([HidKeyboard], [HidMouse]) and send HID
  * reports instead of key/text/touch injections. The UHID mouse is relative, so the window captures the pointer
@@ -299,6 +307,8 @@ fun MirrorWindow(
     /** Runs `adb install` / `adb push` for dropped files and the Install APK… / Push file… buttons; null disables them. */
     adb: AdbClient? = null,
     fileDialogs: TransferFileDialogs = AwtTransferFileDialogs,
+    /** "+ New action", "Edit…" and "Manage actions…" ask the main window to open the Actions screen through this. */
+    actionsNavigation: ActionsNavigation = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -387,14 +397,17 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
-    val quickActions = rememberQuickActions(serial, session, adb, ::notify)
+    val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
+    val sheetFocus = remember { SheetFocus() }
 
     val orientation = remember(values) { DisplayOrientation.forOptions(values) }
     // The window is sized for the image as displayed (turned by display-orientation).
     val displayedSize = frameSize?.let(orientation::orientedSize)
     val renderFit = e["render-fit"]
-    // Per window, not persisted: null is Fit, else the scale (1 = 100 %).
+    // Per window, not persisted: null is Fit, else the scale (1 = 100 %). A window starts with Fit off (see
+    // Zoom.initialZoom): until the first frame has fitted it is null, then it takes the fitted scale once.
     var zoom by remember { mutableStateOf<Float?>(if (renderFit == "unscaled") 1f else null) }
+    var zoomPending by remember { mutableStateOf(renderFit == null) }
     val fit = zoom == null
     val stretch = renderFit == "stretched"
     val aspectLock = "no-window-aspect-ratio-lock" !in e
@@ -541,12 +554,19 @@ fun MirrorWindow(
             val paste = if (Os.isMac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
             var pasteDown = false
             val zoomKeys = ZoomKeyFilter(Os.isMac)
+            // Keys held for the device when focus moves into the sheet would never see their release: let them go.
+            sheetFocus.onGained = { hidKeyboard?.let { send(it.releaseAll()) } }
             val dispatcher = KeyEventDispatcher { ev ->
                 val inWindow = ev.component === awtWindow || SwingUtilities.getWindowAncestor(ev.component) === awtWindow
                 if (!inWindow) return@KeyEventDispatcher false
-                if (quickActions.open && ev.keyCode == AwtKeyEvent.VK_ESCAPE) {
-                    if (ev.id == AwtKeyEvent.KEY_PRESSED) quickActions.close()
-                    return@KeyEventDispatcher true
+                when (keyTarget(quickActions.open, sheetFocus.focused, ev.keyCode)) {
+                    // Typed into the quick actions sheet: Compose gets every key, the device none (keyTarget).
+                    KeyTarget.Sheet -> return@KeyEventDispatcher false
+                    KeyTarget.Window -> {
+                        if (ev.id == AwtKeyEvent.KEY_PRESSED) quickActions.close()
+                        return@KeyEventDispatcher true
+                    }
+                    KeyTarget.Device -> Unit
                 }
                 // Zoom shortcuts belong to the window: never forwarded to the device (any keyboard mode).
                 if (zoomKeys.handle(ev.id, ev.keyCode, ev.modifiersEx) { currentApplyZoom(it) }) return@KeyEventDispatcher true
@@ -611,13 +631,37 @@ fun MirrorWindow(
         var autoSized by remember { mutableStateOf(explicitSize) }
         var lastStage by remember { mutableStateOf(IntSize.Zero) }
         var lastFrame by remember { mutableStateOf<IntSize?>(null) }
+        // The native window's size when the lock last looked (a plain holder, read only in the effect below).
+        val lastWindowSize = remember { arrayOf(Dimension()) }
+        val lastFit = remember { BooleanArray(1) { fit } } // the same, for Fit
+        // The stage's width (px) while the window grows or shrinks for the quick actions sheet (see the sheet effect).
+        var pinnedStage by remember { mutableStateOf<Int?>(null) }
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
-        LaunchedEffect(stage, displayedSize, fit) {
+        // Keyed on the pin clearing too: a height the user dragged during a sheet animation is corrected once it ends.
+        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null) {
             val fs = displayedSize ?: return@LaunchedEffect
             if (stage == IntSize.Zero || windowState.placement != WindowPlacement.Floating) return@LaunchedEffect
-            // Correcting the size on every step of a drag fights the drag (the window jitters): restarted by each new
-            // stage size, this only goes on once the size has held still.
-            if (autoSized) delay(ASPECT_SETTLE_MS)
+            if (autoSized) {
+                // The sheet changed the stage (its bar, or its open, close or tab switch): the new stage is the base
+                // the next resize is measured from, right away, so a resize within the settle delay is not measured
+                // from the stage before the sheet changed it (and counted as the user's). The sheet only changes the
+                // stage's width: while it is pinned, the base keeps its height, so a height the user dragged meanwhile
+                // is still the user's change once the pin clears.
+                val windowResized = awtWindow.size != lastWindowSize[0]
+                val pinned = pinnedStage != null
+                if (stageChangeIsSheets(pinned, windowResized, lastFrame, fs, lastFit[0], fit)) {
+                    lastStage = if (pinned && lastStage != IntSize.Zero) IntSize(stage.width, lastStage.height) else stage
+                    return@LaunchedEffect
+                }
+                // Correcting the size on every step of a drag fights the drag (the window jitters): restarted by each
+                // new stage size, this only goes on once the size has held still.
+                delay(ASPECT_SETTLE_MS)
+            }
+            val windowSize = awtWindow.size
+            val refit = fit && !lastFit[0]
+            val lockNeeded = aspectLockNeeded(windowSize != lastWindowSize[0], lastFrame, fs, lastFit[0], fit)
+            lastWindowSize[0] = windowSize
+            lastFit[0] = fit
             val target: IntSize? = when {
                 !autoSized -> {
                     autoSized = true
@@ -629,8 +673,24 @@ fun MirrorWindow(
                     val scale = min(1f, min(maxW / fs.width, maxH / fs.height))
                     IntSize((fs.width * scale).roundToInt(), (fs.height * scale).roundToInt())
                 }
-                fit && aspectLock -> aspectLockedStage(lastStage, stage, lastFrame, fs)
+                fit && aspectLock && lockNeeded -> {
+                    // Never taller than the screen has room for below the window's top, less its chrome (title bar).
+                    val chromeH = awtWindow.height * density.density - stage.height
+                    val (usable, below) = screenRoom(awtWindow)
+                    val maxH = aspectMaxHeight(
+                        roomBelow = (below * density.density - chromeH).roundToInt(),
+                        usable = (usable * density.density - chromeH).roundToInt(),
+                        current = lastStage.height,
+                    )
+                    aspectLockedStage(lastStage, stage, lastFrame, fs, maxH, refit)
+                }
                 else -> null
+            }
+            if (zoomPending) {
+                // The image as Fit shows it once the window has its size: leave Fit at that scale, once.
+                zoomPending = false
+                val shown = target ?: stage
+                zoom = Zoom.initialZoom(renderFit, min(shown.width.toFloat() / fs.width, shown.height.toFloat() / fs.height))
             }
             lastFrame = fs
             lastStage = target ?: stage
@@ -641,38 +701,78 @@ fun MirrorWindow(
             }
         }
 
-        // The quick actions sheet grows the window to the right instead of taking width from the stage. While it opens
-        // or closes the stage is pinned to its width (px), so the image never changes size, and the window's right
-        // edge animates out to uncover the panel, which does not move. One setBounds per frame moves and resizes the
-        // window atomically (moved left when it would leave the screen, back on close). Maximized and fullscreen
-        // windows cannot grow: there the sheet takes its width from the stage.
-        var pinnedStage by remember { mutableStateOf<Int?>(null) }
+        // The quick actions sheet grows the window to the right instead of taking width from the stage: by the
+        // current tab's sheet width (280 dp on Actions and 400 dp on Shell by default). While it opens, closes or
+        // switches tabs the stage is pinned to its width (px), so the image never changes size, and the window's right
+        // edge animates to uncover or cover the panel. One setBounds per frame moves and resizes the window atomically
+        // (moved left when it would leave the screen, back on close). Maximized and fullscreen windows cannot grow:
+        // there the sheet takes its width from the stage. Dragging the sheet's bar never resizes the window: the stage
+        // gives up (or takes back) the width, counted apart from the growth (SheetSplit), so closing shrinks the window
+        // by its growth only and the stage, its pin moving along with the window, gets that width back.
         val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
-        var baseBounds by remember { mutableStateOf<java.awt.Rectangle?>(null) }
-        LaunchedEffect(quickActions.open) {
-            val open = quickActions.open
-            if (windowState.placement != WindowPlacement.Floating && sheetGrowth.value == 0f) return@LaunchedEffect
-            val base = baseBounds ?: awtWindow.bounds.also { baseBounds = it }
-            val screenRight = awtWindow.graphicsConfiguration.bounds.let { it.x + it.width }
-            pinnedStage = stage.width
-            sheetGrowth.animateTo(if (open) QUICK_ACTIONS_WIDTH.value else 0f, quickActionsSpec(open)) {
-                val width = base.width + value.roundToInt()
-                val overflow = (base.x + width - screenRight).coerceAtLeast(0)
-                awtWindow.setBounds(base.x - overflow, awtWindow.y, width, awtWindow.height)
+        val sheetFromStage = remember { FloatArray(1) } // dp of the sheet's width the stage gave up (SheetSplit)
+        val sheetShift = remember { IntArray(1) } // px the window moved left to keep the sheet on screen
+        val sheetOpen = state.quickActions.open
+        val sheetTab = state.quickActions.tab
+        val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
+        val lastSheet = remember { SheetRun(false, sheetTab) }
+        LaunchedEffect(sheetOpen, sheetTab, sheetTarget) {
+            // Same open tab as the last run: only its width changed, by the drag bar.
+            val resized = sheetOpen && lastSheet.open && lastSheet.tab == sheetTab
+            lastSheet.open = sheetOpen
+            lastSheet.tab = sheetTab
+            if (windowState.placement != WindowPlacement.Floating) {
+                // A maximized or fullscreen window is never resized here; forget any growth from before.
+                sheetGrowth.snapTo(0f)
+                sheetFromStage[0] = 0f
+                sheetShift[0] = 0
+                pinnedStage = null
+                return@LaunchedEffect
             }
-            if (!open) {
-                baseBounds = null
-                // Keep the pin until the native window has shrunk, or the stage widens for a frame.
-                var frames = 0
-                while (awtWindow.width > base.width + 1 && frames++ < 30) withFrameNanos { }
+            if (resized) {
+                // The bar moved: the window keeps its size, the sheet's new width comes out of the stage. If this cut
+                // an open or tab switch short, the window keeps what it has grown so far.
+                sheetFromStage[0] = draggedSplit(sheetGrowth.value.dp, sheetTarget).fromStage.value
+                lastWindowSize[0] = awtWindow.size // whatever the cut-short animation grew, the user did not
+                pinnedStage = null
+                return@LaunchedEffect
             }
+            // From the window as it is now: the user may have moved or resized it while the sheet was open.
+            val base = sheetBaseBounds(awtWindow.bounds, sheetGrowth.value.roundToInt(), sheetShift[0])
+            val screen = awtWindow.graphicsConfiguration.bounds
+            val screenRight = screen.x + screen.width
+            val split = sheetSplit(
+                sheetTarget, sheetTab, (stage.width / density.density).dp,
+                SheetSplit(sheetGrowth.value.dp, sheetFromStage[0].dp), (screen.width - base.width).dp,
+            )
+            val target = split.growth.value
+            // The stage's pin moves with the window by what it gets back (or gives up), so the image resizes along.
+            val pinFrom = stage.width
+            val pinTo = pinFrom + ((sheetFromStage[0] - split.fromStage.value) * density.density).roundToInt()
+            val growthFrom = sheetGrowth.value
+            sheetFromStage[0] = split.fromStage.value
+            pinnedStage = pinFrom
+            sheetGrowth.animateTo(target, sheetWidthSpec(sheetGrowth.value.dp, target.dp)) {
+                val grown = grownBounds(base, value.roundToInt(), screenRight)
+                sheetShift[0] = base.x - grown.x
+                awtWindow.setBounds(grown.x, awtWindow.y, grown.width, awtWindow.height)
+                val progress = if (target == growthFrom) 1f else (value - growthFrom) / (target - growthFrom)
+                pinnedStage = pinFrom + ((pinTo - pinFrom) * progress).roundToInt()
+            }
+            pinnedStage = pinTo
+            // Keep the pin until the native window has shrunk, or the stage widens for a frame.
+            var frames = 0
+            while (awtWindow.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
+            // Grown for the sheet, not by the user: nothing for the aspect lock. The height from before the animation,
+            // so a height the user dragged meanwhile is still seen as a resize.
+            lastWindowSize[0] = Dimension(awtWindow.width, base.height)
             pinnedStage = null // not when cancelled: a reversed toggle keeps the pin through its own animation
         }
 
         ScrcpyViewerTheme(themeMode) {
             Box(Modifier.fillMaxSize()) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    CompositionLocalProvider(LocalSnackbarHostState provides snackbar) {
+                    CompositionLocalProvider(LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus) {
                     MirrorContent(
                         state = state,
                         frame = frame,
@@ -704,6 +804,7 @@ fun MirrorWindow(
                         onStageSize = { stage = it },
                         onQuickAction = quickActions::onEvent,
                         pinnedStageWidth = pinnedStage,
+                        shellConsole = quickActions.console,
                         onStageBounds = { stageBounds = it },
                         clickIndicator = clickIndicator,
                     )
@@ -715,25 +816,101 @@ fun MirrorWindow(
     }
 }
 
+/** What the window's sheet-growth effect last ran for; a plain holder, read and written only in that effect. */
+private class SheetRun(var open: Boolean, var tab: SheetTab)
+
+/**
+ * Start-aligned at its own width but never narrower than the space it is given (so it can overflow, to be clipped,
+ * but leaves no gap).
+ */
+private val AtLeastAvailableWidth: Modifier = Modifier.layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minWidth = constraints.maxWidth, maxWidth = Constraints.Infinity))
+    layout(constraints.maxWidth, placeable.height) { placeable.placeRelative(0, 0) }
+}
+
 /** How long the stage size must hold still before the aspect ratio lock corrects the window. */
 private const val ASPECT_SETTLE_MS = 150L
 
 /**
- * Stage size that keeps the frame's aspect ratio after the user resized the stage from [old] to [new]: the
- * dimension that changed most wins. When the frame turned (rotation), the longer side is kept.
+ * Heights (window units) on the screen [window] is on: the screen's height less the menu bar and the Dock or taskbar,
+ * and the room from the window's top down to the screen's bottom (less the Dock or taskbar; negative when the window
+ * hangs below it).
  */
-fun aspectLockedStage(old: IntSize, new: IntSize, oldFrame: IntSize?, frame: IntSize): IntSize {
+private fun screenRoom(window: java.awt.Window): Pair<Int, Int> {
+    val config = window.graphicsConfiguration
+    val insets = Toolkit.getDefaultToolkit().getScreenInsets(config)
+    val bottom = config.bounds.y + config.bounds.height - insets.bottom
+    return (config.bounds.height - insets.top - insets.bottom) to (bottom - window.y)
+}
+
+/** The smallest height the aspect ratio lock lets the stage have (px), whatever room the screen has. */
+private const val ASPECT_MIN_STAGE_HEIGHT = 200
+
+/**
+ * The tallest stage (px) the aspect ratio lock allows: the room from the window's top to the screen's bottom
+ * ([roomBelow]), no more than the screen's [usable] height. Never under the stage's [current] height (up to [usable]),
+ * so a window that hangs low or below the screen's bottom is not shrunk by a resize, and never under
+ * [ASPECT_MIN_STAGE_HEIGHT].
+ */
+fun aspectMaxHeight(roomBelow: Int, usable: Int, current: Int): Int =
+    maxOf(minOf(roomBelow, usable), minOf(current, usable), ASPECT_MIN_STAGE_HEIGHT)
+
+/**
+ * Whether the aspect ratio lock looks at the stage: after the user resized the window ([windowResized]), when the
+ * frame changed size or turned ([lastFrame] to [frame]), or when Fit came back on ([wasFit] to [fit]). Not when only
+ * the stage changed inside a window that kept its size: the quick actions sheet's drag bar moved, and the stage's new
+ * shape is the user's choice.
+ */
+fun aspectLockNeeded(windowResized: Boolean, lastFrame: IntSize?, frame: IntSize, wasFit: Boolean, fit: Boolean): Boolean =
+    windowResized || lastFrame != frame || (fit && !wasFit)
+
+/**
+ * Whether a stage change is the sheet's, not the user's, so the aspect ratio lock takes the new stage at once as the
+ * base the next resize is measured from (no settle delay, no correction): with the frame and Fit as they were, the
+ * stage is [pinned] while the quick actions sheet opens, closes or switches tabs, or the window kept its size (the
+ * sheet's drag bar moved). A new frame or a Fit change always goes through the lock, even during a sheet animation.
+ */
+fun stageChangeIsSheets(pinned: Boolean, windowResized: Boolean, lastFrame: IntSize?, frame: IntSize, wasFit: Boolean, fit: Boolean): Boolean =
+    lastFrame == frame && wasFit == fit && (pinned || !windowResized)
+
+/**
+ * Stage size that keeps the frame's aspect ratio after the user resized the stage from [old] (the stage right before
+ * the resize) to [new]; the dimension that changed most wins. A stage at the frame's aspect (within 1 px) is rebuilt
+ * from that dimension, so rounding never adds up. A stage the sheet's drag bar made wider or narrower than the frame
+ * keeps that difference: the other dimension changes by the user's change scaled by the aspect ratio, so a small
+ * resize never turns into a large one. For a new frame (another size, or the first) or when Fit came back on
+ * ([refit]) the stage is rebuilt too. When the frame turned (rotation), the longer side is kept. A stage taller than
+ * [maxHeight] (what the screen can show) is [maxHeight] tall, its width taken from that height: as much of the
+ * user's change as fits.
+ */
+fun aspectLockedStage(
+    old: IntSize,
+    new: IntSize,
+    oldFrame: IntSize?,
+    frame: IntSize,
+    maxHeight: Int = Int.MAX_VALUE,
+    refit: Boolean = false,
+): IntSize {
     if (frame.width <= 0 || frame.height <= 0 || new.width <= 0 || new.height <= 0) return new
     val aspect = frame.width.toDouble() / frame.height
     val rotated = oldFrame != null && (oldFrame.width > oldFrame.height) != (frame.width > frame.height)
-    return if (rotated) {
-        val long = maxOf(new.width, new.height)
-        if (frame.width >= frame.height) IntSize(long, (long / aspect).roundToInt()) else IntSize((long * aspect).roundToInt(), long)
-    } else if (abs(new.width - old.width) >= abs(new.height - old.height)) {
-        IntSize(new.width, (new.width / aspect).roundToInt())
-    } else {
-        IntSize((new.height * aspect).roundToInt(), new.height)
+    val onAspect = abs(old.width - old.height * aspect) <= 1.0
+    val fromScratch = rotated || refit || oldFrame != frame || onAspect
+    // The width for a height, kept to the frame's aspect from scratch or from the stage before the resize.
+    fun widthFor(height: Int): Int =
+        if (fromScratch) (height * aspect).roundToInt() else old.width + ((height - old.height) * aspect).roundToInt()
+    val widthWins = abs(new.width - old.width) >= abs(new.height - old.height)
+    val locked = when {
+        rotated -> {
+            val long = maxOf(new.width, new.height)
+            if (frame.width >= frame.height) IntSize(long, (long / aspect).roundToInt()) else IntSize(widthFor(long), long)
+        }
+        widthWins && fromScratch -> IntSize(new.width, (new.width / aspect).roundToInt())
+        widthWins -> IntSize(new.width, old.height + ((new.width - old.width) / aspect).roundToInt())
+        else -> IntSize(widthFor(new.height), new.height)
     }
+    if (locked.height <= maxHeight) return IntSize(locked.width.coerceAtLeast(1), locked.height.coerceAtLeast(1))
+    return IntSize(widthFor(maxHeight).coerceAtLeast(1), maxHeight.coerceAtLeast(1))
 }
 
 /** The mirror window's content (stateless, so it can be rendered offscreen). */
@@ -762,13 +939,41 @@ fun MirrorContent(
      * shows in whatever width is left. Null: the sheet animates its own width, taken from the stage.
      */
     pinnedStageWidth: Int? = null,
+    /** The quick actions sheet's Shell tab console; null shows an empty Shell tab. */
+    shellConsole: ShellConsole? = null,
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(modifier.fillMaxSize()) {
+    val focusManager = LocalFocusManager.current
+    // A press in the sheet marks itself on the way down (Initial pass); a press anywhere else takes keyboard focus out
+    // of the sheet, so typing goes to the device again. Closing the sheet does the same. A plain holder.
+    val pressInSheet = remember { BooleanArray(1) }
+    val sheetPresses = remember {
+        Modifier.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) pressInSheet[0] = true
+                }
+            }
+        }
+    }
+    val sheetOpen = state.quickActions.open
+    LaunchedEffect(sheetOpen) { if (!sheetOpen) focusManager.clearFocus() }
+    Column(
+        modifier.fillMaxSize().pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    if (awaitPointerEvent(PointerEventPass.Final).type != PointerEventType.Press) continue
+                    if (!pressInSheet[0]) focusManager.clearFocus()
+                    pressInSheet[0] = false
+                }
+            }
+        },
+    ) {
         if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom)
         HorizontalDivider(color = colors.outlineVariant)
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            val density = LocalDensity.current
+        val density = LocalDensity.current
+        var rowWidth by remember { mutableStateOf<Dp?>(null) }
+        Row(Modifier.weight(1f).fillMaxWidth().onSizeChanged { rowWidth = with(density) { it.width.toDp() } }) {
             Box(
                 (if (pinnedStageWidth != null) Modifier.width(with(density) { pinnedStageWidth.toDp() }) else Modifier.weight(1f))
                     .fillMaxHeight()
@@ -796,16 +1001,18 @@ fun MirrorContent(
                 }
             }
             SideToolbar(state, onAction)
+            // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
+            val panel = rememberQuickActionsPanel(
+                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null },
+            )
             if (pinnedStageWidth != null) {
-                // The panel stays put; the growing window uncovers it.
+                // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
+                // so a tab switch's width change leaves no gap while the window catches up.
                 Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                    QuickActionsPanel(
-                        state.quickActions, onQuickAction,
-                        Modifier.align(Alignment.CenterStart).wrapContentWidth(Alignment.Start, unbounded = true),
-                    )
+                    panel(AtLeastAvailableWidth.then(sheetPresses))
                 }
             } else {
-                QuickActionsSheet(state.quickActions, onQuickAction)
+                QuickActionsSheet(state.quickActions.open) { panel(sheetPresses) }
             }
         }
         HorizontalDivider(color = colors.outlineVariant)
@@ -1125,11 +1332,14 @@ private val toolbarIcons: Map<MirrorAction, ImageVector> = mapOf(
     MirrorAction.PushFile to Icons.Filled.UploadFile,
 )
 
+/** The side toolbar's width, between the stage and the quick actions sheet. */
+internal val SIDE_TOOLBAR_WIDTH = 64.dp
+
 @Composable
 private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(
-        Modifier.width(64.dp).fillMaxHeight().background(colors.surfaceContainer).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
+        Modifier.width(SIDE_TOOLBAR_WIDTH).fillMaxHeight().background(colors.surfaceContainer).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {

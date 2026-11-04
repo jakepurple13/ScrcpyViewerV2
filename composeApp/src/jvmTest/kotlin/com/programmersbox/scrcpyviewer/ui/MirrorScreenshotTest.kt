@@ -10,7 +10,25 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.actions.RunOnceAction
+import com.programmersbox.scrcpyviewer.actions.ToggleAction
+import com.programmersbox.scrcpyviewer.actions.Variable
+import com.programmersbox.scrcpyviewer.actions.VariableKind
+import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.adb.ShellEvent
+import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.media.VideoFrame
+import com.programmersbox.scrcpyviewer.ui.mirror.SheetTab
+import com.programmersbox.scrcpyviewer.ui.mirror.SheetWidths
+import com.programmersbox.scrcpyviewer.ui.mirror.ShellConsole
+import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
+import com.programmersbox.scrcpyviewer.ui.mirror.ShellTabContent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import com.programmersbox.scrcpyviewer.ui.mirror.PendingRun
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.ui.mirror.ClickIndicator
 import com.programmersbox.scrcpyviewer.ui.mirror.DisplayOrientation
@@ -89,13 +107,16 @@ class MirrorScreenshotTest {
         command = "scrcpy -s 39121FDJH004AB --max-size=1920",
     )
 
-    private fun render(name: String, mode: ThemeMode, state: MirrorUiState = this.state, clickIndicator: ClickIndicator? = null, width: Int = 1280, height: Int = 800, showTopStrip: Boolean = true) {
+    private fun render(name: String, mode: ThemeMode, state: MirrorUiState = this.state, clickIndicator: ClickIndicator? = null, width: Int = 1280, height: Int = 800, showTopStrip: Boolean = true, settleMillis: Long = 0, shellConsole: ShellConsole? = null) {
         val out = outDir.resolve(name)
         val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
-        renderToPng(width, height, out) {
+        renderToPng(width, height, out, settleMillis) {
             ScrcpyViewerTheme(mode) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    MirrorContent(state, frame, {}, {}, {}, {}, {}, {}, clickIndicator = clickIndicator, showTopStrip = showTopStrip)
+                    MirrorContent(
+                        state, frame, {}, {}, {}, {}, {}, {}, clickIndicator = clickIndicator, showTopStrip = showTopStrip,
+                        shellConsole = shellConsole,
+                    )
                 }
             }
         }
@@ -246,4 +267,124 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror quick actions open dark`() = render("mirror-quick-actions-dark.png", ThemeMode.Dark, state.copy(quickActions = quickActionsOpen))
+
+    private val customActions = listOf(
+        ToggleAction(id = "stay", name = "Stay awake", icon = "bolt", on = "a", off = "b"),
+        RunOnceAction(
+            id = "clear", name = "Clear data", icon = "delete", command = "pm clear {pkg}", confirm = true,
+            variables = mapOf("pkg" to Variable(label = "App to clear", kind = VariableKind.App)),
+        ),
+    )
+
+    private val tilesState = quickActionsOpen.copy(
+        pending = emptySet(),
+        custom = customActions,
+        customState = mapOf("stay" to true),
+    )
+
+    @Test
+    fun `mirror quick actions tiles`() {
+        render("mirror-quick-actions-tiles.png", ThemeMode.Light, state.copy(quickActions = tilesState), height = 1000)
+        render("mirror-quick-actions-tiles-dark.png", ThemeMode.Dark, state.copy(quickActions = tilesState), height = 1000)
+    }
+
+    @Test
+    fun `mirror quick actions wide`() {
+        // Dragged to 520 dp: four tile columns; the stage gives up the width.
+        val wide = state.copy(quickActions = tilesState.copy(widths = SheetWidths(actions = 520.dp)))
+        render("mirror-quick-actions-wide.png", ThemeMode.Light, wide, height = 1000)
+        render("mirror-quick-actions-wide-dark.png", ThemeMode.Dark, wide, height = 1000)
+    }
+
+    @Test
+    fun `mirror quick actions prompt`() {
+        val prompt = PendingRun(customActions[1] as RunOnceAction, needsValues = true, needsConfirm = true, values = mapOf("pkg" to ""))
+        val packages = listOf("com.android.chrome", "com.example.notes", "com.spotify.music", "org.mozilla.firefox")
+        render(
+            "mirror-quick-actions-prompt.png", ThemeMode.Light,
+            state.copy(quickActions = tilesState.copy(prompt = prompt, packages = packages)), height = 1000, settleMillis = 1000,
+        )
+    }
+
+    /** Streams the scripted events for each command, then waits forever when [hang]. */
+    private class ScriptRunner(private val script: Map<String, List<ShellEvent>>, private val hang: Boolean = false) :
+        ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "serial") {
+        override fun stream(cmd: String): Flow<ShellEvent> = flow {
+            script[cmd].orEmpty().forEach { emit(it) }
+            if (hang) awaitCancellation()
+        }
+    }
+
+    private fun renderShell(name: String, mode: ThemeMode, console: ShellConsole, chips: List<RunOnceAction>) {
+        renderToPng(400, 640, outDir.resolve(name)) {
+            ScrcpyViewerTheme(mode) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainer) {
+                    ShellTabContent(console, chips) {}
+                }
+            }
+        }
+    }
+
+    private val shellChips = listOf(
+        RunOnceAction(id = "bugreport", name = "Bug report", command = "bugreportz"),
+        RunOnceAction(id = "clear", name = "Clear data", command = "pm clear {pkg}"),
+    )
+
+    @Test
+    fun `mirror shell finished`() {
+        val runner = ScriptRunner(
+            mapOf(
+                "wm size" to listOf(ShellEvent.Output("Physical size: 1344x2992\n"), ShellEvent.Exit(0, 48)),
+                "getprop ro.product.model" to listOf(ShellEvent.Output("Pixel 9 Pro\n"), ShellEvent.Exit(0, 31)),
+                "cat /missing" to listOf(ShellEvent.Output("cat: /missing: No such file or directory\n"), ShellEvent.Exit(1, 22)),
+            ),
+        )
+        val console = ShellConsole(runner, ShellHistory(), CoroutineScope(Dispatchers.Unconfined), {})
+        for (cmd in listOf("wm size", "getprop ro.product.model", "cat /missing")) {
+            console.input = cmd
+            console.submit()
+        }
+        renderShell("mirror-shell-finished.png", ThemeMode.Light, console, shellChips)
+        renderShell("mirror-shell-finished-dark.png", ThemeMode.Dark, console, shellChips)
+    }
+
+    @Test
+    fun `mirror shell streaming`() {
+        val runner = ScriptRunner(
+            mapOf(
+                "logcat" to listOf(
+                    ShellEvent.Output("I/ActivityManager( 612): Start proc 4121:com.example.notes/u0a212\n"),
+                    ShellEvent.Output("D/WindowManager( 612): Relayout Window{4f2a u0 com.example.notes}\n"),
+                    ShellEvent.Output("I/ActivityManager( 612): Start proc 4188:com.spotify.music/u0a198\n"),
+                    ShellEvent.Output("W/System( 4121): ClassLoader referenced unknown path\n"),
+                    ShellEvent.Output("I/ActivityManager( 612): Start proc 4230:com.android.chrome/u0a101\n"),
+                ),
+            ),
+            hang = true,
+        )
+        val console = ShellConsole(runner, ShellHistory(), CoroutineScope(Dispatchers.Unconfined), {})
+        console.input = "logcat"
+        console.submit()
+        console.filter = "Start proc"
+        renderShell("mirror-shell-streaming.png", ThemeMode.Light, console, shellChips)
+        renderShell("mirror-shell-streaming-dark.png", ThemeMode.Dark, console, shellChips)
+        console.stop()
+    }
+
+    @Test
+    fun `mirror quick actions shell tab running`() {
+        val runner = ScriptRunner(
+            mapOf("logcat" to listOf(ShellEvent.Output("I/ActivityManager( 612): Start proc 4121:com.example.notes/u0a212\n"))),
+            hang = true,
+        )
+        val console = ShellConsole(runner, ShellHistory(), CoroutineScope(Dispatchers.Unconfined), {})
+        console.input = "logcat"
+        console.submit()
+        val shell = state.copy(
+            quickActions = tilesState.copy(tab = SheetTab.Shell, consoleRunning = true),
+        )
+        render("mirror-quick-actions-shell.png", ThemeMode.Light, shell, shellConsole = console)
+        render("mirror-quick-actions-shell-dark.png", ThemeMode.Dark, shell, shellConsole = console)
+        console.stop()
+    }
 }
