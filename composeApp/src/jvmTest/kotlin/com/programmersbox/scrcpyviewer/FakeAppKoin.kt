@@ -56,7 +56,7 @@ fun withFakeAppKoin(
 ) {
     val koin = startAppKoin(dataDir, adbClientFactory = { FakeAdbClient() }, updateBackend = updateBackend)
     try {
-        koin.get<AppSettings>().update { it.copy(onboardingSeen = true) }
+        koin.get<AppSettings>().update { it.copy(onboardingSeen = true, actionsIntroSeen = true) }
         runBlocking { withTimeout(5_000) { koin.get<DeviceTracker>().devices.first { it.size == 3 } } }
         block(koin)
     } finally {

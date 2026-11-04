@@ -136,6 +136,8 @@ Layout: list on the left, editor on the right, following the existing Presets sc
 
 - **List**: each custom action's name and a type line ("Toggle", "Run once · 1 variable", "Run once · to Shell").
   A drag handle reorders; the mirror sheet uses the same order. Under the list: **+ New**, **Import**, **Export**.
+  A **?** button in the list header ("How actions work") opens the intro dialog; Export switches the list to
+  selection mode (see Import and export).
 - **Empty state**: a short explanation and + New / Import.
 - **Editor** fields:
   - Type segment: **Toggle** / **Run once**. Switching type keeps the name.
@@ -150,6 +152,14 @@ Layout: list on the left, editor on the right, following the existing Presets sc
   - Bottom row: **Test run on <device> ▾** (connected devices; disabled with none connected), **Delete**, **Save**.
     Test run shows output under the editor and prompts for variables like a real run.
 - Save is explicit. Leaving with unsaved changes asks to discard.
+- **Intro dialog**: a four-page dialog in the onboarding dialog's style (Your own quick actions; Toggle or run once;
+  Variables; Test, then share). It opens the first time the Actions page is shown; `actionsIntroSeen` in settings
+  records it (false for new installs and for settings files without the key, so existing users see it once;
+  finishing or closing sets it). The **?** button reopens it.
+- **Animations** (260 ms emphasized-decelerate in, 200 ms emphasized-accelerate out, as in the sheet): the "Variables
+  found in the command" section expands and fades in when the command gains its first `{name}` and collapses when the
+  last one goes, and each variable row animates in or out as its variable is added or removed. The Test output panel
+  expands and fades in when Test run / Test read first produces a result and collapses when the result clears.
 - Saving updates every open mirror window at once (the store is a shared singleton exposed as a `StateFlow`).
 
 ## Icons
@@ -188,8 +198,12 @@ Layout: list on the left, editor on the right, following the existing Presets sc
 
 ## Import and export
 
-- **Export** writes every custom action to one file the user picks (`scrcpy-actions.json` suggested), through the
-  same AWT file dialog pattern as presets (`PresetFileDialogs`).
+- **Export** uses selection in the list. Clicking Export puts the list in selection mode: every row shows a checkbox,
+  all ticked, and a row click toggles its checkbox instead of opening the editor; drag reorder is off. The list header
+  shows "n selected" with **Select all** and **None**. The footer swaps New / Import / Export for **Export n**
+  (disabled at 0) and **Cancel**. Export n writes only the ticked actions, in list order, to one file the user picks
+  (`scrcpy-actions.json` suggested), through the same AWT file dialog pattern as presets (`PresetFileDialogs`), then
+  leaves selection mode. Cancel leaves it. Unsaved editor changes are not touched.
 - **Import** reads a file and shows a preview dialog before changing anything:
   - A warning: "These run shell commands on your devices. Check each one."
   - One row per incoming action with an include checkbox, its name, and **its commands**. This is the one place besides

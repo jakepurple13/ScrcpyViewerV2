@@ -61,4 +61,13 @@ class AppSettingsTest {
         Files.writeString(file, """{"themeMode":"Light"}""")
         assertTrue(AppSettings(file).settings.value.onboardingSeen)
     }
+
+    @Test
+    fun `actions intro is unseen by default, also for an older file, and persists once seen`() {
+        assertFalse(AppSettings(file).settings.value.actionsIntroSeen)
+        Files.writeString(file, """{"themeMode":"Light","onboardingSeen":true}""")
+        assertFalse(AppSettings(file).settings.value.actionsIntroSeen)
+        AppSettings(file).update { it.copy(actionsIntroSeen = true) }
+        assertTrue(AppSettings(file).settings.value.actionsIntroSeen)
+    }
 }

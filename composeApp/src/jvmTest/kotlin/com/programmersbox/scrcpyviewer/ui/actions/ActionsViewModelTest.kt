@@ -358,10 +358,44 @@ class ActionsViewModelTest {
     }
 
     @Test
-    fun `export writes every action`() {
+    fun `export writes only the given actions in list order`() {
         store.upsert(stayAwake)
         store.upsert(logcat)
-        assertEquals(listOf(stayAwake, logcat), ActionCodec.decode(vm().exportJson()))
+        val vm = vm()
+        assertEquals(listOf(stayAwake, logcat), ActionCodec.decode(vm.exportJson(listOf("logcat", "awake"))))
+        assertEquals(listOf(logcat), ActionCodec.decode(vm.exportJson(setOf("logcat", "gone"))))
+        assertEquals(emptyList(), ActionCodec.decode(vm.exportJson(emptyList())))
+    }
+
+    @Test
+    fun `export selection starts with every action and can be changed`() {
+        store.upsert(stayAwake)
+        store.upsert(logcat)
+        val vm = vm()
+        assertNull(vm.state.value.exportSelection)
+
+        vm.startExport()
+        assertEquals(setOf("awake", "logcat"), vm.state.value.exportSelection)
+        vm.toggleExport("awake")
+        assertEquals(setOf("logcat"), vm.state.value.exportSelection)
+        vm.toggleExport("awake")
+        assertEquals(setOf("awake", "logcat"), vm.state.value.exportSelection)
+        vm.selectNoExport()
+        assertEquals(emptySet(), vm.state.value.exportSelection)
+        vm.selectAllExport()
+        assertEquals(setOf("awake", "logcat"), vm.state.value.exportSelection)
+        vm.cancelExport()
+        assertNull(vm.state.value.exportSelection)
+    }
+
+    @Test
+    fun `a deleted action leaves the export selection`() {
+        store.upsert(stayAwake)
+        store.upsert(logcat)
+        val vm = vm()
+        vm.startExport()
+        vm.delete("awake")
+        assertEquals(setOf("logcat"), vm.state.value.exportSelection)
     }
 
     @Test

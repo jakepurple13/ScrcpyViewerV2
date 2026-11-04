@@ -1,5 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,12 +22,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -82,7 +89,15 @@ sealed interface ActionsEvent {
     data class Select(val id: String) : ActionsEvent
     data object New : ActionsEvent
     data object Import : ActionsEvent
+    /** Enters selection mode: tick the actions to export. */
     data object Export : ActionsEvent
+    /** Asks for a file and writes the ticked actions to it. */
+    data object ExportSelected : ActionsEvent
+    data class ToggleExport(val id: String) : ActionsEvent
+    data object SelectAllExport : ActionsEvent
+    data object SelectNoExport : ActionsEvent
+    data object CancelExport : ActionsEvent
+    data object ShowIntro : ActionsEvent
     data class Move(val id: String, val toIndex: Int) : ActionsEvent
     data class Edit(val transform: (ActionDraft) -> ActionDraft) : ActionsEvent
     data class SetType(val type: ActionType) : ActionsEvent
@@ -98,6 +113,8 @@ sealed interface ActionsEvent {
 fun ActionsScreen(
     viewModel: ActionsViewModel,
     files: PresetFileDialogs,
+    introSeen: Boolean,
+    onIntroSeen: () -> Unit,
     modifier: Modifier = Modifier,
     panes: ListDetailPanes = rememberListDetailPanes(),
 ) {
@@ -108,6 +125,7 @@ fun ActionsScreen(
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(viewModel) { viewModel.messages.collect { snackbar?.showSnackbar(it) } }
     val scope = rememberCoroutineScope()
+    var introRequested by remember { mutableStateOf(false) }
 
     /** Runs [block] on the IO dispatcher; shows a file error in the snackbar instead of crashing the UI. */
     fun io(block: () -> Unit) {
@@ -128,10 +146,20 @@ fun ActionsScreen(
                 is ActionsEvent.Select -> viewModel.handle(ActionsRequest(event.id, new = false))
                 ActionsEvent.New -> viewModel.handle(ActionsRequest(null, new = true))
                 ActionsEvent.Import -> files.chooseImportFile()?.let { path -> io { viewModel.beginImport(Files.readString(path)) } }
-                ActionsEvent.Export -> files.chooseExportFile(ACTIONS_EXPORT_FILE)?.let { path ->
-                    val json = viewModel.exportJson()
-                    io { Files.writeString(path, json) }
+                ActionsEvent.Export -> viewModel.startExport()
+                ActionsEvent.ExportSelected -> {
+                    // Cancelling the file picker keeps the selection, so the user can pick again.
+                    files.chooseExportFile(ACTIONS_EXPORT_FILE)?.let { path ->
+                        val json = viewModel.exportJson(state.exportSelection.orEmpty())
+                        viewModel.cancelExport()
+                        io { Files.writeString(path, json) }
+                    }
                 }
+                is ActionsEvent.ToggleExport -> viewModel.toggleExport(event.id)
+                ActionsEvent.SelectAllExport -> viewModel.selectAllExport()
+                ActionsEvent.SelectNoExport -> viewModel.selectNoExport()
+                ActionsEvent.CancelExport -> viewModel.cancelExport()
+                ActionsEvent.ShowIntro -> introRequested = true
                 is ActionsEvent.Move -> viewModel.move(event.id, event.toIndex)
                 is ActionsEvent.Edit -> viewModel.edit(event.transform)
                 is ActionsEvent.SetType -> viewModel.setType(event.type)
@@ -151,6 +179,15 @@ fun ActionsScreen(
             name = state.draft?.name.orEmpty(),
             onDiscard = { viewModel.discardAndSelect(request.actionId) },
             onKeepEditing = viewModel::keepEditing,
+        )
+    }
+    if (!introSeen || introRequested) {
+        // Leaves composition on close, so reopening starts at the first page.
+        var page by remember { mutableIntStateOf(0) }
+        ActionsIntroDialog(
+            page = page,
+            onPage = { page = it },
+            onFinish = { introRequested = false; onIntroSeen() },
         )
     }
     import?.let {
@@ -234,7 +271,9 @@ private fun EmptyState(onEvent: (ActionsEvent) -> Unit, modifier: Modifier = Mod
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ActionList(state: ActionsUiState, onSelect: (String) -> Unit, onEvent: (ActionsEvent) -> Unit) {
+    val selection = state.exportSelection
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp)) {
+        ListHeader(state.actions.size, selection, onEvent)
         Box(Modifier.weight(1f).fillMaxWidth()) {
             if (state.actions.isEmpty()) {
                 Text(
@@ -244,7 +283,10 @@ private fun ActionList(state: ActionsUiState, onSelect: (String) -> Unit, onEven
                     modifier = Modifier.align(Alignment.Center).padding(horizontal = 12.dp),
                 )
             } else {
-                ReorderableActions(state.actions, state.selectedId, onSelect) { id, to -> onEvent(ActionsEvent.Move(id, to)) }
+                ReorderableActions(
+                    state.actions, state.selectedId, selection,
+                    onSelect = { if (selection != null) onEvent(ActionsEvent.ToggleExport(it)) else onSelect(it) },
+                ) { id, to -> onEvent(ActionsEvent.Move(id, to)) }
             }
         }
         FlowRow(
@@ -252,9 +294,47 @@ private fun ActionList(state: ActionsUiState, onSelect: (String) -> Unit, onEven
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Button({ onEvent(ActionsEvent.New) }, contentPadding = ToolbarPadding) { Text("+ New", maxLines = 1) }
-            OutlinedButton({ onEvent(ActionsEvent.Import) }, contentPadding = ToolbarPadding) { Text("Import") }
-            OutlinedButton({ onEvent(ActionsEvent.Export) }, enabled = state.actions.isNotEmpty(), contentPadding = ToolbarPadding) { Text("Export") }
+            if (selection == null) {
+                Button({ onEvent(ActionsEvent.New) }, contentPadding = ToolbarPadding) { Text("+ New", maxLines = 1) }
+                OutlinedButton({ onEvent(ActionsEvent.Import) }, contentPadding = ToolbarPadding) { Text("Import") }
+                OutlinedButton({ onEvent(ActionsEvent.Export) }, enabled = state.actions.isNotEmpty(), contentPadding = ToolbarPadding) { Text("Export") }
+            } else {
+                Button({ onEvent(ActionsEvent.ExportSelected) }, enabled = selection.isNotEmpty(), contentPadding = ToolbarPadding) {
+                    Text("Export ${selection.size}", maxLines = 1)
+                }
+                OutlinedButton({ onEvent(ActionsEvent.CancelExport) }, contentPadding = ToolbarPadding) { Text("Cancel") }
+            }
+        }
+    }
+}
+
+/** "Actions" and the help button, or in selection mode the count with Select all and None. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ListHeader(total: Int, selection: Set<String>?, onEvent: (ActionsEvent) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (selection == null) {
+            Text("Actions", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            TooltipArea(
+                tooltip = {
+                    Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
+                        Text(
+                            "How actions work",
+                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.inverseOnSurface,
+                        )
+                    }
+                },
+            ) {
+                IconButton({ onEvent(ActionsEvent.ShowIntro) }, Modifier.size(32.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = "How actions work", modifier = Modifier.size(20.dp))
+                }
+            }
+        } else {
+            Text("${selection.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            TextButton({ onEvent(ActionsEvent.SelectAllExport) }, enabled = selection.size < total, contentPadding = ToolbarPadding) { Text("Select all") }
+            TextButton({ onEvent(ActionsEvent.SelectNoExport) }, enabled = selection.isNotEmpty(), contentPadding = ToolbarPadding) { Text("None") }
         }
     }
 }
@@ -266,6 +346,7 @@ private val RowSpacing = 6.dp
 private fun ReorderableActions(
     actions: List<CustomAction>,
     selectedId: String?,
+    exportSelection: Set<String>?,
     onSelect: (String) -> Unit,
     onMove: (String, Int) -> Unit,
 ) {
@@ -297,9 +378,12 @@ private fun ReorderableActions(
             val isDragged = index == from
             ActionRow(
                 action,
-                selected = action.id == selectedId,
+                selected = exportSelection == null && action.id == selectedId,
+                checked = exportSelection?.let { action.id in it },
                 onClick = { onSelect(action.id) },
-                handle = Modifier.pointerInput(action.id) {
+                handle = Modifier.pointerInput(action.id, exportSelection == null) {
+                    // No reordering while ticking actions to export.
+                    if (exportSelection != null) return@pointerInput
                     detectDragGestures(
                         onDragStart = { dragged = action.id; dragOffset = 0f },
                         onDragEnd = {
@@ -328,7 +412,7 @@ private fun ReorderableActions(
 }
 
 @Composable
-private fun ActionRow(action: CustomAction, selected: Boolean, onClick: () -> Unit, handle: Modifier, modifier: Modifier = Modifier) {
+private fun ActionRow(action: CustomAction, selected: Boolean, checked: Boolean?, onClick: () -> Unit, handle: Modifier, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Row(
         modifier
@@ -340,17 +424,22 @@ private fun ActionRow(action: CustomAction, selected: Boolean, onClick: () -> Un
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        if (checked != null) Checkbox(checked, null, Modifier.size(20.dp))
         Icon(ActionIcons.forName(action.icon, action.defaultIcon), contentDescription = null, tint = colors.primary, modifier = Modifier.size(20.dp))
         Column(Modifier.weight(1f)) {
             Text(action.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(actionTypeLine(action), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Icon(
-            Icons.Filled.DragIndicator,
-            contentDescription = "Drag to reorder",
-            tint = colors.onSurfaceVariant,
-            modifier = handle.pointerHoverIcon(PointerIcon(Cursor(Cursor.MOVE_CURSOR))).padding(4.dp).size(20.dp),
-        )
+        if (checked == null) {
+            Icon(
+                Icons.Filled.DragIndicator,
+                contentDescription = "Drag to reorder",
+                tint = colors.onSurfaceVariant,
+                modifier = handle.pointerHoverIcon(PointerIcon(Cursor(Cursor.MOVE_CURSOR))).padding(4.dp).size(20.dp),
+            )
+        } else {
+            Spacer(Modifier.size(8.dp))
+        }
     }
 }
 

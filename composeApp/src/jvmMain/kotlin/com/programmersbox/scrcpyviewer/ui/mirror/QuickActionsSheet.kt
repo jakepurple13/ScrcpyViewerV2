@@ -3,7 +3,6 @@ package com.programmersbox.scrcpyviewer.ui.mirror
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.animateDpAsState
@@ -36,8 +35,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AirplanemodeActive
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ScreenLockRotation
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.TouchApp
@@ -70,6 +69,10 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
+import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import kotlin.math.roundToInt
 
 /** Width of the open sheet on the Actions tab, its divider included. */
@@ -77,11 +80,6 @@ val QUICK_ACTIONS_WIDTH = 280.dp
 
 /** Width of the open sheet on the Shell tab, its divider included. */
 val QUICK_ACTIONS_SHELL_WIDTH = 400.dp
-
-private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
-private val EmphasizedAccelerate = CubicBezierEasing(0.3f, 0f, 0.8f, 0.15f)
-private const val OPEN_MILLIS = 260
-private const val CLOSE_MILLIS = 200
 
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
 private val SLIDE_OFFSET = 40.dp

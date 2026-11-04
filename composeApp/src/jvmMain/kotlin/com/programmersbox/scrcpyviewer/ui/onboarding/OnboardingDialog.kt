@@ -80,7 +80,7 @@ fun OnboardingDialog(
                 }
                 Spacer(Modifier.height(20.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    PageDots(page, Modifier.weight(1f))
+                    PageDots(page, ONBOARDING_PAGE_COUNT, Modifier.weight(1f))
                     if (page < ONBOARDING_PAGE_COUNT - 1) TextButton(onFinish) { Text("Skip") }
                     if (page > 0) TextButton({ onPage(page - 1) }) { Text("Back") }
                     Spacer(Modifier.width(8.dp))
@@ -96,9 +96,9 @@ fun OnboardingDialog(
 }
 
 @Composable
-private fun PageDots(page: Int, modifier: Modifier = Modifier) {
+internal fun PageDots(page: Int, count: Int, modifier: Modifier = Modifier) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        repeat(ONBOARDING_PAGE_COUNT) { i ->
+        repeat(count) { i ->
             val active = i == page
             Box(
                 Modifier.size(width = if (active) 20.dp else 8.dp, height = 8.dp)
@@ -112,7 +112,7 @@ private fun PageDots(page: Int, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun PageHeader(icon: @Composable () -> Unit, title: String, subtitle: String) {
+internal fun PageHeader(icon: @Composable () -> Unit, title: String, subtitle: String) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         icon()
         Spacer(Modifier.height(16.dp))
@@ -123,7 +123,7 @@ private fun PageHeader(icon: @Composable () -> Unit, title: String, subtitle: St
 }
 
 @Composable
-private fun IconBadge(icon: ImageVector) {
+internal fun IconBadge(icon: ImageVector) {
     Box(
         Modifier.size(64.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(20.dp)),
         contentAlignment = Alignment.Center,
@@ -133,7 +133,7 @@ private fun IconBadge(icon: ImageVector) {
 }
 
 @Composable
-private fun FeatureRow(icon: ImageVector, title: String, body: String) {
+internal fun FeatureRow(icon: ImageVector, title: String, body: String) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),

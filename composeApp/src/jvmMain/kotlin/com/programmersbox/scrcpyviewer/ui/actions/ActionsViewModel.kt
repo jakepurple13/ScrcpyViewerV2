@@ -91,6 +91,8 @@ data class ActionsUiState(
     val test: TestResult? = null,
     /** Non-null when actions cannot be saved to disk. */
     val persistenceError: String? = null,
+    /** Ids ticked for export while the list is in selection mode; null otherwise. Only existing actions. */
+    val exportSelection: Set<String>? = null,
 )
 
 /** The import being reviewed. When [error] is set the file was rejected and [items] is empty. */
@@ -121,6 +123,8 @@ class ActionsViewModel(
 
     private val editor = MutableStateFlow(Editor())
 
+    private val exportIds = MutableStateFlow<Set<String>?>(null)
+
     /** Settings of every variable seen in this draft, so one that disappears while typing comes back unchanged. */
     private val variableMemory = HashMap<String, Variable>()
 
@@ -130,8 +134,8 @@ class ActionsViewModel(
     private val devices = tracker.devices.map(::connectedSerials)
 
     val state: StateFlow<ActionsUiState> = combine(
-        store.actions, editor, devices, store.persistenceError,
-    ) { actions, e, serials, error ->
+        store.actions, editor, devices, store.persistenceError, exportIds,
+    ) { actions, e, serials, error, export ->
         ActionsUiState(
             actions = actions,
             selectedId = e.selectedId,
@@ -142,6 +146,7 @@ class ActionsViewModel(
             testDevice = testDevice(e.testDevice, serials),
             test = e.test,
             persistenceError = error,
+            exportSelection = export?.let { ids -> actions.mapNotNullTo(HashSet()) { it.id.takeIf { id -> id in ids } } },
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ActionsUiState())
 
@@ -309,7 +314,29 @@ class ActionsViewModel(
         }
     }
 
-    fun exportJson(): String = ActionCodec.encode(store.actions.value)
+    /** The file text for the actions in [ids], in list order. */
+    fun exportJson(ids: Collection<String>): String = ActionCodec.encode(store.actions.value.filter { it.id in ids })
+
+    /** Enters selection mode with every action ticked. */
+    fun startExport() {
+        exportIds.value = store.actions.value.mapTo(HashSet()) { it.id }
+    }
+
+    fun toggleExport(id: String) {
+        exportIds.update { it?.let { ids -> if (id in ids) ids - id else ids + id } }
+    }
+
+    fun selectAllExport() {
+        if (exportIds.value != null) startExport()
+    }
+
+    fun selectNoExport() {
+        if (exportIds.value != null) exportIds.value = emptySet()
+    }
+
+    fun cancelExport() {
+        exportIds.value = null
+    }
 
     fun beginImport(text: String) {
         _importState.value = try {

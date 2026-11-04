@@ -19,6 +19,8 @@ data class Settings(
     val useSystemTitleBar: Boolean? = null,
     /** False until the first-run guide is finished or skipped. True when absent, so upgrades from older files skip it. */
     val onboardingSeen: Boolean = true,
+    /** False until the Actions intro is finished or closed. False when absent, so existing users see it once. */
+    val actionsIntroSeen: Boolean = false,
 )
 
 internal fun defaultCaptureDir(): String {

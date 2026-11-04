@@ -25,6 +25,7 @@ import com.programmersbox.scrcpyviewer.ui.actions.ActionImportDialogContent
 import com.programmersbox.scrcpyviewer.ui.actions.ActionImportUiState
 import com.programmersbox.scrcpyviewer.ui.actions.ActionType
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsContent
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsIntroDialog
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsUiState
 import com.programmersbox.scrcpyviewer.ui.actions.IconPickerContent
 import com.programmersbox.scrcpyviewer.ui.actions.TestResult
@@ -97,6 +98,19 @@ class ActionsScreenshotTest {
                 persistenceError = "actions.json is corrupt and was backed up",
             ),
         )
+    }
+
+    @Test
+    fun `actions export selection`() = shot("actions-export-select.png", ThemeMode.Light) {
+        screen(state.copy(exportSelection = setOf("awake", "logcat")))
+    }
+
+    @Test
+    fun `actions intro dialog`() = shot("actions-intro.png", ThemeMode.Light) {
+        Box(Modifier.fillMaxSize()) {
+            screen(state)
+            ActionsIntroDialog(page = 0, onPage = {}, onFinish = {})
+        }
     }
 
     @Test

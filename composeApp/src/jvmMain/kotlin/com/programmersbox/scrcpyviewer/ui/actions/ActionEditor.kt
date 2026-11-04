@@ -1,5 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,7 +40,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -56,6 +61,8 @@ import com.programmersbox.scrcpyviewer.actions.OutputTarget
 import com.programmersbox.scrcpyviewer.actions.Variable
 import com.programmersbox.scrcpyviewer.actions.VariableKind
 import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
+import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
+import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
 import com.programmersbox.scrcpyviewer.ui.mirror.VariablesDialog
 
 /** Shown under the Output field: Toast and None runs stop at 30 s. */
@@ -111,7 +118,7 @@ fun ActionEditor(
                 ActionType.Toggle -> ToggleFields(draft, state, monospace, edit, onTestRead = { onEvent(ActionsEvent.TestRead) })
                 ActionType.RunOnce -> RunOnceFields(draft, errors, monospace, edit)
             }
-            state.test?.let { TestOutput(it) }
+            AnimatedPresence(state.test) { TestOutput(it) }
         }
         HorizontalDivider()
         Row(
@@ -201,12 +208,14 @@ private fun ToggleFields(
 @Composable
 private fun RunOnceFields(draft: ActionDraft, errors: DraftErrors, monospace: TextStyle, edit: ((ActionDraft) -> ActionDraft) -> Unit) {
     CommandField("Command", draft.command, errors.command, monospace) { v -> edit { it.copy(command = v) } }
-    SectionLabel("Variables found in the command")
-    if (draft.variables.isEmpty()) {
-        Hint("None. Write {name} in the command to ask for a value each time it runs.")
-    } else {
-        draft.variables.forEach { (name, variable) ->
-            VariableRow(name, variable, monospace) { v -> edit { it.copy(variables = it.variables + (name to v)) } }
+    // One child of the field column, so the collapsed parts add no extra spacing between fields.
+    Column {
+        SectionLabel("Variables found in the command")
+        AnimatedVisibility(draft.variables.isEmpty(), enter = expandFadeIn(), exit = shrinkFadeOut()) {
+            Hint("None. Write {name} in the command to ask for a value each time it runs.", Modifier.padding(top = 12.dp))
+        }
+        AnimatedVisibility(draft.variables.isNotEmpty(), enter = expandFadeIn(), exit = shrinkFadeOut()) {
+            VariableRows(draft.variables, monospace) { name, v -> edit { it.copy(variables = it.variables + (name to v)) } }
         }
     }
     SectionLabel("Output")
@@ -221,9 +230,48 @@ private fun RunOnceFields(draft: ActionDraft, errors: DraftErrors, monospace: Te
     }
 }
 
+/**
+ * One row per variable. A row grows in when its variable appears and shrinks away when it goes, and is kept
+ * meanwhile with the settings it last had. Rows present when this first shows appear without animating.
+ */
 @Composable
-private fun VariableRow(name: String, variable: Variable, monospace: TextStyle, onChange: (Variable) -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+private fun VariableRows(variables: Map<String, Variable>, monospace: TextStyle, onChange: (String, Variable) -> Unit) {
+    val leaving = remember { mutableStateMapOf<String, Variable>() }
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(variables) {
+        leaving.putAll(variables)
+        settled = true
+    }
+    Column {
+        (variables.keys + leaving.keys).forEach { name ->
+            key(name) { VariableRowItem(name, variables[name], leaving, settled, monospace, onChange) }
+        }
+    }
+}
+
+@Composable
+private fun VariableRowItem(
+    name: String,
+    live: Variable?,
+    leaving: MutableMap<String, Variable>,
+    settled: Boolean,
+    monospace: TextStyle,
+    onChange: (String, Variable) -> Unit,
+) {
+    val variable = live ?: leaving[name]
+    val visible = remember { MutableTransitionState(!settled) }
+    visible.targetState = live != null
+    if (variable != null) {
+        AnimatedVisibility(visible, enter = expandFadeIn(), exit = shrinkFadeOut()) {
+            VariableRow(name, variable, monospace, Modifier.padding(top = 12.dp)) { onChange(name, it) }
+        }
+    }
+    if (live == null && visible.isIdle && !visible.currentState) LaunchedEffect(Unit) { leaving.remove(name) }
+}
+
+@Composable
+private fun VariableRow(name: String, variable: Variable, monospace: TextStyle, modifier: Modifier, onChange: (Variable) -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(12.dp), modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("{$name}", style = monospace, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(120.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -339,14 +387,26 @@ private fun TestOutput(test: TestResult) {
     }
 }
 
+/** Shows [value] with its content growing in, and shrinking away when [value] becomes null, keeping the last value meanwhile. */
+@Composable
+private fun <T : Any> AnimatedPresence(value: T?, content: @Composable (T) -> Unit) {
+    val last = remember { arrayOfNulls<Any>(1) }
+    if (value != null) last[0] = value
+    @Suppress("UNCHECKED_CAST")
+    val shown = last[0] as T?
+    AnimatedVisibility(value != null, enter = expandFadeIn(), exit = shrinkFadeOut()) {
+        if (shown != null) content(shown)
+    }
+}
+
 @Composable
 private fun SectionLabel(text: String) {
     Text(text.uppercase(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
 }
 
 @Composable
-private fun Hint(text: String) {
-    Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun Hint(text: String, modifier: Modifier = Modifier) {
+    Text(text, modifier = modifier, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -154,6 +154,8 @@ fun App(
                                 TopLevelRoute.Actions -> ActionsScreen(
                                     actionsViewModel,
                                     actionFileDialogs,
+                                    introSeen = settings.actionsIntroSeen,
+                                    onIntroSeen = settingsViewModel::finishActionsIntro,
                                     panes = actionsPanes
                                 )
 

@@ -128,6 +128,9 @@ class SettingsViewModel(
     /** The first-run guide was closed. */
     fun finishOnboarding() = appSettings.update { it.copy(onboardingSeen = true) }
 
+    /** The Actions intro was finished or closed. */
+    fun finishActionsIntro() = appSettings.update { it.copy(actionsIntroSeen = true) }
+
     /** `null` clears the default preset. */
     fun setDefaultPreset(id: String?) = presets.setDefault(id)
 
