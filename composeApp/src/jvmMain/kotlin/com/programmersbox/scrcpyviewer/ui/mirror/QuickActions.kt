@@ -22,7 +22,9 @@ import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.koin.compose.koinInject
 
 /** Device settings the quick actions sheet switches on and off over `adb shell`. */
@@ -73,22 +75,38 @@ enum class QuickToggle(val label: String, val readCommand: String) {
 data class ToggleStates(val builtIn: Map<QuickToggle, Boolean?>, val custom: Map<String, Boolean?>)
 
 /** `adb shell` commands of the quick actions sheet for one device. */
-open class DeviceQuickActions(private val adb: AdbClient, private val serial: String) {
+open class DeviceQuickActions(
+    private val adb: AdbClient,
+    private val serial: String,
+    private val readTimeoutMs: Long = ShellRunner.BUFFERED_TIMEOUT_MS,
+) {
     /** Every [QuickToggle]'s state, read in one shell call; null for a setting that could not be read. */
-    open suspend fun read(): Map<QuickToggle, Boolean?> = readBatch(emptyList()).builtIn
+    open suspend fun read(): Map<QuickToggle, Boolean?> = parse(adb.shell(serial, batch(emptyList())), emptyList()).builtIn
 
     /**
      * The built-ins plus every [custom] toggle that has a read command, in the same shell call. A custom toggle is on
      * when its [ToggleAction.onWhen] matches its output; null without a match rule or when its part is missing.
+     * A user's read command may never end (`logcat`), so this call runs on the cancellable stream with the buffered
+     * 30 s overall limit and throws [IOException] when it is reached: the read fails and the device command stops.
      */
-    open suspend fun read(custom: List<ToggleAction>): ToggleStates =
-        if (custom.none { it.read != null }) ToggleStates(read(), emptyMap()) else readBatch(custom)
-
-    private suspend fun readBatch(custom: List<ToggleAction>): ToggleStates {
+    open suspend fun read(custom: List<ToggleAction>): ToggleStates {
         val readable = custom.filter { it.read != null }
-        // Newlines, not `;`: a trailing `#comment` in a custom read command cannot swallow the commands after it.
-        val cmd = (QuickToggle.entries.map { it.readCommand } + readable.map { it.read!! }).joinToString("\necho $SEPARATOR\n")
-        val parts = adb.shell(serial, cmd).split(SEPARATOR)
+        if (readable.isEmpty()) return ToggleStates(read(), emptyMap())
+        val out = StringBuilder()
+        try {
+            withTimeout(readTimeoutMs) { adb.shellStream(serial, batch(readable)).collect { out.append(it) } }
+        } catch (e: TimeoutCancellationException) {
+            throw IOException("Reading the toggles timed out")
+        }
+        return parse(out.toString(), readable)
+    }
+
+    // Newlines, not `;`: a trailing `#comment` in a custom read command cannot swallow the commands after it.
+    private fun batch(readable: List<ToggleAction>): String =
+        (QuickToggle.entries.map { it.readCommand } + readable.map { it.read!! }).joinToString("\necho $SEPARATOR\n")
+
+    private fun parse(output: String, readable: List<ToggleAction>): ToggleStates {
+        val parts = output.split(SEPARATOR)
         val builtIn = QuickToggle.entries.withIndex().associate { (i, t) -> t to parts.getOrNull(i)?.let(t::parse) }
         val states = readable.withIndex().associate { (i, a) ->
             a.id to parts.getOrNull(QuickToggle.entries.size + i)?.let { out -> a.onWhen?.matches(out) }
@@ -298,8 +316,18 @@ class QuickActions internal constructor(
             QuickActionEvent.PromptConfirm -> prompt?.takeIf { !it.needsValues }?.let(::execute)
             QuickActionEvent.PromptCancel -> prompt = null
             is QuickActionEvent.Manage -> onManage(event.actionId)
-            is QuickActionEvent.Duplicate -> store?.let { s -> runCatching { s.duplicate(event.id) } }
-            is QuickActionEvent.Delete -> store?.delete(event.id)
+            is QuickActionEvent.Duplicate -> editStore("Could not duplicate the action") { duplicate(event.id) }
+            is QuickActionEvent.Delete -> editStore("Could not delete the action") { delete(event.id) }
+        }
+    }
+
+    /** Store edits from the sheet; the action may already be gone (deleted in the main window), which is reported. */
+    private fun editStore(failure: String, block: ActionStore.() -> Unit) {
+        val s = store ?: return
+        try {
+            s.block()
+        } catch (e: Exception) {
+            notify("$failure: ${e.message ?: e}")
         }
     }
 
@@ -310,7 +338,9 @@ class QuickActions internal constructor(
             val read = runCatching { d.read(toggleActions) }.getOrNull() ?: return@launch
             // A toggle being switched keeps its optimistic state until its command answers.
             toggles = read.builtIn + toggles.filterKeys { it in pending }
-            customState = customState + read.custom.filterKeys { it !in customPending }
+            // Only toggles that still exist: one deleted during the read must not get its state back.
+            val ids = custom.mapTo(HashSet()) { it.id }
+            customState = customState + read.custom.filterKeys { it in ids && it !in customPending }
         }
     }
 
@@ -379,6 +409,11 @@ class QuickActions internal constructor(
         val cmd = CommandTemplate.substitute(action.command, pending.values)
         if (promptToConsole) {
             val c = console ?: return
+            // The console may have become busy while the prompt was open: refuse before switching tabs.
+            if (c.running) {
+                notify(ShellConsole.BUSY_MESSAGE)
+                return
+            }
             tab = SheetTab.Shell
             memory.tab = SheetTab.Shell
             c.runAction(action.name, cmd)

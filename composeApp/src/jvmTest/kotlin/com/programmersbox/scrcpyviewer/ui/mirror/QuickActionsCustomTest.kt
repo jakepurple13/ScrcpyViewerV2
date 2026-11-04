@@ -23,19 +23,47 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import java.io.IOException
+import kotlin.test.assertFailsWith
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 
-/** Answers buffered shell commands from [answer]. */
-private class ShellAdb(private val answer: (String) -> String) : AdbClient(adbPath = { error("no real adb in tests") }) {
+/** Answers shell commands from [answer]; with [endless] a streamed command prints forever, like `logcat`. */
+private class ShellAdb(private val endless: Boolean = false, private val answer: (String) -> String) :
+    AdbClient(adbPath = { error("no real adb in tests") }) {
     val commands = mutableListOf<String>()
+    val streams = mutableListOf<String>()
+
+    @Volatile var streamCancelled = false
+
+    /** When set, a streamed command answers only once it completes. */
+    var streamGate: CompletableDeferred<Unit>? = null
 
     override suspend fun shell(serial: String, cmd: String): String {
         commands += cmd
         return answer(cmd)
+    }
+
+    override fun shellStream(serial: String, cmd: String): Flow<String> = flow {
+        streams += cmd
+        if (!endless) {
+            streamGate?.await()
+            emit(answer(cmd))
+            return@flow
+        }
+        try {
+            while (true) {
+                emit("I ActivityManager: line\n")
+                delay(1)
+            }
+        } finally {
+            streamCancelled = true
+        }
     }
 }
 
@@ -83,9 +111,10 @@ class QuickActionsCustomTest {
         adb: ShellAdb = ShellAdb { "" },
         memory: QuickActionsMemory = QuickActionsMemory(),
         managed: MutableList<String?> = mutableListOf(),
+        readTimeoutMs: Long = 30_000,
     ): QuickActions {
         val qa = QuickActions(
-            DeviceQuickActions(adb, "SER"), eager, serial = "SER", store = store, runner = runner, console = console,
+            DeviceQuickActions(adb, "SER", readTimeoutMs), eager, serial = "SER", store = store, runner = runner, console = console,
             memory = memory, onManage = { managed += it },
         ) { messages += it }
         eager.launch { qa.watchActions() }
@@ -102,13 +131,73 @@ class QuickActionsCustomTest {
 
         qa.toggleSheet()
 
-        val cmd = adb.commands.single()
+        assertTrue(adb.commands.isEmpty())
+        val cmd = adb.streams.single()
         assertTrue(cmd.startsWith(QuickToggle.DarkMode.readCommand))
         assertTrue(cmd.endsWith("settings get global stay_on_while_plugged_in"))
         assertEquals(true, qa.uiState.customState["stay"])
         assertNull(qa.uiState.customState["plain"])
         assertEquals(false, qa.uiState.toggles[QuickToggle.WiFi])
         assertEquals(listOf(stayAwake, noRead), qa.uiState.custom)
+    }
+
+    @Test
+    fun `a read that never ends gives up and stops the device command`() = runBlocking {
+        val adb = ShellAdb(endless = true) { "" }
+        val e = assertFailsWith<IOException> { DeviceQuickActions(adb, "SER", readTimeoutMs = 50).read(listOf(stayAwake)) }
+        assertEquals("Reading the toggles timed out", e.message)
+        assertTrue(adb.streamCancelled)
+    }
+
+    @Test
+    fun `toggles stay usable while a read never ends, and its states stay unknown`() = runBlocking {
+        store.upsert(stayAwake)
+        val adb = ShellAdb(endless = true) { "__scrcpyviewer_exit=0\n" }
+        val qa = quickActions(adb, readTimeoutMs = 100)
+
+        qa.toggleSheet()
+        qa.onEvent(QuickActionEvent.CustomToggle("stay", true))
+        qa.onEvent(QuickActionEvent.Toggle(QuickToggle.WiFi, true))
+        assertTrue(qa.uiState.customPending.isEmpty())
+        assertTrue(qa.uiState.pending.isEmpty())
+
+        withTimeout(5_000) { while (!adb.streamCancelled) delay(10) }
+        assertEquals(true, qa.uiState.customState["stay"])
+        assertEquals(true, qa.uiState.toggles[QuickToggle.WiFi])
+        assertNull(qa.uiState.toggles[QuickToggle.DarkMode])
+        assertTrue(messages.isEmpty())
+    }
+
+    @Test
+    fun `refresh keeps a pending custom toggle's optimistic state`() {
+        store.upsert(stayAwake)
+        val builtIns = QuickToggle.entries.joinToString("\n__scrcpyviewer_sep__\n") { "0" }
+        val qa = quickActions(ShellAdb { "$builtIns\n__scrcpyviewer_sep__\n0\n" })
+        runner.gate = CompletableDeferred()
+
+        qa.onEvent(QuickActionEvent.CustomToggle("stay", true))
+        qa.toggleSheet()
+        assertEquals(true, qa.uiState.customState["stay"])
+        runner.gate!!.complete(Unit)
+        assertEquals(true, qa.uiState.customState["stay"])
+        assertTrue(qa.uiState.customPending.isEmpty())
+    }
+
+    @Test
+    fun `a toggle deleted during the read does not get its state back`() {
+        store.upsert(stayAwake)
+        val builtIns = QuickToggle.entries.joinToString("\n__scrcpyviewer_sep__\n") { "0" }
+        val adb = ShellAdb { "$builtIns\n__scrcpyviewer_sep__\n7\n" }
+        adb.streamGate = CompletableDeferred()
+        val qa = quickActions(adb)
+
+        qa.toggleSheet()
+        store.delete("stay")
+        adb.streamGate!!.complete(Unit)
+
+        assertEquals(false, qa.uiState.toggles[QuickToggle.WiFi]) // the read did answer
+        assertTrue(qa.uiState.custom.isEmpty())
+        assertFalse("stay" in qa.uiState.customState)
     }
 
     @Test
@@ -220,6 +309,23 @@ class QuickActionsCustomTest {
     }
 
     @Test
+    fun `console busy by the time the prompt is confirmed is refused without switching tabs`() {
+        store.upsert(RunOnceAction(id = "s", name = "Logcat", command = "logcat", output = OutputTarget.Shell, confirm = true))
+        val qa = quickActions()
+        qa.toggleSheet()
+
+        qa.onEvent(QuickActionEvent.RunCustom("s"))
+        console.input = "top"
+        console.submit()
+        qa.onEvent(QuickActionEvent.PromptConfirm)
+
+        assertEquals(listOf("Stop the running command first"), messages)
+        assertEquals(SheetTab.Actions, qa.uiState.tab)
+        assertEquals(listOf("top"), runner.streams)
+        assertNull(qa.uiState.prompt)
+    }
+
+    @Test
     fun `deleting or changing the action while its prompt is open clears the prompt`() {
         val action = RunOnceAction(id = "c", name = "Clear", command = "pm clear {pkg}", confirm = true)
         store.upsert(action)
@@ -296,5 +402,9 @@ class QuickActionsCustomTest {
         qa.onEvent(QuickActionEvent.Delete("plain"))
         assertEquals(listOf("Plain (2)"), qa.uiState.custom.map { it.name })
         assertEquals(listOf(null, "plain"), managed)
+
+        qa.onEvent(QuickActionEvent.Duplicate("gone"))
+        qa.onEvent(QuickActionEvent.Delete("gone"))
+        assertTrue(messages.single().startsWith("Could not duplicate the action: "))
     }
 }
