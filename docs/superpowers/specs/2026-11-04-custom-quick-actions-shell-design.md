@@ -52,7 +52,11 @@ rounded grip that turns the accent color while hovered, dragged, or focused; the
   width is not changed. The tab minimum wins over the stage minimum.
 - Actions and Shell each remember their own width. The widths are saved in the app settings (`quickActionsWidth`,
   `shellWidth`, in dp) when a drag ends, so new mirror windows open at them.
-- Opening the sheet grows the window by the current tab's width; closing shrinks it by the width it has then.
+- Opening the sheet grows the window by the current tab's width, no further than the screen allows (but at least by the
+  tab's minimum; the stage gives up the rest, and the stored width is not changed). In a window whose stage is already
+  under 160 dp it grows by the tab's minimum, the width the sheet then shows. Closing shrinks the window by what opening
+  grew it, so it returns to its width before opening, and the stage gets back what a drag took from it. A tab switch
+  after a drag moves the window by the difference between the two tabs' widths; the drag stays taken from the stage.
 - Double-click the bar, or press Home while it is focused, to reset the current tab to its default width. The bar is
   focusable; Left and Right move it by 16 dp.
 - Maximized and fullscreen windows: the bar works the same way; the sheet takes its width from the stage.
@@ -155,18 +159,21 @@ A new `TopLevelRoute.Actions`, labelled "Actions", placed between Presets and Se
 Layout: list on the left, editor on the right, following the existing Presets screen's patterns.
 
 - **List**: each custom action's name and a type line ("Toggle", "Run once · 1 variable", "Run once · to Shell").
-  A drag handle reorders; the mirror sheet uses the same order. Under the list: **+ New**, **Import**, **Export**.
+  A drag handle reorders; the mirror sheet uses the same order. Under the list: **+ New** (a split button; its arrow
+  menu offers "New blank action" and "From template…", see Templates), **Import**, **Export**.
   A **?** button in the list header ("How actions work") opens the intro dialog; Export switches the list to
   selection mode (see Import and export).
-- **Empty state**: a short explanation and + New / Import.
+- **Empty state**: a short explanation, + New / Import, a "Browse templates" button, and four quick-start template
+  chips (see Templates).
 - **Editor** fields:
   - Type segment: **Toggle** / **Run once**. Switching type keeps the name.
   - **Icon** button left of the Name field, opening the icon picker (see Icons).
   - Name (required, unique case-insensitive).
   - Toggle: **Turn on** command, **Turn off** command (both required), **Read state** command (optional), and when a
     read command is set, **On when output** with a mode (equals / contains / matches regex) and a value. Output is
-    trimmed before matching. "Test read" runs the read command on the chosen device and shows the raw output and
-    whether it counts as on or off.
+    trimmed before matching. A regex that does not compile shows "Not a valid pattern" (error color) in place of the
+    rule's sentence, and Save reports it as a field error. "Test read" runs the read command on the chosen device and
+    shows the raw output and whether it counts as on or off.
   - Run once: **Command** (required), **Variables found in the command** (one row per distinct `{name}`, see below),
     **Output**: Toast / Shell tab / None, **Confirm before running** checkbox.
   - Bottom row: **Test run on <device> ▾** (connected devices; disabled with none connected), **Delete**, **Save**.
