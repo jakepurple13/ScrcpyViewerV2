@@ -17,7 +17,7 @@ plugins {
 
 // Single source of truth: feeds packageVersion and the generated APP_VERSION constant shown in the window title.
 // Local update tests only: -PappVersion=1.6.1 builds a "newer" package.
-val appVersion = (findProperty("appVersion") as String?) ?: "1.8.0"
+val appVersion = (findProperty("appVersion") as String?) ?: "1.8.1"
 
 val generateAppVersion = tasks.register("generateAppVersion") {
     val version = appVersion
@@ -167,7 +167,7 @@ nucleus.application {
             infoPlist {
                 extraKeysRawXml = """
                     <key>NSLocalNetworkUsageDescription</key>
-                    <string>Scrcpy Viewer connects to Android devices on your network for wireless debugging.</string>
+                    <string>Scrcpy Vwr connects to Android devices on your network for wireless debugging.</string>
                     <key>NSBonjourServices</key>
                     <array>
                         <string>_adb-tls-pairing._tcp</string>

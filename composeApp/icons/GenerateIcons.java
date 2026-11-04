@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Renders the Scrcpy Viewer app icon ("Mirror": a phone with its outlined reflection behind it) from the
+ * Renders the Scrcpy Vwr app icon ("Mirror": a phone with its outlined reflection behind it) from the
  * geometry in app-icon.svg, and writes the packaging formats:
  *
  *   icon.png        512 px, for Linux packaging and the window/taskbar icon (copied into jvmMain resources)

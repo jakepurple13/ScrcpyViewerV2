@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="composeApp/src/jvmMain/resources/icon.png" width="128" alt="Scrcpy Viewer icon">
+  <img src="composeApp/src/jvmMain/resources/icon.png" width="128" alt="Scrcpy Vwr icon">
 </p>
 
-<h1 align="center">Scrcpy Viewer</h1>
+<h1 align="center">Scrcpy Vwr</h1>
 
 <p align="center">
   A desktop app for mirroring and controlling Android devices, built on the
@@ -14,7 +14,7 @@
 ## What it is
 
 Running [scrcpy](https://github.com/Genymobile/scrcpy) usually means typing a command in a terminal and remembering
-which flags you want. Scrcpy Viewer replaces that with a desktop app: a live list of connected devices, a searchable
+which flags you want. Scrcpy Vwr replaces that with a desktop app: a live list of connected devices, a searchable
 list of every scrcpy option as checkboxes, and saved presets you can share.
 
 It is not a wrapper around the `scrcpy` program. The app includes its own scrcpy client. It talks to `scrcpy-server`

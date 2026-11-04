@@ -48,13 +48,13 @@ class PresetCodecTest {
     @Test
     fun `decode rejects version 2`() {
         val r = PresetCodec.decode("""{"format":"scrcpyviewer-presets","version":2,"presets":[]}""")
-        assertEquals("This file was made by a newer version of Scrcpy Viewer.", r.exceptionOrNull()?.message)
+        assertEquals("This file was made by a newer version of Scrcpy Vwr.", r.exceptionOrNull()?.message)
     }
 
     @Test
     fun `decode rejects malformed JSON`() {
         val r = PresetCodec.decode("{not json")
-        assertEquals("This file isn't a Scrcpy Viewer preset file.", r.exceptionOrNull()?.message)
+        assertEquals("This file isn't a Scrcpy Vwr preset file.", r.exceptionOrNull()?.message)
     }
 
     @Test

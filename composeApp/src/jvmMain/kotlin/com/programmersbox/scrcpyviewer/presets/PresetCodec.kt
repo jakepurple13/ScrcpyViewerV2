@@ -47,13 +47,13 @@ object PresetCodec {
         Result.failure(notPresetFile())
     }
 
-    private fun notPresetFile() = PresetImportException("This file isn't a Scrcpy Viewer preset file.")
+    private fun notPresetFile() = PresetImportException("This file isn't a Scrcpy Vwr preset file.")
 
     private fun parse(text: String): DecodedFile {
         val root = Json.parseToJsonElement(text) as? JsonObject ?: throw notPresetFile()
         if ((root["format"] as? JsonPrimitive)?.contentOrNull != FORMAT) throw notPresetFile()
         val version = (root["version"] as? JsonPrimitive)?.intOrNull ?: throw notPresetFile()
-        if (version > VERSION) throw PresetImportException("This file was made by a newer version of Scrcpy Viewer.")
+        if (version > VERSION) throw PresetImportException("This file was made by a newer version of Scrcpy Vwr.")
         if (version < 1) throw notPresetFile()
         val list = root["presets"] as? JsonArray ?: throw notPresetFile()
 

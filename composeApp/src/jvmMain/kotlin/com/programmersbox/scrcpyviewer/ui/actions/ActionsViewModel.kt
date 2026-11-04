@@ -384,7 +384,7 @@ class ActionsViewModel(
         _importState.value = try {
             ActionImportUiState(ActionImportPlan.plan(store.actions.value, ActionCodec.decode(text)))
         } catch (e: ActionFileException) {
-            ActionImportUiState(error = e.message ?: "Not a scrcpy-viewer actions file")
+            ActionImportUiState(error = e.message ?: "Not a Scrcpy Vwr actions file")
         }
     }
 
