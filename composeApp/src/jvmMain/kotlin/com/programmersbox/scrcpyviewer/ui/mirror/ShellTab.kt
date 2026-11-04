@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
@@ -53,6 +54,9 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
@@ -151,16 +155,27 @@ private fun Console(console: ShellConsole, modifier: Modifier, onCopy: () -> Uni
     val colors = MaterialTheme.colorScheme
     val state = rememberLazyListState()
     val visible = console.visible
-    // Follow the bottom until the user scrolls away from it; scrolling back down resumes.
+    // Follow the bottom until the user scrolls up; reaching the bottom again resumes. Only the user's scrolling (wheel,
+    // drag) stops it: it arrives through nested scroll, which our own scrollToItem does not dispatch.
     var following by remember { mutableStateOf(true) }
+    val userScroll = remember {
+        object : NestedScrollConnection {
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (consumed.y > 0f) following = false // content moved down: the user scrolled toward older lines
+                return Offset.Zero
+            }
+        }
+    }
     LaunchedEffect(state) {
-        snapshotFlow { state.isScrollInProgress }.filter { !it }.collect { following = !state.canScrollForward }
+        snapshotFlow { state.isScrollInProgress }.filter { !it }.collect { if (!state.canScrollForward) following = true }
     }
-    LaunchedEffect(visible.size, visible.lastOrNull(), console.paused) {
+    // Pause holds the view only while output can still arrive; once the command ends its last lines show.
+    val paused = console.paused && console.running
+    LaunchedEffect(visible.size, visible.lastOrNull(), paused) {
         if (!state.canScrollForward) following = true
-        if (following && !console.paused && visible.isNotEmpty()) state.scrollToItem(visible.lastIndex)
+        if (following && !paused && visible.isNotEmpty()) state.scrollToItem(visible.lastIndex)
     }
-    Box(modifier.clip(FieldShape).background(colors.surfaceContainerLowest).border(1.dp, colors.outlineVariant, FieldShape)) {
+    Box(modifier.nestedScroll(userScroll).clip(FieldShape).background(colors.surfaceContainerLowest).border(1.dp, colors.outlineVariant, FieldShape)) {
         SelectionContainer {
             LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
                 items(visible) { line -> ConsoleRow(line, console.filter) }

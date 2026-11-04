@@ -7,6 +7,7 @@ import com.programmersbox.scrcpyviewer.actions.OutputTarget
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.actions.ToggleAction
 import com.programmersbox.scrcpyviewer.actions.Variable
+import com.programmersbox.scrcpyviewer.actions.VariableKind
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellEvent
 import com.programmersbox.scrcpyviewer.adb.ShellResult
@@ -419,5 +420,21 @@ class QuickActionsCustomTest {
 
         assertEquals(listOf("com.a", "com.z"), qa.uiState.packages)
         assertEquals("pm list packages", adb.commands.last())
+    }
+
+    @Test
+    fun `each variable prompt starts without the previous package list`() {
+        store.upsert(RunOnceAction(id = "c", name = "Clear", command = "pm clear {pkg}",
+            variables = mapOf("pkg" to Variable("App", kind = VariableKind.App))))
+        val qa = quickActions(ShellAdb { "package:com.a\n" })
+        qa.toggleSheet()
+        qa.onEvent(QuickActionEvent.RunCustom("c"))
+        qa.onEvent(QuickActionEvent.LoadPackages(includeSystem = true))
+        assertEquals(listOf("com.a"), qa.uiState.packages)
+        qa.onEvent(QuickActionEvent.PromptCancel)
+
+        qa.onEvent(QuickActionEvent.RunCustom("c"))
+
+        assertNull(qa.uiState.packages)
     }
 }

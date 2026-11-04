@@ -10,6 +10,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -76,7 +79,7 @@ private val TileShape = RoundedCornerShape(16.dp)
 
 /**
  * The Actions tab: the built-in tiles, a "Your actions" divider, the user's tiles and a dashed "+ New action" tile,
- * two per row, plus the variable prompt, confirm and delete dialogs.
+ * two per row, plus the reboot and delete confirmations. The variable prompt and run confirm live at the sheet level.
  */
 @Composable
 fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) -> Unit) {
@@ -93,9 +96,9 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
             "Built in", Modifier.padding(start = 4.dp, top = 8.dp), style = MaterialTheme.typography.labelMedium,
             color = colors.onSurfaceVariant,
         )
-        val builtIn = buildList<@Composable () -> Unit> {
+        val builtIn = buildList {
             QuickToggle.entries.forEach { toggle ->
-                add {
+                add(GridTile(toggle) {
                     val value = state.toggles[toggle]
                     ActionTile(
                         icon = toggleIcon(toggle, value),
@@ -107,20 +110,20 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
                         role = Role.Switch,
                         onClick = { onEvent(QuickActionEvent.Toggle(toggle, value != true)) },
                     )
-                }
+                })
             }
-            add {
+            add(GridTile("developer-options") {
                 ActionTile(
                     icon = Icons.Filled.DeveloperMode, title = "Developer options", stateLine = "Open",
                     enabled = state.enabled, onClick = { onEvent(QuickActionEvent.DeveloperOptions) },
                 )
-            }
-            add {
+            })
+            add(GridTile("reboot") {
                 ActionTile(
                     icon = Icons.Filled.RestartAlt, title = "Reboot", stateLine = "Asks first", tint = colors.error,
                     enabled = state.enabled, onClick = { confirmReboot = true },
                 )
-            }
+            })
         }
         TileGrid(builtIn)
 
@@ -128,23 +131,24 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
             Text("Your actions", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
             HorizontalDivider(Modifier.weight(1f).padding(start = 8.dp), color = colors.outlineVariant)
         }
-        val yours = buildList<@Composable () -> Unit> {
+        val yours = buildList {
             state.custom.forEach { action ->
-                add { PopIn(visible = remember(action.id) { MutableTransitionState(action.id in initialIds).apply { targetState = true } }) {
-                    CustomTile(action, state, onEvent, onDelete = { deleting = action })
-                } }
+                add(GridTile(action.id) {
+                    PopIn(visible = remember { MutableTransitionState(action.id in initialIds).apply { targetState = true } }) {
+                        CustomTile(action, state, onEvent, onDelete = { deleting = action })
+                    }
+                })
             }
-            add {
+            add(GridTile(NewTileKey) {
                 ActionTile(
                     icon = Icons.Filled.Add, title = "New action", dashed = true,
                     onClick = { onEvent(QuickActionEvent.Manage(null)) },
                 )
-            }
+            })
         }
         TileGrid(yours)
     }
 
-    RunPrompts(state, onEvent)
     deleting?.let { action ->
         AlertDialog(
             onDismissRequest = { deleting = null },
@@ -175,16 +179,24 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
     }
 }
 
-/** [tiles] two per row, each cell half the width. */
+/** A grid cell: [key] keeps the tile's state (its pop-in) with it when tiles before it come or go. */
+private class GridTile(val key: Any, val content: @Composable () -> Unit)
+
+/** The "New action" tile's key, never equal to an action id. */
+private object NewTileKey
+
+/** [tiles] two per row, each cell half the width. One flow, not a Row per pair, so a key survives a change of row. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TileGrid(tiles: List<@Composable () -> Unit>) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        tiles.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                row.forEach { tile -> Box(Modifier.weight(1f)) { tile() } }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
-            }
-        }
+private fun TileGrid(tiles: List<GridTile>) {
+    FlowRow(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        maxItemsInEachRow = 2,
+    ) {
+        tiles.forEach { tile -> key(tile.key) { Box(Modifier.weight(1f)) { tile.content() } } }
+        if (tiles.size % 2 == 1) Spacer(Modifier.weight(1f))
     }
 }
 

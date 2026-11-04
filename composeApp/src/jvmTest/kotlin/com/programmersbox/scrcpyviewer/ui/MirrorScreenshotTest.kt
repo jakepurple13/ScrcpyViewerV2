@@ -18,6 +18,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellEvent
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.media.VideoFrame
+import com.programmersbox.scrcpyviewer.ui.mirror.SheetTab
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellConsole
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellTabContent
@@ -105,13 +106,16 @@ class MirrorScreenshotTest {
         command = "scrcpy -s 39121FDJH004AB --max-size=1920",
     )
 
-    private fun render(name: String, mode: ThemeMode, state: MirrorUiState = this.state, clickIndicator: ClickIndicator? = null, width: Int = 1280, height: Int = 800, showTopStrip: Boolean = true, settleMillis: Long = 0) {
+    private fun render(name: String, mode: ThemeMode, state: MirrorUiState = this.state, clickIndicator: ClickIndicator? = null, width: Int = 1280, height: Int = 800, showTopStrip: Boolean = true, settleMillis: Long = 0, shellConsole: ShellConsole? = null) {
         val out = outDir.resolve(name)
         val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
         renderToPng(width, height, out, settleMillis) {
             ScrcpyViewerTheme(mode) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    MirrorContent(state, frame, {}, {}, {}, {}, {}, {}, clickIndicator = clickIndicator, showTopStrip = showTopStrip)
+                    MirrorContent(
+                        state, frame, {}, {}, {}, {}, {}, {}, clickIndicator = clickIndicator, showTopStrip = showTopStrip,
+                        shellConsole = shellConsole,
+                    )
                 }
             }
         }
@@ -355,6 +359,23 @@ class MirrorScreenshotTest {
         console.filter = "Start proc"
         renderShell("mirror-shell-streaming.png", ThemeMode.Light, console, shellChips)
         renderShell("mirror-shell-streaming-dark.png", ThemeMode.Dark, console, shellChips)
+        console.stop()
+    }
+
+    @Test
+    fun `mirror quick actions shell tab running`() {
+        val runner = ScriptRunner(
+            mapOf("logcat" to listOf(ShellEvent.Output("I/ActivityManager( 612): Start proc 4121:com.example.notes/u0a212\n"))),
+            hang = true,
+        )
+        val console = ShellConsole(runner, ShellHistory(), CoroutineScope(Dispatchers.Unconfined), {})
+        console.input = "logcat"
+        console.submit()
+        val shell = state.copy(
+            quickActions = tilesState.copy(tab = SheetTab.Shell, consoleRunning = true),
+        )
+        render("mirror-quick-actions-shell.png", ThemeMode.Light, shell, shellConsole = console)
+        render("mirror-quick-actions-shell-dark.png", ThemeMode.Dark, shell, shellConsole = console)
         console.stop()
     }
 }

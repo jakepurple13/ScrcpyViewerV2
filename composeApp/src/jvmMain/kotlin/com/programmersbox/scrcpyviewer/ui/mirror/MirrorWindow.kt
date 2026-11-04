@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
@@ -100,12 +99,14 @@ import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -641,31 +642,31 @@ fun MirrorWindow(
             }
         }
 
-        // The quick actions sheet grows the window to the right instead of taking width from the stage. While it opens
-        // or closes the stage is pinned to its width (px), so the image never changes size, and the window's right
-        // edge animates out to uncover the panel, which does not move. One setBounds per frame moves and resizes the
-        // window atomically (moved left when it would leave the screen, back on close). Maximized and fullscreen
-        // windows cannot grow: there the sheet takes its width from the stage.
+        // The quick actions sheet grows the window to the right instead of taking width from the stage: by 280 dp on
+        // the Actions tab, 400 dp on the Shell tab. While it opens, closes or switches tabs the stage is pinned to its
+        // width (px), so the image never changes size, and the window's right edge animates to uncover or cover the
+        // panel. One setBounds per frame moves and resizes the window atomically (moved left when it would leave the
+        // screen, back on close). Maximized and fullscreen windows cannot grow: there the sheet takes its width from
+        // the stage.
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
         val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
         var baseBounds by remember { mutableStateOf<java.awt.Rectangle?>(null) }
-        LaunchedEffect(quickActions.open) {
-            val open = quickActions.open
+        val sheetTarget = sheetWidth(state.quickActions.open, state.quickActions.tab)
+        LaunchedEffect(sheetTarget) {
             if (windowState.placement != WindowPlacement.Floating && sheetGrowth.value == 0f) return@LaunchedEffect
             val base = baseBounds ?: awtWindow.bounds.also { baseBounds = it }
             val screenRight = awtWindow.graphicsConfiguration.bounds.let { it.x + it.width }
+            val target = sheetTarget.value
             pinnedStage = stage.width
-            sheetGrowth.animateTo(if (open) QUICK_ACTIONS_WIDTH.value else 0f, quickActionsSpec(open)) {
+            sheetGrowth.animateTo(target, sheetWidthSpec(sheetGrowth.value.dp, sheetTarget)) {
                 val width = base.width + value.roundToInt()
                 val overflow = (base.x + width - screenRight).coerceAtLeast(0)
                 awtWindow.setBounds(base.x - overflow, awtWindow.y, width, awtWindow.height)
             }
-            if (!open) {
-                baseBounds = null
-                // Keep the pin until the native window has shrunk, or the stage widens for a frame.
-                var frames = 0
-                while (awtWindow.width > base.width + 1 && frames++ < 30) withFrameNanos { }
-            }
+            if (target == 0f) baseBounds = null
+            // Keep the pin until the native window has shrunk, or the stage widens for a frame.
+            var frames = 0
+            while (awtWindow.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
             pinnedStage = null // not when cancelled: a reversed toggle keeps the pin through its own animation
         }
 
@@ -704,6 +705,7 @@ fun MirrorWindow(
                         onStageSize = { stage = it },
                         onQuickAction = quickActions::onEvent,
                         pinnedStageWidth = pinnedStage,
+                        shellConsole = quickActions.console,
                         onStageBounds = { stageBounds = it },
                         clickIndicator = clickIndicator,
                     )
@@ -713,6 +715,15 @@ fun MirrorWindow(
             }
         }
     }
+}
+
+/**
+ * Start-aligned at its own width but never narrower than the space it is given (so it can overflow, to be clipped,
+ * but leaves no gap).
+ */
+private fun Modifier.atLeastAvailableWidth(): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minWidth = constraints.maxWidth, maxWidth = Constraints.Infinity))
+    layout(constraints.maxWidth, placeable.height) { placeable.placeRelative(0, 0) }
 }
 
 /** How long the stage size must hold still before the aspect ratio lock corrects the window. */
@@ -762,6 +773,8 @@ fun MirrorContent(
      * shows in whatever width is left. Null: the sheet animates its own width, taken from the stage.
      */
     pinnedStageWidth: Int? = null,
+    /** The quick actions sheet's Shell tab console; null shows an empty Shell tab. */
+    shellConsole: ShellConsole? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Column(modifier.fillMaxSize()) {
@@ -796,16 +809,15 @@ fun MirrorContent(
                 }
             }
             SideToolbar(state, onAction)
+            val panel = rememberQuickActionsPanel(state.quickActions, onQuickAction, shellConsole)
             if (pinnedStageWidth != null) {
-                // The panel stays put; the growing window uncovers it.
+                // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
+                // so a tab switch's width change leaves no gap while the window catches up.
                 Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                    QuickActionsPanel(
-                        state.quickActions, onQuickAction,
-                        Modifier.align(Alignment.CenterStart).wrapContentWidth(Alignment.Start, unbounded = true),
-                    )
+                    panel(Modifier.atLeastAvailableWidth())
                 }
             } else {
-                QuickActionsSheet(state.quickActions, onQuickAction)
+                QuickActionsSheet(state.quickActions.open) { panel(Modifier) }
             }
         }
         HorizontalDivider(color = colors.outlineVariant)

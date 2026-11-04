@@ -430,6 +430,11 @@ class QuickActions internal constructor(
         }
         val pendingRun = PendingRun(action, needsValues = names.isNotEmpty(), needsConfirm = action.confirm, values = values)
         promptToConsole = toConsole
+        if (pendingRun.needsValues) {
+            // Each prompt asks the device again: apps change, and an earlier load may have failed.
+            packagesJob?.cancel()
+            packages = null
+        }
         if (pendingRun.needsValues || pendingRun.needsConfirm) prompt = pendingRun else execute(pendingRun)
     }
 
