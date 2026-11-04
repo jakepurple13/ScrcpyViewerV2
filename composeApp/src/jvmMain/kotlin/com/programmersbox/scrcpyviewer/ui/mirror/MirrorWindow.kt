@@ -620,6 +620,7 @@ fun MirrorWindow(
         var lastFrame by remember { mutableStateOf<IntSize?>(null) }
         // The native window's size when the lock last looked (a plain holder, read only in the effect below).
         val lastWindowSize = remember { arrayOf(Dimension()) }
+        val lastFit = remember { BooleanArray(1) { fit } } // the same, for Fit
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
         LaunchedEffect(stage, displayedSize, fit) {
             val fs = displayedSize ?: return@LaunchedEffect
@@ -628,8 +629,9 @@ fun MirrorWindow(
             // stage size, this only goes on once the size has held still.
             if (autoSized) delay(ASPECT_SETTLE_MS)
             val windowSize = awtWindow.size
-            val windowResized = windowSize != lastWindowSize[0]
+            val lockNeeded = aspectLockNeeded(windowSize != lastWindowSize[0], lastFrame, fs, lastFit[0], fit)
             lastWindowSize[0] = windowSize
+            lastFit[0] = fit
             val target: IntSize? = when {
                 !autoSized -> {
                     autoSized = true
@@ -641,9 +643,7 @@ fun MirrorWindow(
                     val scale = min(1f, min(maxW / fs.width, maxH / fs.height))
                     IntSize((fs.width * scale).roundToInt(), (fs.height * scale).roundToInt())
                 }
-                // Only a window the user resized is corrected. A stage resized inside a window that kept its size
-                // (the quick actions sheet's drag bar) keeps its new shape.
-                fit && aspectLock && windowResized -> aspectLockedStage(lastStage, stage, lastFrame, fs)
+                fit && aspectLock && lockNeeded -> aspectLockedStage(lastStage, stage, lastFrame, fs)
                 else -> null
             }
             lastFrame = fs
@@ -687,6 +687,7 @@ fun MirrorWindow(
                 // The bar moved: the window keeps its size, the sheet's new width comes out of the stage. If this cut
                 // an open or tab switch short, the window keeps what it has grown so far.
                 sheetGrowth.snapTo(sheetGrowth.value + (sheetTarget - lastTarget).value)
+                lastWindowSize[0] = awtWindow.size // whatever the cut-short animation grew, the user did not
                 pinnedStage = null
                 return@LaunchedEffect
             }
@@ -768,6 +769,15 @@ private val AtLeastAvailableWidth: Modifier = Modifier.layout { measurable, cons
 
 /** How long the stage size must hold still before the aspect ratio lock corrects the window. */
 private const val ASPECT_SETTLE_MS = 150L
+
+/**
+ * Whether the aspect ratio lock looks at the stage: after the user resized the window ([windowResized]), when the
+ * frame changed size or turned ([lastFrame] to [frame]), or when Fit came back on ([wasFit] to [fit]). Not when only
+ * the stage changed inside a window that kept its size: the quick actions sheet's drag bar moved, and the stage's new
+ * shape is the user's choice.
+ */
+fun aspectLockNeeded(windowResized: Boolean, lastFrame: IntSize?, frame: IntSize, wasFit: Boolean, fit: Boolean): Boolean =
+    windowResized || lastFrame != frame || (fit && !wasFit)
 
 /**
  * Stage size that keeps the frame's aspect ratio after the user resized the stage from [old] to [new]: the

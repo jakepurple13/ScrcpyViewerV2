@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,11 +65,11 @@ class SheetWidthTest {
     }
 
     @Test
-    fun `resizing changes only the current tab, saves on done, and resets to the default`() {
-        val saved = mutableListOf<SheetWidths>()
+    fun `resizing changes only the current tab, saves only that tab on done, and resets to the default`() {
+        val saved = mutableListOf<Pair<SheetTab, Dp>>()
         val qa = QuickActions(
             device = null, scope = CoroutineScope(Dispatchers.Unconfined),
-            widths = SheetWidths(actions = 300.dp, shell = 500.dp), saveWidths = { saved += it },
+            widths = SheetWidths(actions = 300.dp, shell = 500.dp), saveWidth = { tab, width -> saved += tab to width },
         ) {}
         assertEquals(SheetWidths(actions = 300.dp, shell = 500.dp), qa.uiState.widths)
 
@@ -77,11 +78,18 @@ class SheetWidthTest {
         assertEquals(SheetWidths(actions = 420.dp, shell = 500.dp), qa.uiState.widths)
         assertTrue(saved.isEmpty(), "not saved while dragging")
         qa.onEvent(QuickActionEvent.ResizeDone)
-        assertEquals(listOf(SheetWidths(actions = 420.dp, shell = 500.dp)), saved)
+        assertEquals(listOf(SheetTab.Actions to 420.dp), saved)
 
         qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Shell))
         qa.onEvent(QuickActionEvent.ResetWidth)
         assertEquals(SheetWidths(actions = 420.dp, shell = 400.dp), qa.uiState.widths)
-        assertEquals(SheetWidths(actions = 420.dp, shell = 400.dp), saved.last())
+        assertEquals(SheetTab.Shell to 400.dp, saved.last())
+    }
+
+    @Test
+    fun `saved widths load between each tab's minimum and 1200 dp`() {
+        assertEquals(SheetWidths(actions = 520.dp, shell = 640.dp), SheetWidths.fromSettings(520, 640))
+        assertEquals(SheetWidths(actions = 280.dp, shell = 400.dp), SheetWidths.fromSettings(0, -5))
+        assertEquals(SheetWidths(actions = 1200.dp, shell = 1200.dp), SheetWidths.fromSettings(90_000, 5000))
     }
 }

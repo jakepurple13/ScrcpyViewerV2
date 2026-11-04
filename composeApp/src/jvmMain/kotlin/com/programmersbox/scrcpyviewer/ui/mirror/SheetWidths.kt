@@ -6,6 +6,9 @@ import androidx.compose.ui.unit.dp
 /** The narrowest the device area (stage) gets while the sheet is dragged wider. */
 val STAGE_MIN_WIDTH = 160.dp
 
+/** The widest a saved sheet width is taken as when a window opens (a hand-edited or corrupt settings file). */
+val SHEET_MAX_WIDTH = 1200.dp
+
 /** How far one Left or Right key press on the sheet's drag bar moves it. */
 val SHEET_KEY_STEP = 16.dp
 
@@ -25,6 +28,12 @@ data class SheetWidths(val actions: Dp = QUICK_ACTIONS_WIDTH, val shell: Dp = QU
     companion object {
         /** [tab]'s default width, also its minimum. */
         fun default(tab: SheetTab): Dp = SheetWidths()[tab]
+
+        /** From the settings' dp values, each kept between its tab's minimum and [SHEET_MAX_WIDTH]. */
+        fun fromSettings(actions: Int, shell: Int): SheetWidths = SheetWidths(
+            actions.dp.coerceIn(default(SheetTab.Actions), SHEET_MAX_WIDTH),
+            shell.dp.coerceIn(default(SheetTab.Shell), SHEET_MAX_WIDTH),
+        )
     }
 }
 

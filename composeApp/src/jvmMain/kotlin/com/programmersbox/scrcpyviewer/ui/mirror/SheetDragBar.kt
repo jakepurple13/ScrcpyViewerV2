@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,13 +36,22 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.awt.Cursor
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+/** How long after the last key press the width is saved. */
+private const val KEY_SAVE_DELAY_MS = 400L
 
 /** The drag bar's width, part of the sheet's width. */
 internal val SHEET_DRAG_BAR_WIDTH = 8.dp
@@ -50,8 +61,9 @@ private val ResizeCursor = PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR))
 /**
  * The bar on the sheet's left edge, between the side toolbar and the sheet. Dragging it left widens the sheet ([width]
  * is the width shown now), right narrows it; [fit] clamps each new width. [onResize] reports every step,
- * [onResizeDone] the end of a drag or key press (time to save). Double-click or Home calls [onReset]. Focusable:
- * Left and Right move it by [SHEET_KEY_STEP]. The grip turns the accent color while hovered, dragged or focused.
+ * [onResizeDone] the end of a drag or of a run of key presses (time to save). Double-click or Home calls [onReset].
+ * Focusable: Left and Right move it by [SHEET_KEY_STEP]. The grip turns the accent color while hovered, dragged or
+ * focused.
  */
 @Composable
 internal fun SheetDragBar(
@@ -71,6 +83,18 @@ internal fun SheetDragBar(
     val currentWidth by rememberUpdatedState(width)
     val currentFit by rememberUpdatedState(fit)
     val currentOnReset by rememberUpdatedState(onReset)
+    val currentOnResizeDone by rememberUpdatedState(onResizeDone)
+    // Key presses (held keys repeat) save once they stop; a save still pending when the bar leaves is done at once.
+    val scope = rememberCoroutineScope()
+    val keySave = remember { arrayOfNulls<Job>(1) }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (keySave[0]?.isActive == true) {
+                keySave[0]?.cancel()
+                currentOnResizeDone()
+            }
+        }
+    }
     // The pointer's width, unclamped, so the bar stays under the pointer when it comes back from past a limit.
     val dragWidth = remember { FloatArray(1) }
     val dragState = rememberDraggableState { delta ->
@@ -84,7 +108,11 @@ internal fun SheetDragBar(
         val next = currentFit(currentWidth + by)
         if (next != currentWidth) {
             onResize(next)
-            onResizeDone()
+            keySave[0]?.cancel()
+            keySave[0] = scope.launch {
+                delay(KEY_SAVE_DELAY_MS)
+                currentOnResizeDone()
+            }
         }
     }
 
@@ -112,6 +140,18 @@ internal fun SheetDragBar(
             .semantics {
                 contentDescription = "Resize quick actions"
                 stateDescription = "${width.value.roundToInt()} dp wide"
+                // Adjustable, like a slider: the range is what the bar can reach in this window.
+                val min = fit(0.dp).value
+                val max = fit(SHEET_MAX_WIDTH).value.coerceAtLeast(min)
+                progressBarRangeInfo = ProgressBarRangeInfo(width.value.coerceIn(min, max), min..max)
+                setProgress { target ->
+                    val next = fit(target.dp)
+                    if (next != width) {
+                        onResize(next)
+                        onResizeDone()
+                    }
+                    true
+                }
             }
             .focusable(interactionSource = interaction),
         contentAlignment = Alignment.Center,

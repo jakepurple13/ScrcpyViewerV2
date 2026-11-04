@@ -213,8 +213,8 @@ fun QuickActionsPanel(
     }
     Row(
         modifier.layout { measurable, constraints ->
-            // Read here, in layout: during a drag the width changes every frame and nothing else needs to recompose.
-            // Never narrower than the space the pinned slot gives it.
+            // Read here, in layout, so the animation's frames re-measure without recomposing the sheet (a drag does
+            // recompose it: each step is a new width in the UI state). Never narrower than the pinned slot.
             val width = constraints.constrainWidth((if (animating[0]) animated.value else currentShown).roundToPx())
             val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
             layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }

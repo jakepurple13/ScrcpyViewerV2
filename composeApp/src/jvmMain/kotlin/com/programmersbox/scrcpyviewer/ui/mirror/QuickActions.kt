@@ -10,7 +10,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionStore
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
 import com.programmersbox.scrcpyviewer.actions.CustomAction
@@ -244,7 +243,7 @@ sealed interface QuickActionEvent {
     /** The drag bar moved: the current tab's sheet is now [width] wide (already clamped). Not saved yet. */
     data class Resize(val width: Dp) : QuickActionEvent
 
-    /** A drag ended or a key moved the bar: save the widths. */
+    /** A drag ended or a key moved the bar: save the current tab's width. */
     data object ResizeDone : QuickActionEvent
 
     /** Double-click or Home on the drag bar: the current tab goes back to its default width, saved. */
@@ -268,9 +267,9 @@ class QuickActions internal constructor(
     val console: ShellConsole? = null,
     private val memory: QuickActionsMemory = QuickActionsMemory(),
     private val onManage: (actionId: String?, new: Boolean) -> Unit = { _, _ -> },
-    /** Each tab's sheet width when the window opens; [saveWidths] persists them after a drag. */
+    /** Each tab's sheet width when the window opens; [saveWidth] persists one tab's width after a drag. */
     widths: SheetWidths = SheetWidths(),
-    private val saveWidths: (SheetWidths) -> Unit = {},
+    private val saveWidth: (SheetTab, Dp) -> Unit = { _, _ -> },
     private val notify: (String) -> Unit,
 ) {
     var open by mutableStateOf(false)
@@ -354,10 +353,10 @@ class QuickActions internal constructor(
             is QuickActionEvent.Delete -> editStore("Could not delete the action") { delete(event.id) }
             is QuickActionEvent.LoadPackages -> loadPackages(event.includeSystem)
             is QuickActionEvent.Resize -> widths = widths.with(tab, event.width)
-            QuickActionEvent.ResizeDone -> saveWidths(widths)
+            QuickActionEvent.ResizeDone -> saveWidth(tab, widths[tab])
             QuickActionEvent.ResetWidth -> {
                 widths = widths.with(tab, SheetWidths.default(tab))
-                saveWidths(widths)
+                saveWidth(tab, widths[tab])
             }
         }
     }
@@ -562,9 +561,11 @@ fun rememberQuickActions(
             console = ShellConsole(runner, history, scope, { currentNotify(it) }),
             memory = memory,
             onManage = { id, new -> currentOnManage(id, new) },
-            widths = settings.settings.value.let { SheetWidths(it.quickActionsWidth.dp, it.shellWidth.dp) },
-            saveWidths = { w ->
-                settings.update { it.copy(quickActionsWidth = w.actions.value.roundToInt(), shellWidth = w.shell.value.roundToInt()) }
+            widths = settings.settings.value.let { SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth) },
+            // Only the tab that changed: another mirror window may have saved the other one since this one opened.
+            saveWidth = { tab, width ->
+                val dp = width.value.roundToInt()
+                settings.update { if (tab == SheetTab.Shell) it.copy(shellWidth = dp) else it.copy(quickActionsWidth = dp) }
             },
         ) { currentNotify(it) }
     }
