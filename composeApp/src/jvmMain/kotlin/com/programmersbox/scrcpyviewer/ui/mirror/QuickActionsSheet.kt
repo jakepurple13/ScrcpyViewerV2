@@ -60,6 +60,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -218,7 +223,17 @@ fun QuickActionsPanel(
             val width = constraints.constrainWidth((if (animating[0]) animated.value else currentShown).roundToPx())
             val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
             layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
-        }.fillMaxHeight(),
+        }.fillMaxHeight()
+            .reportsSheetFocus()
+            // An Esc nothing in the sheet used (a field clears its filter first) closes the sheet.
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Escape) {
+                    onEvent(QuickActionEvent.Close)
+                    true
+                } else {
+                    false
+                }
+            },
     ) {
         SheetDragBar(
             width = shown,
@@ -256,7 +271,7 @@ private fun RowScope.SheetContent(
             }
             Box {
                 IconButton(onClick = { overflow = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
-                DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
+                DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }, Modifier.reportsSheetFocus()) {
                     DropdownMenuItem(
                         text = { Text("Manage actions…") },
                         onClick = {

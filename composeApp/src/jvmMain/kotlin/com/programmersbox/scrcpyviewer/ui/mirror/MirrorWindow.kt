@@ -94,6 +94,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -103,6 +104,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -281,7 +283,8 @@ fun parseHexColor(value: String?): Color? {
 /**
  * One device's mirror window: [session] keeps running on the app scope; closing the window calls
  * [MirrorController.close]. Keys typed while the window is focused go to the device; Cmd+V (Ctrl+V off macOS)
- * pastes the computer clipboard through `SetClipboard(paste=true)` (or as text with `legacy-paste`).
+ * pastes the computer clipboard through `SetClipboard(paste=true)` (or as text with `legacy-paste`). Keys typed with
+ * focus in the quick actions sheet stay in the sheet ([keyTarget]); a click outside the sheet gives them back.
  *
  * `keyboard=uhid` and `mouse=uhid` create the HID devices on the session ([HidKeyboard], [HidMouse]) and send HID
  * reports instead of key/text/touch injections. The UHID mouse is relative, so the window captures the pointer
@@ -395,6 +398,7 @@ fun MirrorWindow(
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
     val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
+    val sheetFocus = remember { SheetFocus() }
 
     val orientation = remember(values) { DisplayOrientation.forOptions(values) }
     // The window is sized for the image as displayed (turned by display-orientation).
@@ -548,12 +552,19 @@ fun MirrorWindow(
             val paste = if (Os.isMac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
             var pasteDown = false
             val zoomKeys = ZoomKeyFilter(Os.isMac)
+            // Keys held for the device when focus moves into the sheet would never see their release: let them go.
+            sheetFocus.onGained = { hidKeyboard?.let { send(it.releaseAll()) } }
             val dispatcher = KeyEventDispatcher { ev ->
                 val inWindow = ev.component === awtWindow || SwingUtilities.getWindowAncestor(ev.component) === awtWindow
                 if (!inWindow) return@KeyEventDispatcher false
-                if (quickActions.open && ev.keyCode == AwtKeyEvent.VK_ESCAPE) {
-                    if (ev.id == AwtKeyEvent.KEY_PRESSED) quickActions.close()
-                    return@KeyEventDispatcher true
+                when (keyTarget(quickActions.open, sheetFocus.focused, ev.keyCode)) {
+                    // Typed into the quick actions sheet: Compose gets every key, the device none (keyTarget).
+                    KeyTarget.Sheet -> return@KeyEventDispatcher false
+                    KeyTarget.Window -> {
+                        if (ev.id == AwtKeyEvent.KEY_PRESSED) quickActions.close()
+                        return@KeyEventDispatcher true
+                    }
+                    KeyTarget.Device -> Unit
                 }
                 // Zoom shortcuts belong to the window: never forwarded to the device (any keyboard mode).
                 if (zoomKeys.handle(ev.id, ev.keyCode, ev.modifiersEx) { currentApplyZoom(it) }) return@KeyEventDispatcher true
@@ -725,7 +736,7 @@ fun MirrorWindow(
         ScrcpyViewerTheme(themeMode) {
             Box(Modifier.fillMaxSize()) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    CompositionLocalProvider(LocalSnackbarHostState provides snackbar) {
+                    CompositionLocalProvider(LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus) {
                     MirrorContent(
                         state = state,
                         frame = frame,
@@ -841,7 +852,32 @@ fun MirrorContent(
     shellConsole: ShellConsole? = null,
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(modifier.fillMaxSize()) {
+    val focusManager = LocalFocusManager.current
+    // A press in the sheet marks itself on the way down (Initial pass); a press anywhere else takes keyboard focus out
+    // of the sheet, so typing goes to the device again. Closing the sheet does the same. A plain holder.
+    val pressInSheet = remember { BooleanArray(1) }
+    val sheetPresses = remember {
+        Modifier.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) pressInSheet[0] = true
+                }
+            }
+        }
+    }
+    val sheetOpen = state.quickActions.open
+    LaunchedEffect(sheetOpen) { if (!sheetOpen) focusManager.clearFocus() }
+    Column(
+        modifier.fillMaxSize().pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    if (awaitPointerEvent(PointerEventPass.Final).type != PointerEventType.Press) continue
+                    if (!pressInSheet[0]) focusManager.clearFocus()
+                    pressInSheet[0] = false
+                }
+            }
+        },
+    ) {
         if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom)
         HorizontalDivider(color = colors.outlineVariant)
         val density = LocalDensity.current
@@ -882,10 +918,10 @@ fun MirrorContent(
                 // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
                 // so a tab switch's width change leaves no gap while the window catches up.
                 Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                    panel(AtLeastAvailableWidth)
+                    panel(AtLeastAvailableWidth.then(sheetPresses))
                 }
             } else {
-                QuickActionsSheet(state.quickActions.open) { panel(Modifier) }
+                QuickActionsSheet(state.quickActions.open) { panel(sheetPresses) }
             }
         }
         HorizontalDivider(color = colors.outlineVariant)

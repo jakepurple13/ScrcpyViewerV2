@@ -152,6 +152,7 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
     deleting?.let { action ->
         AlertDialog(
             onDismissRequest = { deleting = null },
+            modifier = Modifier.reportsSheetFocus(),
             title = { Text("Delete ${action.name}?") },
             text = { Text("It is removed from every device.") },
             confirmButton = {
@@ -166,6 +167,7 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
     if (confirmReboot) {
         AlertDialog(
             onDismissRequest = { confirmReboot = false },
+            modifier = Modifier.reportsSheetFocus(),
             title = { Text("Reboot device?") },
             text = { Text("Mirroring stops until the device is back and you reconnect.") },
             confirmButton = {
@@ -240,7 +242,7 @@ private fun CustomTile(
                 onEvent(if (toggle != null) QuickActionEvent.CustomToggle(action.id, value != true) else QuickActionEvent.RunCustom(action.id))
             },
         )
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, Modifier.reportsSheetFocus()) {
             DropdownMenuItem(text = { Text("Edit…") }, onClick = { menu = false; onEvent(QuickActionEvent.Manage(action.id)) })
             DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; onEvent(QuickActionEvent.Duplicate(action.id)) })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })

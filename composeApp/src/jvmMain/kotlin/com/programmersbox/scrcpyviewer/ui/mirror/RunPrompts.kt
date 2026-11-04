@@ -61,6 +61,7 @@ fun RunPrompts(state: QuickActionsUiState, onEvent: (QuickActionEvent) -> Unit) 
 private fun ConfirmRunDialog(prompt: PendingRun, onEvent: (QuickActionEvent) -> Unit) {
     AlertDialog(
         onDismissRequest = { onEvent(QuickActionEvent.PromptCancel) },
+        modifier = Modifier.reportsSheetFocus(),
         title = { Text("Run ${prompt.action.name}?") },
         confirmButton = { TextButton(onClick = { onEvent(QuickActionEvent.PromptConfirm) }) { Text("Run") } },
         dismissButton = { TextButton(onClick = { onEvent(QuickActionEvent.PromptCancel) }) { Text("Cancel") } },
@@ -107,6 +108,8 @@ fun VariablesDialog(
 
     AlertDialog(
         onDismissRequest = onCancel,
+        // In a mirror window, keys typed here stay out of the device (keyTarget); nothing elsewhere.
+        modifier = Modifier.reportsSheetFocus(),
         title = { Text(title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -156,7 +159,7 @@ private fun ListField(variable: Variable, value: String, onPick: (String) -> Uni
         )
         // A read-only text field does not open a menu itself: a transparent hit area over it does.
         Box(Modifier.matchParentSize().clickable(role = Role.DropdownList) { open = true })
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, Modifier.reportsSheetFocus()) {
             variable.choices.forEach { choice ->
                 DropdownMenuItem(text = { Text(choice) }, onClick = { open = false; onPick(choice) })
             }
