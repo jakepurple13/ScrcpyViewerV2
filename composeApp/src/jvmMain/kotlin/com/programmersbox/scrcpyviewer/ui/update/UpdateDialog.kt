@@ -160,7 +160,7 @@ private fun ProgressDialog(release: Release, downloading: UpdateState.Downloadin
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             Text(
-                "Scrcpy Viewer will close and reopen. Your computer may ask for your password. Open mirror windows will close.",
+                "Scrcpy Vwr will close and reopen. Your computer may ask for your password. Open mirror windows will close.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 12.dp),

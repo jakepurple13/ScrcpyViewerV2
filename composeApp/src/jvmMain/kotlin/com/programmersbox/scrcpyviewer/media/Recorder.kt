@@ -181,7 +181,7 @@ class Recorder(
         opened = true
         ctx.pb(pb)
         val metadata = AVDictionary(null)
-        avutil.av_dict_set(metadata, "comment", "Recorded by Scrcpy Viewer (scrcpy 5.0)", 0)
+        avutil.av_dict_set(metadata, "comment", "Recorded by Scrcpy Vwr (scrcpy 5.0)", 0)
         ctx.metadata(metadata)
 
         if (video != null) {

@@ -134,7 +134,7 @@ class PresetsViewModel(
     fun beginImport(text: String) {
         _importState.value = PresetCodec.decode(text).fold(
             onSuccess = { ImportUiState(ImportPlan.plan(store.presets.value, it.presets), it.unknownOptions) },
-            onFailure = { ImportUiState(error = it.message ?: "This file isn't a Scrcpy Viewer preset file.") },
+            onFailure = { ImportUiState(error = it.message ?: "This file isn't a Scrcpy Vwr preset file.") },
         )
     }
 

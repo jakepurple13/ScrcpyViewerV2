@@ -54,7 +54,7 @@ class ActionCodecTest {
         val e = assertFailsWith<ActionFileException> {
             ActionCodec.decode(example.replace("\"version\": 1", "\"version\": 2"))
         }
-        assertEquals("This file is from a newer version of scrcpy-viewer", e.message)
+        assertEquals("This file is from a newer version of Scrcpy Vwr", e.message)
     }
 
     @Test
@@ -62,13 +62,13 @@ class ActionCodecTest {
         val e = assertFailsWith<ActionFileException> {
             ActionCodec.decode(example.replace("scrcpy-viewer.actions", "x"))
         }
-        assertEquals("Not a scrcpy-viewer actions file", e.message)
+        assertEquals("Not a Scrcpy Vwr actions file", e.message)
     }
 
     @Test
     fun `rejects non json`() {
         val e = assertFailsWith<ActionFileException> { ActionCodec.decode("nope") }
-        assertEquals("Not a scrcpy-viewer actions file", e.message)
+        assertEquals("Not a Scrcpy Vwr actions file", e.message)
     }
 
     @Test

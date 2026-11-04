@@ -168,7 +168,7 @@ private fun WelcomePage() {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         PageHeader(
             icon = { Image(AppIcon.painter, null, Modifier.size(72.dp)) },
-            title = "Welcome to Scrcpy Viewer",
+            title = "Welcome to Scrcpy Vwr",
             subtitle = "Mirror and control your Android devices from the desktop.",
         )
         Spacer(Modifier.height(4.dp))

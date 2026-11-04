@@ -149,7 +149,7 @@ class PresetsViewModelTest {
         val before = store.presets.value
         vm.beginImport("""{"format":"scrcpyviewer-presets","version":2,"presets":[{"name":"X","options":{}}]}""")
         val state = assertNotNull(vm.importState.value)
-        assertEquals("This file was made by a newer version of Scrcpy Viewer.", state.error)
+        assertEquals("This file was made by a newer version of Scrcpy Vwr.", state.error)
         vm.confirmImport()
         assertEquals(before, store.presets.value)
     }

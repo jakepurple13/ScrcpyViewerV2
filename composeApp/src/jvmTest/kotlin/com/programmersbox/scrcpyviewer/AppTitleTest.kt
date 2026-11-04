@@ -8,7 +8,7 @@ class AppTitleTest {
     @Test
     fun `title shows the app version`() {
         val title = appTitle()
-        assertTrue(Regex("""Scrcpy Viewer \(v\d+\.\d+\.\d+\)""").matches(title), title)
+        assertTrue(Regex("""Scrcpy Vwr \(v\d+\.\d+\.\d+\)""").matches(title), title)
         assertContains(title, APP_VERSION)
     }
 }

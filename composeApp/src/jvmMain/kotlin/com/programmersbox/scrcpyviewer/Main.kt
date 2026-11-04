@@ -123,7 +123,7 @@ private fun MainTitle() {
 private fun FinishingRecordingWindow(themeMode: ThemeMode) {
     Window(
         onCloseRequest = {},
-        title = "Scrcpy Viewer",
+        title = "Scrcpy Vwr",
         icon = AppIcon.painter,
         state = rememberWindowState(size = DpSize(340.dp, 120.dp), position = WindowPosition(Alignment.Center)),
         resizable = false,

@@ -76,7 +76,7 @@ fun UpdatesContent(
         }
         if (ui.macNotInApplications) {
             Text(
-                "Move Scrcpy Viewer to Applications to enable updates.",
+                "Move Scrcpy Vwr to Applications to enable updates.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

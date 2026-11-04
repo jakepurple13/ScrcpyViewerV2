@@ -38,7 +38,7 @@ object ActionCodec {
         } ?: throw notActionsFile()
         if ((root["format"] as? JsonPrimitive)?.contentOrNull != FORMAT) throw notActionsFile()
         val version = (root["version"] as? JsonPrimitive)?.intOrNull ?: throw notActionsFile()
-        if (version > VERSION) throw ActionFileException("This file is from a newer version of scrcpy-viewer")
+        if (version > VERSION) throw ActionFileException("This file is from a newer version of Scrcpy Vwr")
         if (version < 1) throw notActionsFile()
         val list = root["actions"] as? JsonArray ?: throw notActionsFile()
         return list.mapIndexed { i, el ->
@@ -50,5 +50,5 @@ object ActionCodec {
         }
     }
 
-    private fun notActionsFile() = ActionFileException("Not a scrcpy-viewer actions file")
+    private fun notActionsFile() = ActionFileException("Not a Scrcpy Vwr actions file")
 }
