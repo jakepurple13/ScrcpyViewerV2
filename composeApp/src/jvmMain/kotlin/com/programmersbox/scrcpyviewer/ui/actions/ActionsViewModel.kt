@@ -299,7 +299,7 @@ class ActionsViewModel(
         val draft = editor.value.draft ?: return
         if (draft.type != ActionType.Toggle || draft.read.isBlank()) return endTest("No read command")
         val onWhen = OnWhen(draft.matchMode, draft.matchValue)
-        startTest { runner ->
+        startTest(isRead = true) { runner ->
             bufferedTest(runner, draft.read, isRead = true, readOn = { output -> onWhen.matches(output) }) { output ->
                 if (onWhen.matches(output)) "Counts as on" else "Counts as off"
             }
@@ -397,7 +397,9 @@ class ActionsViewModel(
         val draft = old?.let(transform) ?: return@update e
         // A Test read result describes the read command and rule it ran with; it goes when either changes.
         val readChanged = draft.read != old.read || draft.matchMode != old.matchMode || draft.matchValue != old.matchValue
-        val test = if (readChanged && e.test?.isRead == true) null else e.test
+        val dropTest = readChanged && e.test?.isRead == true
+        if (dropTest) cancelTest()
+        val test = if (dropTest) null else e.test
         // Errors shown after a failed save clear as the fields are fixed.
         e.copy(draft = draft, test = test, errors = if (e.errors.isEmpty) e.errors else validate(draft))
     }
@@ -432,10 +434,10 @@ class ActionsViewModel(
         setTest(TestResult(running = false, output = "", exitCode = null, note = note))
     }
 
-    private fun startTest(block: suspend (ShellRunner) -> Unit) {
+    private fun startTest(isRead: Boolean = false, block: suspend (ShellRunner) -> Unit) {
         val serial = currentTestDevice() ?: return endTest(NO_DEVICE_NOTE)
         cancelTest()
-        setTest(TestResult(running = true, output = "", exitCode = null, note = null))
+        setTest(TestResult(running = true, output = "", exitCode = null, note = null, isRead = isRead))
         testJob = viewModelScope.launch {
             try {
                 block(ShellRunner(adb, serial))
@@ -456,9 +458,11 @@ class ActionsViewModel(
     ) {
         val result = runner.run(command, testTimeoutMs)
         val (output, shownLines) = OutputTail.of(result.output)
+        val failedRead = isRead && result.exitCode.let { it != null && it != 0 }
         setTest(
             TestResult(
-                running = false, output = output, exitCode = result.exitCode, note = note(result.output),
+                running = false, output = output, exitCode = result.exitCode,
+                note = if (failedRead) "Read failed" else note(result.output),
                 shownLines = shownLines, isRead = isRead,
                 readOn = if (result.exitCode.let { it == null || it == 0 }) readOn?.invoke(result.output) else null,
             ),

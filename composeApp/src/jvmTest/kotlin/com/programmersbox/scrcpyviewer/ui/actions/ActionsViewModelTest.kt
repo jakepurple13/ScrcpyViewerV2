@@ -312,6 +312,20 @@ class ActionsViewModelTest {
     }
 
     @Test
+    fun `editing the rule cancels a running test read`() {
+        store.upsert(stayAwake)
+        val adb = FakeAdb(listOf("SER1")).apply { endless = true }
+        val vm = vm(listOf("SER1"), adb)
+        vm.select("awake")
+        vm.testRead()
+        assertEquals(true, vm.state.value.test?.running)
+        vm.edit { it.copy(matchValue = "8") }
+        assertNull(vm.state.value.test)
+        Thread.sleep(100)
+        assertNull(vm.state.value.test, "the cancelled read must not report back")
+    }
+
+    @Test
     fun `test read with a failing exit code has no verdict`() {
         store.upsert(stayAwake)
         val adb = FakeAdb(listOf("SER1")).apply { answer = { "boom\n" }; exitCode = 3 }
@@ -322,6 +336,7 @@ class ActionsViewModelTest {
         assertNull(result.readOn)
         assertEquals(true, result.isRead)
         assertEquals(3, result.exitCode)
+        assertEquals("Read failed", result.note)
     }
 
     @Test
