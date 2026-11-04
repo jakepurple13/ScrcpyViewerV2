@@ -77,11 +77,16 @@ private val FieldShape = RoundedCornerShape(12.dp)
 
 /**
  * The Shell tab, sized for the 400 dp sheet: filter, live bar while a command streams, the console, a chip per custom
- * run-once action (names only) and the command field.
+ * run-once action (names only) and the command field. The field takes focus each time [selected] turns true.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ShellTabContent(console: ShellConsole, chips: List<RunOnceAction>, onEvent: (QuickActionEvent) -> Unit) {
+fun ShellTabContent(
+    console: ShellConsole,
+    chips: List<RunOnceAction>,
+    selected: Boolean = true,
+    onEvent: (QuickActionEvent) -> Unit,
+) {
     val copy = rememberCopyAction()
     fun visibleText() = console.visible.joinToString("\n") { it.text }
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -97,7 +102,7 @@ fun ShellTabContent(console: ShellConsole, chips: List<RunOnceAction>, onEvent: 
                 }
             }
         }
-        CommandField(console)
+        CommandField(console, selected)
     }
 }
 
@@ -225,10 +230,10 @@ private fun highlighted(text: String, filter: String, highlight: Color): Annotat
 }
 
 @Composable
-private fun CommandField(console: ShellConsole) {
+private fun CommandField(console: ShellConsole, selected: Boolean) {
     val colors = MaterialTheme.colorScheme
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(selected) { if (selected) runCatching { focus.requestFocus() } }
     // The field keeps its own selection; the console owns the text (history recall and clearing change it).
     var value by remember { mutableStateOf(TextFieldValue(console.input)) }
     if (value.text != console.input) value = TextFieldValue(console.input, TextRange(console.input.length))

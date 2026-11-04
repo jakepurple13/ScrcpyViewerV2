@@ -650,20 +650,26 @@ fun MirrorWindow(
         // the stage.
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
         val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
-        var baseBounds by remember { mutableStateOf<java.awt.Rectangle?>(null) }
+        val sheetShift = remember { IntArray(1) } // px the window moved left to keep the sheet on screen
         val sheetTarget = sheetWidth(state.quickActions.open, state.quickActions.tab)
         LaunchedEffect(sheetTarget) {
-            if (windowState.placement != WindowPlacement.Floating && sheetGrowth.value == 0f) return@LaunchedEffect
-            val base = baseBounds ?: awtWindow.bounds.also { baseBounds = it }
+            if (windowState.placement != WindowPlacement.Floating) {
+                // A maximized or fullscreen window is never resized here; forget any growth from before.
+                sheetGrowth.snapTo(0f)
+                sheetShift[0] = 0
+                pinnedStage = null
+                return@LaunchedEffect
+            }
+            // From the window as it is now: the user may have moved or resized it while the sheet was open.
+            val base = sheetBaseBounds(awtWindow.bounds, sheetGrowth.value.roundToInt(), sheetShift[0])
             val screenRight = awtWindow.graphicsConfiguration.bounds.let { it.x + it.width }
             val target = sheetTarget.value
             pinnedStage = stage.width
             sheetGrowth.animateTo(target, sheetWidthSpec(sheetGrowth.value.dp, sheetTarget)) {
-                val width = base.width + value.roundToInt()
-                val overflow = (base.x + width - screenRight).coerceAtLeast(0)
-                awtWindow.setBounds(base.x - overflow, awtWindow.y, width, awtWindow.height)
+                val grown = grownBounds(base, value.roundToInt(), screenRight)
+                sheetShift[0] = base.x - grown.x
+                awtWindow.setBounds(grown.x, awtWindow.y, grown.width, awtWindow.height)
             }
-            if (target == 0f) baseBounds = null
             // Keep the pin until the native window has shrunk, or the stage widens for a frame.
             var frames = 0
             while (awtWindow.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
@@ -721,7 +727,7 @@ fun MirrorWindow(
  * Start-aligned at its own width but never narrower than the space it is given (so it can overflow, to be clipped,
  * but leaves no gap).
  */
-private fun Modifier.atLeastAvailableWidth(): Modifier = layout { measurable, constraints ->
+private val AtLeastAvailableWidth: Modifier = Modifier.layout { measurable, constraints ->
     val placeable = measurable.measure(constraints.copy(minWidth = constraints.maxWidth, maxWidth = Constraints.Infinity))
     layout(constraints.maxWidth, placeable.height) { placeable.placeRelative(0, 0) }
 }
@@ -814,7 +820,7 @@ fun MirrorContent(
                 // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
                 // so a tab switch's width change leaves no gap while the window catches up.
                 Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                    panel(Modifier.atLeastAvailableWidth())
+                    panel(AtLeastAvailableWidth)
                 }
             } else {
                 QuickActionsSheet(state.quickActions.open) { panel(Modifier) }

@@ -219,7 +219,8 @@ private fun RowScope.SheetContent(state: QuickActionsUiState, onEvent: (QuickAct
             onSelect = { if (it != state.tab) onEvent(QuickActionEvent.SelectTab(it)) },
             Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
         )
-        // Each switch to Shell composes it afresh, so the command field takes focus every time.
+        // The command field takes focus on every switch to Shell: composed afresh, or, when a switch away is reversed
+        // mid-transition, kept and selected again.
         AnimatedContent(
             targetState = state.tab,
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -229,7 +230,9 @@ private fun RowScope.SheetContent(state: QuickActionsUiState, onEvent: (QuickAct
             when (tab) {
                 SheetTab.Actions -> ActionsTabContent(state, onEvent)
                 SheetTab.Shell -> if (console != null) {
-                    ShellTabContent(console, state.custom.filterIsInstance<RunOnceAction>(), onEvent)
+                    ShellTabContent(
+                        console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,
+                    )
                 }
             }
         }
