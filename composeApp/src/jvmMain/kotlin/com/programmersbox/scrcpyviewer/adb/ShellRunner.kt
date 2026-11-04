@@ -45,36 +45,41 @@ open class ShellRunner(
 
     /**
      * Streams [cmd] as [ShellEvent.Output] chunks with the exit marker removed, then one [ShellEvent.Exit]. The marker
-     * may follow unterminated output or be split across chunks, so a trailing partial marker is held back until it is
-     * resolved. [ShellEvent.Exit.code] is null when the stream ends without the marker (stopped or killed). Like
-     * [run], the marker may directly follow output; unlike [run] the first occurrence wins, since later text cannot be
-     * known yet. Collect it in a cancellable scope to stop the command.
+     * may follow unterminated output or be split across chunks. Like [run], only the marker at the very end of the
+     * stream counts: a marker followed by anything but digits and a newline is the command's own output and is
+     * flushed. A trailing partial marker (`_`, `__`, ...) or a marker candidate (marker, digits, optional newline) is
+     * held until the next chunk, so held text stays bounded. [ShellEvent.Exit.code] is null when the stream ends
+     * without the marker (stopped or killed). Collect it in a cancellable scope to stop the command.
      */
     open fun stream(cmd: String): Flow<ShellEvent> = flow {
         val start = clock()
         var pending = ""
-        var afterMarker: String? = null
         adb.shellStream(serial, wrap(cmd)).collect { chunk ->
-            val tail = afterMarker
-            if (tail != null) {
-                afterMarker = tail + chunk
-            } else {
-                pending += chunk
+            pending += chunk
+            while (true) {
                 val idx = pending.indexOf(EXIT_MARKER)
-                if (idx >= 0) {
-                    if (idx > 0) emit(ShellEvent.Output(pending.substring(0, idx)))
-                    afterMarker = pending.substring(idx + EXIT_MARKER.length)
-                    pending = ""
-                } else {
-                    val hold = partialMarkerSuffix(pending)
-                    val ready = pending.length - hold
+                if (idx < 0) {
+                    val ready = pending.length - partialMarkerSuffix(pending)
                     if (ready > 0) emit(ShellEvent.Output(pending.substring(0, ready)))
                     pending = pending.substring(ready)
+                    break
                 }
+                val end = idx + EXIT_MARKER.length
+                if (CANDIDATE_TAIL.matches(pending.substring(end))) {
+                    if (idx > 0) emit(ShellEvent.Output(pending.substring(0, idx)))
+                    pending = pending.substring(idx)
+                    break
+                }
+                emit(ShellEvent.Output(pending.substring(0, end)))
+                pending = pending.substring(end)
             }
         }
-        if (pending.isNotEmpty()) emit(ShellEvent.Output(pending))
-        val code = afterMarker?.trim()?.toIntOrNull()
+        val code = if (pending.startsWith(EXIT_MARKER)) {
+            pending.substring(EXIT_MARKER.length).trim().toIntOrNull()
+        } else {
+            if (pending.isNotEmpty()) emit(ShellEvent.Output(pending))
+            null
+        }
         emit(ShellEvent.Exit(code, clock() - start))
     }
 
@@ -86,6 +91,7 @@ open class ShellRunner(
     }
 
     companion object {
+        private val CANDIDATE_TAIL = Regex("\\d{0,10}\\r?\\n?")
         const val BUFFERED_TIMEOUT_MS = 30_000L
         const val EXIT_MARKER = "__scrcpyviewer_exit="
 

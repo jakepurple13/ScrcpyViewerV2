@@ -52,6 +52,22 @@ class ShellRunnerStreamTest {
     }
 
     @Test
+    fun `marker text in the output is flushed and the last marker wins`() {
+        assertEquals(
+            "a__scrcpyviewer_exit=\nb\n" to ShellEvent.Exit(3, 250),
+            collect("a__scrcpyviewer_exit=\nb\n", "__scrcpyviewer_exit=3\n"),
+        )
+    }
+
+    @Test
+    fun `candidate followed by trailing data is output`() {
+        assertEquals(
+            "__scrcpyviewer_exit=5\nmore\n" to ShellEvent.Exit(null, 250),
+            collect("__scrcpyviewer_exit=5\n", "more\n"),
+        )
+    }
+
+    @Test
     fun `exit code without trailing newline`() {
         assertEquals("" to ShellEvent.Exit(7, 250), collect("__scrcpyviewer_exit=7"))
     }
