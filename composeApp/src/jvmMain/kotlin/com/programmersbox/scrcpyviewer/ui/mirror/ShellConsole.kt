@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -43,6 +44,9 @@ sealed interface ConsoleLine {
 /**
  * One mirror window's shell console: the scrollback, the running command and the command field. One command runs at
  * a time; [notify] gets the refusal message when another starts. [runner] is null while the device is unreachable.
+ *
+ * Snapshot state is written on the UI thread: [scope] is the window's coroutine scope (Main), and the stream does its
+ * own IO on another dispatcher. Every run has a generation; events from a run that was stopped or cleared are ignored.
  */
 @Stable
 class ShellConsole(
@@ -58,42 +62,53 @@ class ShellConsole(
         private set
     var filter: String by mutableStateOf("")
     var paused: Boolean by mutableStateOf(false)
-    var input: String by mutableStateOf("")
+    private var inputState by mutableStateOf("")
+
+    /** The command field. Typing resets the history position; [historyUp] and [historyDown] do not. */
+    var input: String
+        get() = inputState
+        set(value) {
+            navIndex = -1
+            inputState = value
+        }
 
     val lineCount: Int get() = lines.size
 
     /** [lines] with the filter applied: matching output, plus the header and exit of every run that has one. */
-    val visible: List<ConsoleLine>
-        get() {
-            val all = lines
-            if (filter.isEmpty()) return all
-            val result = ArrayList<ConsoleLine>()
-            var run = ArrayList<ConsoleLine>()
-            var hit = false
-            fun flush() {
-                if (hit) result += run
-                run = ArrayList()
-                hit = false
-            }
-            for (line in all) {
-                if (line is ConsoleLine.Header) flush()
-                if (line !is ConsoleLine.Out) {
-                    run += line
-                } else if (line.text.contains(filter, ignoreCase = true)) {
-                    run += line
-                    hit = true
-                }
-            }
-            flush()
-            return result
+    val visible: List<ConsoleLine> by derivedStateOf {
+        val all = lines
+        val needle = filter
+        if (needle.isEmpty()) return@derivedStateOf all
+        val result = ArrayList<ConsoleLine>()
+        var run = ArrayList<ConsoleLine>()
+        var hit = false
+        fun flush() {
+            if (hit) result += run
+            run = ArrayList()
+            hit = false
         }
+        for (line in all) {
+            if (line is ConsoleLine.Header) flush()
+            if (line !is ConsoleLine.Out) {
+                run += line
+            } else if (line.text.contains(needle, ignoreCase = true)) {
+                run += line
+                hit = true
+            }
+        }
+        flush()
+        result
+    }
 
-    /** Output lines that contain the filter. */
-    val matchCount: Int
-        get() = lines.count { it is ConsoleLine.Out && it.text.contains(filter, ignoreCase = true) }
+    /** Output lines that contain the filter; 0 while the filter is empty. */
+    val matchCount: Int by derivedStateOf {
+        val needle = filter
+        if (needle.isEmpty()) 0 else lines.count { it is ConsoleLine.Out && it.text.contains(needle, ignoreCase = true) }
+    }
 
     private var job: Job? = null
     private var partial = StringBuilder()
+    private var generation = 0
     private var navIndex = -1
     private var draft = ""
 
@@ -104,7 +119,6 @@ class ShellConsole(
         if (!start(ConsoleLine.Header("$ $cmd", typed = true), cmd)) return false
         history.add(cmd)
         input = ""
-        navIndex = -1
         return true
     }
 
@@ -121,6 +135,7 @@ class ShellConsole(
             return false
         }
         partial = StringBuilder()
+        val mine = ++generation
         append(listOf(header))
         running = true
         paused = false
@@ -128,17 +143,19 @@ class ShellConsole(
             try {
                 runner.stream(cmd).collect { event ->
                     when (event) {
-                        is ShellEvent.Output -> appendOutput(event.text)
-                        is ShellEvent.Exit -> finish(ConsoleLine.Exit(event.code, event.millis))
+                        is ShellEvent.Output -> if (mine == generation) appendOutput(event.text)
+                        is ShellEvent.Exit -> if (mine == generation) finish(ConsoleLine.Exit(event.code, event.millis))
                     }
                 }
                 // A stream that ends without Exit must not leave the console busy.
-                finish(ConsoleLine.Exit(null, 0))
+                if (mine == generation) finish(ConsoleLine.Exit(null, 0))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                appendOutput("error: ${e.message ?: e::class.simpleName}\n")
-                finish(ConsoleLine.Exit(null, 0))
+                if (mine == generation) {
+                    appendOutput("error: ${e.message ?: e::class.simpleName}\n")
+                    finish(ConsoleLine.Exit(null, 0))
+                }
             }
         }
         return true
@@ -147,14 +164,20 @@ class ShellConsole(
     /** Stops the running command; the console ends the run with a "stopped" line. */
     fun stop() {
         if (!running) return
+        generation++
         job?.cancel()
         job = null
         finish(ConsoleLine.Exit(null, 0))
     }
 
+    /** Empties the console. A running command is stopped too: its later output would have no header. */
     fun clear() {
-        lines = emptyList()
+        generation++
+        job?.cancel()
+        job = null
+        running = false
         partial = StringBuilder()
+        lines = emptyList()
     }
 
     /** Up: the previous command, starting from the newest; the typed draft is kept for [historyDown]. */
@@ -167,7 +190,7 @@ class ShellConsole(
         } else if (navIndex > 0) {
             navIndex--
         }
-        input = items[navIndex]
+        inputState = items[navIndex]
     }
 
     /** Down: the next command; past the newest it restores the draft. */
@@ -176,10 +199,10 @@ class ShellConsole(
         val items = history.items
         if (navIndex < items.size - 1) {
             navIndex++
-            input = items[navIndex]
+            inputState = items[navIndex]
         } else {
             navIndex = -1
-            input = draft
+            inputState = draft
         }
     }
 

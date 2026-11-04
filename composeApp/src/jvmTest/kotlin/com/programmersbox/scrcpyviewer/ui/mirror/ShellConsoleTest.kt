@@ -6,12 +6,15 @@ import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.runBlocking
 
 /** Streams the scripted events; with [hang] it then waits until cancelled, like a command that never ends. */
 private class FakeRunner(private val events: List<ShellEvent>, private val hang: Boolean = false) :
@@ -197,5 +200,115 @@ class ShellConsoleTest {
         assertEquals("dra", c.input)
         c.historyDown()
         assertEquals("dra", c.input)
+    }
+
+    /** A runner whose stream hands out its collector, so a test can emit after the collector was cancelled. */
+    private class LeakyRunner : ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "s") {
+        var collector: FlowCollector<ShellEvent>? = null
+
+        override fun stream(cmd: String): Flow<ShellEvent> = object : Flow<ShellEvent> {
+            override suspend fun collect(collector: FlowCollector<ShellEvent>) {
+                this@LeakyRunner.collector = collector
+                awaitCancellation()
+            }
+        }
+
+        fun leak(event: ShellEvent) = runBlocking { collector!!.emit(event) }
+    }
+
+    @Test
+    fun `output after stop is ignored`() {
+        val runner = LeakyRunner()
+        val c = ShellConsole(runner, ShellHistory(), eager, { toasts += it })
+        c.input = "logcat"
+        c.submit()
+        runner.leak(ShellEvent.Output("one\npar"))
+        c.stop()
+        runner.leak(ShellEvent.Output("late\n"))
+        runner.leak(ShellEvent.Exit(0, 9))
+        assertEquals(listOf("$ logcat", "one", "par", "stopped"), c.lines.map { it.text })
+    }
+
+    @Test
+    fun `clear mid-stream leaves an empty console and drops the partial`() {
+        val runner = LeakyRunner()
+        val c = ShellConsole(runner, ShellHistory(), eager, { toasts += it })
+        c.input = "logcat"
+        c.submit()
+        runner.leak(ShellEvent.Output("one\npar"))
+        c.clear()
+        assertFalse(c.running)
+        runner.leak(ShellEvent.Output("tial\n"))
+        assertTrue(c.lines.isEmpty())
+        c.input = "ls"
+        assertTrue(c.submit())
+        assertEquals(listOf("$ ls"), c.lines.map { it.text })
+    }
+
+    @Test
+    fun `null runner refuses with a message`() {
+        val c = ShellConsole(null, ShellHistory(), eager, { toasts += it })
+        c.input = "ls"
+        assertFalse(c.submit())
+        assertEquals(listOf("Not connected"), toasts)
+        assertTrue(c.lines.isEmpty())
+    }
+
+    @Test
+    fun `empty input does not run`() {
+        val runner = FakeRunner(emptyList())
+        val c = console(runner)
+        c.input = "   "
+        assertFalse(c.submit())
+        assertTrue(runner.commands.isEmpty())
+        assertTrue(toasts.isEmpty())
+    }
+
+    @Test
+    fun `stream failure prints an error line and ends the run`() {
+        val c = ShellConsole(
+            object : ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "s") {
+                override fun stream(cmd: String): Flow<ShellEvent> = flow { error("boom") }
+            },
+            ShellHistory(), eager, { toasts += it },
+        )
+        c.input = "x"
+        c.submit()
+        assertFalse(c.running)
+        assertEquals("error: boom", c.lines[1].text)
+        assertNull((c.lines.last() as ConsoleLine.Exit).code)
+    }
+
+    @Test
+    fun `stream that ends without exit ends the run`() {
+        val c = console(FakeRunner(listOf(ShellEvent.Output("a\n"))))
+        c.input = "x"
+        c.submit()
+        assertFalse(c.running)
+        assertEquals("stopped", c.lines.last().text)
+    }
+
+    @Test
+    fun `match count is zero without a filter`() {
+        val c = console(FakeRunner(listOf(ShellEvent.Output("a\n"), ShellEvent.Exit(0, 1))))
+        c.input = "x"
+        c.submit()
+        assertEquals(0, c.matchCount)
+        c.filter = "a"
+        assertEquals(1, c.matchCount)
+    }
+
+    @Test
+    fun `typing after up resets the history position`() {
+        val h = ShellHistory()
+        h.add("one")
+        h.add("two")
+        val c = console(FakeRunner(emptyList()), h)
+        c.historyUp()
+        c.input = "mine"
+        c.historyDown()
+        assertEquals("mine", c.input)
+        c.historyUp()
+        assertEquals("two", c.input)
     }
 }
