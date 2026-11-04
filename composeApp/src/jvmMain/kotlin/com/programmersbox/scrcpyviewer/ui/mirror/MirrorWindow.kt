@@ -404,8 +404,10 @@ fun MirrorWindow(
     // The window is sized for the image as displayed (turned by display-orientation).
     val displayedSize = frameSize?.let(orientation::orientedSize)
     val renderFit = e["render-fit"]
-    // Per window, not persisted: null is Fit, else the scale (1 = 100 %).
+    // Per window, not persisted: null is Fit, else the scale (1 = 100 %). A window starts with Fit off (see
+    // Zoom.initialZoom): until the first frame has fitted it is null, then it takes the fitted scale once.
     var zoom by remember { mutableStateOf<Float?>(if (renderFit == "unscaled") 1f else null) }
+    var zoomPending by remember { mutableStateOf(renderFit == null) }
     val fit = zoom == null
     val stretch = renderFit == "stretched"
     val aspectLock = "no-window-aspect-ratio-lock" !in e
@@ -683,6 +685,12 @@ fun MirrorWindow(
                     aspectLockedStage(lastStage, stage, lastFrame, fs, maxH, refit)
                 }
                 else -> null
+            }
+            if (zoomPending) {
+                // The image as Fit shows it once the window has its size: leave Fit at that scale, once.
+                zoomPending = false
+                val shown = target ?: stage
+                zoom = Zoom.initialZoom(renderFit, min(shown.width.toFloat() / fs.width, shown.height.toFloat() / fs.height))
             }
             lastFrame = fs
             lastStage = target ?: stage

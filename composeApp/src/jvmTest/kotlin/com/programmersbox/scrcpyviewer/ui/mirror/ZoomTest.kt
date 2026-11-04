@@ -15,6 +15,22 @@ class ZoomTest {
     private val fitted = 0.37f
 
     @Test
+    fun `a new window starts at the fitted scale with Fit off`() {
+        assertEquals(0.37f, Zoom.initialZoom(null, 0.37f))
+    }
+
+    @Test
+    fun `unscaled starts at 100 percent`() {
+        assertEquals(1f, Zoom.initialZoom("unscaled", 0.37f))
+    }
+
+    @Test
+    fun `an explicit letterbox or stretched render fit starts in Fit`() {
+        assertNull(Zoom.initialZoom("letterbox", 0.37f))
+        assertNull(Zoom.initialZoom("stretched", 0.37f))
+    }
+
+    @Test
     fun `zoom in steps up through the list`() {
         assertEquals(1.25f, Zoom.step(1f, fitted, ZoomCommand.In))
         assertEquals(0.5f, Zoom.step(0.33f, fitted, ZoomCommand.In))

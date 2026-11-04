@@ -36,6 +36,17 @@ object Zoom {
         }
     }
 
+    /**
+     * The zoom a new window starts with, given the `render-fit` option and the scale the image has when it first
+     * fits ([fitted]). `unscaled` is 100 %; an explicit `letterbox` or `stretched` asks for Fit (`null`); otherwise
+     * Fit is off and the window starts at [fitted], so the image shows at the size Fit would have given it.
+     */
+    fun initialZoom(renderFit: String?, fitted: Float): Float? = when (renderFit) {
+        "unscaled" -> 1f
+        "letterbox", "stretched" -> null
+        else -> fitted
+    }
+
     fun label(scale: Float): String = "${(scale * 100).roundToInt()}%"
 
     /**
