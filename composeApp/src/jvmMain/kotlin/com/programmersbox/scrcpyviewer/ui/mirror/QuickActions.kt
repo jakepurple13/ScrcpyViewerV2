@@ -21,7 +21,9 @@ import com.programmersbox.scrcpyviewer.adb.ShellTimeoutException
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -126,6 +128,11 @@ open class DeviceQuickActions(
         if ("Error" in out) throw IOException(out.lineSequence().first { "Error" in it }.trim())
     }
 
+    /** Installed package names, sorted; third-party only unless [includeSystem]. */
+    open suspend fun packages(includeSystem: Boolean): List<String> =
+        adb.shell(serial, if (includeSystem) "pm list packages" else "pm list packages -3").lineSequence()
+            .map { it.trim().removePrefix("package:") }.filter { it.isNotEmpty() }.distinct().sorted().toList()
+
     open suspend fun reboot() {
         val result = adb.execWithTimeout(REBOOT_TIMEOUT_MS, "-s", serial, "reboot")
             ?: throw IOException("adb reboot timed out")
@@ -199,6 +206,8 @@ data class QuickActionsUiState(
     val prompt: PendingRun? = null,
     /** A console command is running (the Shell tab shows a red dot). */
     val consoleRunning: Boolean = false,
+    /** Installed apps for the prompt's "Installed app" variables; null until loaded. */
+    val packages: List<String>? = null,
 )
 
 /** A tap in the quick actions sheet. */
@@ -222,6 +231,9 @@ sealed interface QuickActionEvent {
 
     /** Deletes at once; the sheet asks for confirmation before sending it. */
     data class Delete(val id: String) : QuickActionEvent
+
+    /** The variable prompt wants the device's installed apps, with or without system apps. */
+    data class LoadPackages(val includeSystem: Boolean) : QuickActionEvent
 }
 
 /**
@@ -257,12 +269,14 @@ class QuickActions internal constructor(
     private var customPending by mutableStateOf<Set<String>>(emptySet())
     private var prompt by mutableStateOf<PendingRun?>(null)
     private var promptToConsole = false
+    private var packages by mutableStateOf<List<String>?>(null)
+    private var packagesJob: Job? = null
 
     val enabled: Boolean get() = device != null && connected
 
     val uiState: QuickActionsUiState
         get() = QuickActionsUiState(
-            open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true,
+            open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages,
         )
 
     fun toggleSheet() {
@@ -318,6 +332,7 @@ class QuickActions internal constructor(
             is QuickActionEvent.Manage -> onManage(event.actionId)
             is QuickActionEvent.Duplicate -> editStore("Could not duplicate the action") { duplicate(event.id) }
             is QuickActionEvent.Delete -> editStore("Could not delete the action") { delete(event.id) }
+            is QuickActionEvent.LoadPackages -> loadPackages(event.includeSystem)
         }
     }
 
@@ -328,6 +343,23 @@ class QuickActions internal constructor(
             s.block()
         } catch (e: Exception) {
             notify("$failure: ${e.message ?: e}")
+        }
+    }
+
+    /** A newer request replaces an older one still running. */
+    private fun loadPackages(includeSystem: Boolean) {
+        val d = device ?: return
+        packagesJob?.cancel()
+        packages = null
+        packagesJob = scope.launch {
+            packages = try {
+                d.packages(includeSystem)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                notify("Could not list apps: ${e.message ?: e}")
+                emptyList()
+            }
         }
     }
 

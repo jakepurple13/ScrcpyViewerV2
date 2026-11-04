@@ -407,4 +407,17 @@ class QuickActionsCustomTest {
         qa.onEvent(QuickActionEvent.Delete("gone"))
         assertTrue(messages.single().startsWith("Could not duplicate the action: "))
     }
+
+    @Test
+    fun `loads the package list for the prompt on request`() {
+        val adb = ShellAdb { "package:com.z\npackage:com.a\n" }
+        val qa = quickActions(adb)
+        qa.toggleSheet()
+        assertNull(qa.uiState.packages)
+
+        qa.onEvent(QuickActionEvent.LoadPackages(includeSystem = true))
+
+        assertEquals(listOf("com.a", "com.z"), qa.uiState.packages)
+        assertEquals("pm list packages", adb.commands.last())
+    }
 }

@@ -10,7 +10,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.actions.RunOnceAction
+import com.programmersbox.scrcpyviewer.actions.ToggleAction
+import com.programmersbox.scrcpyviewer.actions.Variable
+import com.programmersbox.scrcpyviewer.actions.VariableKind
 import com.programmersbox.scrcpyviewer.media.VideoFrame
+import com.programmersbox.scrcpyviewer.ui.mirror.PendingRun
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.ui.mirror.ClickIndicator
 import com.programmersbox.scrcpyviewer.ui.mirror.DisplayOrientation
@@ -89,10 +94,10 @@ class MirrorScreenshotTest {
         command = "scrcpy -s 39121FDJH004AB --max-size=1920",
     )
 
-    private fun render(name: String, mode: ThemeMode, state: MirrorUiState = this.state, clickIndicator: ClickIndicator? = null, width: Int = 1280, height: Int = 800, showTopStrip: Boolean = true) {
+    private fun render(name: String, mode: ThemeMode, state: MirrorUiState = this.state, clickIndicator: ClickIndicator? = null, width: Int = 1280, height: Int = 800, showTopStrip: Boolean = true, settleMillis: Long = 0) {
         val out = outDir.resolve(name)
         val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
-        renderToPng(width, height, out) {
+        renderToPng(width, height, out, settleMillis) {
             ScrcpyViewerTheme(mode) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     MirrorContent(state, frame, {}, {}, {}, {}, {}, {}, clickIndicator = clickIndicator, showTopStrip = showTopStrip)
@@ -246,4 +251,34 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror quick actions open dark`() = render("mirror-quick-actions-dark.png", ThemeMode.Dark, state.copy(quickActions = quickActionsOpen))
+
+    private val customActions = listOf(
+        ToggleAction(id = "stay", name = "Stay awake", icon = "bolt", on = "a", off = "b"),
+        RunOnceAction(
+            id = "clear", name = "Clear data", icon = "delete", command = "pm clear {pkg}", confirm = true,
+            variables = mapOf("pkg" to Variable(label = "App to clear", kind = VariableKind.App)),
+        ),
+    )
+
+    private val tilesState = quickActionsOpen.copy(
+        pending = emptySet(),
+        custom = customActions,
+        customState = mapOf("stay" to true),
+    )
+
+    @Test
+    fun `mirror quick actions tiles`() {
+        render("mirror-quick-actions-tiles.png", ThemeMode.Light, state.copy(quickActions = tilesState), height = 1000)
+        render("mirror-quick-actions-tiles-dark.png", ThemeMode.Dark, state.copy(quickActions = tilesState), height = 1000)
+    }
+
+    @Test
+    fun `mirror quick actions prompt`() {
+        val prompt = PendingRun(customActions[1] as RunOnceAction, needsValues = true, needsConfirm = true, values = mapOf("pkg" to ""))
+        val packages = listOf("com.android.chrome", "com.example.notes", "com.spotify.music", "org.mozilla.firefox")
+        render(
+            "mirror-quick-actions-prompt.png", ThemeMode.Light,
+            state.copy(quickActions = tilesState.copy(prompt = prompt, packages = packages)), height = 1000, settleMillis = 1000,
+        )
+    }
 }
