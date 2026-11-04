@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
+import com.programmersbox.scrcpyviewer.ui.actions.ActionsViewModel
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
@@ -87,6 +88,7 @@ fun App(
     presetsViewModel: PresetsViewModel = koinViewModel(),
     settingsViewModel: SettingsViewModel = koinViewModel(),
     updateViewModel: UpdateViewModel = koinViewModel(),
+    actionsViewModel: ActionsViewModel = koinViewModel(),
     mirrorController: MirrorController = koinInject(),
     appSettings: AppSettings = koinInject(),
     actionsNavigation: ActionsNavigation = koinInject(),
@@ -103,10 +105,11 @@ fun App(
             .filter { it.serial !in mirrorController.open.value }
             .collect { snackbar.showSnackbar(recordResultMessage(it.result)) }
     }
-    // A mirror window asked for the Actions screen. Task 12 also forwards the request to the Actions view model here.
-    LaunchedEffect(actionsNavigation, navigator) {
-        actionsNavigation.requests.collect { _ ->
+    // A mirror window asked for the Actions screen: show it and open the requested action.
+    LaunchedEffect(actionsNavigation, navigator, actionsViewModel) {
+        actionsNavigation.requests.collect { request ->
             navigator.select(TopLevelRoute.Actions)
+            actionsViewModel.handle(request)
         }
     }
     ScrcpyViewerTheme(settings.themeMode) {

@@ -1,0 +1,373 @@
+package com.programmersbox.scrcpyviewer.ui.actions
+
+import com.programmersbox.scrcpyviewer.actions.ActionCodec
+import com.programmersbox.scrcpyviewer.actions.ActionStore
+import com.programmersbox.scrcpyviewer.actions.MatchMode
+import com.programmersbox.scrcpyviewer.actions.OnWhen
+import com.programmersbox.scrcpyviewer.actions.OutputTarget
+import com.programmersbox.scrcpyviewer.actions.RunOnceAction
+import com.programmersbox.scrcpyviewer.actions.ToggleAction
+import com.programmersbox.scrcpyviewer.actions.Variable
+import com.programmersbox.scrcpyviewer.actions.VariableKind
+import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.adb.DeviceTracker
+import com.programmersbox.scrcpyviewer.adb.ShellRunner
+import com.programmersbox.scrcpyviewer.presets.ConflictChoice
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import java.nio.file.Files
+import java.util.Collections
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/** Lists [serials] as connected; shell commands answer from [answer], or print forever with [endless], like `logcat`. */
+private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = { error("no real adb in tests") }) {
+    var answer: (String) -> String = { "" }
+    var endless = false
+    val commands: MutableList<String> = Collections.synchronizedList(mutableListOf())
+
+    override suspend fun startServer() {}
+
+    override fun trackDevices(): Flow<String> = flow {
+        emit(serials.joinToString("\n") { "$it\tdevice" })
+        awaitCancellation()
+    }
+
+    // Only the tracker's device info query uses the one-shot shell.
+    override suspend fun shell(serial: String, cmd: String): String = "Pixel 8\n15\n35\n$serial\n"
+
+    override fun shellStream(serial: String, cmd: String): Flow<String> = flow {
+        val command = cmd.substringBeforeLast("\necho ")
+        commands += "$serial: $command"
+        if (endless) {
+            while (true) {
+                emit("I ActivityManager: line\n")
+                delay(5)
+            }
+        }
+        emit(answer(command) + "${ShellRunner.EXIT_MARKER}0\n")
+    }
+}
+
+class ActionsViewModelTest {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+    private val store = ActionStore(Files.createTempDirectory("actions-vm").resolve("actions.json"))
+
+    private val stayAwake = ToggleAction(
+        "awake", "Stay awake", on = "svc power stayon true", off = "svc power stayon false",
+        read = "settings get global stay_on_while_plugged_in", onWhen = OnWhen(MatchMode.Equals, "7"),
+    )
+    private val logcat = RunOnceAction("logcat", "Logcat", command = "logcat", output = OutputTarget.Shell)
+
+    @AfterTest
+    fun tearDown() = scope.cancel()
+
+    private fun vm(serials: List<String> = listOf("SER1", "SER2"), adb: FakeAdb = FakeAdb(serials)): ActionsViewModel {
+        val tracker = DeviceTracker(adb, scope)
+        runBlocking { withTimeout(5_000) { tracker.devices.first { it.size == serials.size } } }
+        return ActionsViewModel(store, tracker, adb, scope, testTimeoutMs = 300)
+    }
+
+    private fun ActionsViewModel.awaitTest() = runBlocking {
+        withTimeout(5_000) { state.first { it.test != null && !it.test!!.running } }.test!!
+    }
+
+    @Test
+    fun `new draft is a toggle with the toggle icon`() {
+        val vm = vm()
+        vm.new()
+        val draft = assertNotNull(vm.state.value.draft)
+        assertEquals(ActionType.Toggle, draft.type)
+        assertEquals("toggle_on", draft.icon)
+        assertNull(draft.id)
+        assertFalse(vm.state.value.dirty)
+    }
+
+    @Test
+    fun `switching type keeps the name and swaps a default icon`() {
+        val vm = vm()
+        vm.new()
+        vm.edit { it.copy(name = "Clear data") }
+        vm.setType(ActionType.RunOnce)
+        assertEquals("Clear data", vm.state.value.draft!!.name)
+        assertEquals("play_arrow", vm.state.value.draft!!.icon)
+        vm.edit { it.copy(icon = "bolt") }
+        vm.setType(ActionType.Toggle)
+        assertEquals("bolt", vm.state.value.draft!!.icon, "a chosen icon stays")
+    }
+
+    @Test
+    fun `editing the command derives variables and keeps their settings`() {
+        val vm = vm()
+        vm.new()
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(command = "pm clear {package}") }
+        assertEquals(mapOf("package" to Variable("package", VariableKind.Text)), vm.state.value.draft!!.variables)
+
+        vm.edit { it.copy(variables = mapOf("package" to Variable("App to clear", VariableKind.App))) }
+        vm.edit { it.copy(command = "pm clear --user 0 {package} {{literal}}") }
+        assertEquals(mapOf("package" to Variable("App to clear", VariableKind.App)), vm.state.value.draft!!.variables)
+
+        // A variable that briefly disappears while typing keeps its settings when it comes back.
+        vm.edit { it.copy(command = "pm clear {packag") }
+        assertEquals(emptyMap(), vm.state.value.draft!!.variables)
+        vm.edit { it.copy(command = "pm clear {package}") }
+        assertEquals("App to clear", vm.state.value.draft!!.variables["package"]?.label)
+    }
+
+    @Test
+    fun `save validates required and unique fields`() {
+        store.upsert(stayAwake)
+        val vm = vm()
+        vm.new()
+        assertFalse(vm.save())
+        val errors = vm.state.value.errors
+        assertNotNull(errors.name)
+        assertNotNull(errors.on)
+        assertNotNull(errors.off)
+        assertNull(errors.command)
+
+        vm.edit { it.copy(name = "stay AWAKE", on = "a", off = "b") }
+        assertFalse(vm.save())
+        assertNotNull(vm.state.value.errors.name, "names are unique ignoring case")
+        assertNull(vm.state.value.errors.on)
+
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(name = "Other") }
+        assertFalse(vm.save())
+        assertNotNull(vm.state.value.errors.command)
+        assertNull(vm.state.value.errors.on)
+        assertEquals(listOf(stayAwake), store.actions.value)
+    }
+
+    @Test
+    fun `save upserts and clears dirty`() {
+        val vm = vm()
+        vm.new()
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(name = "  Clear data ", command = "pm clear {package}", confirm = true) }
+        assertTrue(vm.state.value.dirty)
+        assertTrue(vm.save())
+        val saved = store.actions.value.single() as RunOnceAction
+        assertEquals("Clear data", saved.name)
+        assertEquals("play_arrow", saved.icon)
+        assertEquals(mapOf("package" to Variable("package")), saved.variables)
+        assertTrue(saved.confirm)
+        assertEquals(saved.id, vm.state.value.selectedId)
+        assertEquals(saved.id, vm.state.value.draft!!.id)
+        assertFalse(vm.state.value.dirty)
+
+        // Saving again updates the same action.
+        vm.edit { it.copy(name = "Clear app") }
+        assertTrue(vm.save())
+        assertEquals(listOf("Clear app"), store.actions.value.map { it.name })
+    }
+
+    @Test
+    fun `a toggle saves its read check only with a read command`() {
+        val vm = vm()
+        vm.new()
+        vm.edit { it.copy(name = "Wifi", on = "svc wifi enable", off = "svc wifi disable", matchValue = "1") }
+        assertTrue(vm.save())
+        val saved = store.actions.value.single() as ToggleAction
+        assertNull(saved.read)
+        assertNull(saved.onWhen)
+    }
+
+    @Test
+    fun `select while dirty is refused and discardAndSelect switches`() {
+        store.upsert(stayAwake)
+        store.upsert(logcat)
+        val vm = vm()
+        assertTrue(vm.select("awake"))
+        assertEquals("Stay awake", vm.state.value.draft!!.name)
+        vm.edit { it.copy(name = "Changed") }
+        assertFalse(vm.select("logcat"))
+        assertEquals("awake", vm.state.value.selectedId)
+        vm.discardAndSelect("logcat")
+        assertEquals("logcat", vm.state.value.selectedId)
+        assertEquals(ActionType.RunOnce, vm.state.value.draft!!.type)
+        assertFalse(vm.state.value.dirty)
+        assertEquals(listOf("Stay awake", "Logcat"), store.actions.value.map { it.name })
+    }
+
+    @Test
+    fun `handle opens an action, a new one, or asks to discard first`() {
+        store.upsert(stayAwake)
+        store.upsert(logcat)
+        val vm = vm()
+        vm.handle(ActionsRequest("logcat", new = false))
+        assertEquals("logcat", vm.state.value.selectedId)
+        vm.handle(ActionsRequest(null, new = true))
+        assertNull(vm.state.value.draft!!.id)
+
+        vm.edit { it.copy(name = "Unsaved") }
+        vm.handle(ActionsRequest("awake", new = false))
+        assertEquals("Unsaved", vm.state.value.draft!!.name)
+        assertEquals(ActionsRequest("awake", new = false), vm.pendingDiscard.value)
+        vm.discardAndSelect("awake")
+        assertNull(vm.pendingDiscard.value)
+        assertEquals("awake", vm.state.value.selectedId)
+
+        vm.handle(ActionsRequest(null, new = false))
+        assertEquals("awake", vm.state.value.selectedId, "a plain request only shows the screen")
+    }
+
+    @Test
+    fun `test device defaults to the first connected device`() {
+        assertEquals(listOf("SER1", "SER2"), vm().state.value.devices)
+        val vm = vm()
+        assertEquals("SER1", vm.state.value.testDevice)
+        vm.setTestDevice("SER2")
+        assertEquals("SER2", vm.state.value.testDevice)
+        assertNull(vm(serials = emptyList()).state.value.testDevice)
+    }
+
+    @Test
+    fun `test read shows the raw output and whether it counts as on`() {
+        store.upsert(stayAwake)
+        val adb = FakeAdb(listOf("SER1")).apply { answer = { "7\r\n" } }
+        val vm = vm(listOf("SER1"), adb)
+        vm.select("awake")
+        vm.testRead()
+        val result = vm.awaitTest()
+        assertEquals("Counts as on", result.note)
+        assertEquals("7", result.output)
+        assertEquals(0, result.exitCode)
+        assertEquals(listOf("SER1: settings get global stay_on_while_plugged_in"), adb.commands)
+
+        adb.answer = { "0\n" }
+        vm.testRead()
+        assertEquals("Counts as off", vm.awaitTest().note)
+    }
+
+    @Test
+    fun `test read without a read command says so`() {
+        val vm = vm()
+        vm.new()
+        vm.testRead()
+        assertEquals("No read command", vm.awaitTest().note)
+    }
+
+    @Test
+    fun `test run substitutes variables on the chosen device`() {
+        val adb = FakeAdb(listOf("SER1", "SER2")).apply { answer = { "Success\n" } }
+        val vm = vm(adb = adb)
+        vm.new()
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(command = "pm clear {package}") }
+        vm.setTestDevice("SER2")
+        vm.testRun(mapOf("package" to "com.example"))
+        val result = vm.awaitTest()
+        assertEquals("Success", result.output)
+        assertEquals(0, result.exitCode)
+        assertNull(result.note)
+        assertEquals(listOf("SER2: pm clear com.example"), adb.commands)
+    }
+
+    @Test
+    fun `test run of a Shell output action stops after the timeout`() {
+        store.upsert(logcat)
+        val adb = FakeAdb(listOf("SER1")).apply { endless = true }
+        val vm = vm(listOf("SER1"), adb)
+        vm.select("logcat")
+        vm.testRun(emptyMap())
+        val result = vm.awaitTest()
+        assertEquals("Stopped after 30 s", result.note)
+        assertTrue(result.output.startsWith("I ActivityManager: line\n"), result.output)
+        assertNull(result.exitCode)
+    }
+
+    @Test
+    fun `test run of a Toast action that never ends times out`() {
+        val adb = FakeAdb(listOf("SER1")).apply { endless = true }
+        val vm = vm(listOf("SER1"), adb)
+        vm.new()
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(command = "sleep 100") }
+        vm.testRun(emptyMap())
+        assertEquals("Timed out after 30 s; set Output to Shell tab for long commands", vm.awaitTest().note)
+    }
+
+    @Test
+    fun `delete clears the selection of the deleted action`() {
+        store.upsert(stayAwake)
+        val vm = vm()
+        vm.select("awake")
+        vm.delete("awake")
+        assertEquals(emptyList(), store.actions.value)
+        assertNull(vm.state.value.selectedId)
+        assertNull(vm.state.value.draft)
+    }
+
+    @Test
+    fun `duplicate and move go through the store`() {
+        store.upsert(stayAwake)
+        store.upsert(logcat)
+        val vm = vm()
+        vm.duplicate("awake")
+        assertEquals(listOf("Stay awake", "Logcat", "Stay awake (2)"), store.actions.value.map { it.name })
+        assertEquals("Stay awake (2)", vm.state.value.draft!!.name)
+        vm.move("logcat", 0)
+        assertEquals(listOf("Logcat", "Stay awake", "Stay awake (2)"), vm.state.value.actions.map { it.name })
+    }
+
+    @Test
+    fun `export writes every action`() {
+        store.upsert(stayAwake)
+        store.upsert(logcat)
+        assertEquals(listOf(stayAwake, logcat), ActionCodec.decode(vm().exportJson()))
+    }
+
+    @Test
+    fun `import of a newer version sets an error and changes nothing`() {
+        val vm = vm()
+        vm.beginImport("""{"format": "scrcpy-viewer.actions", "version": 2, "actions": []}""")
+        val import = assertNotNull(vm.importState.value)
+        assertNotNull(import.error)
+        assertEquals(emptyList(), import.items)
+        vm.confirmImport()
+        assertNull(vm.importState.value)
+        assertEquals(emptyList(), store.actions.value)
+    }
+
+    @Test
+    fun `confirmImport applies the plan`() {
+        store.upsert(stayAwake)
+        val vm = vm()
+        val incoming = listOf(
+            stayAwake.copy(id = "x", on = "svc power stayon usb"),
+            logcat.copy(id = "y"),
+            RunOnceAction("z", "Reboot", command = "reboot"),
+        )
+        vm.beginImport(ActionCodec.encode(incoming))
+        val import = assertNotNull(vm.importState.value)
+        assertNull(import.error)
+        assertEquals(3, import.importCount)
+        assertEquals(stayAwake, import.items[0].conflictsWith)
+        vm.setChoice(0, ConflictChoice.Replace)
+        vm.setInclude(2, false)
+        assertEquals(2, vm.importState.value!!.importCount)
+        vm.confirmImport()
+        assertNull(vm.importState.value)
+        val actions = store.actions.value
+        assertEquals(listOf("Stay awake", "Logcat"), actions.map { it.name })
+        assertEquals("awake", actions[0].id, "a replaced action keeps its id")
+        assertEquals("svc power stayon usb", (actions[0] as ToggleAction).on)
+        assertTrue(actions[1].id != "y", "an added action gets a new id")
+    }
+}
