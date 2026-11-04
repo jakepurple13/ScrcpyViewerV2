@@ -10,7 +10,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionImportPlan
 import com.programmersbox.scrcpyviewer.actions.ActionTemplates
@@ -33,6 +40,7 @@ import com.programmersbox.scrcpyviewer.ui.actions.TemplatePickerContent
 import com.programmersbox.scrcpyviewer.ui.actions.TestResult
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import org.jetbrains.skia.EncodedImageFormat
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.test.Test
@@ -167,6 +175,34 @@ class ActionsScreenshotTest {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             TemplatePickerContent(onPick = {}, onDismiss = {}, initialQuery = "broad")
         }
+    }
+
+    /** The picker after a click on the Intents chip, once the filter animation has settled. */
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test
+    fun `actions template picker filtered`() = onEdt {
+        val out = outDir.resolve("actions-template-picker-filtered.png")
+        val scene = ImageComposeScene(1280, 900, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { TemplatePickerContent(onPick = {}, onDismiss = {}) }
+                }
+            }
+        }
+        try {
+            scene.render(0)
+            // The Intents chip (see actions-template-picker.png).
+            val chip = Offset(471f, 249f)
+            scene.sendPointerEvent(PointerEventType.Press, chip, type = PointerType.Mouse, button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Release, chip, type = PointerType.Mouse, button = PointerButton.Primary)
+            var image = scene.render(16_000_000)
+            for (frame in 2..63) image = scene.render(frame * 16_000_000L) // ~1 s of frames
+            Files.createDirectories(out.parent)
+            Files.write(out, checkNotNull(image.encodeToData(EncodedImageFormat.PNG)).bytes)
+        } finally {
+            scene.close()
+        }
+        assertTrue(Files.size(out) > 10_000, "the filtered picker should not be blank")
     }
 
     @Test
