@@ -64,6 +64,23 @@ class AspectLockTest {
     }
 
     @Test
+    fun `a window hanging near or below the screen's bottom is never collapsed by the cap`() {
+        val usable = 1400
+        // The window's top 40 px above the screen's bottom: no room below once the title bar comes off.
+        val nearBottom = aspectMaxHeight(roomBelow = 40 - 56, usable = usable, current = 1000)
+        assertEquals(1000, nearBottom)
+        assertEquals(IntSize(450, 1000), aspectLockedStage(IntSize(450, 1000), IntSize(454, 1000), portrait, portrait, nearBottom), "height kept")
+        val offAspect = aspectLockedStage(IntSize(650, 1000), IntSize(654, 1000), portrait, portrait, nearBottom)
+        assertEquals(IntSize(650, 1000), offAspect, "the height kept, the stage not shrunk to nothing")
+        // A rotation or a new frame there keeps a usable stage too.
+        val rotated = aspectLockedStage(IntSize(1000, 450), IntSize(1000, 450), landscape, portrait, aspectMaxHeight(-500, usable, 450))
+        assertEquals(IntSize(203, 450), rotated, "the stage keeps its height, not 1 x 1")
+        assertEquals(200, aspectMaxHeight(roomBelow = -500, usable = usable, current = 50), "never under the minimum")
+        assertEquals(usable, aspectMaxHeight(roomBelow = -500, usable = usable, current = 3000), "never over the screen")
+        assertEquals(1200, aspectMaxHeight(roomBelow = 1200, usable = usable, current = 1000), "room below when there is some")
+    }
+
+    @Test
     fun `many resizes of a stage at the frame's aspect never drift off it`() {
         val random = Random(20)
         var stage = IntSize(450, 1000)

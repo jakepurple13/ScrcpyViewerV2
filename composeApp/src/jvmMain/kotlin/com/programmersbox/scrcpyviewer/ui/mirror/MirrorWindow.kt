@@ -674,7 +674,12 @@ fun MirrorWindow(
                 fit && aspectLock && lockNeeded -> {
                     // Never taller than the screen has room for below the window's top, less its chrome (title bar).
                     val chromeH = awtWindow.height * density.density - stage.height
-                    val maxH = (screenRoomBelow(awtWindow) * density.density - chromeH).roundToInt()
+                    val (usable, below) = screenRoom(awtWindow)
+                    val maxH = aspectMaxHeight(
+                        roomBelow = (below * density.density - chromeH).roundToInt(),
+                        usable = (usable * density.density - chromeH).roundToInt(),
+                        current = lastStage.height,
+                    )
                     aspectLockedStage(lastStage, stage, lastFrame, fs, maxH, refit)
                 }
                 else -> null
@@ -819,15 +824,28 @@ private val AtLeastAvailableWidth: Modifier = Modifier.layout { measurable, cons
 private const val ASPECT_SETTLE_MS = 150L
 
 /**
- * The height (window units) the window's content can reach on the screen [window] is on: from the window's top to the
- * screen's bottom less the Dock or taskbar, and never more than the screen's height less the menu bar.
+ * Heights (window units) on the screen [window] is on: the screen's height less the menu bar and the Dock or taskbar,
+ * and the room from the window's top down to the screen's bottom (less the Dock or taskbar; negative when the window
+ * hangs below it).
  */
-private fun screenRoomBelow(window: java.awt.Window): Int {
+private fun screenRoom(window: java.awt.Window): Pair<Int, Int> {
     val config = window.graphicsConfiguration
     val insets = Toolkit.getDefaultToolkit().getScreenInsets(config)
     val bottom = config.bounds.y + config.bounds.height - insets.bottom
-    return minOf(config.bounds.height - insets.top - insets.bottom, bottom - window.y)
+    return (config.bounds.height - insets.top - insets.bottom) to (bottom - window.y)
 }
+
+/** The smallest height the aspect ratio lock lets the stage have (px), whatever room the screen has. */
+private const val ASPECT_MIN_STAGE_HEIGHT = 200
+
+/**
+ * The tallest stage (px) the aspect ratio lock allows: the room from the window's top to the screen's bottom
+ * ([roomBelow]), no more than the screen's [usable] height. Never under the stage's [current] height (up to [usable]),
+ * so a window that hangs low or below the screen's bottom is not shrunk by a resize, and never under
+ * [ASPECT_MIN_STAGE_HEIGHT].
+ */
+fun aspectMaxHeight(roomBelow: Int, usable: Int, current: Int): Int =
+    maxOf(minOf(roomBelow, usable), minOf(current, usable), ASPECT_MIN_STAGE_HEIGHT)
 
 /**
  * Whether the aspect ratio lock looks at the stage: after the user resized the window ([windowResized]), when the
