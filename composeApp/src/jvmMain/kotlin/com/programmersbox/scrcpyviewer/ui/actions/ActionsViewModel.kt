@@ -28,6 +28,8 @@ import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -41,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.core.annotation.KoinViewModel
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 enum class ActionType { Toggle, RunOnce }
 
@@ -67,8 +70,11 @@ data class DraftErrors(val name: String? = null, val on: String? = null, val off
     val isEmpty: Boolean get() = name == null && on == null && off == null && command == null
 }
 
-/** A Test run or Test read. [note] explains the result, e.g. a read verdict ("Counts as on") or why it stopped. */
-data class TestResult(val running: Boolean, val output: String, val exitCode: Int?, val note: String?)
+/**
+ * A Test run or Test read. [note] explains the result, e.g. a read verdict ("Counts as on") or why it stopped.
+ * [shownLines] is set when [output] was trimmed to its last lines.
+ */
+data class TestResult(val running: Boolean, val output: String, val exitCode: Int?, val note: String?, val shownLines: Int? = null)
 
 data class ActionsUiState(
     val actions: List<CustomAction> = emptyList(),
@@ -161,6 +167,20 @@ class ActionsViewModel(
 
     private val dirty: Boolean get() = editor.value.let { it.draft != it.baseline }
 
+    init {
+        // The open action deleted elsewhere (a mirror tile's Delete): close it, or Save would bring it back.
+        viewModelScope.launch {
+            store.actions.collect { actions ->
+                val e = editor.value
+                val id = e.selectedId ?: return@collect
+                if (actions.any { it.id == id }) return@collect
+                cancelTest()
+                editor.update { it.copy(selectedId = null, draft = null, baseline = null, errors = DraftErrors(), test = null) }
+                _messages.tryEmit("${(e.baseline ?: e.draft)?.name ?: "The action"} was deleted")
+            }
+        }
+    }
+
     /** A request from a mirror window: open an action, a new one, or (neither) just the list as it is. */
     fun handle(request: ActionsRequest) {
         val e = editor.value
@@ -219,11 +239,12 @@ class ActionsViewModel(
     }
 
     fun delete(id: String) {
-        store.delete(id)
+        // Close the editor first, so deleting the open action here is not reported as deleted elsewhere.
         if (editor.value.selectedId == id) {
             cancelTest()
             editor.update { it.copy(selectedId = null, draft = null, baseline = null, errors = DraftErrors(), test = null) }
         }
+        store.delete(id)
     }
 
     /** Copies [id] under a unique name, and opens the copy unless the draft has unsaved changes. */
@@ -239,7 +260,8 @@ class ActionsViewModel(
 
     /**
      * Runs the draft on the test device: a run-once command with [values] substituted for its variables, or a
-     * toggle's Turn on command. Shell-output actions stream and stop at the time limit; the others run buffered.
+     * toggle's Turn on command (noted "Ran Turn on"). Shell-output actions stream and stop at the time limit; the
+     * others run buffered.
      */
     fun testRun(values: Map<String, String>) {
         val draft = editor.value.draft ?: return
@@ -252,7 +274,8 @@ class ActionsViewModel(
         if (draft.type == ActionType.RunOnce && draft.output == OutputTarget.Shell) {
             startTest { runner -> streamTest(runner, command) }
         } else {
-            startTest { runner -> bufferedTest(runner, command) { null } }
+            val note = if (draft.type == ActionType.Toggle) RAN_TURN_ON_NOTE else null
+            startTest { runner -> bufferedTest(runner, command) { note } }
         }
     }
 
@@ -383,25 +406,41 @@ class ActionsViewModel(
 
     private suspend fun bufferedTest(runner: ShellRunner, command: String, note: (String) -> String?) {
         val result = runner.run(command, testTimeoutMs)
-        setTest(TestResult(running = false, output = result.output, exitCode = result.exitCode, note = note(result.output)))
+        val (output, shownLines) = OutputTail.of(result.output)
+        setTest(TestResult(running = false, output = output, exitCode = result.exitCode, note = note(result.output), shownLines = shownLines))
     }
 
-    /** Shows output as it arrives; stops the command at the time limit. */
+    /**
+     * Shows the output's last lines as it arrives, at most every [OUTPUT_REFRESH_MS] so a flood of output
+     * cannot swamp the window; stops the command at the time limit.
+     */
     private suspend fun streamTest(runner: ShellRunner, command: String) {
-        val output = StringBuilder()
+        val tail = OutputTail()
+        val changed = AtomicBoolean(false)
         var exitCode: Int? = null
-        val finished = withTimeoutOrNull(testTimeoutMs) {
-            runner.stream(command).collect { event ->
-                when (event) {
-                    is ShellEvent.Output -> {
-                        output.append(event.text)
-                        setTest(TestResult(running = true, output = output.toString(), exitCode = null, note = null))
-                    }
-                    is ShellEvent.Exit -> exitCode = event.code
+        fun show(running: Boolean, note: String? = null) = setTest(
+            TestResult(running, tail.toString(), if (running) null else exitCode, note, tail.lineCount.takeIf { tail.trimmed }),
+        )
+        val finished = coroutineScope {
+            val refresh = launch {
+                while (true) {
+                    delay(OUTPUT_REFRESH_MS)
+                    if (changed.getAndSet(false)) show(running = true)
                 }
             }
-        } != null
-        setTest(TestResult(running = false, output = output.toString(), exitCode = exitCode, note = if (finished) null else STOPPED_NOTE))
+            withTimeoutOrNull(testTimeoutMs) {
+                runner.stream(command).collect { event ->
+                    when (event) {
+                        is ShellEvent.Output -> {
+                            tail.append(event.text)
+                            changed.set(true)
+                        }
+                        is ShellEvent.Exit -> exitCode = event.code
+                    }
+                }
+            }.also { refresh.cancel() } != null
+        }
+        show(running = false, note = if (finished) null else STOPPED_NOTE)
     }
 
     private fun setTest(result: TestResult) = editor.update { it.copy(test = result) }
@@ -421,6 +460,8 @@ class ActionsViewModel(
         const val STOPPED_NOTE = "Stopped after 30 s"
         const val NO_DEVICE_NOTE = "No device connected"
         const val NOTHING_TO_RUN_NOTE = "Nothing to run"
+        const val RAN_TURN_ON_NOTE = "Ran Turn on"
+        const val OUTPUT_REFRESH_MS = 100L
 
         fun connectedSerials(devices: List<Device>): List<String> =
             devices.filter { it.state == DeviceState.Device }.map { it.serial }

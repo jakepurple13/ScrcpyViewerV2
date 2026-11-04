@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -187,7 +188,8 @@ fun ActionsContent(
                 val draft = state.draft
                 Box(Modifier.fillMaxSize()) {
                     when {
-                        draft != null -> ActionEditor(state, draft, packages, onEvent, onBack)
+                        // Keyed by action so remembered field text (e.g. a List variable's choices) never carries over.
+                        draft != null -> key(draft.id ?: "new") { ActionEditor(state, draft, packages, onEvent, onBack) }
                         else -> {
                             if (onBack != null) DetailBackButton(onBack, Modifier.padding(start = 6.dp, top = 6.dp))
                             if (state.actions.isEmpty()) EmptyState(onEvent, Modifier.align(Alignment.Center))

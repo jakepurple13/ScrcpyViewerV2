@@ -179,7 +179,10 @@ private fun ToggleFields(
     val errors = state.errors
     CommandField("Turn on", draft.on, errors.on, monospace) { v -> edit { it.copy(on = v) } }
     CommandField("Turn off", draft.off, errors.off, monospace) { v -> edit { it.copy(off = v) } }
-    CommandField("Read state (optional)", draft.read, null, monospace) { v -> edit { it.copy(read = v) } }
+    CommandField(
+        "Read state (optional)", draft.read, null, monospace,
+        hint = "Runs each time the quick actions sheet opens; keep it quick",
+    ) { v -> edit { it.copy(read = v) } }
     if (draft.read.isNotBlank()) {
         SectionLabel("On when output")
         // Segments share the row's width equally; give "matches regex" room.
@@ -276,11 +279,11 @@ private fun KindMenu(kind: VariableKind, onPick: (VariableKind) -> Unit) {
 }
 
 @Composable
-private fun CommandField(label: String, value: String, error: String?, style: TextStyle, onChange: (String) -> Unit) {
+private fun CommandField(label: String, value: String, error: String?, style: TextStyle, hint: String? = null, onChange: (String) -> Unit) {
     OutlinedTextField(
         value, onChange, Modifier.fillMaxWidth(),
         label = { Text(label) }, textStyle = style, isError = error != null,
-        supportingText = error?.let { { Text(it) } },
+        supportingText = (error ?: hint)?.let { { Text(it) } },
     )
 }
 
@@ -319,6 +322,7 @@ private fun TestOutput(test: TestResult) {
                 Text("exit $code", style = MaterialTheme.typography.labelMedium, color = if (code == 0) colors.onSurfaceVariant else colors.error)
             }
             test.note?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant) }
+            test.shownLines?.let { Text("Showing last $it lines", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant) }
         }
         if (test.output.isNotEmpty() || test.running) {
             Surface(color = colors.surfaceContainerHighest, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {

@@ -65,7 +65,7 @@ fun IconPickerPopup(selected: String, onPick: (String) -> Unit, onDismiss: () ->
 
 /**
  * Search field, then the icon groups in an 8-column grid. The [selected] icon is filled with the accent color.
- * Arrow keys move the highlight, Enter picks it, Esc closes.
+ * Arrow keys move the highlight (Left and Right only while the search is empty), Enter picks it, Esc closes.
  */
 @Composable
 fun IconPickerContent(selected: String, onPick: (String) -> Unit, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
@@ -94,8 +94,13 @@ fun IconPickerContent(selected: String, onPick: (String) -> Unit, onDismiss: () 
         modifier = modifier.width(CellSize * COLUMNS + 32.dp).onPreviewKeyEvent { event ->
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
             when (event.key) {
-                Key.DirectionLeft -> highlight = (highlight - 1).coerceAtLeast(0)
-                Key.DirectionRight -> highlight = (highlight + 1).coerceAtMost((flat.size - 1).coerceAtLeast(0))
+                // With a search typed, Left and Right move the caret in the field instead.
+                Key.DirectionLeft -> if (query.isEmpty()) highlight = (highlight - 1).coerceAtLeast(0) else return@onPreviewKeyEvent false
+                Key.DirectionRight -> if (query.isEmpty()) {
+                    highlight = (highlight + 1).coerceAtMost((flat.size - 1).coerceAtLeast(0))
+                } else {
+                    return@onPreviewKeyEvent false
+                }
                 Key.DirectionUp -> moveVertically(-1)
                 Key.DirectionDown -> moveVertically(1)
                 Key.Enter, Key.NumPadEnter -> flat.getOrNull(highlight)?.let { onPick(it.name) }

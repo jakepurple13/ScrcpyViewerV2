@@ -23,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
@@ -42,6 +43,8 @@ import kotlin.test.assertTrue
 private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = { error("no real adb in tests") }) {
     var answer: (String) -> String = { "" }
     var endless = false
+    /** Prints this many numbered lines at once, then ends, like a large `dumpsys`. */
+    var flood = 0
     val commands: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
     override suspend fun startServer() {}
@@ -61,6 +64,11 @@ private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = {
     override fun shellStream(serial: String, cmd: String): Flow<String> = flow {
         val command = cmd.substringBeforeLast("\necho ")
         commands += "$serial: $command"
+        if (flood > 0) {
+            emit((1..flood).joinToString("") { "line $it\n" })
+            emit("${ShellRunner.EXIT_MARKER}0\n")
+            return@flow
+        }
         if (endless) {
             while (true) {
                 emit("I ActivityManager: line\n")
@@ -488,5 +496,79 @@ class ActionsViewModelTest {
         assertEquals(listOf("com.a", "com.b"), runBlocking { withTimeout(5_000) { vm.packages.first { it != null } } })
         vm.loadPackages(includeSystem = true)
         assertEquals(listOf("android", "com.a", "com.b"), runBlocking { withTimeout(5_000) { vm.packages.first { it?.size == 3 } } })
+    }
+
+    @Test
+    fun `streamed test output keeps only the last 1000 lines`() {
+        val adb = FakeAdb(listOf("SER1")).apply { flood = 5_000 }
+        store.upsert(logcat)
+        val vm = vm(listOf("SER1"), adb)
+        vm.select("logcat")
+        vm.testRun(emptyMap())
+        val result = vm.awaitTest()
+        val lines = result.output.lines().filter { it.isNotEmpty() }
+        assertEquals(1000, lines.size)
+        assertEquals("line 4001", lines.first())
+        assertEquals("line 5000", lines.last())
+        assertEquals(1000, result.shownLines, "the editor says Showing last 1000 lines")
+        assertEquals(0, result.exitCode)
+    }
+
+    @Test
+    fun `buffered test output keeps only the last 1000 lines`() {
+        val adb = FakeAdb(listOf("SER1")).apply { answer = { (1..3_000).joinToString("") { "line $it\n" } } }
+        val vm = vm(listOf("SER1"), adb)
+        vm.new()
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(command = "dumpsys") }
+        vm.testRun(emptyMap())
+        val result = vm.awaitTest()
+        assertEquals("line 3000", result.output.lines().last { it.isNotEmpty() })
+        assertEquals(1000, result.shownLines)
+    }
+
+    @Test
+    fun `short test output is not trimmed`() {
+        val adb = FakeAdb(listOf("SER1")).apply { answer = { "ok\n" } }
+        val vm = vm(listOf("SER1"), adb)
+        vm.new()
+        vm.setType(ActionType.RunOnce)
+        vm.edit { it.copy(command = "echo ok") }
+        vm.testRun(emptyMap())
+        assertNull(vm.awaitTest().shownLines)
+    }
+
+    @Test
+    fun `a toggle test run says it ran Turn on`() {
+        store.upsert(stayAwake)
+        val adb = FakeAdb(listOf("SER1"))
+        val vm = vm(listOf("SER1"), adb)
+        vm.select("awake")
+        vm.testRun(emptyMap())
+        assertEquals("Ran Turn on", vm.awaitTest().note)
+        assertEquals(listOf("SER1: svc power stayon true"), adb.commands)
+    }
+
+    @Test
+    fun `the open action deleted elsewhere closes the editor with a message`() {
+        store.upsert(stayAwake)
+        store.upsert(logcat)
+        val vm = vm()
+        val messages = Collections.synchronizedList(mutableListOf<String>())
+        val collector = scope.launch { vm.messages.collect { messages += it } }
+        vm.select("awake")
+        vm.edit { it.copy(name = "Renamed") }
+        store.delete("awake")
+        runBlocking { withTimeout(5_000) { vm.state.first { it.selectedId == null } } }
+        assertNull(vm.state.value.draft)
+        assertEquals(listOf("Stay awake was deleted"), messages)
+        assertFalse(vm.save(), "nothing left to save")
+        assertEquals(listOf("Logcat"), store.actions.value.map { it.name })
+
+        // Deleting another action, or deleting from this screen, says nothing.
+        vm.select("logcat")
+        vm.delete("logcat")
+        assertEquals(listOf("Stay awake was deleted"), messages)
+        collector.cancel()
     }
 }

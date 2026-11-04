@@ -110,7 +110,7 @@ private fun ImportRow(item: ActionImportItem, onChoice: (ConflictChoice) -> Unit
             Commands(action)
             if (item.conflictsWith != null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Name already exists", style = MaterialTheme.typography.labelMedium, color = warnColor(), modifier = Modifier.weight(1f))
+                    Text(if (item.inFile) "Same name as an action above" else "Name already exists", style = MaterialTheme.typography.labelMedium, color = warnColor(), modifier = Modifier.weight(1f))
                     ConflictChoices(item.choice, enabled = item.include, onChoice)
                 }
             }
@@ -118,11 +118,14 @@ private fun ImportRow(item: ActionImportItem, onChoice: (ConflictChoice) -> Unit
     }
 }
 
+/** A toggle's read command runs by itself, each time a mirror window's quick actions sheet opens. */
+private const val READ_LABEL = "read (runs when the sheet opens)"
+
 /** Every command the action would run, labelled for a toggle. */
 @Composable
 private fun Commands(action: CustomAction) {
     val lines = when (action) {
-        is ToggleAction -> listOfNotNull("on" to action.on, "off" to action.off, action.read?.let { "read" to it })
+        is ToggleAction -> listOfNotNull("on" to action.on, "off" to action.off, action.read?.let { READ_LABEL to it })
         is RunOnceAction -> listOf(null to action.command)
     }
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
