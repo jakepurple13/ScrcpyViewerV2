@@ -50,6 +50,20 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/** A key press's save waiting to run: [done] is the onResizeDone of that press. */
+private class KeySave {
+    var job: Job? = null
+    var done: (() -> Unit)? = null
+
+    fun flush() {
+        if (job?.isActive == true) {
+            job?.cancel()
+            job = null
+            done?.invoke()
+        }
+    }
+}
+
 /** How long after the last key press the width is saved. */
 private const val KEY_SAVE_DELAY_MS = 400L
 
@@ -62,7 +76,8 @@ private val ResizeCursor = PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR))
  * The bar on the sheet's left edge, between the side toolbar and the sheet. Dragging it left widens the sheet ([width]
  * is the width shown now), right narrows it; [fit] clamps each new width. [onResize] reports every step,
  * [onResizeDone] the end of a drag or of a run of key presses (time to save). Double-click or Home calls [onReset].
- * Focusable: Left and Right move it by [SHEET_KEY_STEP]. The grip turns the accent color while hovered, dragged or
+ * Focusable: Left and Right move it by [SHEET_KEY_STEP]; their save waits for the keys to stop, or for [saveKey]
+ * (the panel's tab) to change. The grip turns the accent color while hovered, dragged or
  * focused.
  */
 @Composable
@@ -72,6 +87,7 @@ internal fun SheetDragBar(
     onResize: (Dp) -> Unit,
     onResizeDone: () -> Unit,
     onReset: () -> Unit,
+    saveKey: Any,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -83,17 +99,12 @@ internal fun SheetDragBar(
     val currentWidth by rememberUpdatedState(width)
     val currentFit by rememberUpdatedState(fit)
     val currentOnReset by rememberUpdatedState(onReset)
-    val currentOnResizeDone by rememberUpdatedState(onResizeDone)
-    // Key presses (held keys repeat) save once they stop; a save still pending when the bar leaves is done at once.
+    // Key presses (held keys repeat) save once they stop, through the onResizeDone of the press. A save still
+    // pending when [saveKey] changes or the bar leaves is done at once.
     val scope = rememberCoroutineScope()
-    val keySave = remember { arrayOfNulls<Job>(1) }
-    DisposableEffect(Unit) {
-        onDispose {
-            if (keySave[0]?.isActive == true) {
-                keySave[0]?.cancel()
-                currentOnResizeDone()
-            }
-        }
+    val keySave = remember { KeySave() }
+    DisposableEffect(saveKey) {
+        onDispose { keySave.flush() }
     }
     // The pointer's width, unclamped, so the bar stays under the pointer when it comes back from past a limit.
     val dragWidth = remember { FloatArray(1) }
@@ -108,10 +119,13 @@ internal fun SheetDragBar(
         val next = currentFit(currentWidth + by)
         if (next != currentWidth) {
             onResize(next)
-            keySave[0]?.cancel()
-            keySave[0] = scope.launch {
+            keySave.job?.cancel()
+            val done = onResizeDone
+            keySave.done = done
+            keySave.job = scope.launch {
                 delay(KEY_SAVE_DELAY_MS)
-                currentOnResizeDone()
+                keySave.job = null
+                done()
             }
         }
     }

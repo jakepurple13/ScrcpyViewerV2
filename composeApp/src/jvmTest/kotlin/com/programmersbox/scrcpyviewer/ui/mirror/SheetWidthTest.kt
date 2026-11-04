@@ -77,13 +77,25 @@ class SheetWidthTest {
         qa.onEvent(QuickActionEvent.Resize(420.dp))
         assertEquals(SheetWidths(actions = 420.dp, shell = 500.dp), qa.uiState.widths)
         assertTrue(saved.isEmpty(), "not saved while dragging")
-        qa.onEvent(QuickActionEvent.ResizeDone)
+        qa.onEvent(QuickActionEvent.ResizeDone(SheetTab.Actions))
         assertEquals(listOf(SheetTab.Actions to 420.dp), saved)
 
         qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Shell))
         qa.onEvent(QuickActionEvent.ResetWidth)
         assertEquals(SheetWidths(actions = 420.dp, shell = 400.dp), qa.uiState.widths)
         assertEquals(SheetTab.Shell to 400.dp, saved.last())
+    }
+
+    @Test
+    fun `a save that lands after a tab switch saves the tab that was resized`() {
+        val saved = mutableListOf<Pair<SheetTab, Dp>>()
+        val qa = QuickActions(
+            device = null, scope = CoroutineScope(Dispatchers.Unconfined), saveWidth = { tab, width -> saved += tab to width },
+        ) {}
+        qa.onEvent(QuickActionEvent.Resize(296.dp)) // Left on the bar, Actions tab
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Shell)) // switched before the delayed save
+        qa.onEvent(QuickActionEvent.ResizeDone(SheetTab.Actions))
+        assertEquals(listOf(SheetTab.Actions to 296.dp), saved)
     }
 
     @Test

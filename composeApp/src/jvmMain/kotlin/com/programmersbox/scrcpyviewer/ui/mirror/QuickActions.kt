@@ -243,8 +243,8 @@ sealed interface QuickActionEvent {
     /** The drag bar moved: the current tab's sheet is now [width] wide (already clamped). Not saved yet. */
     data class Resize(val width: Dp) : QuickActionEvent
 
-    /** A drag ended or a key moved the bar: save the current tab's width. */
-    data object ResizeDone : QuickActionEvent
+    /** A drag or a run of key presses on [tab]'s bar ended: save that tab's width (the sheet may show another now). */
+    data class ResizeDone(val tab: SheetTab) : QuickActionEvent
 
     /** Double-click or Home on the drag bar: the current tab goes back to its default width, saved. */
     data object ResetWidth : QuickActionEvent
@@ -353,7 +353,7 @@ class QuickActions internal constructor(
             is QuickActionEvent.Delete -> editStore("Could not delete the action") { delete(event.id) }
             is QuickActionEvent.LoadPackages -> loadPackages(event.includeSystem)
             is QuickActionEvent.Resize -> widths = widths.with(tab, event.width)
-            QuickActionEvent.ResizeDone -> saveWidth(tab, widths[tab])
+            is QuickActionEvent.ResizeDone -> saveWidth(event.tab, widths[event.tab])
             QuickActionEvent.ResetWidth -> {
                 widths = widths.with(tab, SheetWidths.default(tab))
                 saveWidth(tab, widths[tab])

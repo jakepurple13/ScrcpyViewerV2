@@ -227,7 +227,8 @@ fun QuickActionsPanel(
                 animating[0] = false // a drag that cuts a tab switch short follows the pointer from here
                 onEvent(QuickActionEvent.Resize(it))
             },
-            onResizeDone = { onEvent(QuickActionEvent.ResizeDone) },
+            onResizeDone = { onEvent(QuickActionEvent.ResizeDone(tab)) }, // the tab resized, whatever shows by then
+            saveKey = tab,
             onReset = {
                 if (fit(SheetWidths.default(tab), tab) != shown) animating[0] = true
                 onEvent(QuickActionEvent.ResetWidth)
