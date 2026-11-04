@@ -230,19 +230,20 @@ class ShellConsoleTest {
     }
 
     @Test
-    fun `clear mid-stream leaves an empty console and drops the partial`() {
+    fun `clear mid-stream keeps the command running and drops the partial`() {
         val runner = LeakyRunner()
         val c = ShellConsole(runner, ShellHistory(), eager, { toasts += it })
         c.input = "logcat"
         c.submit()
         runner.leak(ShellEvent.Output("one\npar"))
         c.clear()
-        assertFalse(c.running)
-        runner.leak(ShellEvent.Output("tial\n"))
         assertTrue(c.lines.isEmpty())
-        c.input = "ls"
-        assertTrue(c.submit())
-        assertEquals(listOf("$ ls"), c.lines.map { it.text })
+        assertTrue(c.running)
+        runner.leak(ShellEvent.Output("tial\nnext\n"))
+        assertEquals(listOf("tial", "next"), c.lines.map { it.text })
+        c.stop()
+        assertEquals("stopped", c.lines.last().text)
+        assertFalse(c.running)
     }
 
     @Test

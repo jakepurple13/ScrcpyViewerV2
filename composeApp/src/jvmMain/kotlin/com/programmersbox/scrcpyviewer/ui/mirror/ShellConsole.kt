@@ -170,12 +170,8 @@ class ShellConsole(
         finish(ConsoleLine.Exit(null, 0))
     }
 
-    /** Empties the console. A running command is stopped too: its later output would have no header. */
+    /** Empties the scrollback and the unfinished line. A running command keeps running; its later output appends. */
     fun clear() {
-        generation++
-        job?.cancel()
-        job = null
-        running = false
         partial = StringBuilder()
         lines = emptyList()
     }
