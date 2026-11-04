@@ -21,6 +21,7 @@ import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
 import com.programmersbox.scrcpyviewer.update.NucleusUpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateBackend
@@ -121,6 +122,10 @@ class MirrorModule {
     /** Typed shell commands, shared by every mirror window's console. */
     @Singleton
     fun shellHistory(): ShellHistory = ShellHistory()
+
+    /** Quick actions state kept for the life of the app across mirror windows (toggles, last values, last tab). */
+    @Singleton
+    fun quickActionsMemory(): QuickActionsMemory = QuickActionsMemory()
 
     @Singleton
     fun serverLauncher(client: AdbClient, tools: BundledTools): ServerLauncher = ServerLauncher(client, tools)
