@@ -5,7 +5,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.TweenSpec
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
@@ -47,8 +48,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +67,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
@@ -75,10 +77,10 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import kotlin.math.roundToInt
 
-/** Width of the open sheet on the Actions tab, its divider included. */
+/** Default and minimum width of the open sheet on the Actions tab, its drag bar included. */
 val QUICK_ACTIONS_WIDTH = 280.dp
 
-/** Width of the open sheet on the Shell tab, its divider included. */
+/** Default and minimum width of the open sheet on the Shell tab, its drag bar included. */
 val QUICK_ACTIONS_SHELL_WIDTH = 400.dp
 
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
@@ -93,12 +95,8 @@ private fun <T> growSpec(grow: Boolean): TweenSpec<T> =
 /** The sheet's open or close animation, for the window growing or shrinking with it. */
 fun quickActionsSpec(open: Boolean): TweenSpec<Float> = growSpec(open)
 
-/** How wide the sheet is: nothing while closed, else its tab's width. */
-fun sheetWidth(open: Boolean, tab: SheetTab): Dp = when {
-    !open -> 0.dp
-    tab == SheetTab.Shell -> QUICK_ACTIONS_SHELL_WIDTH
-    else -> QUICK_ACTIONS_WIDTH
-}
+/** How wide the sheet is: nothing while closed, else its tab's width in [widths]. */
+fun sheetWidth(open: Boolean, tab: SheetTab, widths: SheetWidths = SheetWidths()): Dp = if (open) widths[tab] else 0.dp
 
 /** The sheet's and window's width change from [from] to [to]: the open timing when growing, the close one otherwise. */
 fun sheetWidthSpec(from: Dp, to: Dp): TweenSpec<Float> = growSpec(to > from)
@@ -160,33 +158,92 @@ fun rememberQuickActionsPanel(
     state: QuickActionsUiState,
     onEvent: (QuickActionEvent) -> Unit,
     console: ShellConsole?,
+    rowWidth: Dp?,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
     val currentConsole by rememberUpdatedState(console)
+    val currentRowWidth by rememberUpdatedState(rowWidth)
     return remember {
-        movableContentOf { modifier: Modifier -> QuickActionsPanel(currentState, currentOnEvent, currentConsole, modifier) }
+        movableContentOf { modifier: Modifier ->
+            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier)
+        }
     }
 }
 
-/** The sheet itself: [QUICK_ACTIONS_WIDTH] wide on the Actions tab, [QUICK_ACTIONS_SHELL_WIDTH] on the Shell tab. */
+/**
+ * The sheet itself, at its tab's width from [QuickActionsUiState.widths], with the drag bar on its left edge.
+ * [rowWidth] is the content row it shares with the stage and the side toolbar: the sheet leaves the stage
+ * [STAGE_MIN_WIDTH] of it. Null (while the window grows or shrinks for the sheet, or unmeasured): only each tab's
+ * minimum applies. A tab switch or reset animates the width with the tab switch's timing; a drag or a window resize
+ * follows at once.
+ */
 @Composable
 fun QuickActionsPanel(
     state: QuickActionsUiState,
     onEvent: (QuickActionEvent) -> Unit,
     console: ShellConsole?,
+    rowWidth: Dp? = null,
     modifier: Modifier = Modifier,
 ) {
-    val toShell = state.tab == SheetTab.Shell
-    val width by animateDpAsState(sheetWidth(true, state.tab), growSpec(toShell))
-    Row(modifier.width(width).fillMaxHeight()) {
-        VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        SheetContent(state, onEvent, console)
+    fun fit(width: Dp, tab: SheetTab) = if (rowWidth == null) {
+        width.coerceAtLeast(SheetWidths.default(tab))
+    } else {
+        clampSheetWidth(width, tab, rowWidth, SIDE_TOOLBAR_WIDTH)
+    }
+    val tab = state.tab
+    val shown = fit(state.widths[tab], tab)
+    val animated = remember { Animatable(shown, Dp.VectorConverter) }
+    // Plain holders, read in effects and layout only: the tab the width last settled on, and whether the next width
+    // change animates (a tab switch or reset) rather than following at once (a drag, a key press, a window resize).
+    val settledTab = remember { arrayOf(tab) }
+    val animating = remember { BooleanArray(1) }
+    if (settledTab[0] != tab) {
+        settledTab[0] = tab
+        animating[0] = true
+    }
+    val currentShown by rememberUpdatedState(shown)
+    LaunchedEffect(tab, shown) {
+        if (animating[0]) {
+            animated.animateTo(shown, growSpec(shown > animated.value)) // the timing of sheetWidthSpec
+            animating[0] = false
+        } else {
+            animated.snapTo(shown)
+        }
+    }
+    Row(
+        modifier.layout { measurable, constraints ->
+            // Read here, in layout: during a drag the width changes every frame and nothing else needs to recompose.
+            // Never narrower than the space the pinned slot gives it.
+            val width = constraints.constrainWidth((if (animating[0]) animated.value else currentShown).roundToPx())
+            val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+            layout(placeable.width, placeable.height) { placeable.placeRelative(0, 0) }
+        }.fillMaxHeight(),
+    ) {
+        SheetDragBar(
+            width = shown,
+            fit = { fit(it, tab) },
+            onResize = {
+                animating[0] = false // a drag that cuts a tab switch short follows the pointer from here
+                onEvent(QuickActionEvent.Resize(it))
+            },
+            onResizeDone = { onEvent(QuickActionEvent.ResizeDone) },
+            onReset = {
+                if (fit(SheetWidths.default(tab), tab) != shown) animating[0] = true
+                onEvent(QuickActionEvent.ResetWidth)
+            },
+        )
+        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)))
     }
 }
 
 @Composable
-private fun RowScope.SheetContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) -> Unit, console: ShellConsole?) {
+private fun RowScope.SheetContent(
+    state: QuickActionsUiState,
+    onEvent: (QuickActionEvent) -> Unit,
+    console: ShellConsole?,
+    columns: Int,
+) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
     var overflow by remember { mutableStateOf(false) }
@@ -226,7 +283,7 @@ private fun RowScope.SheetContent(state: QuickActionsUiState, onEvent: (QuickAct
             contentAlignment = Alignment.TopStart,
         ) { tab ->
             when (tab) {
-                SheetTab.Actions -> ActionsTabContent(state, onEvent)
+                SheetTab.Actions -> ActionsTabContent(state, onEvent, columns)
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,

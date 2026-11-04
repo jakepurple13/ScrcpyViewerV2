@@ -39,9 +39,28 @@ The sheet keeps its place (docked right of the side toolbar), header, and close 
 control under the header: **Actions** and **Shell**. The sheet remembers the last tab for the life of the app
 (not persisted).
 
+### Sheet width (drag bar)
+
+A vertical drag bar sits between the side toolbar and the sheet (the toolbar stays with the device). It shows a short
+rounded grip that turns the accent color while hovered, dragged, or focused; the cursor is the left-right resize cursor.
+
+- Dragging left widens the sheet and narrows the device area; dragging right does the opposite. The window keeps its
+  size while dragging: the width moves between the stage and the sheet, and the image resizes live. The aspect ratio
+  lock does not correct the window afterwards.
+- Limits, applied continuously: the sheet is at least 280 dp on Actions and 400 dp on Shell (also the defaults), and the
+  stage keeps at least 160 dp. In a window too narrow for the stored width, the sheet shows what fits, but the stored
+  width is not changed. The tab minimum wins over the stage minimum.
+- Actions and Shell each remember their own width. The widths are saved in the app settings (`quickActionsWidth`,
+  `shellWidth`, in dp) when a drag ends, so new mirror windows open at them.
+- Opening the sheet grows the window by the current tab's width; closing shrinks it by the width it has then.
+- Double-click the bar, or press Home while it is focused, to reset the current tab to its default width. The bar is
+  focusable; Left and Right move it by 16 dp.
+- Maximized and fullscreen windows: the bar works the same way; the sheet takes its width from the stage.
+
 ### Actions tab
 
-- Tiles, two per row, in the style of Android quick settings. A tile shows an icon, the name, and a short state line.
+- Tiles in the style of Android quick settings: two per row while the sheet is under 360 dp wide, three under 480 dp,
+  four from 480 dp (custom tiles too). A tile shows an icon, the name, and a short state line.
   It never shows a command, and hovering adds nothing.
 - Toggle tiles fill with the accent color when on, and show "On" / "Off" (or no state line while unknown).
 - Run-once tiles show a ▶ mark. The state line hints at what happens on tap: "Asks for <first variable's label>" when
@@ -75,9 +94,10 @@ Tapping a run-once tile:
 
 ### Shell tab
 
-The sheet widens from 280 dp to 400 dp on this tab. The mirror window grows by the extra 120 dp the same way it grows
-for the sheet today (stage width pinned, window right edge animates out, moves left when it would leave the screen;
-maximized and fullscreen windows take the width from the stage instead).
+The sheet takes the Shell tab's own width on this tab (400 dp by default, at least 400 dp; see Sheet width). The
+mirror window grows or shrinks by the difference from the Actions width the same way it grows for the sheet (stage
+width pinned, window right edge animates, moves left when it would leave the screen; maximized and fullscreen windows
+take the width from the stage instead). The tab's content fills the width.
 
 Top to bottom:
 
@@ -123,7 +143,7 @@ closing/reopening the sheet, but a running command is stopped when the sheet clo
 - Tab highlight glides to the selected segment.
 - Outgoing content moves 40 dp toward the side it leaves from (left when going to Shell, right when going back) while
   fading out; incoming content enters from the other side, fading in, slightly delayed (~60 ms).
-- Sheet and window width animate 280 ↔ 400 dp at the same time.
+- Sheet and window width animate between the two tabs' widths (280 ↔ 400 dp by default) at the same time.
 - Timing: to Shell 260 ms with the existing emphasized-decelerate easing, back to Actions 200 ms with
   emphasized-accelerate (`quickActionsSpec(open)` in `QuickActionsSheet.kt`).
 - Reference implementation of the feel: the "Slide" demo in the mockup page.

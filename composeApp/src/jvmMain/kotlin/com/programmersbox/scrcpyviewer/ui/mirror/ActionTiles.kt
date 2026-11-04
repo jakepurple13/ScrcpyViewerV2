@@ -79,10 +79,10 @@ private val TileShape = RoundedCornerShape(16.dp)
 
 /**
  * The Actions tab: the built-in tiles, a "Your actions" divider, the user's tiles and a dashed "+ New action" tile,
- * two per row, plus the reboot and delete confirmations. The variable prompt and run confirm live at the sheet level.
+ * [columns] per row, plus the reboot and delete confirmations. The variable prompt and run confirm live at the sheet level.
  */
 @Composable
-fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) -> Unit) {
+fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) -> Unit, columns: Int = 2) {
     var confirmReboot by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<CustomAction?>(null) }
     // Tiles already there when the tab opened show at once; later ones pop in.
@@ -125,7 +125,7 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
                 )
             })
         }
-        TileGrid(builtIn)
+        TileGrid(builtIn, columns)
 
         Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Your actions", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
@@ -146,7 +146,7 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
                 )
             })
         }
-        TileGrid(yours)
+        TileGrid(yours, columns)
     }
 
     deleting?.let { action ->
@@ -185,18 +185,21 @@ private class GridTile(val key: Any, val content: @Composable () -> Unit)
 /** The "New action" tile's key, never equal to an action id. */
 private object NewTileKey
 
-/** [tiles] two per row, each cell half the width. One flow, not a Row per pair, so a key survives a change of row. */
+/**
+ * [tiles] [columns] per row, each cell an equal share of the width (spacers fill a short last row). One flow, not a
+ * Row per line, so a key survives a change of row.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TileGrid(tiles: List<GridTile>) {
+private fun TileGrid(tiles: List<GridTile>, columns: Int) {
     FlowRow(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
-        maxItemsInEachRow = 2,
+        maxItemsInEachRow = columns,
     ) {
         tiles.forEach { tile -> key(tile.key) { Box(Modifier.weight(1f)) { tile.content() } } }
-        if (tiles.size % 2 == 1) Spacer(Modifier.weight(1f))
+        repeat((columns - tiles.size % columns) % columns) { Spacer(Modifier.weight(1f)) }
     }
 }
 

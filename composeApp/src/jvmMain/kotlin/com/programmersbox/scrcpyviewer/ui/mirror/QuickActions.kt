@@ -9,6 +9,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionStore
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
 import com.programmersbox.scrcpyviewer.actions.CustomAction
@@ -20,6 +22,7 @@ import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.adb.ShellTimeoutException
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
+import com.programmersbox.scrcpyviewer.state.AppSettings
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlin.math.roundToInt
 import org.koin.compose.koinInject
 
 /** Device settings the quick actions sheet switches on and off over `adb shell`. */
@@ -208,6 +212,8 @@ data class QuickActionsUiState(
     val consoleRunning: Boolean = false,
     /** Installed apps for the prompt's "Installed app" variables; null until loaded. */
     val packages: List<String>? = null,
+    /** Each tab's sheet width, as the user dragged it. */
+    val widths: SheetWidths = SheetWidths(),
 )
 
 /** A tap in the quick actions sheet. */
@@ -234,6 +240,15 @@ sealed interface QuickActionEvent {
 
     /** The variable prompt wants the device's installed apps, with or without system apps. */
     data class LoadPackages(val includeSystem: Boolean) : QuickActionEvent
+
+    /** The drag bar moved: the current tab's sheet is now [width] wide (already clamped). Not saved yet. */
+    data class Resize(val width: Dp) : QuickActionEvent
+
+    /** A drag ended or a key moved the bar: save the widths. */
+    data object ResizeDone : QuickActionEvent
+
+    /** Double-click or Home on the drag bar: the current tab goes back to its default width, saved. */
+    data object ResetWidth : QuickActionEvent
 }
 
 /**
@@ -253,6 +268,9 @@ class QuickActions internal constructor(
     val console: ShellConsole? = null,
     private val memory: QuickActionsMemory = QuickActionsMemory(),
     private val onManage: (actionId: String?, new: Boolean) -> Unit = { _, _ -> },
+    /** Each tab's sheet width when the window opens; [saveWidths] persists them after a drag. */
+    widths: SheetWidths = SheetWidths(),
+    private val saveWidths: (SheetWidths) -> Unit = {},
     private val notify: (String) -> Unit,
 ) {
     var open by mutableStateOf(false)
@@ -271,12 +289,14 @@ class QuickActions internal constructor(
     private var promptToConsole = false
     private var packages by mutableStateOf<List<String>?>(null)
     private var packagesJob: Job? = null
+    private var widths by mutableStateOf(widths)
 
     val enabled: Boolean get() = device != null && connected
 
     val uiState: QuickActionsUiState
         get() = QuickActionsUiState(
             open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages,
+            widths,
         )
 
     fun toggleSheet() {
@@ -333,6 +353,12 @@ class QuickActions internal constructor(
             is QuickActionEvent.Duplicate -> editStore("Could not duplicate the action") { duplicate(event.id) }
             is QuickActionEvent.Delete -> editStore("Could not delete the action") { delete(event.id) }
             is QuickActionEvent.LoadPackages -> loadPackages(event.includeSystem)
+            is QuickActionEvent.Resize -> widths = widths.with(tab, event.width)
+            QuickActionEvent.ResizeDone -> saveWidths(widths)
+            QuickActionEvent.ResetWidth -> {
+                widths = widths.with(tab, SheetWidths.default(tab))
+                saveWidths(widths)
+            }
         }
     }
 
@@ -520,6 +546,7 @@ fun rememberQuickActions(
     store: ActionStore = koinInject(),
     memory: QuickActionsMemory = koinInject(),
     history: ShellHistory = koinInject(),
+    settings: AppSettings = koinInject(),
 ): QuickActions {
     val currentNotify by rememberUpdatedState(notify)
     val currentOnManage by rememberUpdatedState(onManage)
@@ -535,6 +562,10 @@ fun rememberQuickActions(
             console = ShellConsole(runner, history, scope, { currentNotify(it) }),
             memory = memory,
             onManage = { id, new -> currentOnManage(id, new) },
+            widths = settings.settings.value.let { SheetWidths(it.quickActionsWidth.dp, it.shellWidth.dp) },
+            saveWidths = { w ->
+                settings.update { it.copy(quickActionsWidth = w.actions.value.roundToInt(), shellWidth = w.shell.value.roundToInt()) }
+            },
         ) { currentNotify(it) }
     }
     LaunchedEffect(actions) { actions.watchActions() }

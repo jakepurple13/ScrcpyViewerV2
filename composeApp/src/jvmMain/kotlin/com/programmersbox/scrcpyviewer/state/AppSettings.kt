@@ -21,6 +21,10 @@ data class Settings(
     val onboardingSeen: Boolean = true,
     /** False until the Actions intro is finished or closed. False when absent, so existing users see it once. */
     val actionsIntroSeen: Boolean = false,
+    /** The mirror window's quick actions sheet width (dp) on the Actions tab; new mirror windows open at it. */
+    val quickActionsWidth: Int = 280,
+    /** The sheet's width (dp) on the Shell tab. */
+    val shellWidth: Int = 400,
 )
 
 internal fun defaultCaptureDir(): String {

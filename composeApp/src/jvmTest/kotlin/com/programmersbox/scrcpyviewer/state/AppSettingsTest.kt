@@ -70,4 +70,18 @@ class AppSettingsTest {
         AppSettings(file).update { it.copy(actionsIntroSeen = true) }
         assertTrue(AppSettings(file).settings.value.actionsIntroSeen)
     }
+
+    @Test
+    fun `sheet widths default to 280 and 400, also for an older file, and persist`() {
+        assertEquals(280, AppSettings(file).settings.value.quickActionsWidth)
+        assertEquals(400, AppSettings(file).settings.value.shellWidth)
+        Files.writeString(file, """{"themeMode":"Light","onboardingSeen":true}""")
+        val older = AppSettings(file).settings.value
+        assertEquals(280, older.quickActionsWidth)
+        assertEquals(400, older.shellWidth)
+        AppSettings(file).update { it.copy(quickActionsWidth = 520, shellWidth = 640) }
+        val saved = AppSettings(file).settings.value
+        assertEquals(520, saved.quickActionsWidth)
+        assertEquals(640, saved.shellWidth)
+    }
 }

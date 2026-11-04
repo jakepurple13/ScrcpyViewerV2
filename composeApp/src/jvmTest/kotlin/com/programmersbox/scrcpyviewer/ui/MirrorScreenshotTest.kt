@@ -19,6 +19,7 @@ import com.programmersbox.scrcpyviewer.adb.ShellEvent
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.media.VideoFrame
 import com.programmersbox.scrcpyviewer.ui.mirror.SheetTab
+import com.programmersbox.scrcpyviewer.ui.mirror.SheetWidths
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellConsole
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellTabContent
@@ -285,6 +286,14 @@ class MirrorScreenshotTest {
     fun `mirror quick actions tiles`() {
         render("mirror-quick-actions-tiles.png", ThemeMode.Light, state.copy(quickActions = tilesState), height = 1000)
         render("mirror-quick-actions-tiles-dark.png", ThemeMode.Dark, state.copy(quickActions = tilesState), height = 1000)
+    }
+
+    @Test
+    fun `mirror quick actions wide`() {
+        // Dragged to 520 dp: four tile columns; the stage gives up the width.
+        val wide = state.copy(quickActions = tilesState.copy(widths = SheetWidths(actions = 520.dp)))
+        render("mirror-quick-actions-wide.png", ThemeMode.Light, wide, height = 1000)
+        render("mirror-quick-actions-wide-dark.png", ThemeMode.Dark, wide, height = 1000)
     }
 
     @Test

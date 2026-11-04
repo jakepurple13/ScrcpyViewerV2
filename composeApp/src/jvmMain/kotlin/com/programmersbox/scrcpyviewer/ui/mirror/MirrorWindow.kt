@@ -107,6 +107,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -143,6 +144,7 @@ import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
+import java.awt.Dimension
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.Toolkit
@@ -616,6 +618,8 @@ fun MirrorWindow(
         var autoSized by remember { mutableStateOf(explicitSize) }
         var lastStage by remember { mutableStateOf(IntSize.Zero) }
         var lastFrame by remember { mutableStateOf<IntSize?>(null) }
+        // The native window's size when the lock last looked (a plain holder, read only in the effect below).
+        val lastWindowSize = remember { arrayOf(Dimension()) }
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
         LaunchedEffect(stage, displayedSize, fit) {
             val fs = displayedSize ?: return@LaunchedEffect
@@ -623,6 +627,9 @@ fun MirrorWindow(
             // Correcting the size on every step of a drag fights the drag (the window jitters): restarted by each new
             // stage size, this only goes on once the size has held still.
             if (autoSized) delay(ASPECT_SETTLE_MS)
+            val windowSize = awtWindow.size
+            val windowResized = windowSize != lastWindowSize[0]
+            lastWindowSize[0] = windowSize
             val target: IntSize? = when {
                 !autoSized -> {
                     autoSized = true
@@ -634,7 +641,9 @@ fun MirrorWindow(
                     val scale = min(1f, min(maxW / fs.width, maxH / fs.height))
                     IntSize((fs.width * scale).roundToInt(), (fs.height * scale).roundToInt())
                 }
-                fit && aspectLock -> aspectLockedStage(lastStage, stage, lastFrame, fs)
+                // Only a window the user resized is corrected. A stage resized inside a window that kept its size
+                // (the quick actions sheet's drag bar) keeps its new shape.
+                fit && aspectLock && windowResized -> aspectLockedStage(lastStage, stage, lastFrame, fs)
                 else -> null
             }
             lastFrame = fs
@@ -646,21 +655,38 @@ fun MirrorWindow(
             }
         }
 
-        // The quick actions sheet grows the window to the right instead of taking width from the stage: by 280 dp on
-        // the Actions tab, 400 dp on the Shell tab. While it opens, closes or switches tabs the stage is pinned to its
-        // width (px), so the image never changes size, and the window's right edge animates to uncover or cover the
-        // panel. One setBounds per frame moves and resizes the window atomically (moved left when it would leave the
-        // screen, back on close). Maximized and fullscreen windows cannot grow: there the sheet takes its width from
-        // the stage.
+        // The quick actions sheet grows the window to the right instead of taking width from the stage: by the
+        // current tab's sheet width (280 dp on Actions and 400 dp on Shell by default). While it opens, closes or
+        // switches tabs the stage is pinned to its width (px), so the image never changes size, and the window's right
+        // edge animates to uncover or cover the panel. One setBounds per frame moves and resizes the window atomically
+        // (moved left when it would leave the screen, back on close). Maximized and fullscreen windows cannot grow:
+        // there the sheet takes its width from the stage. Dragging the sheet's bar never resizes the window: the stage
+        // gives up (or takes back) the width, and the growth counts it so closing shrinks the window by the new width.
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
         val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
         val sheetShift = remember { IntArray(1) } // px the window moved left to keep the sheet on screen
-        val sheetTarget = sheetWidth(state.quickActions.open, state.quickActions.tab)
-        LaunchedEffect(sheetTarget) {
+        val sheetOpen = state.quickActions.open
+        val sheetTab = state.quickActions.tab
+        val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
+        val lastSheet = remember { SheetRun(false, sheetTab, 0.dp) }
+        LaunchedEffect(sheetOpen, sheetTab, sheetTarget) {
+            // Same open tab as the last run: only its width changed, by the drag bar.
+            val resized = sheetOpen && lastSheet.open && lastSheet.tab == sheetTab
+            val lastTarget = lastSheet.target
+            lastSheet.open = sheetOpen
+            lastSheet.tab = sheetTab
+            lastSheet.target = sheetTarget
             if (windowState.placement != WindowPlacement.Floating) {
                 // A maximized or fullscreen window is never resized here; forget any growth from before.
                 sheetGrowth.snapTo(0f)
                 sheetShift[0] = 0
+                pinnedStage = null
+                return@LaunchedEffect
+            }
+            if (resized) {
+                // The bar moved: the window keeps its size, the sheet's new width comes out of the stage. If this cut
+                // an open or tab switch short, the window keeps what it has grown so far.
+                sheetGrowth.snapTo(sheetGrowth.value + (sheetTarget - lastTarget).value)
                 pinnedStage = null
                 return@LaunchedEffect
             }
@@ -677,6 +703,7 @@ fun MirrorWindow(
             // Keep the pin until the native window has shrunk, or the stage widens for a frame.
             var frames = 0
             while (awtWindow.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
+            lastWindowSize[0] = awtWindow.size // grown for the sheet, not by the user: nothing for the aspect lock
             pinnedStage = null // not when cancelled: a reversed toggle keeps the pin through its own animation
         }
 
@@ -726,6 +753,9 @@ fun MirrorWindow(
         }
     }
 }
+
+/** What the window's sheet-growth effect last ran for; a plain holder, read and written only in that effect. */
+private class SheetRun(var open: Boolean, var tab: SheetTab, var target: Dp)
 
 /**
  * Start-aligned at its own width but never narrower than the space it is given (so it can overflow, to be clipped,
@@ -790,8 +820,9 @@ fun MirrorContent(
     Column(modifier.fillMaxSize()) {
         if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom)
         HorizontalDivider(color = colors.outlineVariant)
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            val density = LocalDensity.current
+        val density = LocalDensity.current
+        var rowWidth by remember { mutableStateOf<Dp?>(null) }
+        Row(Modifier.weight(1f).fillMaxWidth().onSizeChanged { rowWidth = with(density) { it.width.toDp() } }) {
             Box(
                 (if (pinnedStageWidth != null) Modifier.width(with(density) { pinnedStageWidth.toDp() }) else Modifier.weight(1f))
                     .fillMaxHeight()
@@ -819,7 +850,10 @@ fun MirrorContent(
                 }
             }
             SideToolbar(state, onAction)
-            val panel = rememberQuickActionsPanel(state.quickActions, onQuickAction, shellConsole)
+            // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
+            val panel = rememberQuickActionsPanel(
+                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null },
+            )
             if (pinnedStageWidth != null) {
                 // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
                 // so a tab switch's width change leaves no gap while the window catches up.
@@ -1147,11 +1181,14 @@ private val toolbarIcons: Map<MirrorAction, ImageVector> = mapOf(
     MirrorAction.PushFile to Icons.Filled.UploadFile,
 )
 
+/** The side toolbar's width, between the stage and the quick actions sheet. */
+internal val SIDE_TOOLBAR_WIDTH = 64.dp
+
 @Composable
 private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(
-        Modifier.width(64.dp).fillMaxHeight().background(colors.surfaceContainer).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
+        Modifier.width(SIDE_TOOLBAR_WIDTH).fillMaxHeight().background(colors.surfaceContainer).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
