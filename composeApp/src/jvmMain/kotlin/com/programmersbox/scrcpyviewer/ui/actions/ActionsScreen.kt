@@ -131,7 +131,10 @@ fun ActionsScreen(
     modifier: Modifier = Modifier,
     panes: ListDetailPanes = rememberListDetailPanes(),
 ) {
-    val state by viewModel.state.collectAsState()
+    val pageState by viewModel.state.collectAsState()
+    val open by viewModel.openDraft.collectAsState()
+    // The editor's fields need each edit at once (see openDraft); the rest of the page may follow an event later.
+    val state = pageState.copy(draft = open?.draft, editorKey = open?.editorKey ?: pageState.editorKey)
     val import by viewModel.importState.collectAsState()
     val pending by viewModel.pendingDiscard.collectAsState()
     val packages by viewModel.packages.collectAsState()

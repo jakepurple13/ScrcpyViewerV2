@@ -26,6 +26,7 @@ import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.presets.ConflictChoice
 import com.programmersbox.scrcpyviewer.ui.mirror.DeviceQuickActions
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
+import com.programmersbox.scrcpyviewer.ui.common.mapState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -110,6 +111,9 @@ data class ActionsUiState(
     val exportSelection: Set<String>? = null,
 )
 
+/** The draft open in the editor, and the [ActionsUiState.editorKey] it was opened with. */
+data class OpenDraft(val draft: ActionDraft, val editorKey: Int)
+
 /** The import being reviewed. When [error] is set the file was rejected and [items] is empty. */
 data class ActionImportUiState(val items: List<ActionImportItem> = emptyList(), val error: String? = null) {
     /** Actions that confirming would add or change: included, and not a conflict that is set to Skip. */
@@ -167,6 +171,14 @@ class ActionsViewModel(
             exportSelection = export?.let { ids -> actions.mapNotNullTo(HashSet()) { it.id.takeIf { id -> id in ids } } },
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ActionsUiState())
+
+    /**
+     * The open draft and its [ActionsUiState.editorKey], current as soon as an edit is made. The editor's text fields
+     * read the draft from here, not from [state]: `combine` publishes each change in a later EDT event, and a field
+     * that recomposes with its old text before then loses the next key (quick or held Backspace deleted the wrong
+     * character or nothing).
+     */
+    val openDraft: StateFlow<OpenDraft?> = editor.mapState { e -> e.draft?.let { OpenDraft(it, e.generation) } }
 
     private val _pendingDiscard = MutableStateFlow<ActionsRequest?>(null)
 

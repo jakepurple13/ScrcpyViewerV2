@@ -580,6 +580,31 @@ class ActionsViewModelTest {
     }
 
     @Test
+    fun `openDraft has each edit before the view model's dispatcher runs`() {
+        store.upsert(stayAwake)
+        val adb = FakeAdb(listOf("SER1"))
+        val tracker = DeviceTracker(adb, scope)
+        runBlocking { withTimeout(5_000) { tracker.devices.first { it.size == 1 } } }
+        val dispatcher = ManualDispatcher()
+        val vmScope = CoroutineScope(SupervisorJob() + dispatcher)
+        try {
+            val vm = ActionsViewModel(store, tracker, adb, vmScope)
+            vm.select("awake")
+            val key = assertNotNull(vm.openDraft.value).editorKey
+            vm.edit { it.copy(name = "Stay awak") }
+            vm.edit { it.copy(name = "Stay awa") }
+            assertEquals("Stay awa", vm.openDraft.value!!.draft.name)
+            assertEquals(key, vm.openDraft.value!!.editorKey, "editing keeps the key")
+            dispatcher.drain { vm.state.value.draft?.name == "Stay awa" }
+            assertEquals("Stay awa", vm.state.value.draft?.name, "state catches up")
+            vm.new()
+            assertEquals(key + 1, vm.openDraft.value!!.editorKey, "a new draft gets a new key at once")
+        } finally {
+            vmScope.cancel()
+        }
+    }
+
+    @Test
     fun `handle while dirty ignores a request for what is already open`() {
         store.upsert(stayAwake)
         val vm = vm()

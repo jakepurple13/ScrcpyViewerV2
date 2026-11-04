@@ -98,7 +98,13 @@ class DevicesViewModel(
     /** Results of Wi-Fi actions, for the snackbar. */
     val notices: SharedFlow<WifiNotice> = _notices.asSharedFlow()
 
-    private val query = MutableStateFlow("")
+    private val _query = MutableStateFlow("")
+
+    /**
+     * The options search text, current as soon as it is typed. The search field reads it from here, not from [state]:
+     * `combine` publishes each change in a later EDT event, and a field fed that lagging value loses quick keys.
+     */
+    val query: StateFlow<String> get() = _query
     private val group = MutableStateFlow<OptionGroup?>(null)
 
     /** The serial shown as selected: the user's choice while it is connected, else the first ready device. */
@@ -114,7 +120,7 @@ class DevicesViewModel(
 
     val state: StateFlow<DevicesUiState> = combine(
         selection.state,
-        combine(query, group, switching) { q, g, busy -> Filters(q, g, busy) },
+        combine(_query, group, switching) { q, g, busy -> Filters(q, g, busy) },
         workingValues,
         presets.presets,
         options.persistenceError,
@@ -124,7 +130,7 @@ class DevicesViewModel(
         // Built now, so the first frame after the screen creates this ViewModel already shows the options.
         selection.state.value.let { sel ->
             uiState(
-                sel, Filters(query.value, group.value, switching.value),
+                sel, Filters(_query.value, group.value, switching.value),
                 sel.key?.let { options.workingSet(it).value.values }, presets.presets.value, options.persistenceError.value,
             )
         },
@@ -167,7 +173,7 @@ class DevicesViewModel(
     }
 
     fun setQuery(q: String) {
-        query.value = q
+        _query.value = q
     }
 
     fun setGroup(g: OptionGroup?) {

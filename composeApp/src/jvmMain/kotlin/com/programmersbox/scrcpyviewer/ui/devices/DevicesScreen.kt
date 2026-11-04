@@ -101,7 +101,10 @@ fun DevicesScreen(
     modifier: Modifier = Modifier,
     panes: ListDetailPanes = rememberListDetailPanes(),
 ) {
-    val state by viewModel.state.collectAsState()
+    val pageState by viewModel.state.collectAsState()
+    val query by viewModel.query.collectAsState()
+    // The search field needs each key at once (see DevicesViewModel.query); the list may follow an event later.
+    val state = pageState.copy(query = query)
     var pairing by remember { mutableStateOf(false) }
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(viewModel, snackbar) {
