@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -28,36 +27,64 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.programmersbox.scrcpyviewer.ui.onboarding.IconBadge
 import com.programmersbox.scrcpyviewer.ui.onboarding.PageDots
 
-private class IntroPage(val icon: ImageVector, val title: String, val body: String)
+private class IntroPage(
+    val icon: ImageVector,
+    val title: String,
+    val body: AnnotatedString,
+    val extra: (@Composable () -> Unit)? = null,
+)
+
+private fun page(icon: ImageVector, title: String, body: String) = IntroPage(icon, title, AnnotatedString(body))
 
 private val introPages = listOf(
-    IntroPage(
+    page(
         Icons.Filled.Terminal, "Your own quick actions",
         "Quick actions run adb shell commands from the mirror window's quick actions sheet. Every action you make works on every device.",
     ),
-    IntroPage(
+    page(
         Icons.Filled.ToggleOn, "Toggle or run once",
         "A toggle has an on command, an off command, and an optional read command that decides whether it shows on or off; " +
             "the read command runs each time the sheet opens.\n\n" +
             "A run-once action has one command; its output goes to a toast, the Shell tab, or nowhere, and it can ask before running.",
     ),
     IntroPage(
+        Icons.Filled.ToggleOn, "How a toggle knows it's on",
+        buildAnnotatedString {
+            append("When the quick actions sheet opens, the app runs the toggle's ")
+            bold("Read state")
+            append(" command and compares what the device prints with ")
+            bold("On when output")
+            append(". A match shows On; anything else shows Off.")
+        },
+        extra = { ReadStateExplainer() },
+    ),
+    page(
         Icons.Filled.DataObject, "Variables",
         "Put {name} in a run-once command and it asks for a value when it runs: free text, a choice from a list, or an installed app. " +
             "The last value you used is remembered for each device.",
     ),
-    IntroPage(
+    page(
         Icons.Filled.IosShare, "Test, then share",
         "Use Test run or Test read on a connected device before saving. Pick which actions to export; " +
             "importing shows every command before anything is added.",
     ),
 )
+
+private fun AnnotatedString.Builder.bold(text: String) = withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(text) }
+
+/** Height of the page area: the tallest page ("How a toggle knows it's on"), so the dialog does not jump between pages. */
+private val PAGE_HEIGHT = 570.dp
 
 /** Number of pages in [ActionsIntroDialog]. */
 val ACTIONS_INTRO_PAGE_COUNT = introPages.size
@@ -80,7 +107,7 @@ fun ActionsIntroDialog(page: Int, onPage: (Int) -> Unit, onFinish: () -> Unit) {
                         (slideInHorizontally { it / 4 * dir } + fadeIn()) togetherWith
                             (slideOutHorizontally { -it / 4 * dir } + fadeOut())
                     },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp),
+                    modifier = Modifier.fillMaxWidth().height(PAGE_HEIGHT),
                 ) { p ->
                     val content = introPages[p]
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -89,6 +116,7 @@ fun ActionsIntroDialog(page: Int, onPage: (Int) -> Unit, onFinish: () -> Unit) {
                         Text(content.title, style = MaterialTheme.typography.headlineSmall)
                         Spacer(Modifier.height(10.dp))
                         Text(content.body, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        content.extra?.invoke()
                     }
                 }
                 Spacer(Modifier.height(20.dp))

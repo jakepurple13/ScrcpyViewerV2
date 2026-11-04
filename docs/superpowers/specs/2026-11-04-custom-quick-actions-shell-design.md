@@ -152,8 +152,10 @@ Layout: list on the left, editor on the right, following the existing Presets sc
   - Bottom row: **Test run on <device> ▾** (connected devices; disabled with none connected), **Delete**, **Save**.
     Test run shows output under the editor and prompts for variables like a real run.
 - Save is explicit. Leaving with unsaved changes asks to discard.
-- **Intro dialog**: a four-page dialog in the onboarding dialog's style (Your own quick actions; Toggle or run once;
-  Variables; Test, then share). It opens the first time the Actions page is shown; `actionsIntroSeen` in settings
+- **Intro dialog**: a five-page dialog in the onboarding dialog's style (Your own quick actions; Toggle or run once;
+  How a toggle knows it's on (Read state vs On when output, with a flow diagram, result chips and a match table);
+  Variables; Test, then share). The editor also states the On-when rule in a live sentence under the value field and
+  shows a one-line result after Test read. It opens the first time the Actions page is shown; `actionsIntroSeen` in settings
   records it (false for new installs and for settings files without the key, so existing users see it once;
   finishing or closing sets it). The **?** button reopens it.
 - **Animations** (260 ms emphasized-decelerate in, 200 ms emphasized-accelerate out, as in the sheet): the "Variables

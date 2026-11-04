@@ -74,7 +74,15 @@ data class DraftErrors(val name: String? = null, val on: String? = null, val off
  * A Test run or Test read. [note] explains the result, e.g. a read verdict ("Counts as on") or why it stopped.
  * [shownLines] is set when [output] was trimmed to its last lines.
  */
-data class TestResult(val running: Boolean, val output: String, val exitCode: Int?, val note: String?, val shownLines: Int? = null)
+data class TestResult(
+    val running: Boolean,
+    val output: String,
+    val exitCode: Int?,
+    val note: String?,
+    val shownLines: Int? = null,
+    /** For a finished Test read: whether the output counts as on. Null for any other result. */
+    val readOn: Boolean? = null,
+)
 
 data class ActionsUiState(
     val actions: List<CustomAction> = emptyList(),
@@ -290,7 +298,9 @@ class ActionsViewModel(
         if (draft.type != ActionType.Toggle || draft.read.isBlank()) return endTest("No read command")
         val onWhen = OnWhen(draft.matchMode, draft.matchValue)
         startTest { runner ->
-            bufferedTest(runner, draft.read) { output -> if (onWhen.matches(output)) "Counts as on" else "Counts as off" }
+            bufferedTest(runner, draft.read, readOn = { output -> onWhen.matches(output) }) { output ->
+                if (onWhen.matches(output)) "Counts as on" else "Counts as off"
+            }
         }
     }
 
@@ -431,10 +441,20 @@ class ActionsViewModel(
         }
     }
 
-    private suspend fun bufferedTest(runner: ShellRunner, command: String, note: (String) -> String?) {
+    private suspend fun bufferedTest(
+        runner: ShellRunner,
+        command: String,
+        readOn: ((String) -> Boolean)? = null,
+        note: (String) -> String?,
+    ) {
         val result = runner.run(command, testTimeoutMs)
         val (output, shownLines) = OutputTail.of(result.output)
-        setTest(TestResult(running = false, output = output, exitCode = result.exitCode, note = note(result.output), shownLines = shownLines))
+        setTest(
+            TestResult(
+                running = false, output = output, exitCode = result.exitCode, note = note(result.output),
+                shownLines = shownLines, readOn = readOn?.invoke(result.output),
+            ),
+        )
     }
 
     /**

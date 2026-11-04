@@ -94,8 +94,23 @@ class ActionsScreenshotTest {
                 dirty = true,
                 devices = emptyList(),
                 testDevice = null,
-                test = TestResult(running = false, output = "7", exitCode = 0, note = "Counts as on"),
+                test = TestResult(running = false, output = "7", exitCode = 0, note = "Counts as on", readOn = true),
                 persistenceError = "actions.json is corrupt and was backed up",
+            ),
+        )
+    }
+
+    @Test
+    fun `actions toggle editor read state sentence`() = shot("actions-toggle-editor.png", ThemeMode.Light) {
+        screen(
+            state.copy(
+                selectedId = "awake",
+                draft = ActionDraft(
+                    id = "awake", type = ActionType.Toggle, name = "Stay awake", icon = "battery_full",
+                    on = "svc power stayon true", off = "svc power stayon false",
+                    read = "settings get global stay_on_while_plugged_in", matchValue = "7",
+                ),
+                test = TestResult(running = false, output = "7", exitCode = 0, note = "Counts as on", readOn = true),
             ),
         )
     }
@@ -118,6 +133,14 @@ class ActionsScreenshotTest {
         Box(Modifier.fillMaxSize()) {
             screen(state)
             ActionsIntroDialog(page = 1, onPage = {}, onFinish = {})
+        }
+    }
+
+    @Test
+    fun `actions intro dialog page 3`() = shot("actions-intro-page3.png", ThemeMode.Light) {
+        Box(Modifier.fillMaxSize()) {
+            screen(state)
+            ActionsIntroDialog(page = 2, onPage = {}, onFinish = {})
         }
     }
 

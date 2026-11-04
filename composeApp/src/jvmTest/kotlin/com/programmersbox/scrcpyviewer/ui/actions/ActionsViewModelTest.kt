@@ -277,13 +277,16 @@ class ActionsViewModelTest {
         vm.testRead()
         val result = vm.awaitTest()
         assertEquals("Counts as on", result.note)
+        assertEquals(true, result.readOn)
         assertEquals("7", result.output)
         assertEquals(0, result.exitCode)
         assertEquals(listOf("SER1: settings get global stay_on_while_plugged_in"), adb.commands)
 
         adb.answer = { "0\n" }
         vm.testRead()
-        assertEquals("Counts as off", vm.awaitTest().note)
+        val off = vm.awaitTest()
+        assertEquals("Counts as off", off.note)
+        assertEquals(false, off.readOn)
     }
 
     @Test
