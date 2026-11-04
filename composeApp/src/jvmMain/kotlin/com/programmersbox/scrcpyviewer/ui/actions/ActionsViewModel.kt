@@ -96,6 +96,8 @@ data class ActionsUiState(
     val draft: ActionDraft? = null,
     /** The draft differs from what was loaded or last saved. */
     val dirty: Boolean = false,
+    /** Changes whenever a different draft is opened; the editor's remembered field state is keyed by it. */
+    val editorKey: Int = 0,
     val errors: DraftErrors = DraftErrors(),
     /** Connected device serials for Test run / Test read. */
     val devices: List<String> = emptyList(),
@@ -132,6 +134,8 @@ class ActionsViewModel(
         val errors: DraftErrors = DraftErrors(),
         val test: TestResult? = null,
         val testDevice: String? = null,
+        /** Bumped each time a draft is opened, so the UI can start the editor fresh (not on save). */
+        val generation: Int = 0,
     )
 
     private val editor = MutableStateFlow(Editor())
@@ -153,6 +157,7 @@ class ActionsViewModel(
             actions = actions,
             selectedId = e.selectedId,
             draft = e.draft,
+            editorKey = e.generation,
             dirty = e.draft != e.baseline,
             errors = e.errors,
             devices = serials,
@@ -205,7 +210,7 @@ class ActionsViewModel(
         when {
             !request.new && request.actionId == null -> Unit
             // Already showing what was asked for: keep the unsaved changes without asking.
-            request.new && request.template == null && e.draft != null && e.draft.id == null -> Unit
+            request.new && request.template == null && e.draft != null && e.draft.id == null && e.draft.fromTemplate == null -> Unit
             !request.new && request.actionId == e.selectedId && e.draft != null -> Unit
             dirty -> _pendingDiscard.value = request
             request.template != null -> startFromTemplate(request.template)
@@ -405,7 +410,7 @@ class ActionsViewModel(
         cancelTest()
         variableMemory.clear()
         variableMemory.putAll(draft.variables)
-        editor.update { it.copy(selectedId = id, draft = draft, baseline = baseline, errors = DraftErrors(), test = null) }
+        editor.update { it.copy(selectedId = id, draft = draft, baseline = baseline, errors = DraftErrors(), test = null, generation = it.generation + 1) }
     }
 
     private fun updateDraft(transform: (ActionDraft) -> ActionDraft) = editor.update { e ->

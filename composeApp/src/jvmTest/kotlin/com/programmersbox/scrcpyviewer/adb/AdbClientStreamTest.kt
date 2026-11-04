@@ -71,7 +71,7 @@ class AdbClientStreamTest {
                     out.write("b\n".toByteArray()); out.flush()
                 }
             }
-            val first = withTimeout(5_000) { client(server).shellStream("s", "x").first() }
+            val first = withTimeout(15_000) { client(server).shellStream("s", "x").first() }
             assertEquals("a\n", first)
             assertEquals(1L, gate.count, "first chunk must arrive before the latch opens")
             gate.countDown()

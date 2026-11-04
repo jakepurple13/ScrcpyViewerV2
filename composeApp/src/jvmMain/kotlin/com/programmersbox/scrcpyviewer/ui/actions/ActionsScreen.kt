@@ -30,10 +30,10 @@ import androidx.compose.material.icons.filled.AutoAwesomeMotion
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -98,8 +98,6 @@ sealed interface ActionsEvent {
     /** Opens [id], asking to discard unsaved changes first. */
     data class Select(val id: String) : ActionsEvent
     data object New : ActionsEvent
-    /** Opens the template picker; handled by [ActionsContent] itself. */
-    data object BrowseTemplates : ActionsEvent
     /** Starts an unsaved draft from [template], asking to discard unsaved changes first. */
     data class NewFromTemplate(val template: ActionTemplate) : ActionsEvent
     data object Import : ActionsEvent
@@ -159,7 +157,6 @@ fun ActionsScreen(
             when (event) {
                 is ActionsEvent.Select -> viewModel.handle(ActionsRequest(event.id, new = false))
                 ActionsEvent.New -> viewModel.handle(ActionsRequest(null, new = true))
-                ActionsEvent.BrowseTemplates -> Unit
                 is ActionsEvent.NewFromTemplate -> viewModel.newFromTemplate(event.template)
                 ActionsEvent.Import -> files.chooseImportFile()?.let { path -> io { viewModel.beginImport(Files.readString(path)) } }
                 ActionsEvent.Export -> viewModel.startExport()
@@ -224,7 +221,6 @@ fun ActionsContent(
     // The picker is this screen's own state; everything else goes to the caller.
     val send: (ActionsEvent) -> Unit = { event ->
         when (event) {
-            ActionsEvent.BrowseTemplates -> picker = true
             is ActionsEvent.NewFromTemplate -> {
                 picker = false
                 onEvent(event)
@@ -244,6 +240,7 @@ fun ActionsContent(
             list = {
                 ActionList(
                     state,
+                    onBrowseTemplates = { picker = true },
                     onSelect = { onEvent(ActionsEvent.Select(it)); panes.navigation.openDetail() },
                     onEvent = { event ->
                         send(event)
@@ -255,16 +252,17 @@ fun ActionsContent(
                 val draft = state.draft
                 Box(Modifier.fillMaxSize()) {
                     when {
-                        // Keyed by action so remembered field text (e.g. a List variable's choices) never carries over.
-                        draft != null -> key(draft.id ?: "new") { ActionEditor(state, draft, packages, onEvent, onBack) }
+                        // Keyed by the open draft so remembered field text (e.g. a List variable's choices) never carries over.
+                        draft != null -> key(state.editorKey) { ActionEditor(state, draft, packages, onEvent, onBack) }
                         else -> {
                             if (onBack != null) DetailBackButton(onBack, Modifier.padding(start = 6.dp, top = 6.dp))
                             if (state.actions.isEmpty()) EmptyState(
-                                { event ->
+                                onBrowseTemplates = { picker = true },
+                                onEvent = { event ->
                                     send(event)
                                     if (event == ActionsEvent.New) panes.navigation.openDetail()
                                 },
-                                Modifier.align(Alignment.Center))
+                                modifier = Modifier.align(Alignment.Center))
                             else Text(
                                 "Select an action to edit it, or create one with + New.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -287,7 +285,7 @@ private val ActionListPreferredWidth = 320.dp
 val ACTION_DETAIL_MIN_WIDTH = 560.dp
 
 @Composable
-private fun EmptyState(onEvent: (ActionsEvent) -> Unit, modifier: Modifier = Modifier) {
+private fun EmptyState(onBrowseTemplates: () -> Unit, onEvent: (ActionsEvent) -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.widthIn(max = 440.dp).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("No actions yet", style = MaterialTheme.typography.titleLarge)
         Text(
@@ -298,7 +296,7 @@ private fun EmptyState(onEvent: (ActionsEvent) -> Unit, modifier: Modifier = Mod
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button({ onEvent(ActionsEvent.New) }) { Text("+ New") }
-            OutlinedButton({ onEvent(ActionsEvent.BrowseTemplates) }) { Text("Browse templates") }
+            OutlinedButton(onBrowseTemplates) { Text("Browse templates") }
             OutlinedButton({ onEvent(ActionsEvent.Import) }) { Text("Import") }
         }
         Text("Popular templates, one click to start", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -321,11 +319,11 @@ private val QUICK_START_TEMPLATES = listOf("Grant permission", "Start activity",
 
 /** "+ New" with a drop-down arrow: the arrow offers a blank action or the template picker. */
 @Composable
-private fun SplitNewButton(onEvent: (ActionsEvent) -> Unit) {
+private fun SplitNewButton(onNew: () -> Unit, onBrowseTemplates: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         Button(
-            { onEvent(ActionsEvent.New) },
+            onNew,
             shape = RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp, topEnd = 4.dp, bottomEnd = 4.dp),
             contentPadding = ToolbarPadding,
         ) { Text("+ New", maxLines = 1) }
@@ -339,12 +337,12 @@ private fun SplitNewButton(onEvent: (ActionsEvent) -> Unit) {
                 DropdownMenuItem(
                     text = { Text("New blank action") },
                     leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    onClick = { menu = false; onEvent(ActionsEvent.New) },
+                    onClick = { menu = false; onNew() },
                 )
                 DropdownMenuItem(
                     text = { Text("From template…") },
                     leadingIcon = { Icon(Icons.Filled.AutoAwesomeMotion, contentDescription = null) },
-                    onClick = { menu = false; onEvent(ActionsEvent.BrowseTemplates) },
+                    onClick = { menu = false; onBrowseTemplates() },
                 )
             }
         }
@@ -353,7 +351,7 @@ private fun SplitNewButton(onEvent: (ActionsEvent) -> Unit) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ActionList(state: ActionsUiState, onSelect: (String) -> Unit, onEvent: (ActionsEvent) -> Unit) {
+private fun ActionList(state: ActionsUiState, onBrowseTemplates: () -> Unit, onSelect: (String) -> Unit, onEvent: (ActionsEvent) -> Unit) {
     val selection = state.exportSelection
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp)) {
         ListHeader(state.actions.size, selection, onEvent)
@@ -378,7 +376,7 @@ private fun ActionList(state: ActionsUiState, onSelect: (String) -> Unit, onEven
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             if (selection == null) {
-                SplitNewButton(onEvent)
+                SplitNewButton(onNew = { onEvent(ActionsEvent.New) }, onBrowseTemplates = onBrowseTemplates)
                 OutlinedButton({ onEvent(ActionsEvent.Import) }, contentPadding = ToolbarPadding) { Text("Import") }
                 OutlinedButton({ onEvent(ActionsEvent.Export) }, enabled = state.actions.isNotEmpty(), contentPadding = ToolbarPadding) { Text("Export") }
             } else {

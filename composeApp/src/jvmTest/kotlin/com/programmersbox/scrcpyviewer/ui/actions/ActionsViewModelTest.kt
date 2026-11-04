@@ -751,4 +751,41 @@ class ActionsViewModelTest {
         assertEquals("Force stop", vm.state.value.draft!!.fromTemplate, "still from template")
         assertEquals(1, store.actions.value.size)
     }
+
+    @Test
+    fun `picking the same template twice gives a fresh draft and a new editor key`() {
+        val vm = vm()
+        val t = template("Grant permission")
+        vm.newFromTemplate(t)
+        val firstKey = vm.state.value.editorKey
+        vm.edit { it.copy(variables = it.variables + ("permission" to Variable("Mine", VariableKind.List, choices = listOf("x")))) }
+        vm.newFromTemplate(t)
+        assertNotNull(vm.pendingDiscard.value)
+        vm.discardAndSelect(null)
+        val draft = vm.state.value.draft!!
+        assertEquals((t.action as RunOnceAction).variables, draft.variables, "template's original values")
+        assertTrue(vm.state.value.editorKey != firstKey, "editor remounts")
+    }
+
+    @Test
+    fun `saving keeps the editor key but opening another draft changes it`() {
+        val vm = vm()
+        vm.newFromTemplate(template("Force stop"))
+        val key = vm.state.value.editorKey
+        assertTrue(vm.save())
+        assertEquals(key, vm.state.value.editorKey)
+        vm.new()
+        assertTrue(vm.state.value.editorKey != key)
+    }
+
+    @Test
+    fun `new blank while a template draft is open asks to discard`() {
+        val vm = vm()
+        vm.newFromTemplate(template("Force stop"))
+        vm.handle(ActionsRequest(null, new = true))
+        assertEquals(ActionsRequest(null, new = true), vm.pendingDiscard.value)
+        vm.discardAndSelect(null)
+        assertNull(vm.state.value.draft!!.fromTemplate)
+        assertEquals("", vm.state.value.draft!!.name)
+    }
 }
