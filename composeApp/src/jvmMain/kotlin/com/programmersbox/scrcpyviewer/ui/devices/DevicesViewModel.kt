@@ -24,6 +24,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.mirror.OpenMirrors
 import org.koin.core.annotation.KoinViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,7 +65,17 @@ data class DevicesUiState(
     val persistenceError: String? = null,
     /** Serials currently being switched from USB to Wi-Fi. */
     val switching: Set<String> = emptySet(),
+    /** True while the header's restart button is restarting the adb server. */
+    val restartingAdb: Boolean = false,
+    /** What a restart would close, while its confirmation dialog is showing; null otherwise. */
+    val restartConfirm: RestartAdbImpact? = null,
 )
+
+/** What restarting the adb server would end: open mirror windows and Wi-Fi connections, by device name. */
+data class RestartAdbImpact(val mirrors: List<String>, val wifiDevices: List<String>) {
+    /** Nothing would be lost, so the restart needs no confirmation. */
+    val isEmpty: Boolean get() = mirrors.isEmpty() && wifiDevices.isEmpty()
+}
 
 /**
  * A snackbar message from a Wi-Fi action; [mirrorSerial] adds a Mirror action for that device. [mdnsName] is the
@@ -81,7 +92,9 @@ data class WifiNotice(
 /** Why a restart can help, shown when the app may not restart adb by itself (mirror windows are open). */
 const val RESTART_ADB_HINT = "adb was started by another app, so macOS blocks it. Restarting adb closes open mirror windows."
 
-private data class Filters(val query: String, val group: OptionGroup?, val switching: Set<String>)
+private data class Filters(val query: String, val group: OptionGroup?, val switching: Set<String>, val restart: RestartUi)
+
+private data class RestartUi(val running: Boolean = false, val confirm: RestartAdbImpact? = null)
 
 @KoinViewModel
 class DevicesViewModel(
@@ -90,9 +103,11 @@ class DevicesViewModel(
     private val presets: PresetStore,
     private val mirrorRequests: MirrorRequests,
     private val wireless: WirelessAdb,
+    private val openMirrors: OpenMirrors,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val switching = MutableStateFlow<Set<String>>(emptySet())
+    private val restart = MutableStateFlow(RestartUi())
     private val _notices = MutableSharedFlow<WifiNotice>(extraBufferCapacity = 8)
 
     /** Results of Wi-Fi actions, for the snackbar. */
@@ -114,7 +129,7 @@ class DevicesViewModel(
 
     val state: StateFlow<DevicesUiState> = combine(
         selection.state,
-        combine(query, group, switching) { q, g, busy -> Filters(q, g, busy) },
+        combine(query, group, switching, restart) { q, g, busy, r -> Filters(q, g, busy, r) },
         workingValues,
         presets.presets,
         options.persistenceError,
@@ -124,7 +139,7 @@ class DevicesViewModel(
         // Built now, so the first frame after the screen creates this ViewModel already shows the options.
         selection.state.value.let { sel ->
             uiState(
-                sel, Filters(query.value, group.value, switching.value),
+                sel, Filters(query.value, group.value, switching.value, restart.value),
                 sel.key?.let { options.workingSet(it).value.values }, presets.presets.value, options.persistenceError.value,
             )
         },
@@ -159,6 +174,8 @@ class DevicesViewModel(
             basePresetId = key?.let { options.effectiveBasePresetId(it) },
             persistenceError = persistenceError,
             switching = filters.switching,
+            restartingAdb = filters.restart.running,
+            restartConfirm = filters.restart.confirm,
         )
     }
 
@@ -269,18 +286,56 @@ class DevicesViewModel(
         openDevice(serial)
     }
 
-    /** The "Restart adb" action: restarts the adb server so this app owns it, then says to try again. */
-    fun restartAdb() {
+    /** The "Restart adb" snackbar action after a failed Wi-Fi connect: restarts adb, then says to try again. */
+    fun restartAdb() = runRestart("Restarted adb. Try connecting again.")
+
+    /** What restarting adb now would close: open mirror windows and Wi-Fi devices, by name. */
+    fun restartImpact(): RestartAdbImpact {
+        val devices = selection.state.value.devices
+        return RestartAdbImpact(
+            mirrors = openMirrors.serials()
+                .map { serial -> devices.firstOrNull { it.serial == serial }?.let(::deviceTitle) ?: serial }
+                .sorted(),
+            wifiDevices = devices.filter { it.isTcp }.map(::deviceTitle),
+        )
+    }
+
+    /** The header's restart button: restarts at once when nothing would be lost, else asks first. */
+    fun requestRestartAdb() {
+        if (restart.value.running) return
+        val impact = restartImpact()
+        if (impact.isEmpty) runRestart("Restarted adb.") else restart.update { it.copy(confirm = impact) }
+    }
+
+    /** The confirmation dialog's restart button. */
+    fun confirmRestartAdb() {
+        restart.update { it.copy(confirm = null) }
+        runRestart("Restarted adb.")
+    }
+
+    fun cancelRestartAdb() {
+        restart.update { it.copy(confirm = null) }
+    }
+
+    /** Restarts the adb server so this app owns it, then reports [success] or the error. Ignored while one runs. */
+    private fun runRestart(success: String) {
+        var started = false
+        restart.update { if (it.running) it else { started = true; it.copy(running = true) } }
+        if (!started) return
         viewModelScope.launch {
-            val text = try {
-                wireless.restartServer()
-                "Restarted adb. Try connecting again."
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                "Couldn't restart adb: ${e.message}"
+            try {
+                val text = try {
+                    wireless.restartServer()
+                    success
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    "Couldn't restart adb: ${e.message}"
+                }
+                _notices.emit(WifiNotice(text))
+            } finally {
+                restart.update { it.copy(running = false) }
             }
-            _notices.emit(WifiNotice(text))
         }
     }
 

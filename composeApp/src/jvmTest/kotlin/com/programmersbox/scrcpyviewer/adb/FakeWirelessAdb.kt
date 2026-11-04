@@ -29,8 +29,12 @@ open class FakeWirelessAdb : WirelessAdb(object : AdbClient({ error("FakeWireles
         return disconnectResult
     }
 
+    /** Thrown by [restartServer] when set. */
+    @Volatile var restartError: Exception? = null
+
     override suspend fun restartServer() {
         calls += "restart"
+        restartError?.let { throw it }
     }
 
     override suspend fun switchToWifi(serial: String): SwitchResult {

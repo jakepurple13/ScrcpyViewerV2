@@ -8,6 +8,7 @@ import com.programmersbox.scrcpyviewer.adb.FakeWirelessAdb
 import com.programmersbox.scrcpyviewer.adb.SwitchResult
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.mirror.OpenMirrors
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -50,8 +51,14 @@ class DevicesViewModelTest {
 
     private val wireless = FakeWirelessAdb()
 
+    /** Serials with an open mirror window. */
+    private var openMirrors: Set<String> = emptySet()
+
     private fun vm(options: DeviceOptionsStore = this.options, wireless: WirelessAdb = this.wireless) =
-        DevicesViewModel(DeviceSelection(devices, connected, scope), options, presets, MirrorRequests(mirrorRequests), wireless, scope)
+        DevicesViewModel(
+            DeviceSelection(devices, connected, scope), options, presets, MirrorRequests(mirrorRequests), wireless,
+            OpenMirrors { openMirrors }, scope,
+        )
 
     private val pixel = device("R1", info = DeviceInfo("Pixel 8 Pro", "15", 35, "R1"))
     private val usbAbc = device("ABC")
@@ -160,6 +167,91 @@ class DevicesViewModelTest {
         vm.restartAdb()
         assertEquals("restart", wireless.calls.last())
         assertEquals("Restarted adb. Try connecting again.", seen.last().text)
+    }
+
+    @Test
+    fun `restart button restarts at once when nothing would be lost`() {
+        devices.value = listOf(pixel)
+        val vm = vm()
+        val seen = notices(vm)
+        vm.requestRestartAdb()
+        assertNull(vm.state.value.restartConfirm)
+        assertEquals(listOf("restart"), wireless.calls)
+        assertEquals("Restarted adb.", seen.single().text)
+        assertFalse(vm.state.value.restartingAdb)
+    }
+
+    @Test
+    fun `restart button asks first and lists open mirrors and wifi devices`() {
+        devices.value = listOf(pixel, tcpAbc)
+        openMirrors = setOf("R1", "gone-serial")
+        val vm = vm()
+        vm.requestRestartAdb()
+        assertEquals(RestartAdbImpact(mirrors = listOf("Pixel 8 Pro", "gone-serial"), wifiDevices = listOf("P")), vm.state.value.restartConfirm)
+        assertTrue(wireless.calls.isEmpty())
+    }
+
+    @Test
+    fun `restart asks when only a wifi device would drop`() {
+        devices.value = listOf(pixel, tcpAbc)
+        val vm = vm()
+        vm.requestRestartAdb()
+        assertEquals(RestartAdbImpact(mirrors = emptyList(), wifiDevices = listOf("P")), vm.state.value.restartConfirm)
+    }
+
+    @Test
+    fun `cancelling the restart dialog does not restart`() {
+        devices.value = listOf(pixel)
+        openMirrors = setOf("R1")
+        val vm = vm()
+        vm.requestRestartAdb()
+        vm.cancelRestartAdb()
+        assertNull(vm.state.value.restartConfirm)
+        assertTrue(wireless.calls.isEmpty())
+    }
+
+    @Test
+    fun `confirming the restart dialog restarts`() {
+        devices.value = listOf(pixel)
+        openMirrors = setOf("R1")
+        val vm = vm()
+        val seen = notices(vm)
+        vm.requestRestartAdb()
+        vm.confirmRestartAdb()
+        assertNull(vm.state.value.restartConfirm)
+        assertEquals(listOf("restart"), wireless.calls)
+        assertEquals("Restarted adb.", seen.single().text)
+    }
+
+    @Test
+    fun `restart failure is reported`() {
+        devices.value = listOf(pixel)
+        wireless.restartError = java.io.IOException("adb start-server failed (1): cannot bind")
+        val vm = vm()
+        val seen = notices(vm)
+        vm.requestRestartAdb()
+        assertEquals("Couldn't restart adb: adb start-server failed (1): cannot bind", seen.single().text)
+        assertFalse(vm.state.value.restartingAdb)
+    }
+
+    @Test
+    fun `restart is ignored while one is running`() = runBlocking {
+        devices.value = listOf(pixel)
+        val gate = CompletableDeferred<Unit>()
+        val slow = object : FakeWirelessAdb() {
+            override suspend fun restartServer() {
+                super.restartServer()
+                gate.await()
+            }
+        }
+        val vm = vm(wireless = slow)
+        vm.requestRestartAdb()
+        assertTrue(vm.state.value.restartingAdb)
+        vm.requestRestartAdb()
+        vm.restartAdb()
+        gate.complete(Unit)
+        withTimeout(2000) { while (vm.state.value.restartingAdb) delay(10) }
+        assertEquals(listOf("restart"), slow.calls)
     }
 
     @Test

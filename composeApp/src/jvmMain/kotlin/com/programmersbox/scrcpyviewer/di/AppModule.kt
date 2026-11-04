@@ -20,6 +20,7 @@ import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.mirror.OpenMirrors
 import com.programmersbox.scrcpyviewer.update.NucleusUpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateManager
@@ -112,6 +113,9 @@ class AdbModule {
 class MirrorModule {
     @Singleton
     fun mirrorRequests(): MirrorRequests = MirrorRequests()
+
+    @Singleton
+    fun openMirrors(mirrors: Lazy<MirrorController>): OpenMirrors = OpenMirrors { mirrors.value.open.value.keys }
 
     @Singleton
     fun serverLauncher(client: AdbClient, tools: BundledTools): ServerLauncher = ServerLauncher(client, tools)
