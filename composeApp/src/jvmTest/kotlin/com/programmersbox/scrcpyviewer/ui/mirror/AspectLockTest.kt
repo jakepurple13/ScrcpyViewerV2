@@ -1,6 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
 import androidx.compose.ui.unit.IntSize
+import kotlin.math.abs
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -54,11 +56,27 @@ class AspectLockTest {
     }
 
     @Test
-    fun `a resize that would be taller than the screen keeps the user's height and narrows the stage`() {
+    fun `a resize that would be taller than the screen keeps as much of the change as fits`() {
         val locked = aspectLockedStage(IntSize(450, 1000), IntSize(480, 1000), portrait, portrait, maxHeight = 1020)
-        assertEquals(IntSize(450, 1000), locked, "not 480 x 1067: the width goes back to the user's height")
-        // Off the frame's aspect after a drag: the stage keeps its difference, at the user's height.
-        assertEquals(IntSize(650, 1000), aspectLockedStage(IntSize(650, 1000), IntSize(700, 1000), portrait, portrait, 1050))
+        assertEquals(IntSize(459, 1020), locked, "not 480 x 1067: as tall as the screen allows, the width from that")
+        // Off the frame's aspect after a drag: the stage keeps its difference.
+        assertEquals(IntSize(668, 1040), aspectLockedStage(IntSize(650, 1000), IntSize(700, 1000), portrait, portrait, 1040))
+    }
+
+    @Test
+    fun `many resizes of a stage at the frame's aspect never drift off it`() {
+        val random = Random(20)
+        var stage = IntSize(450, 1000)
+        repeat(500) {
+            val d = random.nextInt(-40, 41)
+            val resized = if (random.nextBoolean()) IntSize(stage.width + d, stage.height) else IntSize(stage.width, stage.height + d)
+            if (resized.width < 100 || resized.height < 200) return@repeat
+            stage = aspectLockedStage(stage, resized, portrait, portrait)
+            assertTrue(abs(stage.width - stage.height * 0.45) <= 1.0, "off the aspect after ${it + 1} resizes: $stage")
+        }
+        var widened = IntSize(450, 1000)
+        repeat(100) { widened = aspectLockedStage(widened, IntSize(widened.width + 4, widened.height), portrait, portrait) }
+        assertEquals(IntSize(850, 1889), widened)
     }
 
     @Test
@@ -91,6 +109,14 @@ class AspectLockTest {
         assertFalse(stageChangeIsSheets(pinned = false, windowResized = false, portrait, landscape, wasFit = true, fit = true))
     }
 
+    @Test
+    fun `a rotation or Fit change during a sheet animation still goes through the lock`() {
+        assertFalse(stageChangeIsSheets(pinned = true, windowResized = false, portrait, landscape, wasFit = true, fit = true))
+        assertFalse(stageChangeIsSheets(pinned = true, windowResized = false, portrait, portrait, wasFit = false, fit = true))
+        // Fit turned off is recorded too, so turning it back on later is seen as Fit coming back.
+        assertFalse(stageChangeIsSheets(pinned = false, windowResized = false, portrait, portrait, wasFit = true, fit = false))
+    }
+
     /**
      * A floating mirror window (px) whose stage shows [frame] with Fit on, run like the window's aspect lock effect:
      * each stage change [look]s; a change the sheet made becomes the base at once, any other waits for the size to
@@ -104,7 +130,7 @@ class AspectLockTest {
 
         fun look(settled: Boolean = true) {
             if (stageChangeIsSheets(pinned, window != lastWindow, frame, frame, true, true)) {
-                lastStage = stage
+                lastStage = if (pinned) IntSize(stage.width, lastStage.height) else stage
                 return
             }
             if (!settled) return // restarted by the next stage change before the settle delay ran out
@@ -132,15 +158,19 @@ class AspectLockTest {
             look()
         }
 
-        /** An open, close or tab switch: the window grows by [grow], the stage (pinned) changes by [stageBy]. */
-        fun sheet(grow: Int, stageBy: Int) {
+        /**
+         * An open, close or tab switch: the window grows by [grow], the stage (pinned) changes by [stageBy], and the
+         * user drags the window's height by [userDh] meanwhile.
+         */
+        fun sheet(grow: Int, stageBy: Int, userDh: Int = 0) {
             pinned = true
-            window = IntSize(window.width + grow, window.height)
-            stage = IntSize(stage.width + stageBy, stage.height)
+            val baseHeight = window.height
+            window = IntSize(window.width + grow, window.height + userDh)
+            stage = IntSize(stage.width + stageBy, stage.height + userDh)
             look(settled = false)
-            lastWindow = window // the sheet effect, once the native window has its new size
+            lastWindow = IntSize(window.width, baseHeight) // the sheet effect, once the native window has its new size
             pinned = false
-            look()
+            look() // the pin clearing reruns the lock
         }
     }
 
@@ -154,8 +184,18 @@ class AspectLockTest {
         w.dragBar(-150)
         w.resize(-10, 0)
         assertTrue(w.stage.height in 989..991, "measured from the stage after the second drag: ${w.stage}")
-        repeat(20) { w.resize(4, 0) }
-        assertTrue(w.stage.height <= w.maxHeight, "never taller than the screen: ${w.stage}")
+        w.dragBar(-50)
+        val offAspect = w.stage.width - w.stage.height * 0.45
+        repeat(20) {
+            w.resize(4, 0)
+            assertTrue(w.stage.height <= w.maxHeight, "never taller than the screen: ${w.stage}")
+            assertTrue(abs(w.stage.width - w.stage.height * 0.45 - offAspect) <= 1.0, "keeps its offset: ${w.stage}")
+        }
+        val atAspect = LockedWindow(IntSize(450, 1000))
+        repeat(20) {
+            atAspect.resize(4, 0)
+            assertTrue(abs(atAspect.stage.width - atAspect.stage.height * 0.45) <= 1.0, "at the aspect: ${atAspect.stage}")
+        }
     }
 
     @Test
@@ -169,5 +209,12 @@ class AspectLockTest {
         w.sheet(grow = -400, stageBy = -80)
         assertEquals(height, w.window.height)
         assertEquals(IntSize(450, 1000), w.stage)
+    }
+
+    @Test
+    fun `a height the user drags during a sheet animation is corrected when it ends`() {
+        val w = LockedWindow(IntSize(450, 1000))
+        w.sheet(grow = 280, stageBy = 0, userDh = 100)
+        assertEquals(IntSize(495, 1100), w.stage)
     }
 }

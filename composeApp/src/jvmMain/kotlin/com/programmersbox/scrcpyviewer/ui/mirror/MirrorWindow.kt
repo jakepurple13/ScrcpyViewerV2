@@ -635,16 +635,20 @@ fun MirrorWindow(
         // The stage's width (px) while the window grows or shrinks for the quick actions sheet (see the sheet effect).
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
-        LaunchedEffect(stage, displayedSize, fit) {
+        // Keyed on the pin clearing too: a height the user dragged during a sheet animation is corrected once it ends.
+        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null) {
             val fs = displayedSize ?: return@LaunchedEffect
             if (stage == IntSize.Zero || windowState.placement != WindowPlacement.Floating) return@LaunchedEffect
             if (autoSized) {
                 // The sheet changed the stage (its bar, or its open, close or tab switch): the new stage is the base
                 // the next resize is measured from, right away, so a resize within the settle delay is not measured
-                // from the stage before the sheet changed it (and counted as the user's).
+                // from the stage before the sheet changed it (and counted as the user's). The sheet only changes the
+                // stage's width: while it is pinned, the base keeps its height, so a height the user dragged meanwhile
+                // is still the user's change once the pin clears.
                 val windowResized = awtWindow.size != lastWindowSize[0]
-                if (stageChangeIsSheets(pinnedStage != null, windowResized, lastFrame, fs, lastFit[0], fit)) {
-                    lastStage = stage
+                val pinned = pinnedStage != null
+                if (stageChangeIsSheets(pinned, windowResized, lastFrame, fs, lastFit[0], fit)) {
+                    lastStage = if (pinned && lastStage != IntSize.Zero) IntSize(stage.width, lastStage.height) else stage
                     return@LaunchedEffect
                 }
                 // Correcting the size on every step of a drag fights the drag (the window jitters): restarted by each
@@ -668,9 +672,9 @@ fun MirrorWindow(
                     IntSize((fs.width * scale).roundToInt(), (fs.height * scale).roundToInt())
                 }
                 fit && aspectLock && lockNeeded -> {
-                    // Never taller than the screen can show: the window's chrome (title bar) comes off its height.
+                    // Never taller than the screen has room for below the window's top, less its chrome (title bar).
                     val chromeH = awtWindow.height * density.density - stage.height
-                    val maxH = (usableScreenHeight(awtWindow) * density.density - chromeH).roundToInt()
+                    val maxH = (screenRoomBelow(awtWindow) * density.density - chromeH).roundToInt()
                     aspectLockedStage(lastStage, stage, lastFrame, fs, maxH, refit)
                 }
                 else -> null
@@ -746,7 +750,9 @@ fun MirrorWindow(
             // Keep the pin until the native window has shrunk, or the stage widens for a frame.
             var frames = 0
             while (awtWindow.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
-            lastWindowSize[0] = awtWindow.size // grown for the sheet, not by the user: nothing for the aspect lock
+            // Grown for the sheet, not by the user: nothing for the aspect lock. The height from before the animation,
+            // so a height the user dragged meanwhile is still seen as a resize.
+            lastWindowSize[0] = Dimension(awtWindow.width, base.height)
             pinnedStage = null // not when cancelled: a reversed toggle keeps the pin through its own animation
         }
 
@@ -812,11 +818,15 @@ private val AtLeastAvailableWidth: Modifier = Modifier.layout { measurable, cons
 /** How long the stage size must hold still before the aspect ratio lock corrects the window. */
 private const val ASPECT_SETTLE_MS = 150L
 
-/** The height (window units) of the screen [window] is on, less the menu bar and the Dock or taskbar. */
-private fun usableScreenHeight(window: java.awt.Window): Int {
+/**
+ * The height (window units) the window's content can reach on the screen [window] is on: from the window's top to the
+ * screen's bottom less the Dock or taskbar, and never more than the screen's height less the menu bar.
+ */
+private fun screenRoomBelow(window: java.awt.Window): Int {
     val config = window.graphicsConfiguration
     val insets = Toolkit.getDefaultToolkit().getScreenInsets(config)
-    return config.bounds.height - insets.top - insets.bottom
+    val bottom = config.bounds.y + config.bounds.height - insets.bottom
+    return minOf(config.bounds.height - insets.top - insets.bottom, bottom - window.y)
 }
 
 /**
@@ -829,21 +839,23 @@ fun aspectLockNeeded(windowResized: Boolean, lastFrame: IntSize?, frame: IntSize
     windowResized || lastFrame != frame || (fit && !wasFit)
 
 /**
- * Whether a stage change is not the user's resize, so the aspect ratio lock takes the new stage at once as the base
- * the next resize is measured from (no settle delay, no correction): the stage is [pinned] while the quick actions
- * sheet opens, closes or switches tabs, or nothing [aspectLockNeeded] looks at changed (the sheet's drag bar moved).
+ * Whether a stage change is the sheet's, not the user's, so the aspect ratio lock takes the new stage at once as the
+ * base the next resize is measured from (no settle delay, no correction): with the frame and Fit as they were, the
+ * stage is [pinned] while the quick actions sheet opens, closes or switches tabs, or the window kept its size (the
+ * sheet's drag bar moved). A new frame or a Fit change always goes through the lock, even during a sheet animation.
  */
 fun stageChangeIsSheets(pinned: Boolean, windowResized: Boolean, lastFrame: IntSize?, frame: IntSize, wasFit: Boolean, fit: Boolean): Boolean =
-    pinned || !aspectLockNeeded(windowResized, lastFrame, frame, wasFit, fit)
+    lastFrame == frame && wasFit == fit && (pinned || !windowResized)
 
 /**
  * Stage size that keeps the frame's aspect ratio after the user resized the stage from [old] (the stage right before
- * the resize) to [new]. The dimension that changed most wins, and the other changes by the same amount scaled by the
- * aspect ratio: a stage the sheet's drag bar made wider or narrower than the frame keeps that difference, so a small
+ * the resize) to [new]; the dimension that changed most wins. A stage at the frame's aspect (within 1 px) is rebuilt
+ * from that dimension, so rounding never adds up. A stage the sheet's drag bar made wider or narrower than the frame
+ * keeps that difference: the other dimension changes by the user's change scaled by the aspect ratio, so a small
  * resize never turns into a large one. For a new frame (another size, or the first) or when Fit came back on
- * ([refit]) the stage takes the frame's aspect from its width. When the frame turned (rotation), the longer side is
- * kept. A stage taller than [maxHeight] (what the screen can show) keeps the user's height instead (the screen's
- * height after a rotation) and takes its width from that height.
+ * ([refit]) the stage is rebuilt too. When the frame turned (rotation), the longer side is kept. A stage taller than
+ * [maxHeight] (what the screen can show) is [maxHeight] tall, its width taken from that height: as much of the
+ * user's change as fits.
  */
 fun aspectLockedStage(
     old: IntSize,
@@ -856,23 +868,23 @@ fun aspectLockedStage(
     if (frame.width <= 0 || frame.height <= 0 || new.width <= 0 || new.height <= 0) return new
     val aspect = frame.width.toDouble() / frame.height
     val rotated = oldFrame != null && (oldFrame.width > oldFrame.height) != (frame.width > frame.height)
-    val fromScratch = rotated || refit || oldFrame != frame
+    val onAspect = abs(old.width - old.height * aspect) <= 1.0
+    val fromScratch = rotated || refit || oldFrame != frame || onAspect
     // The width for a height, kept to the frame's aspect from scratch or from the stage before the resize.
     fun widthFor(height: Int): Int =
         if (fromScratch) (height * aspect).roundToInt() else old.width + ((height - old.height) * aspect).roundToInt()
+    val widthWins = abs(new.width - old.width) >= abs(new.height - old.height)
     val locked = when {
         rotated -> {
             val long = maxOf(new.width, new.height)
             if (frame.width >= frame.height) IntSize(long, (long / aspect).roundToInt()) else IntSize(widthFor(long), long)
         }
-        fromScratch -> IntSize(new.width, (new.width / aspect).roundToInt())
-        abs(new.width - old.width) >= abs(new.height - old.height) ->
-            IntSize(new.width, old.height + ((new.width - old.width) / aspect).roundToInt())
+        widthWins && fromScratch -> IntSize(new.width, (new.width / aspect).roundToInt())
+        widthWins -> IntSize(new.width, old.height + ((new.width - old.width) / aspect).roundToInt())
         else -> IntSize(widthFor(new.height), new.height)
     }
     if (locked.height <= maxHeight) return IntSize(locked.width.coerceAtLeast(1), locked.height.coerceAtLeast(1))
-    val height = if (rotated) maxHeight else minOf(new.height, maxHeight)
-    return IntSize(widthFor(height).coerceAtLeast(1), height.coerceAtLeast(1))
+    return IntSize(widthFor(maxHeight).coerceAtLeast(1), maxHeight.coerceAtLeast(1))
 }
 
 /** The mirror window's content (stateless, so it can be rendered offscreen). */
