@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.di
 
 import com.programmersbox.scrcpyviewer.AppDataDir
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.actions.ActionStore
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
@@ -73,6 +74,9 @@ class StorageModule {
 
     @Singleton
     fun presetStore(dataDir: DataDir, scope: AppScope): PresetStore = PresetStore(dataDir.path.resolve("presets.json"), scope)
+
+    @Singleton
+    fun actionStore(dataDir: DataDir): ActionStore = ActionStore(dataDir.path.resolve("actions.json"))
 
     @Singleton
     fun deviceOptions(dataDir: DataDir, presets: PresetStore, scope: AppScope): DeviceOptionsStore =
