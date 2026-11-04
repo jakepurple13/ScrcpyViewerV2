@@ -661,24 +661,25 @@ fun MirrorWindow(
         // edge animates to uncover or cover the panel. One setBounds per frame moves and resizes the window atomically
         // (moved left when it would leave the screen, back on close). Maximized and fullscreen windows cannot grow:
         // there the sheet takes its width from the stage. Dragging the sheet's bar never resizes the window: the stage
-        // gives up (or takes back) the width, and the growth counts it so closing shrinks the window by the new width.
+        // gives up (or takes back) the width, counted apart from the growth (SheetSplit), so closing shrinks the window
+        // by its growth only and the stage, its pin moving along with the window, gets that width back.
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
         val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
+        val sheetFromStage = remember { FloatArray(1) } // dp of the sheet's width the stage gave up (SheetSplit)
         val sheetShift = remember { IntArray(1) } // px the window moved left to keep the sheet on screen
         val sheetOpen = state.quickActions.open
         val sheetTab = state.quickActions.tab
         val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
-        val lastSheet = remember { SheetRun(false, sheetTab, 0.dp) }
+        val lastSheet = remember { SheetRun(false, sheetTab) }
         LaunchedEffect(sheetOpen, sheetTab, sheetTarget) {
             // Same open tab as the last run: only its width changed, by the drag bar.
             val resized = sheetOpen && lastSheet.open && lastSheet.tab == sheetTab
-            val lastTarget = lastSheet.target
             lastSheet.open = sheetOpen
             lastSheet.tab = sheetTab
-            lastSheet.target = sheetTarget
             if (windowState.placement != WindowPlacement.Floating) {
                 // A maximized or fullscreen window is never resized here; forget any growth from before.
                 sheetGrowth.snapTo(0f)
+                sheetFromStage[0] = 0f
                 sheetShift[0] = 0
                 pinnedStage = null
                 return@LaunchedEffect
@@ -686,21 +687,34 @@ fun MirrorWindow(
             if (resized) {
                 // The bar moved: the window keeps its size, the sheet's new width comes out of the stage. If this cut
                 // an open or tab switch short, the window keeps what it has grown so far.
-                sheetGrowth.snapTo(sheetGrowth.value + (sheetTarget - lastTarget).value)
+                sheetFromStage[0] = draggedSplit(sheetGrowth.value.dp, sheetTarget).fromStage.value
                 lastWindowSize[0] = awtWindow.size // whatever the cut-short animation grew, the user did not
                 pinnedStage = null
                 return@LaunchedEffect
             }
             // From the window as it is now: the user may have moved or resized it while the sheet was open.
             val base = sheetBaseBounds(awtWindow.bounds, sheetGrowth.value.roundToInt(), sheetShift[0])
-            val screenRight = awtWindow.graphicsConfiguration.bounds.let { it.x + it.width }
-            val target = sheetTarget.value
-            pinnedStage = stage.width
-            sheetGrowth.animateTo(target, sheetWidthSpec(sheetGrowth.value.dp, sheetTarget)) {
+            val screen = awtWindow.graphicsConfiguration.bounds
+            val screenRight = screen.x + screen.width
+            val split = sheetSplit(
+                sheetTarget, sheetTab, (stage.width / density.density).dp,
+                SheetSplit(sheetGrowth.value.dp, sheetFromStage[0].dp), (screen.width - base.width).dp,
+            )
+            val target = split.growth.value
+            // The stage's pin moves with the window by what it gets back (or gives up), so the image resizes along.
+            val pinFrom = stage.width
+            val pinTo = pinFrom + ((sheetFromStage[0] - split.fromStage.value) * density.density).roundToInt()
+            val growthFrom = sheetGrowth.value
+            sheetFromStage[0] = split.fromStage.value
+            pinnedStage = pinFrom
+            sheetGrowth.animateTo(target, sheetWidthSpec(sheetGrowth.value.dp, target.dp)) {
                 val grown = grownBounds(base, value.roundToInt(), screenRight)
                 sheetShift[0] = base.x - grown.x
                 awtWindow.setBounds(grown.x, awtWindow.y, grown.width, awtWindow.height)
+                val progress = if (target == growthFrom) 1f else (value - growthFrom) / (target - growthFrom)
+                pinnedStage = pinFrom + ((pinTo - pinFrom) * progress).roundToInt()
             }
+            pinnedStage = pinTo
             // Keep the pin until the native window has shrunk, or the stage widens for a frame.
             var frames = 0
             while (awtWindow.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
@@ -756,7 +770,7 @@ fun MirrorWindow(
 }
 
 /** What the window's sheet-growth effect last ran for; a plain holder, read and written only in that effect. */
-private class SheetRun(var open: Boolean, var tab: SheetTab, var target: Dp)
+private class SheetRun(var open: Boolean, var tab: SheetTab)
 
 /**
  * Start-aligned at its own width but never narrower than the space it is given (so it can overflow, to be clipped,
