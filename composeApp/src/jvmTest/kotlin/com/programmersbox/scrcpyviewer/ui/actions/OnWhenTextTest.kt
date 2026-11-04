@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.ui.actions
 import com.programmersbox.scrcpyviewer.actions.MatchMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class OnWhenTextTest {
     @Test
@@ -16,6 +17,15 @@ class OnWhenTextTest {
     fun `blank value asks for the on output`() {
         assertEquals("Enter the output that means On.", onWhenSentence(MatchMode.Equals, ""))
         assertEquals("Enter the output that means On.", onWhenSentence(MatchMode.Regex, "   "))
+    }
+
+    @Test
+    fun `an invalid regex is an error, other modes and valid patterns are not`() {
+        assertEquals("Not a valid pattern", onWhenError(MatchMode.Regex, "[1-"))
+        assertNull(onWhenError(MatchMode.Regex, "^[1-3]$"))
+        assertNull(onWhenError(MatchMode.Regex, ""))
+        assertNull(onWhenError(MatchMode.Equals, "[1-"))
+        assertNull(onWhenError(MatchMode.Contains, "[1-"))
     }
 
     @Test

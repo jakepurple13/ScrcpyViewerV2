@@ -48,6 +48,8 @@ private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = {
     /** Prints this many numbered lines at once, then ends, like a large `dumpsys`. */
     var flood = 0
     val commands: MutableList<String> = Collections.synchronizedList(mutableListOf())
+    /** Thrown by every streamed shell command, like a lost adb connection. */
+    var failure: Exception? = null
 
     override suspend fun startServer() {}
 
@@ -66,6 +68,7 @@ private class FakeAdb(private val serials: List<String>) : AdbClient(adbPath = {
     override fun shellStream(serial: String, cmd: String): Flow<String> = flow {
         val command = cmd.substringBeforeLast("\necho ")
         commands += "$serial: $command"
+        failure?.let { throw it }
         if (flood > 0) {
             emit((1..flood).joinToString("") { "line $it\n" })
             emit("${ShellRunner.EXIT_MARKER}0\n")
@@ -450,6 +453,41 @@ class ActionsViewModelTest {
         vm.startExport()
         vm.delete("awake")
         assertEquals(setOf("logcat"), vm.state.value.exportSelection)
+    }
+
+    @Test
+    fun `deleting the last action leaves selection mode`() {
+        store.upsert(stayAwake)
+        val vm = vm()
+        vm.startExport()
+        vm.delete("awake")
+        assertNull(vm.state.value.exportSelection)
+    }
+
+    @Test
+    fun `a test read that throws stays a read, so editing the rule clears it`() {
+        store.upsert(stayAwake)
+        val adb = FakeAdb(listOf("SER1")).apply { failure = IllegalStateException("device offline") }
+        val vm = vm(listOf("SER1"), adb)
+        vm.select("awake")
+        vm.testRead()
+        val result = vm.awaitTest()
+        assertEquals("device offline", result.note)
+        assertTrue(result.isRead)
+        vm.edit { it.copy(matchValue = "8") }
+        assertNull(vm.state.value.test)
+    }
+
+    @Test
+    fun `save refuses an invalid regex in the on when rule`() {
+        val vm = vm()
+        vm.new()
+        vm.edit { it.copy(name = "Wifi", on = "a", off = "b", read = "settings get global wifi_on", matchMode = MatchMode.Regex, matchValue = "[1-") }
+        assertFalse(vm.save())
+        assertEquals("Not a valid pattern", vm.state.value.errors.match)
+        vm.edit { it.copy(matchValue = "[1-3]") }
+        assertNull(vm.state.value.errors.match, "the error clears as the pattern is fixed")
+        assertTrue(vm.save())
     }
 
     @Test

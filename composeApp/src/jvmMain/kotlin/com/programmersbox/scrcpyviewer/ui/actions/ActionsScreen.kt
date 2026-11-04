@@ -42,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -138,6 +139,8 @@ fun ActionsScreen(
     LaunchedEffect(viewModel) { viewModel.messages.collect { snackbar?.showSnackbar(it) } }
     val scope = rememberCoroutineScope()
     var introRequested by remember { mutableStateOf(false) }
+    // Selection mode ends with the screen: coming back shows the list as usual.
+    DisposableEffect(viewModel) { onDispose { viewModel.cancelExport() } }
 
     /** Runs [block] on the IO dispatcher; shows a file error in the snackbar instead of crashing the UI. */
     fun io(block: () -> Unit) {

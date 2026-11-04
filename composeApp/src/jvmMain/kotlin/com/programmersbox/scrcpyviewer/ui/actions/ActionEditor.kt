@@ -216,19 +216,26 @@ private fun ToggleFields(
         SectionLabel("On when output")
         // Segments share the row's width equally; give "matches regex" room.
         Segments(matchLabels, draft.matchMode, Modifier.width(420.dp)) { mode -> edit { it.copy(matchMode = mode) } }
+        val matchError = onWhenError(draft.matchMode, draft.matchValue)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(
                 draft.matchValue, { v -> edit { it.copy(matchValue = v) } }, Modifier.weight(1f),
-                placeholder = { Text("Value") }, singleLine = true, textStyle = monospace,
+                placeholder = { Text("Value") }, singleLine = true, textStyle = monospace, isError = matchError != null,
             )
             OutlinedButton(onTestRead, enabled = state.testDevice != null && state.test?.running != true) { Text("Test read") }
         }
-        Hint(onWhenSentence(draft.matchMode, draft.matchValue))
+        // A pattern that does not compile says so in place of the sentence (Save reports it too).
+        if (matchError != null) {
+            Text(matchError, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+        } else {
+            Hint(onWhenSentence(draft.matchMode, draft.matchValue))
+        }
         state.test?.takeIf { it.isRead && !it.running }?.let { test ->
             Text(
                 buildAnnotatedString {
                     if (test.readOn == null) {
-                        append("Test read failed (exit ${test.exitCode})")
+                        // No exit code: the read never finished (an adb error or the time limit; the note says which).
+                        append(test.exitCode?.let { "Test read failed (exit $it)" } ?: "Test read failed")
                     } else {
                         append("Test read: device printed ")
                         val printed = printedLine(test.output)

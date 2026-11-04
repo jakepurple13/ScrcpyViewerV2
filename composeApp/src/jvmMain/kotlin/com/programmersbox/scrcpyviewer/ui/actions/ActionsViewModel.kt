@@ -69,8 +69,8 @@ data class ActionDraft(
 )
 
 /** Field errors from the last [ActionsViewModel.save]; null means the field is fine. */
-data class DraftErrors(val name: String? = null, val on: String? = null, val off: String? = null, val command: String? = null) {
-    val isEmpty: Boolean get() = name == null && on == null && off == null && command == null
+data class DraftErrors(val name: String? = null, val on: String? = null, val off: String? = null, val command: String? = null, val match: String? = null) {
+    val isEmpty: Boolean get() = name == null && on == null && off == null && command == null && match == null
 }
 
 /**
@@ -194,6 +194,7 @@ class ActionsViewModel(
         // The open action deleted elsewhere (a mirror tile's Delete): close it, or Save would bring it back.
         viewModelScope.launch {
             store.actions.collect { actions ->
+                if (actions.isEmpty()) cancelExport() // nothing left to tick: leave selection mode
                 val e = editor.value
                 val id = e.selectedId ?: return@collect
                 if (actions.any { it.id == id }) return@collect
@@ -443,6 +444,9 @@ class ActionsViewModel(
             on = "Turn on command is required".takeIf { draft.type == ActionType.Toggle && draft.on.isBlank() },
             off = "Turn off command is required".takeIf { draft.type == ActionType.Toggle && draft.off.isBlank() },
             command = "Command is required".takeIf { draft.type == ActionType.RunOnce && draft.command.isBlank() },
+            // The rule only counts with a read command (saved without one, it is dropped).
+            match = onWhenError(draft.matchMode, draft.matchValue)
+                .takeIf { draft.type == ActionType.Toggle && draft.read.isNotBlank() },
         )
     }
 
@@ -465,7 +469,13 @@ class ActionsViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                setTest(TestResult(running = false, output = editor.value.test?.output.orEmpty(), exitCode = null, note = e.message ?: "Failed"))
+                // Still a read: editing the read command or the rule clears it like any read result.
+                setTest(
+                    TestResult(
+                        running = false, output = editor.value.test?.output.orEmpty(), exitCode = null,
+                        note = e.message ?: "Failed", isRead = isRead,
+                    ),
+                )
             }
         }
     }
