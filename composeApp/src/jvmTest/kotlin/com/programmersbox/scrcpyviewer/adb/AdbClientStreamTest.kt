@@ -42,6 +42,24 @@ class AdbClientStreamTest {
     }
 
     @Test
+    fun `shellStream keeps a multibyte character split across reads intact`() = runBlocking {
+        ServerSocket(0).use { server ->
+            val t = thread {
+                server.accept().use { s ->
+                    handshake(s)
+                    val out = s.getOutputStream()
+                    out.write(byteArrayOf(0xC3.toByte())); out.flush()
+                    Thread.sleep(200)
+                    out.write(byteArrayOf(0xA9.toByte(), '\n'.code.toByte())); out.flush()
+                }
+            }
+            val chunks = withTimeout(10_000) { client(server).shellStream("s", "x").toList() }
+            t.join()
+            assertEquals("é\n", chunks.joinToString(""))
+        }
+    }
+
+    @Test
     fun `shellStream delivers the first chunk before the server finishes`() = runBlocking {
         val gate = CountDownLatch(1)
         ServerSocket(0).use { server ->

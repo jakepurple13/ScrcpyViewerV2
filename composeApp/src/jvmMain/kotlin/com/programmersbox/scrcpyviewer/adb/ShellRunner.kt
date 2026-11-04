@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.adb
 
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.withTimeout
 import java.io.IOException
 
@@ -21,15 +22,19 @@ open class ShellRunner(
 ) {
     /**
      * Runs [cmd] buffered and returns its output without the exit marker. Throws [ShellTimeoutException] after
-     * [timeoutMs]. [ShellResult.exitCode] is null when the marker never arrived.
+     * [timeoutMs] overall (the socket closes on timeout, so a silent or slow command cannot overrun it).
+     * Trailing newlines are trimmed from the output. [ShellResult.exitCode] is null when the marker never arrived,
+     * for example when the command ends the shell itself (`exit 3`).
      */
     open suspend fun run(cmd: String, timeoutMs: Long = BUFFERED_TIMEOUT_MS): ShellResult {
         val start = clock()
-        val raw = try {
-            withTimeout(timeoutMs) { adb.shell(serial, wrap(cmd)) }
+        val buffer = StringBuilder()
+        try {
+            withTimeout(timeoutMs) { adb.shellStream(serial, wrap(cmd)).collect { buffer.append(it) } }
         } catch (e: TimeoutCancellationException) {
             throw ShellTimeoutException()
         }
+        val raw = buffer.toString()
         val idx = raw.lastIndexOf(EXIT_MARKER)
         val code = if (idx < 0) null else raw.substring(idx + EXIT_MARKER.length).trim().toIntOrNull()
         val output = (if (idx < 0) raw else raw.substring(0, idx)).trimEnd('\n', '\r')
