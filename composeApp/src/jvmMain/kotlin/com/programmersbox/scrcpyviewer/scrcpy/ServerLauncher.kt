@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.options.ServerArgs
 import com.programmersbox.scrcpyviewer.tools.BundledTools
+import com.programmersbox.scrcpyviewer.closingOnCancel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -289,7 +290,10 @@ class ServerLauncher(
                     }
                 }
                 try {
-                    val meta = connectBlocking(video, audio, control, host, port)
+                    // Cancelling (close() while connecting) must wake accept/connect even if the watcher never ran.
+                    val meta = closingOnCancel(onCancel = { if (!connected) closeSockets() }) {
+                        connectBlocking(video, audio, control, host, port)
+                    }
                     connected = true
                     meta
                 } catch (e: IOException) {

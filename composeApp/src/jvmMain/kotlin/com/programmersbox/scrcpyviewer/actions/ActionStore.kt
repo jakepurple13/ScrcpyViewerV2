@@ -46,6 +46,54 @@ class ActionStore(file: Path) {
         _actions.value = list
     }
 
+    /**
+     * Moves [id] within its own source group only. [toGroupIndex] counts that group's other members:
+     * the action lands just before the [toGroupIndex]-th one, or after the last one when past the end.
+     */
+    fun moveInGroup(id: String, toGroupIndex: Int) = mutate {
+        val list = _actions.value.toMutableList()
+        val from = list.indexOfFirst { it.id == id }
+        if (from < 0) return@mutate
+        val item = list.removeAt(from)
+        val members = list.withIndex().filter { it.value.source == item.source }.map { it.index }
+        val n = toGroupIndex.coerceAtLeast(0)
+        val at = when {
+            members.isEmpty() -> list.size
+            n < members.size -> members[n]
+            else -> members.last() + 1
+        }
+        list.add(at, item)
+        _actions.value = list
+    }
+
+    /** Marks [id] as user-owned without changing its position. */
+    fun markAsUser(id: String) = mutate {
+        _actions.value = _actions.value.map { if (it.id == id) it.withSource(ActionSource.User) else it }
+    }
+
+    /**
+     * Applies AI-made [incoming] actions in one save. An id that existed before the call is updated in
+     * place (position and source kept). Anything else is appended as [ActionSource.Ai] with a unique name,
+     * keeping its id unless another action already has it.
+     */
+    fun applyInbox(incoming: List<CustomAction>): List<InboxChange> = synchronized(lock) {
+        val existingIds = _actions.value.map { it.id }.toSet()
+        val changes = incoming.map { action ->
+            if (action.id in existingIds) {
+                val existing = _actions.value.first { it.id == action.id }
+                _actions.value = _actions.value.map { if (it.id == action.id) action.withSource(existing.source) else it }
+                InboxChange.Updated(action.name)
+            } else {
+                val id = if (_actions.value.any { it.id == action.id }) UUID.randomUUID().toString() else action.id
+                val name = uniqueName(action.name)
+                _actions.value += action.withId(id).withName(name).withSource(ActionSource.Ai)
+                InboxChange.Added(name)
+            }
+        }
+        save()
+        changes
+    }
+
     fun replaceAll(actions: List<CustomAction>) = mutate { _actions.value = actions }
 
     /** True when another action (not [exceptId]) already has [name], ignoring case. */

@@ -7,6 +7,7 @@ import com.programmersbox.scrcpyviewer.actions.ActionFileException
 import com.programmersbox.scrcpyviewer.actions.ActionIcons
 import com.programmersbox.scrcpyviewer.actions.ActionImportItem
 import com.programmersbox.scrcpyviewer.actions.ActionImportPlan
+import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.ActionStore
 import com.programmersbox.scrcpyviewer.actions.ActionTemplate
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
@@ -67,6 +68,8 @@ data class ActionDraft(
     val confirm: Boolean = false,
     /** Name of the built-in template this unsaved draft started from, for the editor's banner; null once saved. */
     val fromTemplate: String? = null,
+    /** Carried through editing so saving an AI-made action keeps its mark. */
+    val source: ActionSource = ActionSource.User,
 )
 
 /** Field errors from the last [ActionsViewModel.save]; null means the field is fine. */
@@ -209,7 +212,22 @@ class ActionsViewModel(
                 if (actions.isEmpty()) cancelExport() // nothing left to tick: leave selection mode
                 val e = editor.value
                 val id = e.selectedId ?: return@collect
-                if (actions.any { it.id == id }) return@collect
+                val stored = actions.firstOrNull { it.id == id }
+                if (stored != null) {
+                    // Changed elsewhere (the inbox, the sheet's Move to Your actions): show it, or Save would undo it.
+                    val storedDraft = stored.toDraft()
+                    if (storedDraft == e.baseline) return@collect
+                    if (e.draft == e.baseline) {
+                        load(id)
+                    } else {
+                        // Keep the unsaved edits, but never let Save flip where the action lives.
+                        editor.update {
+                            if (it.selectedId != id) it
+                            else it.copy(draft = it.draft?.copy(source = stored.source), baseline = storedDraft)
+                        }
+                    }
+                    return@collect
+                }
                 cancelTest()
                 editor.update { it.copy(selectedId = null, draft = null, baseline = null, errors = DraftErrors(), test = null) }
                 _messages.tryEmit("${(e.baseline ?: e.draft)?.name ?: "The action"} was deleted")
@@ -299,7 +317,20 @@ class ActionsViewModel(
         if (!dirty) load(copy.id)
     }
 
-    fun move(id: String, toIndex: Int) = store.move(id, toIndex)
+    /** Moves [id] within its own group; [toGroupIndex] counts only that group's actions. */
+    fun move(id: String, toGroupIndex: Int) = store.moveInGroup(id, toGroupIndex)
+
+    /** Moves [id] to "Your actions". An open draft of it follows, so saving it does not mark it AI-made again. */
+    fun markAsUser(id: String) {
+        store.markAsUser(id)
+        editor.update { e ->
+            if (e.selectedId != id) e
+            else e.copy(
+                draft = e.draft?.copy(source = ActionSource.User),
+                baseline = e.baseline?.copy(source = ActionSource.User),
+            )
+        }
+    }
 
     fun setTestDevice(serial: String) = editor.update { it.copy(testDevice = serial) }
 
@@ -580,11 +611,11 @@ class ActionsViewModel(
             is ToggleAction -> ActionDraft(
                 id = id, type = ActionType.Toggle, name = name, icon = icon,
                 on = on, off = off, read = read.orEmpty(),
-                matchMode = onWhen?.mode ?: MatchMode.Equals, matchValue = onWhen?.value.orEmpty(),
+                matchMode = onWhen?.mode ?: MatchMode.Equals, matchValue = onWhen?.value.orEmpty(), source = source,
             )
             is RunOnceAction -> ActionDraft(
                 id = id, type = ActionType.RunOnce, name = name, icon = icon,
-                command = command, variables = variables, output = output, confirm = confirm,
+                command = command, variables = variables, output = output, confirm = confirm, source = source,
             )
         }
 
@@ -592,11 +623,11 @@ class ActionsViewModel(
             ActionType.Toggle -> ToggleAction(
                 id = id, name = name.trim(), icon = icon, on = on, off = off,
                 read = read.takeIf { it.isNotBlank() },
-                onWhen = if (read.isNotBlank()) OnWhen(matchMode, matchValue) else null,
+                onWhen = if (read.isNotBlank()) OnWhen(matchMode, matchValue) else null, source = source,
             )
             ActionType.RunOnce -> RunOnceAction(
                 id = id, name = name.trim(), icon = icon, command = command,
-                output = output, confirm = confirm, variables = variables,
+                output = output, confirm = confirm, variables = variables, source = source,
             )
         }
     }

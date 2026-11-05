@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionIcons
+import com.programmersbox.scrcpyviewer.actions.ActionGroups
 import com.programmersbox.scrcpyviewer.actions.ActionTemplate
 import com.programmersbox.scrcpyviewer.actions.ActionTemplates
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
@@ -111,7 +112,9 @@ sealed interface ActionsEvent {
     data object SelectNoExport : ActionsEvent
     data object CancelExport : ActionsEvent
     data object ShowIntro : ActionsEvent
+    /** [toIndex] counts only the actions in [id]'s own group (Your actions or Made by AI). */
     data class Move(val id: String, val toIndex: Int) : ActionsEvent
+    data class MarkAsUser(val id: String) : ActionsEvent
     data class Edit(val transform: (ActionDraft) -> ActionDraft) : ActionsEvent
     data class SetType(val type: ActionType) : ActionsEvent
     data object Save : ActionsEvent
@@ -180,6 +183,7 @@ fun ActionsScreen(
                 ActionsEvent.CancelExport -> viewModel.cancelExport()
                 ActionsEvent.ShowIntro -> introRequested = true
                 is ActionsEvent.Move -> viewModel.move(event.id, event.toIndex)
+                is ActionsEvent.MarkAsUser -> viewModel.markAsUser(event.id)
                 is ActionsEvent.Edit -> viewModel.edit(event.transform)
                 is ActionsEvent.SetType -> viewModel.setType(event.type)
                 ActionsEvent.Save -> viewModel.save()
@@ -428,9 +432,40 @@ private fun ListHeader(total: Int, selection: Set<String>?, onEvent: (ActionsEve
 
 private val RowSpacing = 6.dp
 
-/** The rows in order; dragging a row's handle moves it, and the others make room as it passes. */
+/**
+ * The rows in order, "Your actions" then "Made by AI" (headers only once there are AI actions). Each group reorders
+ * on its own: [onMove] gets the new index within the dragged row's group.
+ */
 @Composable
 private fun ReorderableActions(
+    actions: List<CustomAction>,
+    selectedId: String?,
+    exportSelection: Set<String>?,
+    onSelect: (String) -> Unit,
+    onMove: (String, Int) -> Unit,
+) {
+    val groups = ActionGroups.of(actions)
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(RowSpacing)) {
+        if (groups.showYoursHeader) GroupHeader("Your actions")
+        ReorderableGroup(groups.yours, selectedId, exportSelection, onSelect, onMove)
+        if (groups.showAiSection) {
+            GroupHeader("Made by AI")
+            ReorderableGroup(groups.madeByAi, selectedId, exportSelection, onSelect, onMove)
+        }
+    }
+}
+
+@Composable
+private fun GroupHeader(text: String) {
+    Text(
+        text, Modifier.padding(start = 4.dp, top = 6.dp), style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** One group's rows; dragging a row's handle moves it, and the others make room as it passes. */
+@Composable
+private fun ReorderableGroup(
     actions: List<CustomAction>,
     selectedId: String?,
     exportSelection: Set<String>?,
@@ -453,7 +488,7 @@ private fun ReorderableActions(
     val from = actions.indexOfFirst { it.id == dragged }
     val target = targetOf(from, actions, step)
 
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(RowSpacing)) {
+    Column(verticalArrangement = Arrangement.spacedBy(RowSpacing)) {
         actions.forEachIndexed { index, action ->
             // Rows between the dragged row's start and its target shift one step to make room.
             val shift = when {

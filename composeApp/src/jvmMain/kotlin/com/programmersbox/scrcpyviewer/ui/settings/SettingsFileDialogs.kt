@@ -13,6 +13,9 @@ interface SettingsFileDialogs {
 
     /** Asks for a folder; null when cancelled. */
     fun chooseFolder(initial: Path?): Path?
+
+    /** Asks for a folder, with [title] on the dialog; null when cancelled. */
+    fun chooseFolder(title: String): Path?
 }
 
 class AwtSettingsFileDialogs(private val parent: () -> Frame? = { null }) : SettingsFileDialogs {
@@ -23,13 +26,17 @@ class AwtSettingsFileDialogs(private val parent: () -> Frame? = { null }) : Sett
         return Path.of(dialog.directory ?: "", file)
     }
 
-    override fun chooseFolder(initial: Path?): Path? {
+    override fun chooseFolder(initial: Path?): Path? = pickFolder("Choose folder", initial)
+
+    override fun chooseFolder(title: String): Path? = pickFolder(title, null)
+
+    private fun pickFolder(title: String, initial: Path?): Path? {
         if (Os.isMac) {
             // AWT's native macOS dialog picks folders when this property is set.
             val key = "apple.awt.fileDialogForDirectories"
             System.setProperty(key, "true")
             try {
-                val dialog = FileDialog(parent(), "Choose folder", FileDialog.LOAD)
+                val dialog = FileDialog(parent(), title, FileDialog.LOAD)
                 initial?.let { dialog.directory = it.toString() }
                 dialog.isVisible = true
                 val file = dialog.file ?: return null
@@ -39,6 +46,7 @@ class AwtSettingsFileDialogs(private val parent: () -> Frame? = { null }) : Sett
             }
         }
         val chooser = JFileChooser(initial?.toFile())
+        chooser.dialogTitle = title
         chooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
         return if (chooser.showOpenDialog(parent()) == JFileChooser.APPROVE_OPTION) chooser.selectedFile.toPath() else null
     }

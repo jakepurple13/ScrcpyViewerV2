@@ -4,11 +4,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.programmersbox.scrcpyviewer.actions.SkillTarget
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
 import com.programmersbox.scrcpyviewer.ui.update.UpdatesContent
 
-enum class SettingsCategoryId { Appearance, Mirroring, Adb, Updates, Help }
+enum class SettingsCategoryId { Appearance, Mirroring, Adb, Ai, Updates, Help }
 
 /** [Inline] puts the control right of the text; [Block] puts it full-width below. */
 enum class EntryLayout { Inline, Block }
@@ -35,6 +36,10 @@ class SettingsActions(
     val onCheckUpdates: () -> Unit = {},
     val onUpdate: () -> Unit = {},
     val onCancelUpdate: () -> Unit = {},
+    val onOpenAiSkill: () -> Unit = {},
+    val onInstallAiSkill: (List<SkillTarget>) -> Unit = {},
+    val onChooseAiSkillFolder: () -> Unit = {},
+    val onDismissAiInstall: () -> Unit = {},
     val onSelectCategory: (SettingsCategoryId) -> Unit = {},
     val onQuery: (String) -> Unit = {},
 )
@@ -100,6 +105,18 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 keywords = listOf("android debug bridge", "platform-tools", "binary", "path", "custom"),
                 layout = EntryLayout.Block,
                 content = { AdbPicker(it) },
+            ),
+        ),
+    ),
+    SettingsCategory(
+        SettingsCategoryId.Ai, "AI",
+        listOf(
+            SettingEntry(
+                "ai-skill", "AI skill for custom actions",
+                "Teach an AI tool on this computer to write quick actions. They show up here and in the mirror window as soon as the AI makes them.",
+                keywords = listOf("claude", "gemini", "codex", "chatgpt", "grok", "skill", "agent", "llm"),
+                layout = EntryLayout.Block,
+                content = { AiSkillControl(it) },
             ),
         ),
     ),

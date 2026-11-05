@@ -84,4 +84,15 @@ class AppSettingsTest {
         assertEquals(520, saved.quickActionsWidth)
         assertEquals(640, saved.shellWidth)
     }
+
+    @Test
+    fun `aiSkillFolders round trips and dedupes`() {
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertEquals(emptyList(), AppSettings(file).settings.value.aiSkillFolders)
+        val settings = AppSettings(file)
+        settings.addAiSkillFolder("/a")
+        settings.addAiSkillFolder("/b")
+        settings.addAiSkillFolder("/a")
+        assertEquals(listOf("/a", "/b"), AppSettings(file).settings.value.aiSkillFolders)
+    }
 }

@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
+import com.programmersbox.scrcpyviewer.actions.AiSkillInstaller
 import com.programmersbox.scrcpyviewer.assumePosix
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
@@ -9,6 +10,9 @@ import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
@@ -24,6 +28,7 @@ class SettingsViewModelTest {
     private val presets = PresetStore(dir.resolve("presets.json"), scope)
     private var restarts = 0
     private val bundled = dir.resolve("bundled-adb")
+    private fun installer() = AiSkillInstaller(dir.resolve("home"), dir.resolve("inbox"), dir.resolve("actions.json"))
 
     private fun adb(bundledAdb: () -> Path = { bundled }, version: (Path) -> String?) = object : SettingsAdb {
         override fun bundledAdb() = bundledAdb()
@@ -33,7 +38,14 @@ class SettingsViewModelTest {
         }
     }
 
-    private fun vm(version: (Path) -> String? = { "1.0.41 (35.0.2)" }) = SettingsViewModel(settings, presets, adb(version = version), scope)
+    /**
+     * Waits for the AI-skill rows the view model loads on an IO thread at start. Until then that thread can update
+     * the combined state at the same time as a test's action, and a test reading state.value could miss its change.
+     */
+    private fun vm(version: (Path) -> String? = { "1.0.41 (35.0.2)" }) =
+        SettingsViewModel(settings, presets, adb(version = version), installer(), scope).also { vm ->
+            runBlocking { withTimeout(10_000) { vm.state.first { it.aiSkill.isNotEmpty() } } }
+        }
 
     private fun executable(name: String): Path {
         assumePosix()
@@ -98,7 +110,7 @@ class SettingsViewModelTest {
     fun `version is Unknown when adb fails`() {
         val vm = vm { null }
         assertEquals(UNKNOWN_VERSION, vm.state.value.bundledAdbVersion)
-        val broken = SettingsViewModel(settings, presets, adb(bundledAdb = { error("missing") }, version = { null }), scope)
+        val broken = SettingsViewModel(settings, presets, adb(bundledAdb = { error("missing") }, version = { null }), installer(), scope)
         assertEquals(UNKNOWN_VERSION, broken.state.value.bundledAdbVersion)
     }
 

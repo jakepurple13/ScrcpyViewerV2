@@ -1,7 +1,9 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
 import com.programmersbox.scrcpyviewer.actions.ActionCodec
+import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.ActionStore
+import com.programmersbox.scrcpyviewer.actions.withSource
 import com.programmersbox.scrcpyviewer.actions.ActionTemplates
 import com.programmersbox.scrcpyviewer.actions.MatchMode
 import com.programmersbox.scrcpyviewer.actions.OnWhen
@@ -211,6 +213,18 @@ class ActionsViewModelTest {
         vm.edit { it.copy(name = "Clear app") }
         assertTrue(vm.save())
         assertEquals(listOf("Clear app"), store.actions.value.map { it.name })
+    }
+
+    @Test
+    fun `saving an AI action keeps its source`() {
+        store.upsert(stayAwake.copy(source = ActionSource.Ai))
+        val vm = vm()
+        vm.select(stayAwake.id)
+        vm.edit { it.copy(name = "Awake") }
+        assertTrue(vm.save())
+        val saved = store.actions.value.single()
+        assertEquals("Awake", saved.name)
+        assertEquals(ActionSource.Ai, saved.source)
     }
 
     @Test
@@ -850,5 +864,75 @@ class ActionsViewModelTest {
         vm.discardAndSelect(null)
         assertNull(vm.state.value.draft!!.fromTemplate)
         assertEquals("", vm.state.value.draft!!.name)
+    }
+
+    @Test
+    fun `move counts positions inside the dragged action's group`() {
+        val ai1 = logcat.withSource(ActionSource.Ai)
+        val ai2 = RunOnceAction("ai2", "Two", command = "echo 2").withSource(ActionSource.Ai)
+        store.upsert(ai1)
+        store.upsert(stayAwake)
+        store.upsert(ai2)
+        val vm = vm()
+        vm.move("ai2", 0)
+        assertEquals(listOf("ai2", "logcat"), store.actions.value.filter { it.source == ActionSource.Ai }.map { it.id })
+        assertEquals("awake", store.actions.value.single { it.source == ActionSource.User }.id)
+    }
+
+    @Test
+    fun `markAsUser moves the action and updates the open draft so saving keeps it yours`() {
+        store.upsert(logcat.withSource(ActionSource.Ai))
+        val vm = vm()
+        vm.select("logcat")
+        assertEquals(ActionSource.Ai, vm.state.value.draft!!.source)
+        vm.markAsUser("logcat")
+        assertEquals(ActionSource.User, store.actions.value.single().source)
+        assertEquals(ActionSource.User, vm.state.value.draft!!.source)
+        assertFalse(vm.state.value.dirty)
+        vm.edit { it.copy(name = "Renamed") }
+        vm.save()
+        assertEquals(ActionSource.User, store.actions.value.single().source)
+    }
+
+    @Test
+    fun `the open action updated by the inbox reloads the editor`() {
+        store.upsert(logcat.withSource(ActionSource.Ai))
+        val vm = vm()
+        vm.select("logcat")
+        store.applyInbox(listOf(logcat.copy(command = "logcat -d")))
+        runBlocking { withTimeout(5_000) { vm.state.first { it.draft?.command == "logcat -d" } } }
+        assertFalse(vm.state.value.dirty)
+        vm.save()
+        assertEquals("logcat -d", (store.actions.value.single() as RunOnceAction).command)
+    }
+
+    @Test
+    fun `the open action moved to yours by the sheet stays yours after save`() {
+        store.upsert(logcat.withSource(ActionSource.Ai))
+        val vm = vm()
+        vm.select("logcat")
+        store.markAsUser("logcat") // as the mirror window's sheet does, bypassing the view model
+        runBlocking { withTimeout(5_000) { vm.state.first { it.draft?.source == ActionSource.User } } }
+        vm.edit { it.copy(name = "Renamed") }
+        assertTrue(vm.save())
+        val saved = store.actions.value.single()
+        assertEquals("Renamed", saved.name)
+        assertEquals(ActionSource.User, saved.source)
+    }
+
+    @Test
+    fun `an unsaved edit keeps its fields but takes the source changed elsewhere`() {
+        store.upsert(logcat.withSource(ActionSource.Ai))
+        val vm = vm()
+        vm.select("logcat")
+        vm.edit { it.copy(name = "Renamed") }
+        store.markAsUser("logcat")
+        runBlocking { withTimeout(5_000) { vm.state.first { it.draft?.source == ActionSource.User } } }
+        assertEquals("Renamed", vm.state.value.draft!!.name)
+        assertTrue(vm.state.value.dirty)
+        assertTrue(vm.save())
+        val saved = store.actions.value.single()
+        assertEquals("Renamed", saved.name)
+        assertEquals(ActionSource.User, saved.source)
     }
 }

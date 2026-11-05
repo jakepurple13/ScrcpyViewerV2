@@ -14,6 +14,9 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
@@ -30,6 +33,7 @@ fun SettingsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val nav by viewModel.nav.collectAsStateWithLifecycle()
     val updates by updateViewModel.state.collectAsStateWithLifecycle()
+    var showAiSkillDialog by remember { mutableStateOf(false) }
     val actions = SettingsActions(
         onTheme = viewModel::setTheme,
         onUseSystemTitleBar = viewModel::setUseSystemTitleBar,
@@ -42,10 +46,25 @@ fun SettingsScreen(
         onCheckUpdates = updateViewModel::check,
         onUpdate = updateViewModel::update,
         onCancelUpdate = updateViewModel::cancel,
+        onOpenAiSkill = { showAiSkillDialog = true },
+        onInstallAiSkill = { targets ->
+            showAiSkillDialog = false
+            viewModel.installAiSkill(targets)
+        },
+        onChooseAiSkillFolder = { files.chooseFolder("Choose a skills folder")?.let(viewModel::addAiSkillFolder) },
+        onDismissAiInstall = viewModel::dismissAiInstallResult,
         onSelectCategory = viewModel::selectCategory,
         onQuery = viewModel::setQuery,
     )
     SettingsContent(state, updates, nav, actions, modifier)
+    if (showAiSkillDialog) {
+        AddAiSkillDialog(
+            rows = state.aiSkill, home = System.getProperty("user.home"),
+            onInstall = actions.onInstallAiSkill, onChooseFolder = actions.onChooseAiSkillFolder,
+            onDismiss = { showAiSkillDialog = false },
+        )
+    }
+    state.aiInstallResult?.let { AiInstallResultDialog(it, actions.onDismissAiInstall) }
 }
 
 @Composable

@@ -39,6 +39,18 @@ class ActionCodecTest {
     }
 
     @Test
+    fun `source defaults to user when absent`() {
+        assertEquals(ActionSource.User, ActionCodec.decode(example)[0].source)
+    }
+
+    @Test
+    fun `source ai round trips`() {
+        val a = RunOnceAction("x", "X", command = "echo", source = ActionSource.Ai)
+        assertEquals(listOf(a), ActionCodec.decode(ActionCodec.encode(listOf(a))))
+        assertTrue("\"source\": \"ai\"" in ActionCodec.encode(listOf(a)))
+    }
+
+    @Test
     fun `decodes the spec example file`() {
         val actions = ActionCodec.decode(example)
         val toggle = assertIs<ToggleAction>(actions[0])
@@ -84,5 +96,17 @@ class ActionCodecTest {
         val text = example.replace("\"version\": 1,", "\"version\": 1, \"extra\": true,")
             .replace("\"name\": \"Stay awake\",", "\"name\": \"Stay awake\", \"future\": 1,")
         assertEquals(2, ActionCodec.decode(text).size)
+    }
+
+    @Test
+    fun `decodeInbox reads author`() {
+        val file = ActionCodec.decodeInbox(example.replace("\"version\": 1,", "\"version\": 1, \"author\": \"Claude Code\","))
+        assertEquals("Claude Code", file.author)
+        assertEquals(2, file.actions.size)
+    }
+
+    @Test
+    fun `decodeInbox without author is null`() {
+        assertEquals(null, ActionCodec.decodeInbox(example).author)
     }
 }

@@ -37,6 +37,8 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindow
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.App
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
+import com.programmersbox.scrcpyviewer.actions.ActionInbox
+import com.programmersbox.scrcpyviewer.di.AppScope
 import com.programmersbox.scrcpyviewer.di.startAppKoin
 import com.programmersbox.scrcpyviewer.update.UpdateManager
 import com.programmersbox.scrcpyviewer.update.UpdateState
@@ -46,6 +48,7 @@ import kotlin.system.exitProcess
 fun main() {
     AppIcon.installTaskbarIcon()
     val koin = startAppKoin()
+    koin.get<ActionInbox>().start(koin.get<AppScope>())
     val appSettings = koin.get<AppSettings>()
     val mirrorController = koin.get<MirrorController>()
     val adbClient = koin.get<AdbClient>()

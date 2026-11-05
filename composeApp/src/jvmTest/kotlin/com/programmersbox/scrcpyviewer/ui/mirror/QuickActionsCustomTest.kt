@@ -1,6 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.ActionStore
+import com.programmersbox.scrcpyviewer.actions.withSource
 import com.programmersbox.scrcpyviewer.actions.MatchMode
 import com.programmersbox.scrcpyviewer.actions.OnWhen
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
@@ -452,5 +454,17 @@ class QuickActionsCustomTest {
         qa.onEvent(QuickActionEvent.RunCustom("c"))
 
         assertNull(qa.uiState.packages)
+    }
+
+    @Test
+    fun `Move to Your actions clears the AI mark and keeps the position`() {
+        store.upsert(noRead.withSource(ActionSource.Ai))
+        store.upsert(stayAwake)
+        val qa = quickActions()
+        qa.toggleSheet()
+        assertEquals(listOf(ActionSource.Ai, ActionSource.User), qa.uiState.custom.map { it.source })
+        qa.onEvent(QuickActionEvent.MoveToYours("plain"))
+        assertEquals(listOf(ActionSource.User, ActionSource.User), qa.uiState.custom.map { it.source })
+        assertEquals(listOf("plain", "stay"), qa.uiState.custom.map { it.id })
     }
 }

@@ -137,6 +137,7 @@ import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
 import com.programmersbox.scrcpyviewer.ui.common.mapState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.programmersbox.scrcpyviewer.actions.ActionInbox
 import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
@@ -311,6 +312,8 @@ fun MirrorWindow(
     fileDialogs: TransferFileDialogs = AwtTransferFileDialogs,
     /** "+ New action", "Edit…" and "Manage actions…" ask the main window to open the Actions screen through this. */
     actionsNavigation: ActionsNavigation = koinInject(),
+    /** Messages about action files AI tools dropped in the inbox show in every mirror window. */
+    inbox: ActionInbox = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -345,6 +348,7 @@ fun MirrorWindow(
     LaunchedEffect(serial) {
         controller.recordingResults.filter { it.serial == serial }.collect { notify(recordResultMessage(it.result)) }
     }
+    LaunchedEffect(inbox) { inbox.messages.collect { notify(it) } }
     var recordingElapsed by remember { mutableStateOf<String?>(null) }
     /** A start is in flight (directory creation on the IO dispatcher): the Record button waits for it. */
     var recordStarting by remember { mutableStateOf(false) }
