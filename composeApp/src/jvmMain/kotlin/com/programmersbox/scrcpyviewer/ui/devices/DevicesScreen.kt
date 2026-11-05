@@ -68,7 +68,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -105,8 +105,8 @@ fun DevicesScreen(
     modifier: Modifier = Modifier,
     panes: ListDetailPanes = rememberListDetailPanes(),
 ) {
-    val pageState by viewModel.state.collectAsState()
-    val query by viewModel.query.collectAsState()
+    val pageState by viewModel.state.collectAsStateWithLifecycle()
+    val query by viewModel.query.collectAsStateWithLifecycle()
     // The search field needs each key at once (see DevicesViewModel.query); the list may follow an event later.
     val state = pageState.copy(query = query)
     var pairing by remember { mutableStateOf(false) }
@@ -137,7 +137,7 @@ fun DevicesScreen(
                 pairing = false
             }
         }
-        val pairingState by pairingVm.state.collectAsState()
+        val pairingState by pairingVm.state.collectAsStateWithLifecycle()
         WifiPairingDialog(pairingState, remember(pairingVm) { pairingVm.actions() }, onDismiss = { pairing = false })
     }
     DevicesContent(

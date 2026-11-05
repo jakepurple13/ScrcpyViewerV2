@@ -135,6 +135,8 @@ import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.scrcpy.StreamProtocol
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
+import com.programmersbox.scrcpyviewer.ui.common.mapState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
@@ -326,7 +328,10 @@ fun MirrorWindow(
     val fps by session.fps.collectAsState()
     val audioDisabled by session.audioDisabledByDevice.collectAsState()
     val audioPlaybackError by session.audioPlaybackError.collectAsState()
-    val frame = session.frames.collectAsState()
+    // Only whether there is a frame is read here: reading the frame itself would recompose this whole function (and
+    // the window content it rebuilds) on every decoded frame. The window content collects the frame below, and only
+    // the stage's canvas redraws on it.
+    val hasFrame by remember(session) { session.frames.mapState { it != null } }.collectAsState()
     val reconnectable by controller.reconnectable.collectAsState()
     val recording by session.recording.collectAsState()
     val currentCaptureDir by rememberUpdatedState(captureDir)
@@ -516,7 +521,7 @@ fun MirrorWindow(
         actionsEnabled = status == SessionStatus.Running && "no-control" !in e,
         audioNote = if (audioDisabled) "No audio from device" else audioPlaybackError,
         captureHint = if (captured && windowFocused) "Mouse captured — press ${MouseCapture.keyLabel()} to release" else null,
-        screenshotEnabled = frame.value != null,
+        screenshotEnabled = hasFrame,
         recordEnabled = !recordStarting && (recording != null || status == SessionStatus.Running),
         recordingLabel = if (recording != null) recordingElapsed ?: recordingLabel(0) else null,
         orientation = orientation,
@@ -768,6 +773,10 @@ fun MirrorWindow(
             lastWindowSize[0] = Dimension(awtWindow.width, base.height)
             pinnedStage = null // not when cancelled: a reversed toggle keeps the pin through its own animation
         }
+
+        // Collected with the window's lifecycle (in here, not above, where the lifecycle is the application's): a
+        // minimized mirror stops invalidating its canvas until it is restored. Read only at draw time by the stage.
+        val frame = session.frames.collectAsStateWithLifecycle()
 
         ScrcpyViewerTheme(themeMode) {
             Box(Modifier.fillMaxSize()) {

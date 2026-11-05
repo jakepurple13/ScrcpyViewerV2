@@ -64,6 +64,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.androidx.navigation3.ui)
+            implementation(libs.lifecycle.runtime.compose)
             implementation(libs.material3.adaptive)
             implementation(libs.material3.adaptive.layout)
             implementation(libs.qrose)

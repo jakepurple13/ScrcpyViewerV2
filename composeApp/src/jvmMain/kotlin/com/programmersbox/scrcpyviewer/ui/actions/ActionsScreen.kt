@@ -44,7 +44,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -131,13 +131,13 @@ fun ActionsScreen(
     modifier: Modifier = Modifier,
     panes: ListDetailPanes = rememberListDetailPanes(),
 ) {
-    val pageState by viewModel.state.collectAsState()
-    val open by viewModel.openDraft.collectAsState()
+    val pageState by viewModel.state.collectAsStateWithLifecycle()
+    val open by viewModel.openDraft.collectAsStateWithLifecycle()
     // The editor's fields need each edit at once (see openDraft); the rest of the page may follow an event later.
     val state = pageState.copy(draft = open?.draft, editorKey = open?.editorKey ?: pageState.editorKey)
-    val import by viewModel.importState.collectAsState()
-    val pending by viewModel.pendingDiscard.collectAsState()
-    val packages by viewModel.packages.collectAsState()
+    val import by viewModel.importState.collectAsStateWithLifecycle()
+    val pending by viewModel.pendingDiscard.collectAsStateWithLifecycle()
+    val packages by viewModel.packages.collectAsStateWithLifecycle()
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(viewModel) { viewModel.messages.collect { snackbar?.showSnackbar(it) } }
     val scope = rememberCoroutineScope()
