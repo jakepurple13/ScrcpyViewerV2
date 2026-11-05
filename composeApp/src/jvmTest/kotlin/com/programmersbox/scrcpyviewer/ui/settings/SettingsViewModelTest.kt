@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
+import com.programmersbox.scrcpyviewer.actions.AiSkillInstaller
 import com.programmersbox.scrcpyviewer.assumePosix
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
@@ -24,6 +25,7 @@ class SettingsViewModelTest {
     private val presets = PresetStore(dir.resolve("presets.json"), scope)
     private var restarts = 0
     private val bundled = dir.resolve("bundled-adb")
+    private fun installer() = AiSkillInstaller(dir.resolve("home"), dir.resolve("inbox"), dir.resolve("actions.json"))
 
     private fun adb(bundledAdb: () -> Path = { bundled }, version: (Path) -> String?) = object : SettingsAdb {
         override fun bundledAdb() = bundledAdb()
@@ -33,7 +35,7 @@ class SettingsViewModelTest {
         }
     }
 
-    private fun vm(version: (Path) -> String? = { "1.0.41 (35.0.2)" }) = SettingsViewModel(settings, presets, adb(version = version), scope)
+    private fun vm(version: (Path) -> String? = { "1.0.41 (35.0.2)" }) = SettingsViewModel(settings, presets, adb(version = version), installer(), scope)
 
     private fun executable(name: String): Path {
         assumePosix()
@@ -98,7 +100,7 @@ class SettingsViewModelTest {
     fun `version is Unknown when adb fails`() {
         val vm = vm { null }
         assertEquals(UNKNOWN_VERSION, vm.state.value.bundledAdbVersion)
-        val broken = SettingsViewModel(settings, presets, adb(bundledAdb = { error("missing") }, version = { null }), scope)
+        val broken = SettingsViewModel(settings, presets, adb(bundledAdb = { error("missing") }, version = { null }), installer(), scope)
         assertEquals(UNKNOWN_VERSION, broken.state.value.bundledAdbVersion)
     }
 

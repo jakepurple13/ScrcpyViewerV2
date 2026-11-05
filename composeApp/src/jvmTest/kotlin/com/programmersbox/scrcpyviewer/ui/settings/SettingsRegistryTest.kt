@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Adb
+import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Ai
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Appearance
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Help
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Mirroring
@@ -11,7 +12,7 @@ import kotlin.test.assertEquals
 class SettingsRegistryTest {
     @Test
     fun `categories in spec order`() =
-        assertEquals(listOf(Appearance, Mirroring, Adb, Updates, Help), settingsCategories.map { it.id })
+        assertEquals(listOf(Appearance, Mirroring, Adb, Ai, Updates, Help), settingsCategories.map { it.id })
 
     @Test
     fun `entry ids are unique`() {
@@ -27,5 +28,6 @@ class SettingsRegistryTest {
         assertEquals(listOf("adb-path"), hit("platform-tools"))
         assertEquals(listOf("updates"), hit("github"))
         assertEquals(listOf("welcome-guide"), hit("wifi"))
+        assertEquals(listOf("ai-skill"), hit("gemini"))
     }
 }

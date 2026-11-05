@@ -2,6 +2,9 @@ package com.programmersbox.scrcpyviewer.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.programmersbox.scrcpyviewer.actions.AiSkillInstaller
+import com.programmersbox.scrcpyviewer.actions.SkillStatus
+import com.programmersbox.scrcpyviewer.actions.SkillTarget
 import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.di.AdbClientFactory
 import com.programmersbox.scrcpyviewer.presets.Preset
@@ -12,6 +15,8 @@ import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +32,9 @@ import org.koin.core.annotation.Singleton
 
 const val UNKNOWN_VERSION = "Unknown"
 
+/** One place the AI skill can go, whether the tool looks installed, and how current its copy of the skill is. */
+data class AiSkillRow(val target: SkillTarget, val found: Boolean, val status: SkillStatus)
+
 data class SettingsUiState(
     val settings: Settings = Settings(),
     val presets: List<Preset> = emptyList(),
@@ -38,6 +46,9 @@ data class SettingsUiState(
     /** Why the last chosen custom adb path was rejected; the path is not saved. */
     val adbPathError: String? = null,
     val persistenceError: String? = null,
+    val aiSkill: List<AiSkillRow> = emptyList(),
+    /** Label to error (null = installed) per target of the last install; non-null shows the Done dialog. */
+    val aiInstallResult: List<Pair<String, String?>>? = null,
 )
 
 /** Error text when [path] cannot be used as the adb executable, else null. */
@@ -89,11 +100,14 @@ class SettingsViewModel(
     private val appSettings: AppSettings,
     private val presets: PresetStore,
     private val adb: SettingsAdb,
+    private val aiSkill: AiSkillInstaller,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val bundledVersion = MutableStateFlow<String?>(null)
     private val customVersion = MutableStateFlow<String?>(null)
     private val adbError = MutableStateFlow<String?>(null)
+    private val aiRows = MutableStateFlow<List<AiSkillRow>>(emptyList())
+    private val aiResult = MutableStateFlow<List<Pair<String, String?>>?>(null)
 
     val state: StateFlow<SettingsUiState> = combine(
         appSettings.settings, presets.presets, presets.defaultPresetId, bundledVersion, customVersion,
@@ -101,11 +115,44 @@ class SettingsViewModel(
         SettingsUiState(settings, list, defaultId, bundled, if (settings.adbPathOverride != null) custom else null)
     }.combine(adbError) { s, e -> s.copy(adbPathError = e) }
         .combine(appSettings.persistenceError) { s, e -> s.copy(persistenceError = e) }
+        .combine(aiRows) { s, rows -> s.copy(aiSkill = rows) }
+        .combine(aiResult) { s, r -> s.copy(aiInstallResult = r) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState())
 
     init {
         viewModelScope.launch { bundledVersion.value = versionOf { adb.bundledAdb() } }
         appSettings.settings.value.adbPathOverride?.let(::loadCustomVersion)
+        viewModelScope.launch { refreshAiSkill() }
+    }
+
+    private suspend fun refreshAiSkill() {
+        aiRows.value = withContext(Dispatchers.IO) {
+            aiSkill.targets(appSettings.settings.value.aiSkillFolders).map { t ->
+                val found = (t as? SkillTarget.Tool)?.let { aiSkill.isFound(it.tool) } ?: true
+                AiSkillRow(t, found, aiSkill.status(t))
+            }
+        }
+    }
+
+    /** Installs the skill into each of [targets], refreshes the rows, and shows the per-target results. */
+    fun installAiSkill(targets: List<SkillTarget>) {
+        viewModelScope.launch {
+            val results = withContext(Dispatchers.IO) {
+                targets.map { t -> t.label to aiSkill.install(t).exceptionOrNull()?.let { it.message ?: it::class.simpleName ?: "Failed" } }
+            }
+            refreshAiSkill()
+            aiResult.value = results
+        }
+    }
+
+    /** Remembers a folder the user picked as an install target. */
+    fun addAiSkillFolder(path: Path) {
+        appSettings.addAiSkillFolder(path.toString())
+        viewModelScope.launch { refreshAiSkill() }
+    }
+
+    fun dismissAiInstallResult() {
+        aiResult.value = null
     }
 
     private val navState = MutableStateFlow(SettingsNav())
