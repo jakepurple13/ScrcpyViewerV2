@@ -287,6 +287,10 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         if (!screenshots) excludeTestsMatching("*ScreenshotTest")
         if (!deviceTests) excludeTestsMatching("*DeviceTest")
     }
+    // On CI, log each test as it starts: when a job hangs and times out, the last STARTED line names the test.
+    if (System.getenv("CI") == "true") {
+        testLogging { events("started", "failed", "skipped") }
+    }
     if (deviceTests) {
         systemProperty("scrcpyviewer.bundledDir", layout.projectDirectory.dir("bundled").asFile.absolutePath)
         project.findProperty("deviceSerials")?.let { systemProperty("scrcpyviewer.deviceSerials", it.toString()) }

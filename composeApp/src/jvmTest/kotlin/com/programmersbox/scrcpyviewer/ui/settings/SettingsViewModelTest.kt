@@ -10,6 +10,9 @@ import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
@@ -35,7 +38,14 @@ class SettingsViewModelTest {
         }
     }
 
-    private fun vm(version: (Path) -> String? = { "1.0.41 (35.0.2)" }) = SettingsViewModel(settings, presets, adb(version = version), installer(), scope)
+    /**
+     * Waits for the AI-skill rows the view model loads on an IO thread at start. Until then that thread can update
+     * the combined state at the same time as a test's action, and a test reading state.value could miss its change.
+     */
+    private fun vm(version: (Path) -> String? = { "1.0.41 (35.0.2)" }) =
+        SettingsViewModel(settings, presets, adb(version = version), installer(), scope).also { vm ->
+            runBlocking { withTimeout(10_000) { vm.state.first { it.aiSkill.isNotEmpty() } } }
+        }
 
     private fun executable(name: String): Path {
         assumePosix()
