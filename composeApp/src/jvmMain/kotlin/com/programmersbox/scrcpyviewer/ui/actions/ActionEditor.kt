@@ -59,6 +59,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.ActionIcons
 import com.programmersbox.scrcpyviewer.actions.MatchMode
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
@@ -111,6 +112,12 @@ fun ActionEditor(
           // The test output sits outside the spaced column, so while collapsed it adds no gap.
           Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             draft.fromTemplate?.let { TemplateBanner(it) }
+            if (draft.source == ActionSource.Ai && draft.id != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Made by AI", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton({ onEvent(ActionsEvent.MarkAsUser(draft.id)) }) { Text("Move to Your actions") }
+                }
+            }
             Segments(typeLabels, draft.type) { onEvent(ActionsEvent.SetType(it)) }
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconButtonWithPicker(draft) { icon -> edit { it.copy(icon = icon) } }

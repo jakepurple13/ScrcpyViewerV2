@@ -57,8 +57,11 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionIcons
+import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
 import com.programmersbox.scrcpyviewer.actions.CustomAction
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
@@ -132,7 +135,7 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
             HorizontalDivider(Modifier.weight(1f).padding(start = 8.dp), color = colors.outlineVariant)
         }
         val yours = buildList {
-            state.custom.forEach { action ->
+            state.custom.filter { it.source == ActionSource.User }.forEach { action ->
                 add(GridTile(action.id) {
                     PopIn(visible = remember { MutableTransitionState(action.id in initialIds).apply { targetState = true } }) {
                         CustomTile(action, state, onEvent, onDelete = { deleting = action })
@@ -147,6 +150,24 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
             })
         }
         TileGrid(yours, columns)
+
+        val madeByAi = state.custom.filter { it.source == ActionSource.Ai }
+        if (madeByAi.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Made by AI", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                HorizontalDivider(Modifier.weight(1f).padding(start = 8.dp), color = colors.outlineVariant)
+            }
+            TileGrid(
+                madeByAi.map { action ->
+                    GridTile(action.id) {
+                        PopIn(visible = remember { MutableTransitionState(action.id in initialIds).apply { targetState = true } }) {
+                            CustomTile(action, state, onEvent, onDelete = { deleting = action })
+                        }
+                    }
+                },
+                columns,
+            )
+        }
     }
 
     deleting?.let { action ->
@@ -238,6 +259,7 @@ private fun CustomTile(
             enabled = state.enabled,
             role = if (toggle != null) Role.Switch else Role.Button,
             runMark = toggle == null,
+            aiMark = action.source == ActionSource.Ai,
             onClick = {
                 onEvent(if (toggle != null) QuickActionEvent.CustomToggle(action.id, value != true) else QuickActionEvent.RunCustom(action.id))
             },
@@ -245,6 +267,9 @@ private fun CustomTile(
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, Modifier.reportsSheetFocus()) {
             DropdownMenuItem(text = { Text("Edit…") }, onClick = { menu = false; onEvent(QuickActionEvent.Manage(action.id)) })
             DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; onEvent(QuickActionEvent.Duplicate(action.id)) })
+            if (action.source == ActionSource.Ai) {
+                DropdownMenuItem(text = { Text("Move to Your actions") }, onClick = { menu = false; onEvent(QuickActionEvent.MoveToYours(action.id)) })
+            }
             DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
         }
     }
@@ -266,6 +291,7 @@ private fun ActionTile(
     tint: Color? = null,
     role: Role = Role.Button,
     runMark: Boolean = false,
+    aiMark: Boolean = false,
     dashed: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -302,7 +328,10 @@ private fun ActionTile(
             } else {
                 Icon(icon, contentDescription = null, Modifier.size(22.dp), tint = if (dashed) secondary else content)
             }
-            if (runMark) Icon(Icons.Filled.PlayArrow, contentDescription = "Runs once", Modifier.size(14.dp), tint = secondary)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (runMark) Icon(Icons.Filled.PlayArrow, contentDescription = "Runs once", Modifier.size(14.dp), tint = secondary)
+                if (aiMark) Text("✦", Modifier.semantics { contentDescription = "Made by AI" }, style = MaterialTheme.typography.labelMedium, color = secondary)
+            }
         }
         Spacer(Modifier.height(4.dp))
         Text(title, style = MaterialTheme.typography.bodyMedium, color = if (dashed) secondary else content, maxLines = 1, overflow = TextOverflow.Ellipsis)

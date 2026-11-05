@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.ui.actions
 import com.programmersbox.scrcpyviewer.actions.ActionCodec
 import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.ActionStore
+import com.programmersbox.scrcpyviewer.actions.withSource
 import com.programmersbox.scrcpyviewer.actions.ActionTemplates
 import com.programmersbox.scrcpyviewer.actions.MatchMode
 import com.programmersbox.scrcpyviewer.actions.OnWhen
@@ -863,5 +864,33 @@ class ActionsViewModelTest {
         vm.discardAndSelect(null)
         assertNull(vm.state.value.draft!!.fromTemplate)
         assertEquals("", vm.state.value.draft!!.name)
+    }
+
+    @Test
+    fun `move counts positions inside the dragged action's group`() {
+        val ai1 = logcat.withSource(ActionSource.Ai)
+        val ai2 = RunOnceAction("ai2", "Two", command = "echo 2").withSource(ActionSource.Ai)
+        store.upsert(ai1)
+        store.upsert(stayAwake)
+        store.upsert(ai2)
+        val vm = vm()
+        vm.move("ai2", 0)
+        assertEquals(listOf("ai2", "logcat"), store.actions.value.filter { it.source == ActionSource.Ai }.map { it.id })
+        assertEquals("awake", store.actions.value.single { it.source == ActionSource.User }.id)
+    }
+
+    @Test
+    fun `markAsUser moves the action and updates the open draft so saving keeps it yours`() {
+        store.upsert(logcat.withSource(ActionSource.Ai))
+        val vm = vm()
+        vm.select("logcat")
+        assertEquals(ActionSource.Ai, vm.state.value.draft!!.source)
+        vm.markAsUser("logcat")
+        assertEquals(ActionSource.User, store.actions.value.single().source)
+        assertEquals(ActionSource.User, vm.state.value.draft!!.source)
+        assertFalse(vm.state.value.dirty)
+        vm.edit { it.copy(name = "Renamed") }
+        vm.save()
+        assertEquals(ActionSource.User, store.actions.value.single().source)
     }
 }

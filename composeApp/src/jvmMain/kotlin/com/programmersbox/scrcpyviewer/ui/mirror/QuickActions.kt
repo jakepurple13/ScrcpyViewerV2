@@ -234,6 +234,9 @@ sealed interface QuickActionEvent {
     data class Manage(val actionId: String?, val new: Boolean = false) : QuickActionEvent
     data class Duplicate(val id: String) : QuickActionEvent
 
+    /** Moves an AI-made action to "Your actions". */
+    data class MoveToYours(val id: String) : QuickActionEvent
+
     /** Deletes at once; the sheet asks for confirmation before sending it. */
     data class Delete(val id: String) : QuickActionEvent
 
@@ -350,6 +353,7 @@ class QuickActions internal constructor(
             QuickActionEvent.PromptCancel -> prompt = null
             is QuickActionEvent.Manage -> onManage(event.actionId, event.new)
             is QuickActionEvent.Duplicate -> editStore("Could not duplicate the action") { duplicate(event.id) }
+            is QuickActionEvent.MoveToYours -> editStore("Could not move the action") { markAsUser(event.id) }
             is QuickActionEvent.Delete -> editStore("Could not delete the action") { delete(event.id) }
             is QuickActionEvent.LoadPackages -> loadPackages(event.includeSystem)
             is QuickActionEvent.Resize -> widths = widths.with(tab, event.width)

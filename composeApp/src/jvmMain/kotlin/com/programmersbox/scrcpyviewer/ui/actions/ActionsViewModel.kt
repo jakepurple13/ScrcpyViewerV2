@@ -302,7 +302,20 @@ class ActionsViewModel(
         if (!dirty) load(copy.id)
     }
 
-    fun move(id: String, toIndex: Int) = store.move(id, toIndex)
+    /** Moves [id] within its own group; [toGroupIndex] counts only that group's actions. */
+    fun move(id: String, toGroupIndex: Int) = store.moveInGroup(id, toGroupIndex)
+
+    /** Moves [id] to "Your actions". An open draft of it follows, so saving it does not mark it AI-made again. */
+    fun markAsUser(id: String) {
+        store.markAsUser(id)
+        editor.update { e ->
+            if (e.selectedId != id) e
+            else e.copy(
+                draft = e.draft?.copy(source = ActionSource.User),
+                baseline = e.baseline?.copy(source = ActionSource.User),
+            )
+        }
+    }
 
     fun setTestDevice(serial: String) = editor.update { it.copy(testDevice = serial) }
 
