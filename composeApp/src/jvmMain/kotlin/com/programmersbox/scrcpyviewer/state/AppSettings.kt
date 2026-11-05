@@ -25,6 +25,8 @@ data class Settings(
     val quickActionsWidth: Int = 280,
     /** The sheet's width (dp) on the Shell tab. */
     val shellWidth: Int = 400,
+    /** Folders the user picked to install the AI skill into (absolute paths, no duplicates). */
+    val aiSkillFolders: List<String> = emptyList(),
 )
 
 internal fun defaultCaptureDir(): String {
@@ -49,5 +51,9 @@ class AppSettings(file: Path) {
     fun update(transform: (Settings) -> Settings) = synchronized(lock) {
         _settings.value = transform(_settings.value)
         store.save(_settings.value)
+    }
+
+    fun addAiSkillFolder(path: String) = update { s ->
+        if (path in s.aiSkillFolders) s else s.copy(aiSkillFolders = s.aiSkillFolders + path)
     }
 }

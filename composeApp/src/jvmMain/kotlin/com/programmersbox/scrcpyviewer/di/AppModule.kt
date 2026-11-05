@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.AppDataDir
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
 import com.programmersbox.scrcpyviewer.actions.ActionStore
+import com.programmersbox.scrcpyviewer.actions.AiSkillInstaller
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
@@ -87,6 +88,13 @@ class StorageModule {
     @Singleton
     fun actionInbox(dataDir: DataDir, store: ActionStore): ActionInbox =
         ActionInbox(dataDir.path.resolve("actions-inbox"), store)
+
+    @Singleton
+    fun aiSkillInstaller(dataDir: DataDir): AiSkillInstaller = AiSkillInstaller(
+        Path.of(System.getProperty("user.home")),
+        dataDir.path.resolve("actions-inbox"),
+        dataDir.path.resolve("actions.json"),
+    )
 
     @Singleton
     fun deviceOptions(dataDir: DataDir, presets: PresetStore, scope: AppScope): DeviceOptionsStore =
