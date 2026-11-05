@@ -33,7 +33,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/** The Actions screen with AI-made actions, rendered on a real scene (no crash) with the view model's group rules. */
+/** Smoke test: the Actions screen composes and renders with both groups and an AI draft open. Group rules are in ActionGroupsTest. */
 @OptIn(ExperimentalComposeUiApi::class, InternalComposeUiApi::class)
 class ActionsScreenTest {
     private class NoDevices : AdbClient(adbPath = { error("no adb") }) {
@@ -77,28 +77,15 @@ class ActionsScreenTest {
     private fun run(id: String) = RunOnceAction(id, id, command = "echo $id")
 
     @Test
-    fun `list with AI actions renders and a move stays inside the group`() {
+    fun `screen with both groups and an AI draft open renders without error`() {
         store.upsert(run("a").withSource(ActionSource.Ai))
         store.upsert(run("u1"))
-        store.upsert(run("b").withSource(ActionSource.Ai))
-        store.upsert(run("u2"))
-        show()
-        // The drag handler reports a group-relative index.
-        vm.move("b", 0)
-        settle()
-        assertEquals(listOf("b", "a"), store.actions.value.filter { it.source == ActionSource.Ai }.map { it.id })
-        assertEquals(listOf("u1", "u2"), store.actions.value.filter { it.source == ActionSource.User }.map { it.id })
-    }
-
-    @Test
-    fun `editor of an AI action renders and Move to Your actions updates the draft`() {
-        store.upsert(run("a").withSource(ActionSource.Ai))
         show()
         onEdt { vm.select("a") }
         settle()
-        assertEquals(ActionSource.Ai, vm.state.value.draft!!.source)
-        onEdt { vm.markAsUser("a") }
-        settle()
-        assertEquals(ActionSource.User, vm.state.value.draft!!.source)
+        var image: org.jetbrains.skia.Image? = null
+        onEdt { image = driver!!.scene.render(1_000_000_000L) }
+        assertEquals(900, image!!.width)
+        assertEquals(1000, image!!.height)
     }
 }

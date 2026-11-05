@@ -61,6 +61,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionIcons
+import com.programmersbox.scrcpyviewer.actions.ActionGroups
 import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
 import com.programmersbox.scrcpyviewer.actions.CustomAction
@@ -91,6 +92,7 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
     // Tiles already there when the tab opened show at once; later ones pop in.
     val initialIds = remember { state.custom.mapTo(HashSet()) { it.id } }
     val colors = MaterialTheme.colorScheme
+    val groups = ActionGroups.of(state.custom)
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -135,7 +137,7 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
             HorizontalDivider(Modifier.weight(1f).padding(start = 8.dp), color = colors.outlineVariant)
         }
         val yours = buildList {
-            state.custom.filter { it.source == ActionSource.User }.forEach { action ->
+            groups.yours.forEach { action ->
                 add(GridTile(action.id) {
                     PopIn(visible = remember { MutableTransitionState(action.id in initialIds).apply { targetState = true } }) {
                         CustomTile(action, state, onEvent, onDelete = { deleting = action })
@@ -151,14 +153,13 @@ fun ActionsTabContent(state: QuickActionsUiState, onEvent: (QuickActionEvent) ->
         }
         TileGrid(yours, columns)
 
-        val madeByAi = state.custom.filter { it.source == ActionSource.Ai }
-        if (madeByAi.isNotEmpty()) {
+        if (groups.showAiSection) {
             Row(Modifier.fillMaxWidth().padding(top = 6.dp, start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Made by AI", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                 HorizontalDivider(Modifier.weight(1f).padding(start = 8.dp), color = colors.outlineVariant)
             }
             TileGrid(
-                madeByAi.map { action ->
+                groups.madeByAi.map { action ->
                     GridTile(action.id) {
                         PopIn(visible = remember { MutableTransitionState(action.id in initialIds).apply { targetState = true } }) {
                             CustomTile(action, state, onEvent, onDelete = { deleting = action })

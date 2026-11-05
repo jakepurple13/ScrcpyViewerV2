@@ -69,7 +69,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.ActionIcons
-import com.programmersbox.scrcpyviewer.actions.ActionSource
+import com.programmersbox.scrcpyviewer.actions.ActionGroups
 import com.programmersbox.scrcpyviewer.actions.ActionTemplate
 import com.programmersbox.scrcpyviewer.actions.ActionTemplates
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
@@ -444,14 +444,13 @@ private fun ReorderableActions(
     onSelect: (String) -> Unit,
     onMove: (String, Int) -> Unit,
 ) {
-    val yours = actions.filter { it.source == ActionSource.User }
-    val madeByAi = actions.filter { it.source == ActionSource.Ai }
+    val groups = ActionGroups.of(actions)
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(RowSpacing)) {
-        if (madeByAi.isNotEmpty() && yours.isNotEmpty()) GroupHeader("Your actions")
-        ReorderableGroup(yours, selectedId, exportSelection, onSelect, onMove)
-        if (madeByAi.isNotEmpty()) {
+        if (groups.showYoursHeader) GroupHeader("Your actions")
+        ReorderableGroup(groups.yours, selectedId, exportSelection, onSelect, onMove)
+        if (groups.showAiSection) {
             GroupHeader("Made by AI")
-            ReorderableGroup(madeByAi, selectedId, exportSelection, onSelect, onMove)
+            ReorderableGroup(groups.madeByAi, selectedId, exportSelection, onSelect, onMove)
         }
     }
 }
