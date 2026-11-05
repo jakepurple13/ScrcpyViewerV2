@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
 import com.programmersbox.scrcpyviewer.actions.ActionCodec
+import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.ActionStore
 import com.programmersbox.scrcpyviewer.actions.ActionTemplates
 import com.programmersbox.scrcpyviewer.actions.MatchMode
@@ -211,6 +212,18 @@ class ActionsViewModelTest {
         vm.edit { it.copy(name = "Clear app") }
         assertTrue(vm.save())
         assertEquals(listOf("Clear app"), store.actions.value.map { it.name })
+    }
+
+    @Test
+    fun `saving an AI action keeps its source`() {
+        store.upsert(stayAwake.copy(source = ActionSource.Ai))
+        val vm = vm()
+        vm.select(stayAwake.id)
+        vm.edit { it.copy(name = "Awake") }
+        assertTrue(vm.save())
+        val saved = store.actions.value.single()
+        assertEquals("Awake", saved.name)
+        assertEquals(ActionSource.Ai, saved.source)
     }
 
     @Test

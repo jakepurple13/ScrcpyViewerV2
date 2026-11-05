@@ -39,6 +39,18 @@ class ActionCodecTest {
     }
 
     @Test
+    fun `source defaults to user when absent`() {
+        assertEquals(ActionSource.User, ActionCodec.decode(example)[0].source)
+    }
+
+    @Test
+    fun `source ai round trips`() {
+        val a = RunOnceAction("x", "X", command = "echo", source = ActionSource.Ai)
+        assertEquals(listOf(a), ActionCodec.decode(ActionCodec.encode(listOf(a))))
+        assertTrue("\"source\": \"ai\"" in ActionCodec.encode(listOf(a)))
+    }
+
+    @Test
     fun `decodes the spec example file`() {
         val actions = ActionCodec.decode(example)
         val toggle = assertIs<ToggleAction>(actions[0])

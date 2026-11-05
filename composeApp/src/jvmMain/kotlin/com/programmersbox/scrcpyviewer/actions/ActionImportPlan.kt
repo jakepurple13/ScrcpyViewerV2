@@ -23,6 +23,11 @@ fun CustomAction.withName(name: String): CustomAction = when (this) {
     is RunOnceAction -> copy(name = name)
 }
 
+fun CustomAction.withSource(source: ActionSource): CustomAction = when (this) {
+    is ToggleAction -> copy(source = source)
+    is RunOnceAction -> copy(source = source)
+}
+
 object ActionImportPlan {
     /**
      * One item per incoming action. A name clash (case-insensitive) with an earlier action in the same file is a

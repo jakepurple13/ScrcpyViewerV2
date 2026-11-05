@@ -8,6 +8,14 @@ sealed interface CustomAction {
     val id: String
     val name: String
     val icon: String
+    val source: ActionSource
+}
+
+/** Who made an action. [User] is the default and is omitted from the file; [Ai] marks actions an AI skill created. */
+@Serializable
+enum class ActionSource {
+    @SerialName("user") User,
+    @SerialName("ai") Ai,
 }
 
 @Serializable
@@ -20,6 +28,7 @@ data class ToggleAction(
     val off: String,
     val read: String? = null,
     val onWhen: OnWhen? = null,
+    override val source: ActionSource = ActionSource.User,
 ) : CustomAction
 
 @Serializable
@@ -32,6 +41,7 @@ data class RunOnceAction(
     val output: OutputTarget = OutputTarget.Toast,
     val confirm: Boolean = false,
     val variables: Map<String, Variable> = emptyMap(),
+    override val source: ActionSource = ActionSource.User,
 ) : CustomAction
 
 @Serializable
