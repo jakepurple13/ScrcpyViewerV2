@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.programmersbox.scrcpyviewer.Os
@@ -27,9 +27,9 @@ fun SettingsScreen(
     files: SettingsFileDialogs,
     modifier: Modifier = Modifier,
 ) {
-    val state by viewModel.state.collectAsState()
-    val nav by viewModel.nav.collectAsState()
-    val updates by updateViewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val nav by viewModel.nav.collectAsStateWithLifecycle()
+    val updates by updateViewModel.state.collectAsStateWithLifecycle()
     val actions = SettingsActions(
         onTheme = viewModel::setTheme,
         onUseSystemTitleBar = viewModel::setUseSystemTitleBar,

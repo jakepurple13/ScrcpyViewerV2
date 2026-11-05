@@ -22,7 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -95,9 +95,9 @@ fun App(
     appSettings: AppSettings = koinInject(),
     actionsNavigation: ActionsNavigation = koinInject(),
 ) {
-    val update by updateViewModel.state.collectAsState()
+    val update by updateViewModel.state.collectAsStateWithLifecycle()
     // Read from the store, not the ViewModel's state, so the first frame already has the saved theme.
-    val settings by appSettings.settings.collectAsState()
+    val settings by appSettings.settings.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     val fileDialogs = remember { AwtPresetFileDialogs() }
     val actionFileDialogs = remember { AwtPresetFileDialogs(what = "actions") }
