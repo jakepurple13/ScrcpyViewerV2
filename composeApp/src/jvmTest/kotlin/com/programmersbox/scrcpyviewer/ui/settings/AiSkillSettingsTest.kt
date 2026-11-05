@@ -78,7 +78,7 @@ class AiSkillSettingsTest {
         val blocker = Files.writeString(dir.resolve("file"), "x")
         vm.installAiSkill(listOf(tool(AiTool.Claude), SkillTarget.Folder(blocker)))
         val result = vm.awaitResult()
-        assertEquals(listOf("Claude Code", "file"), result.map { it.first })
+        assertEquals(listOf("Claude Code", "${dir.fileName}/file"), result.map { it.first })
         assertNull(result[0].second)
         assertNotNull(result[1].second)
         assertEquals("Some installs failed", installResultTitle(result))

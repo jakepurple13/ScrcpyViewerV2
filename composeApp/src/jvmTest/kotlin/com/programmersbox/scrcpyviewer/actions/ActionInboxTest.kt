@@ -11,7 +11,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -150,6 +152,30 @@ class ActionInboxTest {
         now = 10_000_000
         inbox.processOnce()
         assertEquals(listOf("Bluetooth 2"), store.actions.value.map { it.name })
+    }
+
+    @Test
+    fun `names are trimmed before validation and apply`() = runTest {
+        store.upsert(RunOnceAction("other", "bluetooth", command = "x"))
+        drop("x.json", fileText(actionJson("bt", " Bluetooth ")))
+        inbox.processOnce()
+        assertEquals(listOf("bluetooth", "Bluetooth (2)"), store.actions.value.map { it.name })
+    }
+
+    @Test
+    fun `trimmed name is stored without spaces`() = runTest {
+        drop("x.json", fileText(actionJson("bt", " Bluetooth ")))
+        inbox.processOnce()
+        assertEquals(listOf("Bluetooth"), store.actions.value.map { it.name })
+    }
+
+    @Test
+    fun `start does not throw when the inbox can't be created`() = runTest {
+        val blocked = root.resolve("blocked")
+        blocked.writeText("not a folder")
+        val job = Job()
+        ActionInbox(blocked, store) { now }.start(CoroutineScope(job))
+        job.cancel()
     }
 
     @Test

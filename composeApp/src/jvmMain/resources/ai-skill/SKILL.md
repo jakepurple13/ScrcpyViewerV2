@@ -60,6 +60,7 @@ Run once (`"type": "once"`), default icon `play_arrow`:
   endless output), or `"none"`.
 - `confirm` (default `false`): ask before running. Set `true` for destructive commands.
 - `variables`: map of variable name to `{ "label", "kind", "default", "choices" }`.
+  - `label` is required: the prompt the user sees when running the action.
   - `kind`: `"text"` (free text, default), `"list"` (pick from `choices`), `"app"` (pick an installed package).
   - Every `{name}` in `command` needs an entry; names match `[A-Za-z_][A-Za-z0-9_]*`.
   - Write a literal brace as `{{` or `}}` (for example `awk '{{print $1}}'`).
@@ -127,13 +128,14 @@ Never write the actions file. The app owns it and overwrites it on every change.
    not already in the folder. Quote the folder path in shell commands; it may contain spaces. This works
    in bash, zsh, and PowerShell:
    `cd "{{INBOX_DIR}}"; mv <slug>.json.tmp <slug>.json`
-5. Wait about 3 seconds, then check the result:
+5. Wait about 5 seconds, then check the result:
    - The file is gone: the app accepted it.
    - The file is in the `rejected` folder inside the inbox: read `rejected/<slug>.json.error.txt` for the
      reason, fix the JSON, and write a new file. The app rejects a whole file when any action in it has a
      blank `name`, `on`, `off`, or `command`, an invalid `onWhen` regex, or an edit that takes another
      action's name. It also rejects a file that is not valid JSON or lacks `format`, `version`, or `actions`.
-   - The file is still there: the app is not running. It adds the actions the next time the user opens it.
+   - The file is still there: wait once more (about 5 seconds) and check again. If it is still there, the
+     app is not running. It adds the actions the next time the user opens it.
 
 The inbox folder is outside the project, so your tool may ask the user to approve writing there. Tell the
 user why you need it and ask them to approve it.

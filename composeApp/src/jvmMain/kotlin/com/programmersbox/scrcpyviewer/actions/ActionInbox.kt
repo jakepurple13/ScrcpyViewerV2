@@ -59,10 +59,20 @@ class ActionInbox(
 
     private val rejectedDir get() = dir.resolve("rejected")
 
+    /** Starts polling. Never throws: a folder that can't be created is reported once and retried on each poll. */
     fun start(scope: CoroutineScope) {
-        Files.createDirectories(rejectedDir)
         scope.launch(Dispatchers.IO) {
+            var reportedFolderError = false
             while (isActive) {
+                try {
+                    Files.createDirectories(rejectedDir)
+                    reportedFolderError = false
+                } catch (e: Exception) {
+                    if (!reportedFolderError) System.err.println("Actions inbox folder can't be created: $e")
+                    reportedFolderError = true
+                    delay(POLL_MS)
+                    continue
+                }
                 try {
                     processOnce()
                 } catch (e: Exception) {
@@ -94,7 +104,7 @@ class ActionInbox(
     }
 
     private fun processFile(file: Path, modified: Long) {
-        val parsed = try {
+        val decoded = try {
             ActionCodec.decodeInbox(file.readText())
         } catch (e: ActionFileException) {
             // A writer may still be mid-write; give it a moment before calling the file bad.
@@ -102,6 +112,8 @@ class ActionInbox(
             reject(file, e.message ?: "Not a Scrcpy Vwr actions file")
             return
         }
+        // Like the editor, names are saved trimmed.
+        val parsed = decoded.copy(actions = decoded.actions.map { it.withName(it.name.trim()) })
         val reason = validateInbox(parsed, store.actions.value)
         if (reason != null) {
             reject(file, reason)

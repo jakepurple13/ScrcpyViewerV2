@@ -24,7 +24,13 @@ sealed interface SkillTarget {
     }
 
     data class Folder(val dir: Path) : SkillTarget {
-        override val label: String get() = dir.fileName?.toString() ?: dir.toString()
+        /** `<parent>/<name>` (e.g. `.cursor/skills`), since many picked folders are just named `skills`. */
+        override val label: String
+            get() {
+                val name = dir.fileName?.toString() ?: return dir.toString()
+                val parent = dir.parent?.fileName?.toString() ?: return name
+                return "$parent/$name"
+            }
         override val skillDir: Path get() = dir.resolve(AiSkill.FOLDER)
     }
 }

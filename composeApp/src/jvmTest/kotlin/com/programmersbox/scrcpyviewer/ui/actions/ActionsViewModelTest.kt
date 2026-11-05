@@ -893,4 +893,46 @@ class ActionsViewModelTest {
         vm.save()
         assertEquals(ActionSource.User, store.actions.value.single().source)
     }
+
+    @Test
+    fun `the open action updated by the inbox reloads the editor`() {
+        store.upsert(logcat.withSource(ActionSource.Ai))
+        val vm = vm()
+        vm.select("logcat")
+        store.applyInbox(listOf(logcat.copy(command = "logcat -d")))
+        runBlocking { withTimeout(5_000) { vm.state.first { it.draft?.command == "logcat -d" } } }
+        assertFalse(vm.state.value.dirty)
+        vm.save()
+        assertEquals("logcat -d", (store.actions.value.single() as RunOnceAction).command)
+    }
+
+    @Test
+    fun `the open action moved to yours by the sheet stays yours after save`() {
+        store.upsert(logcat.withSource(ActionSource.Ai))
+        val vm = vm()
+        vm.select("logcat")
+        store.markAsUser("logcat") // as the mirror window's sheet does, bypassing the view model
+        runBlocking { withTimeout(5_000) { vm.state.first { it.draft?.source == ActionSource.User } } }
+        vm.edit { it.copy(name = "Renamed") }
+        assertTrue(vm.save())
+        val saved = store.actions.value.single()
+        assertEquals("Renamed", saved.name)
+        assertEquals(ActionSource.User, saved.source)
+    }
+
+    @Test
+    fun `an unsaved edit keeps its fields but takes the source changed elsewhere`() {
+        store.upsert(logcat.withSource(ActionSource.Ai))
+        val vm = vm()
+        vm.select("logcat")
+        vm.edit { it.copy(name = "Renamed") }
+        store.markAsUser("logcat")
+        runBlocking { withTimeout(5_000) { vm.state.first { it.draft?.source == ActionSource.User } } }
+        assertEquals("Renamed", vm.state.value.draft!!.name)
+        assertTrue(vm.state.value.dirty)
+        assertTrue(vm.save())
+        val saved = store.actions.value.single()
+        assertEquals("Renamed", saved.name)
+        assertEquals(ActionSource.User, saved.source)
+    }
 }

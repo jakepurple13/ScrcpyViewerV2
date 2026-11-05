@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.actions
 
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -28,7 +29,15 @@ class AiSkillInstallerTest {
     @Test
     fun `targets list tools in order then custom folders`() {
         val t = installer.targets(listOf(home.resolve("mine").toString()))
-        assertEquals(listOf("Claude Code", "Gemini CLI", "Codex", "Grok CLI", "mine"), t.map { it.label })
+        assertEquals(listOf("Claude Code", "Gemini CLI", "Codex", "Grok CLI", "${home.fileName}/mine"), t.map { it.label })
+    }
+
+    @Test
+    fun `folder labels name the parent so two skills folders differ`() {
+        assertEquals(".cursor/skills", SkillTarget.Folder(home.resolve(".cursor/skills")).label)
+        assertEquals(".foo/skills", SkillTarget.Folder(home.resolve(".foo/skills")).label)
+        assertEquals("skills", SkillTarget.Folder(Path.of("/skills")).label)
+        assertEquals("skills", SkillTarget.Folder(Path.of("skills")).label)
     }
 
     @Test
@@ -71,7 +80,7 @@ class AiSkillInstallerTest {
         val target = SkillTarget.Folder(dir)
         installer.install(target).getOrThrow()
         assertTrue(Files.exists(dir.resolve("scrcpy-vwr-actions/SKILL.md")))
-        assertEquals("picked", target.label)
+        assertEquals("${home.fileName}/picked", target.label)
     }
 
     @Test
