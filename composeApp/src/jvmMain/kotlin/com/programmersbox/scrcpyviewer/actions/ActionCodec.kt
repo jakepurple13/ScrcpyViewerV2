@@ -10,6 +10,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.put
 
+/** An inbox file: the actions plus who wrote them, when the writer said. */
+data class InboxFile(val author: String?, val actions: List<CustomAction>)
+
 class ActionFileException(message: String) : IllegalArgumentException(message)
 
 object ActionCodec {
@@ -30,7 +33,16 @@ object ActionCodec {
         return json.encodeToString(JsonObject.serializer(), root)
     }
 
-    fun decode(text: String): List<CustomAction> {
+    fun decode(text: String): List<CustomAction> = decodeActions(parseRoot(text))
+
+    /** Like [decode] for a file an AI dropped in the inbox, which may also name its [InboxFile.author]. */
+    fun decodeInbox(text: String): InboxFile {
+        val root = parseRoot(text)
+        val author = (root["author"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        return InboxFile(author, decodeActions(root))
+    }
+
+    private fun parseRoot(text: String): JsonObject {
         val root = try {
             json.parseToJsonElement(text) as? JsonObject
         } catch (e: Exception) {
@@ -40,6 +52,10 @@ object ActionCodec {
         val version = (root["version"] as? JsonPrimitive)?.intOrNull ?: throw notActionsFile()
         if (version > VERSION) throw ActionFileException("This file is from a newer version of Scrcpy Vwr")
         if (version < 1) throw notActionsFile()
+        return root
+    }
+
+    private fun decodeActions(root: JsonObject): List<CustomAction> {
         val list = root["actions"] as? JsonArray ?: throw notActionsFile()
         return list.mapIndexed { i, el ->
             try {

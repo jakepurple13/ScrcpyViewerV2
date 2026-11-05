@@ -97,4 +97,16 @@ class ActionCodecTest {
             .replace("\"name\": \"Stay awake\",", "\"name\": \"Stay awake\", \"future\": 1,")
         assertEquals(2, ActionCodec.decode(text).size)
     }
+
+    @Test
+    fun `decodeInbox reads author`() {
+        val file = ActionCodec.decodeInbox(example.replace("\"version\": 1,", "\"version\": 1, \"author\": \"Claude Code\","))
+        assertEquals("Claude Code", file.author)
+        assertEquals(2, file.actions.size)
+    }
+
+    @Test
+    fun `decodeInbox without author is null`() {
+        assertEquals(null, ActionCodec.decodeInbox(example).author)
+    }
 }
