@@ -1,10 +1,12 @@
 name: Build
 
 on:
+  # Branches with an open PR build through pull_request; pushing to them too ran every job twice.
   push:
-    branches: ["**"]
+    branches: ["main"]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 # One run per ref: a newer push cancels the run in progress (never a tag's release run).
 concurrency:
@@ -21,6 +23,8 @@ jobs:
   test:
     name: ${{ matrix.os }} (jvmTest)
     runs-on: ${{ matrix.os }}
+    # A run takes about 3-4 minutes; a hung test otherwise holds the runner for GitHub's 6-hour default.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
