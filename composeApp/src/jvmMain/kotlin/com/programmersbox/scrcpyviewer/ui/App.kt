@@ -57,6 +57,7 @@ import com.programmersbox.scrcpyviewer.ui.update.UpdateDialog
 import com.programmersbox.scrcpyviewer.ui.update.UpdateViewModel
 import com.programmersbox.scrcpyviewer.update.UpdateState
 import kotlinx.coroutines.flow.filter
+import com.programmersbox.scrcpyviewer.actions.ActionInbox
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -94,6 +95,7 @@ fun App(
     mirrorController: MirrorController = koinInject(),
     appSettings: AppSettings = koinInject(),
     actionsNavigation: ActionsNavigation = koinInject(),
+    inbox: ActionInbox = koinInject(),
 ) {
     val update by updateViewModel.state.collectAsStateWithLifecycle()
     // Read from the store, not the ViewModel's state, so the first frame already has the saved theme.
@@ -108,6 +110,8 @@ fun App(
             .filter { it.serial !in mirrorController.open.value }
             .collect { snackbar.showSnackbar(recordResultMessage(it.result)) }
     }
+    // Files AI tools dropped in the actions inbox: say what was added, changed or rejected.
+    LaunchedEffect(inbox) { inbox.messages.collect { snackbar.showSnackbar(it) } }
     // A mirror window asked for the Actions screen: show it and open the requested action.
     LaunchedEffect(actionsNavigation, navigator, actionsViewModel, actionsPanes) {
         actionsNavigation.requests.collect { request ->
