@@ -85,7 +85,8 @@ class AiSkillSettingsTest {
         assertEquals("Skill added", installResultTitle(listOf("Claude Code" to null)))
         assertEquals("✓ Claude Code", installResultLine("Claude Code", null))
         assertTrue(Files.exists(tool(AiTool.Claude).skillDir.resolve("SKILL.md")))
-        assertEquals(SkillStatus.UpToDate, vm.state.value.aiSkill.of(AiTool.Claude).status)
+        // The combined state can show the result a moment before the refreshed rows.
+        vm.awaitRows { it.of(AiTool.Claude).status == SkillStatus.UpToDate }
         vm.dismissAiInstallResult()
         assertNull(vm.state.value.aiInstallResult)
     }
@@ -118,5 +119,7 @@ class AiSkillSettingsTest {
         assertEquals("~/.claude/skills/x", abbreviateHome("/Users/a/.claude/skills/x", "/Users/a"))
         assertEquals("/opt/x", abbreviateHome("/opt/x", "/Users/a"))
         assertEquals("/Users/ab/x", abbreviateHome("/Users/ab/x", "/Users/a"))
+        assertEquals("~\\.claude\\skills", abbreviateHome("C:\\Users\\a\\.claude\\skills", "C:\\Users\\a"))
+        assertEquals("C:\\Users\\ab", abbreviateHome("C:\\Users\\ab", "C:\\Users\\a"))
     }
 }

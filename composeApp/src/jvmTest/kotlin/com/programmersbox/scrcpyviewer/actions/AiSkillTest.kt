@@ -35,6 +35,11 @@ class AiSkillTest {
     }
 
     @Test
+    fun `render uses LF line endings`() {
+        assertFalse('\r' in rendered)
+    }
+
+    @Test
     fun `installedVersion and installedInbox read back what render wrote`() {
         assertEquals(AiSkill.VERSION, AiSkill.installedVersion(rendered))
         assertEquals(inbox, AiSkill.installedInbox(rendered))
@@ -55,7 +60,8 @@ class AiSkillTest {
     fun `paths with spaces are quoted in commands`() {
         val spaced = Path.of("/tmp/Jo Smith/actions-inbox")
         val text = AiSkill.render(spaced, Path.of("/tmp/Jo Smith/actions.json"))
-        assertTrue("\"/tmp/Jo Smith/actions-inbox\"" in text)
+        // Path.toString uses the OS separator (backslashes on Windows).
+        assertTrue("\"$spaced\"" in text)
         assertEquals(spaced, AiSkill.installedInbox(text))
     }
 

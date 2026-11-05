@@ -16,7 +16,9 @@ object AiSkill {
     }
 
     /** The skill text with this app's [inbox], [actionsFile], skill version and icon names filled in. */
+    // A Windows checkout (core.autocrlf) bundles the template with CRLF; the installed skill is always LF.
     fun render(inbox: Path, actionsFile: Path): String = template
+        .replace("\r\n", "\n")
         .replace("{{SKILL_VERSION}}", VERSION.toString())
         .replace("{{INBOX_DIR}}", inbox.toString())
         .replace("{{ACTIONS_FILE}}", actionsFile.toString())

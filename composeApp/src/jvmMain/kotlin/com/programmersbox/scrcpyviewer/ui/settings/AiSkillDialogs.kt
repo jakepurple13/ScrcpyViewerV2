@@ -40,7 +40,8 @@ fun addButtonLabel(n: Int): String = if (n == 1) "Add to 1 tool" else "Add to $n
 /** [path] with the [home] prefix shown as `~`. */
 fun abbreviateHome(path: String, home: String): String {
     val base = home.trimEnd('/', '\\')
-    return if (base.isNotEmpty() && (path == base || path.startsWith(base + java.io.File.separator))) "~" + path.removePrefix(base) else path
+    val under = path == base || path.startsWith("$base/") || path.startsWith("$base\\")
+    return if (base.isNotEmpty() && under) "~" + path.removePrefix(base) else path
 }
 
 fun installResultTitle(results: List<Pair<String, String?>>): String =
