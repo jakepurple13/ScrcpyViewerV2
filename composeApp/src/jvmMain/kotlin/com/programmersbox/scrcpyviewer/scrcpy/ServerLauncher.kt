@@ -4,8 +4,8 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.options.ServerArgs
 import com.programmersbox.scrcpyviewer.tools.BundledTools
+import com.programmersbox.scrcpyviewer.closingOnCancel
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
@@ -13,7 +13,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.DataInputStream
 import java.io.IOException
@@ -25,29 +24,6 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.random.Random
-
-/**
- * Runs [block] and calls [onCancel] on the cancelling thread the moment the caller is cancelled. Blocking socket
- * calls (ServerSocket.accept, Socket.connect) ignore Thread.interrupt, so runInterruptible alone never returns from
- * them; closing the socket does. A launched coroutine that closes it may not get a thread before the cancel (it is
- * then never run), so the close is registered up front and needs no thread of its own.
- */
-internal suspend fun <T> closingOnCancel(onCancel: () -> Unit, block: suspend () -> T): T = coroutineScope {
-    val finished = AtomicBoolean(false)
-    val guard = launch(start = CoroutineStart.UNDISPATCHED) {
-        suspendCancellableCoroutine<Nothing> { cont -> cont.invokeOnCancellation { if (!finished.get()) onCancel() } }
-    }
-    try {
-        block()
-    } catch (e: Throwable) {
-        // The socket error caused by our own close: report the cancellation, not the error.
-        ensureActive()
-        throw e
-    } finally {
-        finished.set(true)
-        guard.cancel()
-    }
-}
 
 /** Hands out random 31-bit scrcpy session ids (`scid`), unique within the process. */
 object ScidAllocator {

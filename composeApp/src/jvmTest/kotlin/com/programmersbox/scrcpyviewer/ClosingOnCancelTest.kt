@@ -1,4 +1,4 @@
-package com.programmersbox.scrcpyviewer.scrcpy
+package com.programmersbox.scrcpyviewer
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.asCoroutineDispatcher

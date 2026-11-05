@@ -1,16 +1,14 @@
 package com.programmersbox.scrcpyviewer.adb
 
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.closingOnCancel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
@@ -79,15 +77,9 @@ open class AdbClient(
      * is no read timeout and nothing is buffered. Cancelling the collector (or completion) closes the socket.
      */
     open fun shellStream(serial: String, cmd: String): Flow<String> = flow {
-        coroutineScope {
-            val socket = openSocket()
-            val closer = launch(Dispatchers.IO) {
-                try {
-                    awaitCancellation()
-                } finally {
-                    runCatching { socket.close() }
-                }
-            }
+        val socket = openSocket()
+        // Cancelling closes the socket at once: a blocked read ignores interrupts and would otherwise never return.
+        closingOnCancel(onCancel = { runCatching { socket.close() } }) {
             try {
                 socket.soTimeout = 0
                 val out = socket.getOutputStream()
@@ -124,7 +116,6 @@ open class AdbClient(
                     if (eof) break
                 }
             } finally {
-                closer.cancel()
                 runCatching { socket.close() }
             }
         }
@@ -187,15 +178,9 @@ open class AdbClient(
      * throws on connection or protocol errors. Cancelling the collector closes the socket.
      */
     open fun trackDevices(): Flow<String> = flow {
-        coroutineScope {
-            val socket = openSocket()
-            val closer = launch(Dispatchers.IO) {
-                try {
-                    awaitCancellation()
-                } finally {
-                    runCatching { socket.close() }
-                }
-            }
+        val socket = openSocket()
+        // Cancelling closes the socket at once: a blocked read ignores interrupts and would otherwise never return.
+        closingOnCancel(onCancel = { runCatching { socket.close() } }) {
             try {
                 val out = socket.getOutputStream()
                 val input = socket.getInputStream()
@@ -207,7 +192,6 @@ open class AdbClient(
                     emit(payload)
                 }
             } finally {
-                closer.cancel()
                 runCatching { socket.close() }
             }
         }
