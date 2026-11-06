@@ -1,5 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.devices
 
+import com.programmersbox.scrcpyviewer.cdm.CdmClient
+import com.programmersbox.scrcpyviewer.cdm.CdmDevices
+import com.programmersbox.scrcpyviewer.cdm.CdmHolds
 import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceInfo
 import com.programmersbox.scrcpyviewer.adb.DeviceState
@@ -57,8 +60,11 @@ class DevicesViewModelTest {
     private fun vm(options: DeviceOptionsStore = this.options, wireless: WirelessAdb = this.wireless) =
         DevicesViewModel(
             DeviceSelection(devices, connected, scope), options, presets, MirrorRequests(mirrorRequests), wireless,
-            OpenMirrors { openMirrors }, scope,
+            OpenMirrors { openMirrors }, CdmDevices(noCdm, isOurs = { false }), CdmHolds(noCdm, "scrcpy-vwr", scope, io = Dispatchers.Unconfined), scope,
         )
+
+    /** No port file: Claude Device Manager is closed, so leases are granted at once. */
+    private val noCdm = CdmClient(portFile = java.nio.file.Files.createTempDirectory("cdm").resolve("port"))
 
     private val pixel = device("R1", info = DeviceInfo("Pixel 8 Pro", "15", 35, "R1"))
     private val usbAbc = device("ABC")

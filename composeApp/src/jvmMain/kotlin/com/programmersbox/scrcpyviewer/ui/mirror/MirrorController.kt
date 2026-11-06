@@ -1,6 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
 import com.programmersbox.scrcpyviewer.adb.Device
+import com.programmersbox.scrcpyviewer.cdm.CdmHolds
+import com.programmersbox.scrcpyviewer.cdm.HoldState
 import com.programmersbox.scrcpyviewer.adb.DeviceState
 import com.programmersbox.scrcpyviewer.media.RecordResult
 import com.programmersbox.scrcpyviewer.options.OptionValues
@@ -26,6 +28,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import java.util.Collections
+import java.util.WeakHashMap
 
 /** How a recording of [serial]'s session ended. */
 data class RecordingEvent(val serial: String, val result: RecordResult)
@@ -56,6 +60,10 @@ class MirrorController(
     private val optionsFor: (serial: String) -> OptionValues,
     private val newSession: (serial: String, values: OptionValues) -> ScrcpySession,
     private val setClipboard: (String) -> Unit = {},
+    /** Leases each window's device through Claude Device Manager; null mirrors without asking anyone. */
+    private val holds: CdmHolds? = null,
+    /** What CDM is asked for when [serial] opens: its hardware serial when known (same over USB and Wi-Fi). */
+    private val cdmDevice: (serial: String) -> String = { it },
 ) {
     private val lock = Any()
     private val _open = MutableStateFlow<Map<String, ScrcpySession>>(emptyMap())
@@ -77,6 +85,33 @@ class MirrorController(
         else combine(map.map { (serial, s) -> s.status.map { serial to it } }) { it.toMap() }
     }
 
+    /** Sessions stopped because their hold was lost; their window stays open. Guarded by [lock]. */
+    private val stopped: MutableSet<ScrcpySession> = Collections.newSetFromMap(WeakHashMap())
+
+    /**
+     * Each open window's Claude Device Manager lease, by serial; a serial is missing when CDM is not involved. The
+     * window shows the queue for [HoldState.Waiting] and "Device taken back" for [HoldState.Lost].
+     */
+    val holdStates: StateFlow<Map<String, HoldState>> =
+        combine(open, holds?.states ?: flowOf(emptyMap())) { map, st ->
+            map.keys.mapNotNull { serial -> holds?.holderOf(serial)?.let(st::get)?.let { serial to it } }.toMap()
+        }.stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    init {
+        // CDM took a device back: stop its session (a recording is finished first) but keep the window, which offers
+        // to wait for the device again.
+        scope.launch {
+            holdStates.collect { states ->
+                states.filterValues { it == HoldState.Lost }.keys.forEach { serial ->
+                    val session = synchronized(lock) {
+                        _open.value[serial]?.takeIf { stopped.add(it) }
+                    } ?: return@forEach
+                    shutDown(session)
+                }
+            }
+        }
+    }
+
     val reconnectable: StateFlow<Set<String>> = combine(statuses, devices) { st, list ->
         val ready = list.filter { it.state == DeviceState.Device }.map { it.serial }.toSet()
         st.filter { (serial, status) -> serial in ready && (status == SessionStatus.Disconnected || status == SessionStatus.Failed) }
@@ -90,6 +125,7 @@ class MirrorController(
                 _focusRequests.tryEmit(serial)
                 return
             }
+            holds?.lease(serial, cdmDevice(serial))
             start(serial)
         }
     }
@@ -101,14 +137,23 @@ class MirrorController(
             _open.update { it - serial }
             s
         }
-        shutDown(session)
+        shutDown(session, releaseHold = serial)
     }
 
     /** Replaces a disconnected session with a new one, keeping the window. No-op unless [serial] is reconnectable. */
     fun reconnect(serial: String) {
+        if (serial !in reconnectable.value) return
+        restart(serial)
+    }
+
+    /** "Wait again" after CDM took the device back: asks CDM for it again and starts a new session in the window. */
+    fun requeue(serial: String) = restart(serial)
+
+    private fun restart(serial: String) {
         val old = synchronized(lock) {
-            if (serial !in reconnectable.value) return
             val old = _open.value[serial] ?: return
+            // A lost or refused lease asks CDM again; a held one is kept.
+            holds?.retry(serial)
             start(serial)
             old
         }
@@ -118,11 +163,11 @@ class MirrorController(
     /** Closes every session and waits for their teardown (server stopped, tunnel removed). */
     suspend fun closeAll() {
         val sessions = synchronized(lock) {
-            val all = _open.value.values.toList()
+            val all = _open.value.toList()
             _open.value = emptyMap()
             all
         }
-        sessions.forEach(::shutDown)
+        sessions.forEach { (serial, session) -> shutDown(session, releaseHold = serial) }
         val pending = synchronized(lock) { closing.toList() }
         pending.joinAll()
     }
@@ -146,10 +191,18 @@ class MirrorController(
         }
     }
 
-    private fun shutDown(session: ScrcpySession) {
+    /** Closes [session]; with [releaseHold], ends that serial's CDM lease once the teardown is done with the device. */
+    private fun shutDown(session: ScrcpySession, releaseHold: String? = null) {
         synchronized(lock) {
             clipboardJobs.remove(session)?.cancel()
-            val job = scope.launch { session.close() }
+            val job = scope.launch {
+                try {
+                    session.close()
+                } finally {
+                    // Joined, so closeAll (quitting) returns only once CDM has the device back.
+                    if (releaseHold != null) holds?.release(releaseHold)?.join()
+                }
+            }
             closing += job
             job.invokeOnCompletion { synchronized(lock) { closing -= job } }
         }

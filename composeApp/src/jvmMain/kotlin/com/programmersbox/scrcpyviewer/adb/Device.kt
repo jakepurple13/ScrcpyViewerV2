@@ -17,6 +17,12 @@ data class Device(
 )
 
 /**
+ * What Claude Device Manager is asked for: the hardware serial once it is known (the same over USB and Wi-Fi, so both
+ * connections of one phone share one CDM hold); otherwise the adb serial.
+ */
+fun Device.cdmDevice(): String = info?.serialNo?.takeIf { it.isNotBlank() } ?: serial
+
+/**
  * The key device options are stored under: the hardware serial for a Wi-Fi device once it is known, so a phone
  * switched from USB to Wi-Fi keeps its options; otherwise the adb serial.
  */

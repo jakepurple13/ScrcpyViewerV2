@@ -32,6 +32,7 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.cdm.CdmHolds
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindow
 import com.programmersbox.scrcpyviewer.state.AppSettings
@@ -48,6 +49,8 @@ import kotlin.system.exitProcess
 fun main() {
     AppIcon.installTaskbarIcon()
     val koin = startAppKoin()
+    // Quitting normally releases each window's CDM hold; this catches exits that skip that (Ctrl+C, SIGTERM).
+    koin.get<CdmHolds>().installShutdownHook()
     koin.get<ActionInbox>().start(koin.get<AppScope>())
     val appSettings = koin.get<AppSettings>()
     val mirrorController = koin.get<MirrorController>()

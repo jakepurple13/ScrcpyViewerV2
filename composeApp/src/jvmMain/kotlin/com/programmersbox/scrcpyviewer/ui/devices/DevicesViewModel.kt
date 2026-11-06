@@ -6,7 +6,13 @@ import com.programmersbox.scrcpyviewer.adb.DeviceState
 import com.programmersbox.scrcpyviewer.adb.SwitchResult
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
+import com.programmersbox.scrcpyviewer.adb.cdmDevice
 import com.programmersbox.scrcpyviewer.adb.optionsKey
+import com.programmersbox.scrcpyviewer.cdm.CdmDevices
+import com.programmersbox.scrcpyviewer.cdm.CdmHolds
+import com.programmersbox.scrcpyviewer.cdm.CdmUse
+import com.programmersbox.scrcpyviewer.cdm.DeviceNotGrantedException
+import com.programmersbox.scrcpyviewer.ui.common.mapState
 import com.programmersbox.scrcpyviewer.options.CommandLine
 import com.programmersbox.scrcpyviewer.options.OptionCatalog
 import com.programmersbox.scrcpyviewer.options.OptionGroup
@@ -69,6 +75,10 @@ data class DevicesUiState(
     val restartingAdb: Boolean = false,
     /** What a restart would close, while its confirmation dialog is showing; null otherwise. */
     val restartConfirm: RestartAdbImpact? = null,
+    /** True while Claude Device Manager is running: Restart adb is disabled and the rows show who holds each device. */
+    val cdmRunning: Boolean = false,
+    /** How Claude Device Manager sees each device, by serial (see [DevicesViewModel.cdmUse]). */
+    val cdmUse: Map<String, CdmUse> = emptyMap(),
 )
 
 /** What restarting the adb server would end: open mirror windows and Wi-Fi connections, by device name. */
@@ -104,8 +114,24 @@ class DevicesViewModel(
     private val mirrorRequests: MirrorRequests,
     private val wireless: WirelessAdb,
     private val openMirrors: OpenMirrors,
+    private val cdmDevices: CdmDevices,
+    private val holds: CdmHolds,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
+    /**
+     * How Claude Device Manager sees each listed device, by adb serial: free, mirrored here, or in use by another
+     * holder. Empty while CDM is closed.
+     */
+    val cdmUse: StateFlow<Map<String, CdmUse>> = combine(selection.state, cdmDevices.snapshot) { sel, snapshot ->
+        if (snapshot == null) emptyMap()
+        else sel.devices.mapNotNull { d ->
+            cdmDevices.useOf(snapshot, d.serial, d.info?.serialNo)?.let { d.serial to it }
+        }.toMap()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** True while Claude Device Manager is running: restarting adb would cut off its other sessions. */
+    val cdmRunning: StateFlow<Boolean> = cdmDevices.snapshot.mapState { it != null }
+
     private val switching = MutableStateFlow<Set<String>>(emptySet())
     private val restart = MutableStateFlow(RestartUi())
     private val _notices = MutableSharedFlow<WifiNotice>(extraBufferCapacity = 8)
@@ -255,11 +281,19 @@ class DevicesViewModel(
         val name = deviceTitle(device)
         viewModelScope.launch {
             try {
-                val notice = when (val result = wireless.switchToWifi(serial)) {
+                // `tcpip` restarts adbd on the device, so it waits its turn in Claude Device Manager (sharing a
+                // mirror window's hold of the same phone).
+                val result = try {
+                    holds.withHold(serial, device.cdmDevice()) { wireless.switchToWifi(serial) }
+                } catch (e: DeviceNotGrantedException) {
+                    _notices.emit(WifiNotice("Couldn't switch $name to Wi-Fi: ${e.message}"))
+                    return@launch
+                }
+                val notice = when (result) {
                     is SwitchResult.Connected -> WifiNotice("$name connected at ${result.address}", result.address)
                     SwitchResult.NotOnWifi -> WifiNotice("$name isn't on Wi-Fi. Connect it to the same network as this computer.")
                     is SwitchResult.TcpipFailed -> WifiNotice("Couldn't switch $name to Wi-Fi: ${result.message}")
-                    is SwitchResult.ConnectFailed -> if (result.restartCanFix) {
+                    is SwitchResult.ConnectFailed -> if (result.restartCanFix && !cdmRunning.value) {
                         WifiNotice("Couldn't connect to ${result.address}: ${result.message}. $RESTART_ADB_HINT", restartAdb = true)
                     } else {
                         WifiNotice("Couldn't connect to ${result.address}: ${WirelessParsers.withLocalNetworkHint(result.message)}")

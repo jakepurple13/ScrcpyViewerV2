@@ -9,7 +9,12 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
+import com.programmersbox.scrcpyviewer.adb.cdmDevice
 import com.programmersbox.scrcpyviewer.adb.optionsKey
+import com.programmersbox.scrcpyviewer.cdm.CdmClient
+import com.programmersbox.scrcpyviewer.cdm.CdmDevices
+import com.programmersbox.scrcpyviewer.cdm.CdmHolds
+import com.programmersbox.scrcpyviewer.cdm.CdmInstance
 import com.programmersbox.scrcpyviewer.media.AudioPlayer
 import com.programmersbox.scrcpyviewer.media.DelayedVideoSink
 import com.programmersbox.scrcpyviewer.media.VideoDecoder
@@ -64,7 +69,7 @@ fun interface AdbClientFactory {
 class AppScope : CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 /** Discovery root: the modules below, plus the `@KoinViewModel`s and `@Singleton`s under `ui`. */
-@Module(includes = [StorageModule::class, AdbModule::class, MirrorModule::class, UpdateModule::class])
+@Module(includes = [StorageModule::class, AdbModule::class, CdmModule::class, MirrorModule::class, UpdateModule::class])
 @Configuration
 @ComponentScan("com.programmersbox.scrcpyviewer.ui")
 class AppModule
@@ -121,12 +126,28 @@ class AdbModule {
         DeviceSelection(tracker.devices, tracker.connected, scope)
 
     @Singleton
-    fun wirelessAdb(client: AdbClient, mirrors: Lazy<MirrorController>): WirelessAdb = WirelessAdb(
+    fun wirelessAdb(client: AdbClient, mirrors: Lazy<MirrorController>, cdm: CdmClient): WirelessAdb = WirelessAdb(
         client,
         extraDiscovery = if (Os.isMac) DnsSdDiscovery()::services else null,
         // Restarting adb ends every mirror session, so only do it unasked while none is open.
         canRestartServer = { mirrors.value.open.value.isEmpty() },
+        serverShared = cdm::isRunning,
     )
+}
+
+/** Claude Device Manager: the leases mirror windows take turns through, and its live device list. */
+@Module
+class CdmModule {
+    /** Which running copy of the app this is; concurrent copies get different CDM holder IDs. */
+    @Singleton
+    fun cdmInstance(dataDir: DataDir): CdmInstance = CdmInstance.claim(dataDir.path.resolve("cdm"))
+
+    @Singleton
+    fun cdmHolds(client: CdmClient, instance: CdmInstance, scope: AppScope): CdmHolds =
+        CdmHolds(client, instance.appName, scope)
+
+    @Singleton
+    fun cdmDevices(client: CdmClient, holds: CdmHolds): CdmDevices = CdmDevices(client, holds::isOurs)
 }
 
 /** Mirror sessions and the requests that open them. */
@@ -161,6 +182,7 @@ class MirrorModule {
         deviceOptions: DeviceOptionsStore,
         serverLauncher: ServerLauncher,
         settings: AppSettings,
+        holds: CdmHolds,
     ): MirrorController = MirrorController(
         scope = scope,
         devices = tracker.devices,
@@ -170,7 +192,12 @@ class MirrorModule {
         },
         newSession = { serial, values ->
             ScrcpySession(
-                serial, values, serverLauncher,
+                serial, values,
+                // Nothing touches the device until Claude Device Manager has granted it (or is not running).
+                launcher = { s, v ->
+                    holds.awaitReady(s)
+                    serverLauncher.start(s, v)
+                },
                 decoderFactory = { meta, session ->
                     // video-buffer delays what is shown, not what is recorded (the recorder is another sink).
                     DelayedVideoSink.forOptions(VideoDecoder(meta.codecId, session::publishFrame, session::publishFps), values)
@@ -181,6 +208,8 @@ class MirrorModule {
             )
         },
         setClipboard = { text -> Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null) },
+        holds = holds,
+        cdmDevice = { serial -> tracker.devices.value.firstOrNull { it.serial == serial }?.cdmDevice() ?: serial },
     )
 }
 
@@ -195,6 +224,7 @@ class UpdateModule {
         scope: AppScope,
         settings: AppSettings,
         tools: BundledTools,
+        cdm: CdmClient,
     ): UpdateManager {
         // 1.5.0's own updater downloaded installers and helper scripts here; Nucleus caches in "update-cache".
         runCatching { dataDir.path.resolve(LEGACY_UPDATES_DIR).toFile().deleteRecursively() }
@@ -202,7 +232,10 @@ class UpdateModule {
             backend = backend,
             scope = scope,
             // Stop the adb server before installing only when it is the app's own adb.
-            bundledAdbInUse = { if (settings.settings.value.adbPathOverride == null) tools.adbExecutable() else null },
+            // Never while Claude Device Manager runs: other sessions share the adb server.
+            bundledAdbInUse = {
+                if (settings.settings.value.adbPathOverride == null && !cdm.isRunning()) tools.adbExecutable() else null
+            },
         )
     }
 
@@ -216,19 +249,25 @@ private const val UPDATE_CACHE_DIR = "update-cache"
 
 /**
  * Starts the app's Koin graph and opens a mirror window for each [MirrorRequests] serial. Tests pass their own
- * [dataDir], an [adbClientFactory] and an [updateBackend] so no adb server, device or network is touched; they call
- * `stopKoin()` when done.
+ * [dataDir], an [adbClientFactory], an [updateBackend] and a [cdmClient] so no adb server, device, network or
+ * Claude Device Manager is touched; they call `stopKoin()` when done.
+ *
+ * Releases the CDM holds a killed earlier run left behind before anything can lease a device.
  */
 fun startAppKoin(
     dataDir: Path = AppDataDir.root(),
     adbClientFactory: AdbClientFactory = AdbClientFactory { AdbClient(adbPath = it) },
     updateBackend: UpdateBackend = NucleusUpdateBackend(cacheDir = dataDir.resolve(UPDATE_CACHE_DIR)),
+    cdmClient: CdmClient = CdmClient(),
 ): Koin {
     val koin = startKoin<ScrcpyKoinApp> {
         koin.declare(DataDir(dataDir))
         koin.declare(adbClientFactory)
         koin.declare(updateBackend)
+        koin.declare(cdmClient)
     }.koin
+    koin.get<CdmHolds>().releaseStale()
+    koin.get<CdmDevices>().start(koin.get<AppScope>())
     val mirrors = koin.get<MirrorController>()
     koin.get<AppScope>().launch { koin.get<MirrorRequests>().collect { mirrors.open(it) } }
     return koin

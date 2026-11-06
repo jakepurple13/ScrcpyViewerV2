@@ -1,5 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -550,6 +553,8 @@ fun rememberQuickActions(
     memory: QuickActionsMemory = koinInject(),
     history: ShellHistory = koinInject(),
     settings: AppSettings = koinInject(),
+    /** False while Claude Device Manager has not granted the device (queued, or taken back): nothing may touch it. */
+    deviceReady: StateFlow<Boolean> = MutableStateFlow(true),
 ): QuickActions {
     val currentNotify by rememberUpdatedState(notify)
     val currentOnManage by rememberUpdatedState(onManage)
@@ -574,9 +579,11 @@ fun rememberQuickActions(
         ) { currentNotify(it) }
     }
     LaunchedEffect(actions) { actions.watchActions() }
-    LaunchedEffect(actions, session) {
-        session.status.collect {
-            actions.connected = it != SessionStatus.Disconnected && it != SessionStatus.Failed
+    LaunchedEffect(actions, session, deviceReady) {
+        combine(session.status, deviceReady) { status, ready ->
+            ready && status != SessionStatus.Disconnected && status != SessionStatus.Failed
+        }.collect {
+            actions.connected = it
             if (!actions.connected) actions.close()
         }
     }

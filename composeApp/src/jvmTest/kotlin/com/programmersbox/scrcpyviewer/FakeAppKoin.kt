@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.di.AppScope
+import com.programmersbox.scrcpyviewer.cdm.CdmClient
 import com.programmersbox.scrcpyviewer.di.startAppKoin
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.update.FakeUpdateBackend
@@ -54,7 +55,13 @@ fun withFakeAppKoin(
     updateBackend: UpdateBackend = FakeUpdateBackend(),
     block: (Koin) -> Unit,
 ) {
-    val koin = startAppKoin(dataDir, adbClientFactory = { FakeAdbClient() }, updateBackend = updateBackend)
+    val koin = startAppKoin(
+        dataDir,
+        adbClientFactory = { FakeAdbClient() },
+        updateBackend = updateBackend,
+        // No port file: tests never reach the Claude Device Manager running on this machine.
+        cdmClient = CdmClient(portFile = dataDir.resolve("no-cdm-port")),
+    )
     try {
         koin.get<AppSettings>().update { it.copy(onboardingSeen = true, actionsIntroSeen = true) }
         runBlocking { withTimeout(5_000) { koin.get<DeviceTracker>().devices.first { it.size == 3 } } }

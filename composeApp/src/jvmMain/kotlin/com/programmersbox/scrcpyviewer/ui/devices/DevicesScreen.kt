@@ -1,5 +1,9 @@
 package com.programmersbox.scrcpyviewer.ui.devices
 
+import com.programmersbox.scrcpyviewer.cdm.CdmUse
+import com.programmersbox.scrcpyviewer.adb.RESTART_BLOCKED
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.animateBounds
 import androidx.compose.animation.core.Animatable
@@ -107,8 +111,10 @@ fun DevicesScreen(
 ) {
     val pageState by viewModel.state.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
+    val cdmUse by viewModel.cdmUse.collectAsStateWithLifecycle()
+    val cdmRunning by viewModel.cdmRunning.collectAsStateWithLifecycle()
     // The search field needs each key at once (see DevicesViewModel.query); the list may follow an event later.
-    val state = pageState.copy(query = query)
+    val state = pageState.copy(query = query, cdmUse = cdmUse, cdmRunning = cdmRunning)
     var pairing by remember { mutableStateOf(false) }
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(viewModel, snackbar) {
@@ -269,7 +275,11 @@ private fun DeviceColumn(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
-            RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb)
+            RestartAdbButton(
+                restarting = state.restartingAdb,
+                onClick = onRestartAdb,
+                blockedReason = if (state.cdmRunning) RESTART_BLOCKED else null,
+            )
         }
         when {
             !state.adbConnected || state.restartingAdb -> Row(
@@ -296,12 +306,14 @@ private fun DeviceColumn(
                         menu = { onDismiss -> DeviceMenu(device, state, actions, onDismiss) },
                         menuInitiallyOpen = device.serial == contextMenuSerial,
                         onDoubleClick = { actions.onOpen(device.serial) },
+                        cdmUse = state.cdmUse[device.serial],
                     )
                 }
             }
         }
         // The device list takes the free space when present; otherwise this pushes the button to the bottom.
         if (!state.adbConnected || state.devices.isEmpty()) Spacer(Modifier.weight(1f))
+        if (state.cdmRunning) CdmStatusLine()
         FilledTonalButton(onClick = onPairWifi, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Filled.Wifi, contentDescription = null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
@@ -356,6 +368,8 @@ private fun DeviceRow(
     menu: @Composable (onDismiss: () -> Unit) -> Unit,
     menuInitiallyOpen: Boolean,
     onDoubleClick: () -> Unit,
+    /** Who holds the device in Claude Device Manager; null hides the chip (CDM closed, or it does not list it). */
+    cdmUse: CdmUse? = null,
 ) {
     var menuAt by remember { mutableStateOf(if (menuInitiallyOpen) Offset(120f, 40f) else null) }
     val shape = RoundedCornerShape(12.dp)
@@ -415,6 +429,7 @@ private fun DeviceRow(
                 Text(hint, style = MaterialTheme.typography.labelSmall, color = dot)
             }
         }
+        cdmUse?.let { CdmChip(it) }
     }
     menuAt?.let { at ->
         // A zero-size anchor at the pointer, so the menu opens where the user clicked.
@@ -422,6 +437,50 @@ private fun DeviceRow(
             DropdownMenu(expanded = true, onDismissRequest = { menuAt = null }) { menu { menuAt = null } }
         }
     }
+    }
+}
+
+/** A device row's Claude Device Manager chip: "Free", "Mirroring here" or "In use · <holder>". */
+@Composable
+internal fun CdmChip(use: CdmUse) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(8.dp)
+    val (text, container, content, border) = when (use) {
+        CdmUse.Free -> CdmChipLook("Free", Color.Transparent, colors.onSurfaceVariant, colors.outlineVariant)
+        CdmUse.Mine -> CdmChipLook("Mirroring here", Color.Transparent, colors.primary, colors.primary)
+        is CdmUse.Other -> CdmChipLook("In use · ${use.label}", colors.tertiaryContainer, colors.onTertiaryContainer, null)
+    }
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = content,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .widthIn(max = 140.dp)
+            .clip(shape)
+            .background(container)
+            .then(if (border != null) Modifier.border(1.dp, border, shape) else Modifier)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    )
+}
+
+private data class CdmChipLook(val text: String, val container: Color, val content: Color, val border: Color?)
+
+/** Under the device list while Claude Device Manager is running. */
+@Composable
+private fun CdmStatusLine() {
+    Row(
+        Modifier.padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(Modifier.size(7.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+        Text(
+            "Claude Device Manager connected",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -698,21 +757,30 @@ private fun SaveAsDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
 /** The device column header's "Restart adb server" icon; disabled with a spinner while a restart runs. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun RestartAdbButton(restarting: Boolean, onClick: () -> Unit) {
-    val label = if (restarting) "Restarting adb…" else "Restart adb server"
+internal fun RestartAdbButton(
+    restarting: Boolean,
+    onClick: () -> Unit,
+    /** Set while restarting is not allowed (Claude Device Manager is running): the button is disabled and says why. */
+    blockedReason: String? = null,
+) {
+    val label = when {
+        restarting -> "Restarting adb…"
+        blockedReason != null -> blockedReason
+        else -> "Restart adb server"
+    }
     TooltipArea(
         tooltip = {
             Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
                 Text(
                     label,
-                    Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    Modifier.widthIn(max = 260.dp).padding(horizontal = 8.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.inverseOnSurface,
                 )
             }
         },
     ) {
-        IconButton(onClick = onClick, enabled = !restarting, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = onClick, enabled = !restarting && blockedReason == null, modifier = Modifier.size(32.dp)) {
             if (restarting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
             else Icon(Icons.Filled.Refresh, contentDescription = label, Modifier.size(20.dp))
         }

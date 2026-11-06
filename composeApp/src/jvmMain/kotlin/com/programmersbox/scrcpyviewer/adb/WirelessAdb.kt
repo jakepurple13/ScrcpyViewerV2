@@ -1,5 +1,7 @@
 package com.programmersbox.scrcpyviewer.adb
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.programmersbox.scrcpyviewer.Os
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -12,6 +14,10 @@ sealed interface SwitchResult {
     data class ConnectFailed(val address: String, val message: String, val restartCanFix: Boolean = false) : SwitchResult
 }
 
+/** Why adb is not restarted while Claude Device Manager runs (the Restart adb button's tooltip says the same). */
+const val RESTART_BLOCKED =
+    "Claude Device Manager is running. Restarting adb would disconnect other sessions using its devices."
+
 /** Wireless debugging commands (pair, connect, mDNS discovery, `tcpip`) run through [client]. */
 open class WirelessAdb(
     private val client: AdbClient,
@@ -21,6 +27,11 @@ open class WirelessAdb(
     private val mac: Boolean = Os.isMac,
     /** Whether the adb server may be restarted without asking (it drops every adb connection, e.g. open mirrors). */
     private val canRestartServer: () -> Boolean = { true },
+    /**
+     * True while other tools share the adb server through Claude Device Manager: the app never restarts it then,
+     * since that would cut off their sessions.
+     */
+    private val serverShared: () -> Boolean = { false },
 ) {
     /** Services from `adb mdns services` plus [extraDiscovery]; failures count as nothing found. */
     open suspend fun mdnsServices(): List<MdnsService> {
@@ -49,7 +60,10 @@ open class WirelessAdb(
     }
 
     /** Restarts the adb server so this app owns it (the "Restart adb" action). */
-    open suspend fun restartServer() = client.restartServer()
+    open suspend fun restartServer() {
+        check(!withContext(Dispatchers.IO) { serverShared() }) { RESTART_BLOCKED }
+        client.restartServer()
+    }
 
     /**
      * On macOS, Local Network privacy blocks an adb server started by another app (or an older build of this one):
@@ -59,6 +73,7 @@ open class WirelessAdb(
     private suspend fun withServerRestart(op: suspend () -> AdbOutcome): AdbOutcome {
         val first = op()
         if (!mac || client.startedServer || first !is AdbOutcome.Failed || BLOCKED.none { it in first.message }) return first
+        if (withContext(Dispatchers.IO) { serverShared() }) return first
         if (!canRestartServer()) return first.copy(restartCanFix = true)
         guarded {
             client.restartServer()

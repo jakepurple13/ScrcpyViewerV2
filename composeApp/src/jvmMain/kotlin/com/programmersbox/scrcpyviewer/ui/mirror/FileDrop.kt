@@ -1,5 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -148,7 +151,14 @@ class FileTransfers internal constructor(
  * the rest dropped) when the window closes or a Reconnect replaces the session. Results go to [notify].
  */
 @Composable
-fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient?, notify: (String) -> Unit): FileTransfers {
+fun rememberFileTransfers(
+    serial: String,
+    session: ScrcpySession,
+    adb: AdbClient?,
+    notify: (String) -> Unit,
+    /** False while Claude Device Manager has not granted the device (queued, or taken back): nothing may touch it. */
+    deviceReady: StateFlow<Boolean> = MutableStateFlow(true),
+): FileTransfers {
     val currentNotify by rememberUpdatedState(notify)
     val scope = remember(session) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     DisposableEffect(scope) { onDispose { scope.cancel() } }
@@ -157,14 +167,17 @@ fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient
         val queue = adb?.let {
             FileTransferQueue(
                 serial, it, target,
-                canTransfer = { session.status.value.isConnected() },
+                canTransfer = { session.status.value.isConnected() && deviceReady.value },
                 scanFile = { path -> session.send(ControlMessage.ScanFile(path)) },
                 scope = scope,
             )
         }
         FileTransfers(queue, target) { currentNotify(it) }
     }
-    LaunchedEffect(transfers) { session.status.collect { transfers.connected = it.isConnected() } }
+    LaunchedEffect(transfers, deviceReady) {
+        combine(session.status, deviceReady) { status, ready -> status.isConnected() && ready }
+            .collect { transfers.connected = it }
+    }
     transfers.queue?.let { queue ->
         LaunchedEffect(queue) { queue.progress.collect { transfers.progressLabel = it?.label } }
         LaunchedEffect(queue) { queue.results.collect { currentNotify(it.message) } }

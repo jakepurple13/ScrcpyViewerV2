@@ -1,5 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import com.programmersbox.scrcpyviewer.cdm.HoldState
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material.icons.filled.PriorityHigh
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -235,6 +240,8 @@ data class MirrorUiState(
     val dropHint: DropHint? = null,
     /** The quick actions sheet right of the toolbar. */
     val quickActions: QuickActionsUiState = QuickActionsUiState(),
+    /** The window's Claude Device Manager lease; null when CDM is not involved. */
+    val hold: HoldState? = null,
 ) {
     val fit: Boolean get() = zoom == null
 }
@@ -405,8 +412,15 @@ fun MirrorWindow(
         }
     }
 
-    val transfers = rememberFileTransfers(serial, session, adb, ::notify)
-    val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
+    val holdStates by controller.holdStates.collectAsState()
+    // Nothing in the window may touch the device until CDM has granted it (or is not running).
+    val deviceReady = remember(serial) {
+        controller.holdStates.mapState { states -> states[serial].let { it == null || it is HoldState.Held } }
+    }
+    val transfers = rememberFileTransfers(serial, session, adb, ::notify, deviceReady)
+    val quickActions = rememberQuickActions(
+        serial, session, adb, ::notify, onManage = actionsNavigation::open, deviceReady = deviceReady,
+    )
     val sheetFocus = remember { SheetFocus() }
 
     val orientation = remember(values) { DisplayOrientation.forOptions(values) }
@@ -533,6 +547,7 @@ fun MirrorWindow(
         transferLabel = transfers.progressLabel,
         dropHint = transfers.hint,
         quickActions = quickActions.uiState,
+        hold = holdStates[serial],
     )
 
     AppWindow(
@@ -803,6 +818,8 @@ fun MirrorWindow(
                             }
                         },
                         onReconnect = { controller.reconnect(serial) },
+                        onWaitAgain = { controller.requeue(serial) },
+                        onCloseWindow = { controller.close(serial) },
                         onPointer = {
                             when {
                                 "no-control" in e -> Unit
@@ -954,6 +971,10 @@ fun MirrorContent(
     pinnedStageWidth: Int? = null,
     /** The quick actions sheet's Shell tab console; null shows an empty Shell tab. */
     shellConsole: ShellConsole? = null,
+    /** "Wait again" after Claude Device Manager took the device back. */
+    onWaitAgain: () -> Unit = {},
+    /** Cancel (while queued) and Close (after the device was taken back) close the window. */
+    onCloseWindow: () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -995,7 +1016,12 @@ fun MirrorContent(
                     .onGloballyPositioned { onStageBounds(it.boundsInWindow()) },
             ) {
                 Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
-                if (state.status == SessionStatus.Disconnected || state.status == SessionStatus.Failed) {
+                val hold = state.hold
+                if (hold is HoldState.Waiting) {
+                    CdmWaitingScrim(state.model, hold.position, onCancel = onCloseWindow)
+                } else if (hold == HoldState.Lost) {
+                    CdmTakenBackScrim(state.model, onWaitAgain = onWaitAgain, onClose = onCloseWindow)
+                } else if (state.status == SessionStatus.Disconnected || state.status == SessionStatus.Failed) {
                     DisconnectedScrim(state, onReconnect)
                 } else if (state.status == SessionStatus.Connecting || state.frameSize == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -1316,7 +1342,10 @@ private fun DisconnectedScrim(state: MirrorUiState, onReconnect: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Disconnected", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (state.hold is HoldState.Refused) "Device not available" else "Disconnected",
+                    style = MaterialTheme.typography.titleMedium,
+                )
                 state.error?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant, maxLines = 4)
                 }
@@ -1326,6 +1355,76 @@ private fun DisconnectedScrim(state: MirrorUiState, onReconnect: () -> Unit) {
                 Spacer(Modifier.height(4.dp))
                 Button(onClick = onReconnect, enabled = state.canReconnect) { Text("Reconnect") }
             }
+        }
+    }
+}
+
+/** The stage's dimmed backdrop with one centered card, shared by the scrims below. */
+@Composable
+private fun ScrimCard(content: @Composable ColumnScope.() -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Box(Modifier.fillMaxSize().background(colors.scrim.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
+        Surface(shape = RoundedCornerShape(16.dp), color = colors.surfaceContainerHigh, tonalElevation = 3.dp) {
+            Column(
+                Modifier.padding(horizontal = 24.dp, vertical = 20.dp).width(260.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                content = content,
+            )
+        }
+    }
+}
+
+/** Queued in Claude Device Manager: another session has the device. Cancel leaves the queue (closes the window). */
+@Composable
+internal fun CdmWaitingScrim(model: String, position: Int?, onCancel: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    ScrimCard {
+        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+        Text("Waiting for $model", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+        Text(
+            if (position != null) "Another session is using this device in Claude Device Manager."
+            else "Asking Claude Device Manager for this device…",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        if (position != null) {
+            Surface(shape = RoundedCornerShape(6.dp), color = colors.tertiaryContainer) {
+                Text(
+                    "Queue position $position",
+                    Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelLarge.copy(fontFamily = FontFamily.Monospace),
+                    color = colors.onTertiaryContainer,
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        OutlinedButton(onClick = onCancel) { Text("Cancel") }
+    }
+}
+
+/** Claude Device Manager gave the device to another session: mirroring stopped; Wait again re-joins the queue. */
+@Composable
+internal fun CdmTakenBackScrim(model: String, onWaitAgain: () -> Unit, onClose: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    ScrimCard {
+        Surface(shape = CircleShape, color = colors.errorContainer, modifier = Modifier.size(36.dp)) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Filled.PriorityHigh, contentDescription = null, tint = colors.onErrorContainer)
+            }
+        }
+        Text("Device taken back", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Claude Device Manager gave $model to another session. Mirroring stopped.",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onWaitAgain) { Text("Wait again") }
+            OutlinedButton(onClick = onClose) { Text("Close") }
         }
     }
 }
