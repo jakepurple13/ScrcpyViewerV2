@@ -1,9 +1,17 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.HorizontalScrollbar
@@ -58,6 +66,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -71,6 +80,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -85,7 +95,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
@@ -134,7 +146,11 @@ import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.scrcpy.StreamProtocol
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
+import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.mapState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
@@ -237,6 +253,9 @@ data class MirrorUiState(
     val quickActions: QuickActionsUiState = QuickActionsUiState(),
 ) {
     val fit: Boolean get() = zoom == null
+
+    /** The session ended (or failed): the stage shows its last frame, greyed, under the Disconnected card. */
+    val disconnected: Boolean get() = status == SessionStatus.Disconnected || status == SessionStatus.Failed
 }
 
 /** Milliseconds on the monotonic clock the click dots use. */
@@ -995,10 +1014,25 @@ fun MirrorContent(
                     .onGloballyPositioned { onStageBounds(it.boundsInWindow()) },
             ) {
                 Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
-                if (state.status == SessionStatus.Disconnected || state.status == SessionStatus.Failed) {
-                    DisconnectedScrim(state, onReconnect)
-                } else if (state.status == SessionStatus.Connecting || state.frameSize == null) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                val disconnected = state.disconnected
+                // Fully qualified: the enclosing Row's RowScope.AnimatedVisibility would otherwise win.
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !disconnected && (state.status == SessionStatus.Connecting || state.frameSize == null),
+                    enter = fadeIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)),
+                    // Quick: the frame is already fading in underneath, and the skeleton is not its shape.
+                    exit = fadeOut(tween(SKELETON_OUT_MILLIS, easing = EmphasizedAccelerate)),
+                ) {
+                    StageSkeleton(state.frameSize?.let(state.orientation::orientedSize))
+                }
+                // The card keeps what it said while it leaves (a reconnect is already Connecting). A plain holder.
+                val lastDown = remember { arrayOfNulls<MirrorUiState>(1) }
+                if (disconnected) lastDown[0] = state
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = disconnected,
+                    enter = fadeIn(tween(SCRIM_IN_MILLIS, easing = EmphasizedDecelerate)),
+                    exit = fadeOut(tween(CLOSE_MILLIS, delayMillis = CARD_DELAY_MILLIS, easing = EmphasizedAccelerate)),
+                ) {
+                    DisconnectedScrim(lastDown[0] ?: state, onReconnect)
                 }
                 // Keep the last hint while fading out, so the overlay doesn't go blank mid-animation.
                 // A plain holder, not snapshot state: writing it during composition invalidates nothing.
@@ -1122,11 +1156,43 @@ private fun AppTitleBarScope.ZoomControls(state: MirrorUiState, onZoom: (ZoomCom
             Modifier.interactive("zoom-percent").widthIn(min = 56.dp),
             contentPadding = PaddingValues(horizontal = 6.dp),
         ) {
-            Text(Zoom.label(scale), maxLines = 1, softWrap = false, fontFamily = FontFamily.Monospace)
+            ZoomReadout(ZoomReading(scale, state.fit))
         }
         IconButton(onClick = { onZoom(ZoomCommand.In) }, Modifier.interactive("zoom-in").size(32.dp)) {
             Text("+", style = MaterialTheme.typography.titleMedium, maxLines = 1, softWrap = false)
         }
+    }
+}
+
+/**
+ * The zoom percent, rolling to a new value: up (the new one in from below) when the zoom grows, down when it
+ * shrinks. A fitted scale that follows a window resize changes at once, without a roll.
+ */
+@Composable
+private fun ZoomReadout(reading: ZoomReading) {
+    AnimatedContent(
+        targetState = reading,
+        transitionSpec = {
+            val roll = Zoom.roll(initialState, targetState)
+            val spec = tween<IntOffset>(OPEN_MILLIS, easing = EmphasizedDecelerate)
+            val fade = tween<Float>(OPEN_MILLIS, easing = EmphasizedDecelerate)
+            when (roll) {
+                0 -> EnterTransition.None togetherWith ExitTransition.None
+                else -> (slideInVertically(spec) { it * roll } + fadeIn(fade)) togetherWith
+                    (slideOutVertically(spec) { -it * roll } + fadeOut(fade))
+            }.using(SizeTransform(clip = true))
+        },
+        contentAlignment = Alignment.Center,
+        contentKey = { Zoom.label(it.scale) },
+        label = "zoom",
+    ) {
+        Text(
+            Zoom.label(it.scale),
+            maxLines = 1,
+            softWrap = false,
+            fontFamily = FontFamily.Monospace,
+            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+        )
     }
 }
 
@@ -1162,6 +1228,9 @@ private fun AppTitleBarScope.OverflowMenu(state: MirrorUiState, onZoom: (ZoomCom
     }
 }
 
+/** The full radius of the show-touches release ring. */
+private val CLICK_RING_RADIUS = 28.dp
+
 /** Pixels a Shift + wheel notch pans the zoomed stage. */
 private const val PAN_PX_PER_NOTCH = 60f
 
@@ -1188,7 +1257,15 @@ private fun Stage(
     val dotRing = MaterialTheme.colorScheme.onPrimary
     fun DrawScope.drawClickDot() {
         val dot = clickIndicator?.state(now) ?: return
-        val radius = 12.dp.toPx()
+        dot.ring?.let { ring ->
+            // The release ripple: grows out of the dot and fades.
+            drawCircle(
+                dotColor.copy(alpha = ring.alpha), radius = CLICK_RING_RADIUS.toPx() * ring.radiusFraction,
+                center = dot.position, style = Stroke(2.dp.toPx()),
+            )
+        }
+        if (dot.alpha <= 0f) return
+        val radius = 12.dp.toPx() * dot.scale
         drawCircle(dotColor.copy(alpha = 0.4f * dot.alpha), radius = radius, center = dot.position)
         // A thin light ring keeps the dot visible on content close to the primary color.
         drawCircle(dotRing.copy(alpha = 0.6f * dot.alpha), radius = radius, center = dot.position, style = Stroke(1.5.dp.toPx()))
@@ -1215,11 +1292,34 @@ private fun Stage(
     val orientation = state.orientation
     val fs = state.frameSize?.let(orientation::orientedSize)
     val zoom = state.zoom
+    // Only whether there is a frame is read here (it changes once per session), never the frame itself.
+    val hasFrame by remember(frame) { derivedStateOf { frame.value != null } }
+    val disconnected = state.disconnected
+    val waiting = !disconnected && (state.status == SessionStatus.Connecting || state.frameSize == null)
+    val stretch = state.stretch && zoom == null
+    val motion = rememberStageMotion(
+        revealed = hasFrame && !waiting,
+        disconnected = disconnected,
+        frameSize = fs,
+        flip = orientation.flip,
+        latestFrame = latestFrame,
+        orientation = orientation,
+        oldImageSize = { old, canvas ->
+            if (zoom != null) {
+                Size(old.width * zoom, old.height * zoom)
+            } else {
+                InputMapper.contentRect(old, Rect(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat()), stretch).size
+            }
+        },
+    )
     if (zoom == null || fs == null) {
         SideEffect { pan[0] = null }
-        Canvas(Modifier.fillMaxSize().onSizeChanged(onViewSize).then(input)) {
+        Canvas(
+            Modifier.fillMaxSize().onSizeChanged(onViewSize).then(input).clipToBounds()
+                .stageMotionLayer(motion) { size -> fs?.let { InputMapper.contentRect(it, Rect(Offset.Zero, size), stretch) } ?: Rect(Offset.Zero, size) },
+        ) {
             frame.value // subscribe: a new frame redraws
-            drawLatestFrame(latestFrame, FilterQuality.Low, orientation) { f ->
+            drawLatestFrame(latestFrame, FilterQuality.Low, orientation, greyColorFilter(motion.grey.value)) { f ->
                 InputMapper.contentRect(orientation.orientedSize(IntSize(f.width, f.height)), Rect(0f, 0f, size.width, size.height), state.stretch)
             }
             drawClickDot()
@@ -1257,11 +1357,12 @@ private fun Stage(
                 Box(Modifier.widthIn(min = stageW).heightIn(min = stageH), contentAlignment = Alignment.Center) {
                     Canvas(
                         Modifier.size(with(density) { DpSize((fs.width * zoom).toDp(), (fs.height * zoom).toDp()) })
-                            .onSizeChanged(onViewSize).then(input),
+                            .onSizeChanged(onViewSize).then(input)
+                            .stageMotionLayer(motion) { size -> Rect(Offset.Zero, size) },
                     ) {
                         frame.value // subscribe: a new frame redraws
                         val quality = if (zoom >= 1f) FilterQuality.None else FilterQuality.Low
-                        drawLatestFrame(latestFrame, quality, orientation) { Rect(0f, 0f, size.width, size.height) }
+                        drawLatestFrame(latestFrame, quality, orientation, greyColorFilter(motion.grey.value)) { Rect(0f, 0f, size.width, size.height) }
                         drawClickDot()
                     }
                 }
@@ -1278,11 +1379,13 @@ private fun Stage(
  *
  * [placement] gives the rectangle of the image as displayed; with an [orientation] the frame is drawn flipped
  * (first) and rotated about that rectangle's centre, like `SDL_RenderTextureRotated` in v5.0 `screen.c`.
+ * [colorFilter] greys a disconnected frame ([greyColorFilter]); null on a live stage.
  */
 private fun DrawScope.drawLatestFrame(
     latest: () -> VideoFrame?,
     quality: FilterQuality,
     orientation: DisplayOrientation,
+    colorFilter: ColorFilter?,
     placement: (VideoFrame) -> Rect,
 ) {
     repeat(3) {
@@ -1299,18 +1402,42 @@ private fun DrawScope.drawLatestFrame(
                 if (orientation.quarterTurns != 0) rotate(orientation.degrees, center)
                 if (orientation.flip) scale(-1f, 1f, center)
             }) {
-                drawImage(bitmap.asComposeImageBitmap(), dstOffset = offset, dstSize = size, filterQuality = quality)
+                drawImage(bitmap.asComposeImageBitmap(), dstOffset = offset, dstSize = size, filterQuality = quality, colorFilter = colorFilter)
             }
         }
         if (drawn != null) return
     }
 }
 
+/** The connecting skeleton fades out over this long as the first frame comes in. */
+private const val SKELETON_OUT_MILLIS = 140
+
+/** The Disconnected scrim fades in over this long; the card follows [CARD_DELAY_MILLIS] later, over [CARD_IN_MILLIS]. */
+private const val SCRIM_IN_MILLIS = 300
+private const val CARD_DELAY_MILLIS = 120
+private const val CARD_IN_MILLIS = 360
+
+/** How far the Disconnected card rises as it fades in. */
+private val CARD_RISE = 24.dp
+
+/** Shown in an AnimatedVisibility: the scrim fades with it, the card rises in a little after it (and drops out first). */
 @Composable
-private fun DisconnectedScrim(state: MirrorUiState, onReconnect: () -> Unit) {
+private fun AnimatedVisibilityScope.DisconnectedScrim(state: MirrorUiState, onReconnect: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    val density = LocalDensity.current
+    val rise = with(density) { CARD_RISE.roundToPx() }
     Box(Modifier.fillMaxSize().background(colors.scrim.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
-        Surface(shape = RoundedCornerShape(16.dp), color = colors.surfaceContainerHigh, tonalElevation = 3.dp) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = colors.surfaceContainerHigh,
+            tonalElevation = 3.dp,
+            modifier = Modifier.animateEnterExit(
+                enter = slideInVertically(tween(CARD_IN_MILLIS, CARD_DELAY_MILLIS, EmphasizedDecelerate)) { rise } +
+                    fadeIn(tween(CARD_IN_MILLIS, CARD_DELAY_MILLIS, EmphasizedDecelerate)),
+                exit = slideOutVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { rise } +
+                    fadeOut(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)),
+            ),
+        ) {
             Column(
                 Modifier.padding(horizontal = 24.dp, vertical = 20.dp).width(260.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
