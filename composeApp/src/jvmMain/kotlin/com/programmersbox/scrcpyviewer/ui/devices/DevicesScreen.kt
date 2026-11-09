@@ -320,8 +320,10 @@ private fun DeviceColumn(
                             onClick = { onSelect(device.serial) },
                             onSecondaryClick = { onHighlight(device.serial) },
                             menu = { onDismiss -> DeviceMenu(device, state, actions, onDismiss) },
-                            menuInitiallyOpen = device.serial == contextMenuSerial,
+                            menuInitiallyOpen = entry.present && device.serial == contextMenuSerial,
                             onDoubleClick = { actions.onOpen(device.serial) },
+                            // A leaving row is already gone from adb: no clicks, double-clicks or menu while it exits.
+                            interactive = entry.present,
                             status = chipStatus(device, switching = device.serial in state.switching),
                             glow = glow,
                             modifier = Modifier.padding(bottom = 6.dp),
@@ -393,6 +395,8 @@ private fun DeviceRow(
     /** Plays the "just arrived" tint: the device connected after the list first loaded. */
     glow: Boolean,
     modifier: Modifier = Modifier,
+    /** False while the row plays its exit: it ignores clicks and opens no menu. */
+    interactive: Boolean = true,
 ) {
     var menuAt by remember { mutableStateOf(if (menuInitiallyOpen) Offset(120f, 40f) else null) }
     val shape = RoundedCornerShape(12.dp)
@@ -412,7 +416,7 @@ private fun DeviceRow(
         Modifier
             .fillMaxWidth()
             .onPointerEvent(PointerEventType.Press) { event ->
-                if (event.buttons.isSecondaryPressed) {
+                if (interactive && event.buttons.isSecondaryPressed) {
                     onSecondaryClick()
                     menuAt = event.changes.first().position
                 }
@@ -420,7 +424,7 @@ private fun DeviceRow(
             .clip(shape)
             .arrivalGlow(glow, MaterialTheme.colorScheme.surface)
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
-            .combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick)
+            .combinedClickable(enabled = interactive, onClick = onClick, onDoubleClick = onDoubleClick)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),

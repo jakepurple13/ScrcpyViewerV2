@@ -145,9 +145,13 @@ fun rememberStageMotion(
     LaunchedEffect(motion, frameSize) {
         val old = motion.lastFrame
         motion.lastFrame = frameSize ?: old
-        if (frameSize == null) return@LaunchedEffect
-        val from = turnStartDegrees(old, frameSize, flip) ?: return@LaunchedEffect
-        if (motion.reveal.value < 1f || old == null) return@LaunchedEffect // nothing on screen to turn from
+        val from = frameSize?.let { turnStartDegrees(old, it, flip) }
+        if (frameSize == null || from == null || motion.reveal.value < 1f || old == null) {
+            // No new turn (nothing on screen to turn from, or the size kept its orientation). A turn this effect's
+            // restart cancelled midway would otherwise stay drawn partly rotated, so finish it.
+            if (motion.turn.value < 1f) motion.turn.animateTo(1f, tween(TURN_MILLIS / 2, easing = EmphasizedDecelerate))
+            return@LaunchedEffect
+        }
         val oldImage = oldImageSize(old, motion.canvasSize)
         // The session announces the new size before the decoder delivers a frame of it: wait for that frame, so
         // the old frame is never drawn turned. Checked before the frame's draw, so the new frame's first draw turns.

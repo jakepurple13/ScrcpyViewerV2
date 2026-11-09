@@ -89,7 +89,11 @@ class ShellConsole(
         val all = lines
         val first = firstSeq
         val needle = filter
-        if (needle.isEmpty()) return@derivedStateOf all.mapIndexed { i, line -> KeyedLine(first + i, line) }
+        // Unfiltered: a view over the (immutable) lines, so a streaming append doesn't copy up to maxLines entries.
+        if (needle.isEmpty()) return@derivedStateOf object : AbstractList<KeyedLine>() {
+            override val size get() = all.size
+            override fun get(index: Int) = KeyedLine(first + index, all[index])
+        }
         val result = ArrayList<KeyedLine>()
         var run = ArrayList<KeyedLine>()
         var hit = false
@@ -112,7 +116,7 @@ class ShellConsole(
     }
 
     /** [lines] with the filter applied: matching output, plus the header and exit of every run that has one. */
-    val visible: List<ConsoleLine> by derivedStateOf { visibleKeyed.map { it.line } }
+    val visible: List<ConsoleLine> by derivedStateOf { if (filter.isEmpty()) lines else visibleKeyed.map { it.line } }
 
     /** Output lines that contain the filter; 0 while the filter is empty. */
     val matchCount: Int by derivedStateOf {
