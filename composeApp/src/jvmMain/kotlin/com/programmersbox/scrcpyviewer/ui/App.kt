@@ -1,5 +1,19 @@
 package com.programmersbox.scrcpyviewer.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.contentColorFor
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.platform.LocalDensity
+import com.programmersbox.scrcpyviewer.ui.navigation.RailIndicator
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -78,6 +92,71 @@ private val TopLevelRoute.icon: ImageVector
     }
 
 /**
+ * The navigation rail. Its selection pill is one shape drawn behind all items ([RailIndicator]) rather than each
+ * item's own indicator, so it travels between destinations: the edge facing the move leads, the other follows.
+ */
+@Composable
+private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean) {
+    val indicator = remember { RailIndicator() }
+    val selected = navigator.current
+    val selectedCenter = indicator.centers[selected]
+    val halfHeight = with(LocalDensity.current) { IndicatorHeight.toPx() / 2 }
+    LaunchedEffect(indicator, selected, selectedCenter, halfHeight) {
+        selectedCenter?.let { indicator.moveTo(selected, it, halfHeight) }
+    }
+    val pill = MaterialTheme.colorScheme.secondaryContainer
+    val container = MaterialTheme.colorScheme.surfaceContainer
+    // Set during placement, before the items report their positions.
+    val railCoordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    Box(
+        Modifier.fillMaxHeight()
+            .background(container)
+            .onPlaced { railCoordinates[0] = it }
+            .drawBehind {
+                if (!indicator.placed) return@drawBehind
+                // Animated edges are read here, so the move only redraws.
+                val width = IndicatorWidth.toPx()
+                val top = indicator.top.value
+                drawRoundRect(
+                    pill,
+                    topLeft = Offset(indicator.centerX - width / 2, top),
+                    size = Size(width, indicator.bottom.value - top),
+                    cornerRadius = CornerRadius(IndicatorHeight.toPx() / 2),
+                )
+            },
+    ) {
+        NavigationRail(containerColor = Color.Transparent, contentColor = contentColorFor(container)) {
+            TopLevelRoute.all.forEach { route ->
+                val icon = Modifier.onGloballyPositioned { coordinates ->
+                    val rail = railCoordinates[0] ?: return@onGloballyPositioned
+                    if (!rail.isAttached || !coordinates.isAttached) return@onGloballyPositioned
+                    val center = rail.localPositionOf(coordinates, Offset(coordinates.size.width / 2f, coordinates.size.height / 2f))
+                    if (indicator.centers[route] != center) indicator.centers[route] = center
+                }
+                NavigationRailItem(
+                    selected = route == selected,
+                    onClick = { navigator.select(route) },
+                    icon = {
+                        if (route == TopLevelRoute.Settings && settingsBadge) {
+                            BadgedBox(badge = { Badge() }) { Icon(route.icon, contentDescription = route.label, modifier = icon) }
+                        } else {
+                            Icon(route.icon, contentDescription = route.label, modifier = icon)
+                        }
+                    },
+                    label = { Text(route.label) },
+                    // The shared pill above replaces the item's own indicator.
+                    colors = NavigationRailItemDefaults.colors(indicatorColor = Color.Transparent),
+                )
+            }
+        }
+    }
+}
+
+/** Material 3's rail indicator size, centered on the icon. */
+private val IndicatorWidth = 56.dp
+private val IndicatorHeight = 32.dp
+
+/**
  * The main window's content. [navigator] and the pane states are hoisted (tests pass their own);
  * the pane states and ViewModels live above the navigation so divider positions and screen state survive tab switches.
  */
@@ -125,22 +204,7 @@ fun App(
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             CompositionLocalProvider(LocalSnackbarHostState provides snackbar) {
                 Row(Modifier.fillMaxSize()) {
-                    NavigationRail(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
-                        TopLevelRoute.all.forEach { route ->
-                            NavigationRailItem(
-                                selected = route == navigator.current,
-                                onClick = { navigator.select(route) },
-                                icon = {
-                                    if (route == TopLevelRoute.Settings && update.available != null) {
-                                        BadgedBox(badge = { Badge() }) { Icon(route.icon, contentDescription = route.label) }
-                                    } else {
-                                        Icon(route.icon, contentDescription = route.label)
-                                    }
-                                },
-                                label = { Text(route.label) },
-                            )
-                        }
-                    }
+                    Rail(navigator, settingsBadge = update.available != null)
                     Box(Modifier.fillMaxSize()) {
                         TopLevelNavDisplay(navigator) { route ->
                             when (route) {

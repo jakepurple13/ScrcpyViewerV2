@@ -1,6 +1,38 @@
 package com.programmersbox.scrcpyviewer.ui.update
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.IntOffset
+import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.OvershootEasing
+import com.programmersbox.scrcpyviewer.ui.common.dialogEntrance
+import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
+import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -61,8 +93,8 @@ fun UpdateDialog(
         is UpdateState.Failed -> (state.release ?: ui.available)?.let {
             OfferDialog(it, state.message, ui, onLater, onUpdate)
         }
-        is UpdateState.Downloading -> ProgressDialog(state.release, state, onCancel)
-        is UpdateState.Installing -> ProgressDialog(state.release, null, null)
+        // One call site for both, so the same dialog plays the download-finished animation instead of reopening.
+        is UpdateState.Downloading, is UpdateState.Installing -> ProgressDialog(state, onCancel)
         else -> Unit
     }
 }
@@ -70,7 +102,7 @@ fun UpdateDialog(
 @Composable
 private fun DialogCard(content: @Composable () -> Unit) {
     Surface(
-        modifier = Modifier.width(400.dp),
+        modifier = Modifier.dialogEntrance().width(400.dp),
         shape = MaterialTheme.shapes.extraLarge,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 6.dp,
@@ -137,39 +169,134 @@ private fun OfferDialog(
     }
 }
 
-/** [downloading] is null while installing: no numbers, an indeterminate bar and no buttons. */
+internal const val INSTALLING_TEXT = "Download complete. Installing…"
+
+/**
+ * Downloading shows the bar, the numbers and Cancel. Once the download is done ([UpdateState.Installing]) the bar
+ * collapses, a check pops in and draws itself, and the status text changes; there is nothing left to cancel.
+ */
 @Composable
-private fun ProgressDialog(release: Release, downloading: UpdateState.Downloading?, onCancel: (() -> Unit)?) {
+private fun ProgressDialog(state: UpdateState, onCancel: () -> Unit) {
+    val downloading = state as? UpdateState.Downloading
+    val release = downloading?.release ?: (state as UpdateState.Installing).release
     Dialog(
         onDismissRequest = {},
         properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
     ) {
         DialogCard {
             Text("Updating to ${release.versionLabel}", style = MaterialTheme.typography.headlineSmall)
-            if (downloading != null) {
-                Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(8.dp))
+            // Keyed by phase, so the numbers ticking up during the download update in place.
+            AnimatedContent(
+                targetState = state,
+                contentKey = { it is UpdateState.Installing },
+                transitionSpec = {
+                    val inSpec = tween<Float>(OPEN_MILLIS, delayMillis = CLOSE_MILLIS / 2, easing = EmphasizedDecelerate)
+                    val inSlide = tween<IntOffset>(OPEN_MILLIS, delayMillis = CLOSE_MILLIS / 2, easing = EmphasizedDecelerate)
+                    val outSpec = tween<Float>(CLOSE_MILLIS / 2, easing = EmphasizedAccelerate)
+                    val outSlide = tween<IntOffset>(CLOSE_MILLIS / 2, easing = EmphasizedAccelerate)
+                    (fadeIn(inSpec) + slideInVertically(inSlide) { it / 2 }) togetherWith
+                        (fadeOut(outSpec) + slideOutVertically(outSlide) { -it / 3 })
+                },
+                label = "updateStatus",
+            ) { phase ->
                 Text(
-                    downloading.progressText(),
+                    (phase as? UpdateState.Downloading)?.progressText() ?: INSTALLING_TEXT,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(12.dp))
-                DownloadProgressBar(downloading, Modifier.fillMaxWidth())
-            } else {
-                Spacer(Modifier.height(16.dp))
-                LinearProgressIndicator(Modifier.fillMaxWidth())
             }
+            Spacer(Modifier.height(12.dp))
+            DownloadProgress(downloading)
             Text(
                 "Scrcpy Vwr will close and reopen. Your computer may ask for your password. Open mirror windows will close.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 12.dp),
             )
-            if (onCancel != null) {
+            AnimatedVisibility(downloading != null, enter = expandFadeIn(), exit = shrinkFadeOut()) {
                 Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onCancel) { Text("Cancel") }
                 }
             }
+        }
+    }
+}
+
+private val CheckCircleSize = 40.dp
+private val BarHeight = 4.dp
+private const val BAR_COLLAPSE_MILLIS = OPEN_MILLIS
+private const val CHECK_POP_MILLIS = 340
+private const val CHECK_DRAW_DELAY_MILLIS = 200
+private const val CHECK_DRAW_MILLIS = 360
+
+/**
+ * The download bar while [downloading], then the "ready" check once it is null (done): the bar collapses toward its
+ * center and fades, the circle pops in (overshooting) and the check's stroke draws itself. Done on first appearance
+ * shows the finished check without animating. Animated values are read only in layout, layer and draw.
+ */
+@Composable
+private fun DownloadProgress(downloading: UpdateState.Downloading?) {
+    val done = downloading == null
+    val startDone = remember { done }
+    val barGone = remember { Animatable(if (startDone) 1f else 0f) }
+    val circle = remember { Animatable(if (startDone) 1f else 0f) }
+    val check = remember { Animatable(if (startDone) 1f else 0f) }
+    // The last numbers, so the collapsing bar keeps its fill instead of jumping.
+    val lastDownloadHolder = remember { arrayOfNulls<UpdateState.Downloading>(1) }
+    if (downloading != null) lastDownloadHolder[0] = downloading
+    val lastDownload = lastDownloadHolder[0]
+    LaunchedEffect(done) {
+        if (!done || check.value == 1f) return@LaunchedEffect
+        barGone.animateTo(1f, tween(BAR_COLLAPSE_MILLIS, easing = EmphasizedAccelerate))
+        launch { circle.animateTo(1f, tween(CHECK_POP_MILLIS, easing = OvershootEasing)) }
+        // The delay is part of the animation (frame time), not a coroutine delay.
+        check.animateTo(1f, tween(CHECK_DRAW_MILLIS, delayMillis = CHECK_DRAW_DELAY_MILLIS, easing = EmphasizedDecelerate))
+    }
+    Box(
+        Modifier.fillMaxWidth().layout { measurable, constraints ->
+            // Grows from the bar's height to the circle's as the circle pops (not past it on the overshoot).
+            val grow = circle.value.coerceIn(0f, 1f)
+            val height = (BarHeight.toPx() + (CheckCircleSize.toPx() - BarHeight.toPx()) * grow).roundToInt()
+            val placeable = measurable.measure(constraints.copy(minHeight = height, maxHeight = height))
+            layout(placeable.width, height) { placeable.place(0, 0) }
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        val bar = Modifier.fillMaxWidth().graphicsLayer {
+            // Collapses toward its center.
+            val gone = barGone.value
+            scaleX = 1f - gone
+            alpha = 1f - gone
+        }
+        when (lastDownload) {
+            null -> if (!startDone) LinearProgressIndicator(bar)
+            else -> DownloadProgressBar(lastDownload, bar)
+        }
+        val circleColor = MaterialTheme.colorScheme.primaryContainer
+        val checkColor = MaterialTheme.colorScheme.onPrimaryContainer
+        Canvas(
+            Modifier.requiredSize(CheckCircleSize).graphicsLayer {
+                val s = circle.value
+                scaleX = s
+                scaleY = s
+                alpha = s.coerceIn(0f, 1f)
+            },
+        ) {
+            if (circle.value == 0f) return@Canvas
+            drawCircle(circleColor)
+            val trim = check.value
+            if (trim <= 0f) return@Canvas
+            val unit = size.width / 40f
+            val mark = Path().apply {
+                moveTo(12f * unit, 20.5f * unit)
+                lineTo(17.5f * unit, 26f * unit)
+                lineTo(28.5f * unit, 14.5f * unit)
+            }
+            val measure = PathMeasure().apply { setPath(mark, false) }
+            val drawn = Path()
+            measure.getSegment(0f, measure.length * trim, drawn, true)
+            drawPath(drawn, checkColor, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
     }
 }
