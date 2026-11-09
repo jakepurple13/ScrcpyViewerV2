@@ -1,12 +1,15 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +54,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
@@ -277,7 +281,9 @@ private fun CustomTile(
 }
 
 /**
- * One tile: icon (a spinner while [busy]), name, state line. Filled with the accent color while [on]; the ▶ mark
+ * One tile: icon (a spinner while [busy]), name, state line. Filled with the accent color while [on]: the fill grows
+ * as a circle from the press point (the centre for a key press or a change read back from the device) and shrinks
+ * back toward it, the colors follow a beat later and the icon squashes and pops. The ▶ mark
  * shows on run-once tiles; [dashed] is the "New action" tile. A busy or [enabled]-less tile ignores taps.
  */
 @Composable
@@ -296,12 +302,20 @@ private fun ActionTile(
     dashed: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
-    val container = if (on) colors.primary else if (dashed) Color.Transparent else colors.surfaceContainerHighest
-    val content = tint ?: if (on) colors.onPrimary else colors.onSurface
-    val secondary = tint ?: if (on) colors.onPrimary.copy(alpha = 0.8f) else colors.onSurfaceVariant
+    val container = if (dashed) Color.Transparent else colors.surfaceContainerHighest
+    // Text and icon follow the fill a beat behind it, so they cross the fill's edge on the new color.
+    val contentSpec = tween<Color>(TILE_CONTENT_MILLIS, delayMillis = TILE_CONTENT_DELAY_MILLIS)
+    val content by animateColorAsState(tint ?: if (on) colors.onPrimary else colors.onSurface, contentSpec)
+    val secondary by animateColorAsState(
+        tint ?: if (on) colors.onPrimary.copy(alpha = 0.8f) else colors.onSurfaceVariant, contentSpec,
+    )
     val outline = colors.outline
+    val fill = rememberTileFill(on)
+    val interactions = remember { MutableInteractionSource() }
+    TrackTilePresses(fill, interactions)
     Column(
         Modifier.fillMaxWidth().heightIn(min = 84.dp).clip(TileShape).background(container)
+            .tileFill(fill, colors.primary)
             .then(
                 if (dashed) {
                     Modifier.drawBehind {
@@ -312,7 +326,7 @@ private fun ActionTile(
                     }
                 } else Modifier,
             )
-            .clickable(enabled = enabled && !busy, role = role, onClick = onClick)
+            .clickable(interactions, LocalIndication.current, enabled = enabled && !busy, role = role, onClick = onClick)
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
         horizontalAlignment = if (dashed) Alignment.CenterHorizontally else Alignment.Start,
@@ -327,7 +341,14 @@ private fun ActionTile(
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = secondary)
                 }
             } else {
-                Icon(icon, contentDescription = null, Modifier.size(22.dp), tint = if (dashed) secondary else content)
+                Icon(
+                    icon, contentDescription = null,
+                    Modifier.size(22.dp).graphicsLayer {
+                        scaleX = fill.iconScale.value
+                        scaleY = fill.iconScale.value
+                    },
+                    tint = if (dashed) secondary else content,
+                )
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (runMark) Icon(Icons.Filled.PlayArrow, contentDescription = "Runs once", Modifier.size(14.dp), tint = secondary)

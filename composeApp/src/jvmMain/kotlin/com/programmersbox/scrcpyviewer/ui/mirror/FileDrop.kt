@@ -1,7 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +32,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.Os
@@ -40,6 +48,8 @@ import com.programmersbox.scrcpyviewer.files.requestsFor
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import java.awt.Component
 import java.awt.Container
 import java.awt.FileDialog
@@ -278,19 +288,43 @@ fun dropHint(paths: List<Path>?, pushTarget: String, connected: Boolean, isDirec
     }
 }
 
-/** Shown over the stage while files are dragged over the window. */
+/**
+ * Shown over the stage while files are dragged over the window. The border is a dashed outline that marches while a
+ * drop is allowed; the icon bobs. When it is not allowed the colors crossfade to the error colors, the march and bob
+ * stop, and the card shakes once. The card eases in the first time it shows (the caller fades the whole overlay).
+ */
 @Composable
 fun DropOverlay(hint: DropHint, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    val accent = if (hint.allowed) colors.primary else colors.error
+    val density = LocalDensity.current
+    val colorSpec = tween<Color>(250)
+    val accent by animateColorAsState(if (hint.allowed) colors.primary else colors.error, colorSpec)
+    val iconContainer by animateColorAsState(if (hint.allowed) colors.primaryContainer else colors.errorContainer, colorSpec)
+    val iconTint by animateColorAsState(if (hint.allowed) colors.onPrimaryContainer else colors.onErrorContainer, colorSpec)
+    val phase = rememberMarchingPhase(hint.allowed, with(density) { (DropDash + DropGap).toPx() })
+    val bob = rememberBob(hint.allowed)
+    val shake = rememberRefusalShake(hint.allowed)
+    val entrance = remember { Animatable(0f) }
+    LaunchedEffect(Unit) { entrance.animateTo(1f, tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) }
     Box(
         modifier.fillMaxSize()
             .background(colors.scrim.copy(alpha = 0.55f))
             .padding(12.dp)
-            .border(2.dp, accent, RoundedCornerShape(20.dp)),
+            .marchingDashBorder(2.dp, 20.dp, color = { accent }, phase = { phase.value }),
         contentAlignment = Alignment.Center,
     ) {
-        Surface(shape = RoundedCornerShape(16.dp), color = colors.surfaceContainerHigh, tonalElevation = 3.dp) {
+        Surface(
+            Modifier.graphicsLayer {
+                val t = entrance.value
+                val s = 0.92f + 0.08f * t
+                scaleX = s
+                scaleY = s
+                alpha = t
+                translationY = (1f - t) * 8.dp.toPx()
+                translationX = shake.value.dp.toPx()
+            },
+            shape = RoundedCornerShape(16.dp), color = colors.surfaceContainerHigh, tonalElevation = 3.dp,
+        ) {
             Column(
                 Modifier.padding(horizontal = 24.dp, vertical = 20.dp).widthIn(max = 300.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -302,10 +336,14 @@ fun DropOverlay(hint: DropHint, modifier: Modifier = Modifier) {
                     else -> Icons.Filled.UploadFile
                 }
                 Box(
-                    Modifier.size(56.dp).background(if (hint.allowed) colors.primaryContainer else colors.errorContainer, RoundedCornerShape(16.dp)),
+                    Modifier.size(56.dp)
+                        .graphicsLayer { translationY = bob.value.dp.toPx() }
+                        .drawBehind { drawRoundRect(iconContainer, cornerRadius = CornerRadius(16.dp.toPx())) },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(icon, contentDescription = null, Modifier.size(32.dp), tint = if (hint.allowed) colors.onPrimaryContainer else colors.onErrorContainer)
+                    Crossfade(icon, animationSpec = tween(200)) { shown ->
+                        Icon(shown, contentDescription = null, Modifier.size(32.dp), tint = iconTint)
+                    }
                 }
                 Text(hint.label, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
             }
