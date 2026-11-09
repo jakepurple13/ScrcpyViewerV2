@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.ui.devices
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -17,6 +18,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -27,7 +31,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.AlertDialogDefaults
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -39,6 +46,8 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,7 +63,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.DialogProperties
 import com.programmersbox.scrcpyviewer.adb.MdnsService
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
@@ -81,59 +89,134 @@ fun WifiPairingViewModel.actions() = WifiPairingActions(
 
 private val PairingTabLabels = mapOf(PairingTab.Qr to "QR code", PairingTab.Code to "Pairing code", PairingTab.Ip to "IP address")
 
-/** "Pair device over Wi-Fi": QR code, pairing code and IP address tabs. */
+/**
+ * "Pair device over Wi-Fi": QR code, pairing code and IP address tabs.
+ *
+ * Grows out of [anchor]'s button and shrinks back into it (see [ContainerTransformDialog]): pass the anchor's
+ * [PairDialogAnchor.visibility] as [visibleState], set its target to false to close, and keep this composed while
+ * [PairDialogAnchor.showing]. With the defaults it simply shows (screenshots).
+ */
 @Composable
-fun WifiPairingDialog(state: WifiPairingState, actions: WifiPairingActions, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnClickOutside = false,
+fun WifiPairingDialog(
+    state: WifiPairingState,
+    actions: WifiPairingActions,
+    onDismiss: () -> Unit,
+    visibleState: MutableTransitionState<Boolean> = remember { MutableTransitionState(true) },
+    anchor: PairDialogAnchor? = null,
+) {
+    ContainerTransformDialog(
+        visibleState = visibleState,
+        anchor = anchor,
+        origin = ContainerOrigin(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            cornerRadius = null,
+            face = { PairButtonFace() },
         ),
-        title = { Text("Pair device over Wi-Fi") },
-        text = {
-            Column(Modifier.width(500.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                PrimaryTabRow(selectedTabIndex = state.tab.ordinal, containerColor = Color.Transparent) {
-                    PairingTab.entries.forEach { tab ->
-                        Tab(
-                            selected = tab == state.tab,
-                            onClick = { actions.selectTab(tab) },
-                            text = { Text(PairingTabLabels.getValue(tab)) },
-                        )
-                    }
+        containerColor = AlertDialogDefaults.containerColor,
+        cornerRadius = 28.dp,
+        onDismissRequest = onDismiss,
+    ) {
+        DialogCard(
+            title = "Pair device over Wi-Fi",
+            confirmButton = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (state.busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Button(onClick = actions.submit, enabled = state.primaryEnabled) { Text(state.primaryLabel) }
                 }
-                AnimatedContent(
-                    targetState = state.tab,
-                    transitionSpec = {
-                        // Slide toward the tab that was picked: right-hand tabs enter from the right.
-                        val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
-                        (slideInHorizontally { width -> direction * width } + fadeIn()) togetherWith
-                            (slideOutHorizontally { width -> -direction * width } + fadeOut()) using
-                            SizeTransform(clip = true)
-                    },
-                    label = "pairing tab",
-                ) { tab ->
-                    Column(Modifier.fillMaxWidth().heightIn(min = 250.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        when (tab) {
-                            PairingTab.Qr -> QrTab(state)
-                            PairingTab.Code -> CodeTab(state, actions)
-                            PairingTab.Ip -> IpTab(state, actions)
-                        }
-                    }
-                }
-                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
-                if (state.canRestartAdb) {
-                    OutlinedButton(onClick = actions.restartAdb) { Text("Restart adb") }
+            },
+            dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
+        ) {
+            PairingBody(state, actions)
+        }
+    }
+}
+
+/** The "Pair over Wi-Fi" button's label, shown on the morphing container while it is still button-sized. */
+@Composable
+private fun PairButtonFace() {
+    Box(contentAlignment = Alignment.Center) {
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colorScheme.onSecondaryContainer,
+            LocalTextStyle provides MaterialTheme.typography.labelLarge,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.wrapContentSize(unbounded = true)) {
+                Icon(Icons.Filled.Wifi, contentDescription = null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Pair over Wi-Fi", maxLines = 1)
+            }
+        }
+    }
+}
+
+/** Lays out like Material 3's AlertDialog (title, text, end-aligned buttons, 24dp padding) without its own window. */
+@Composable
+private fun DialogCard(
+    title: String,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable () -> Unit,
+    text: @Composable () -> Unit,
+) {
+    Column(Modifier.widthIn(min = 280.dp, max = 560.dp).padding(24.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineSmall,
+            color = AlertDialogDefaults.titleContentColor,
+            modifier = Modifier.padding(bottom = 16.dp),
+        )
+        CompositionLocalProvider(
+            LocalContentColor provides AlertDialogDefaults.textContentColor,
+            LocalTextStyle provides MaterialTheme.typography.bodyMedium,
+        ) {
+            Box(Modifier.weight(1f, fill = false).padding(bottom = 24.dp)) { text() }
+        }
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colorScheme.primary,
+            LocalTextStyle provides MaterialTheme.typography.labelLarge,
+        ) {
+            Row(Modifier.align(Alignment.End), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                dismissButton()
+                confirmButton()
+            }
+        }
+    }
+}
+
+@Composable
+private fun PairingBody(state: WifiPairingState, actions: WifiPairingActions) {
+    Column(Modifier.width(500.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        PrimaryTabRow(selectedTabIndex = state.tab.ordinal, containerColor = Color.Transparent) {
+            PairingTab.entries.forEach { tab ->
+                Tab(
+                    selected = tab == state.tab,
+                    onClick = { actions.selectTab(tab) },
+                    text = { Text(PairingTabLabels.getValue(tab)) },
+                )
+            }
+        }
+        AnimatedContent(
+            targetState = state.tab,
+            transitionSpec = {
+                // Slide toward the tab that was picked: right-hand tabs enter from the right.
+                val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                (slideInHorizontally { width -> direction * width } + fadeIn()) togetherWith
+                    (slideOutHorizontally { width -> -direction * width } + fadeOut()) using
+                    SizeTransform(clip = true)
+            },
+            label = "pairing tab",
+        ) { tab ->
+            Column(Modifier.fillMaxWidth().heightIn(min = 250.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when (tab) {
+                    PairingTab.Qr -> QrTab(state)
+                    PairingTab.Code -> CodeTab(state, actions)
+                    PairingTab.Ip -> IpTab(state, actions)
                 }
             }
-        },
-        confirmButton = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (state.busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                Button(onClick = actions.submit, enabled = state.primaryEnabled) { Text(state.primaryLabel) }
-            }
-        },
-        dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
-    )
+        }
+        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+        if (state.canRestartAdb) {
+            OutlinedButton(onClick = actions.restartAdb) { Text("Restart adb") }
+        }
+    }
 }
 
 @Composable
