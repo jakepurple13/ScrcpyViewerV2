@@ -45,6 +45,12 @@ import androidx.compose.foundation.TooltipArea
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -110,6 +116,7 @@ fun DevicesScreen(
     // The search field needs each key at once (see DevicesViewModel.query); the list may follow an event later.
     val state = pageState.copy(query = query)
     var pairing by remember { mutableStateOf(false) }
+    val pairAnchor = remember { PairDialogAnchor() }
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(viewModel, snackbar) {
         viewModel.notices.collect { notice ->
@@ -128,7 +135,9 @@ fun DevicesScreen(
             }
         }
     }
-    if (pairing) {
+    pairAnchor.visibility.targetState = pairing
+    // Kept while the dialog shrinks back into its button after closing.
+    if (pairAnchor.showing) {
         // Owned by the dialog: closing it clears the ViewModel, which stops polling.
         val pairingVm = koinViewModel<WifiPairingViewModel>(viewModelStoreOwner = rememberComposedViewModelStoreOwner())
         LaunchedEffect(pairingVm) {
@@ -138,7 +147,10 @@ fun DevicesScreen(
             }
         }
         val pairingState by pairingVm.state.collectAsStateWithLifecycle()
-        WifiPairingDialog(pairingState, remember(pairingVm) { pairingVm.actions() }, onDismiss = { pairing = false })
+        WifiPairingDialog(
+            pairingState, remember(pairingVm) { pairingVm.actions() }, onDismiss = { pairing = false },
+            visibleState = pairAnchor.visibility, anchor = pairAnchor,
+        )
     }
     DevicesContent(
         state = state,
@@ -159,6 +171,8 @@ fun DevicesScreen(
         onDisconnect = viewModel::disconnect,
         canMirror = viewModel::canMirror,
         onRestartAdb = viewModel::requestRestartAdb,
+        restartSucceeded = pageState.restartSucceeded,
+        pairAnchor = pairAnchor,
     )
     state.restartConfirm?.let { impact ->
         RestartAdbDialog(impact, onConfirm = viewModel::confirmRestartAdb, onDismiss = viewModel::cancelRestartAdb)
@@ -199,6 +213,10 @@ fun DevicesContent(
     contextMenuSerial: String? = null,
     /** The device column header's restart button. */
     onRestartAdb: () -> Unit = {},
+    /** Whether the last adb restart worked (null: not known yet); the restart button shows a check when it did. */
+    restartSucceeded: Boolean? = true,
+    /** Where the Pair over Wi-Fi button is, so the pairing dialog can grow out of it. */
+    pairAnchor: PairDialogAnchor? = null,
 ) {
     val rowActions = RowActions(onOpen = onOpen, onConnectWifi = onConnectWifi, onDisconnect = onDisconnect, canMirror = canMirror)
     Column(modifier.fillMaxSize()) {
@@ -218,7 +236,7 @@ fun DevicesContent(
             list = {
                 DeviceColumn(
                     state, onSelect = { onSelect(it); panes.navigation.openDetail() }, onSelect, rowActions, onPairWifi,
-                    contextMenuSerial, onRestartAdb,
+                    contextMenuSerial, onRestartAdb, restartSucceeded, pairAnchor,
                 )
             },
             detail = { onBack ->
@@ -257,7 +275,12 @@ private fun DeviceColumn(
     onPairWifi: () -> Unit,
     contextMenuSerial: String?,
     onRestartAdb: () -> Unit,
+    restartSucceeded: Boolean?,
+    pairAnchor: PairDialogAnchor?,
 ) {
+    val live = state.adbConnected && !state.restartingAdb
+    val list = rememberDeviceEntries(state.devices, live)
+    val entries = list.entries
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -269,10 +292,10 @@ private fun DeviceColumn(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
-            RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb)
+            RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb, succeeded = restartSucceeded)
         }
         when {
-            !state.adbConnected || state.restartingAdb -> Row(
+            !live -> Row(
                 Modifier.padding(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -280,29 +303,41 @@ private fun DeviceColumn(
                 CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 Text("Starting adb…", style = MaterialTheme.typography.bodyMedium)
             }
-            state.devices.isEmpty() -> Text(
+            entries.isEmpty() -> Text(
                 "No devices. Connect a device with USB debugging on, or pair one over Wi-Fi.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(4.dp),
             )
-            else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                state.devices.forEach { device ->
-                    DeviceRow(
-                        device = device,
-                        selected = device.serial == state.selectedSerial,
-                        onClick = { onSelect(device.serial) },
-                        onSecondaryClick = { onHighlight(device.serial) },
-                        menu = { onDismiss -> DeviceMenu(device, state, actions, onDismiss) },
-                        menuInitiallyOpen = device.serial == contextMenuSerial,
-                        onDoubleClick = { actions.onOpen(device.serial) },
-                    )
+            // Each row carries its own gap below it, so a leaving row's gap collapses along with it.
+            else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                entries.forEach { entry ->
+                    AnimatedDeviceItem(entry, onExited = list::exited) { glow ->
+                        val device = entry.device
+                        DeviceRow(
+                            device = device,
+                            selected = device.serial == state.selectedSerial,
+                            onClick = { onSelect(device.serial) },
+                            onSecondaryClick = { onHighlight(device.serial) },
+                            menu = { onDismiss -> DeviceMenu(device, state, actions, onDismiss) },
+                            menuInitiallyOpen = entry.present && device.serial == contextMenuSerial,
+                            onDoubleClick = { actions.onOpen(device.serial) },
+                            // A leaving row is already gone from adb: no clicks, double-clicks or menu while it exits.
+                            interactive = entry.present,
+                            status = chipStatus(device, switching = device.serial in state.switching),
+                            glow = glow,
+                            modifier = Modifier.padding(bottom = 6.dp),
+                        )
+                    }
                 }
             }
         }
         // The device list takes the free space when present; otherwise this pushes the button to the bottom.
-        if (!state.adbConnected || state.devices.isEmpty()) Spacer(Modifier.weight(1f))
-        FilledTonalButton(onClick = onPairWifi, modifier = Modifier.fillMaxWidth()) {
+        if (!live || entries.isEmpty()) Spacer(Modifier.weight(1f))
+        FilledTonalButton(
+            onClick = onPairWifi,
+            modifier = Modifier.fillMaxWidth().then(pairAnchor?.let { Modifier.pairDialogOrigin(it) } ?: Modifier),
+        ) {
             Icon(Icons.Filled.Wifi, contentDescription = null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("Pair over Wi-Fi")
@@ -356,6 +391,12 @@ private fun DeviceRow(
     menu: @Composable (onDismiss: () -> Unit) -> Unit,
     menuInitiallyOpen: Boolean,
     onDoubleClick: () -> Unit,
+    status: ChipStatus,
+    /** Plays the "just arrived" tint: the device connected after the list first loaded. */
+    glow: Boolean,
+    modifier: Modifier = Modifier,
+    /** False while the row plays its exit: it ignores clicks and opens no menu. */
+    interactive: Boolean = true,
 ) {
     var menuAt by remember { mutableStateOf(if (menuInitiallyOpen) Offset(120f, 40f) else null) }
     val shape = RoundedCornerShape(12.dp)
@@ -370,20 +411,20 @@ private fun DeviceRow(
         DeviceState.Offline -> "Reconnect the cable or run adb reconnect"
         DeviceState.Other -> device.rawState
     }
-    Box {
+    Box(modifier) {
     Row(
         Modifier
             .fillMaxWidth()
             .onPointerEvent(PointerEventType.Press) { event ->
-                if (event.buttons.isSecondaryPressed) {
+                if (interactive && event.buttons.isSecondaryPressed) {
                     onSecondaryClick()
                     menuAt = event.changes.first().position
                 }
             }
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surface)
+            .arrivalGlow(glow, MaterialTheme.colorScheme.surface)
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
-            .combinedClickable(onClick = onClick, onDoubleClick = onDoubleClick)
+            .combinedClickable(enabled = interactive, onClick = onClick, onDoubleClick = onDoubleClick)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -408,7 +449,7 @@ private fun DeviceRow(
                 } else {
                     serialText(Modifier.weight(1f, fill = false))
                 }
-                ConnectionTag(device.isTcp)
+                StatusChip(status)
             }
             if (title != device.serial) serialText(Modifier)
             if (hint != null) {
@@ -422,21 +463,6 @@ private fun DeviceRow(
             DropdownMenu(expanded = true, onDismissRequest = { menuAt = null }) { menu { menuAt = null } }
         }
     }
-    }
-}
-
-/** "USB" or "Wi-Fi" after the device name. */
-@Composable
-private fun ConnectionTag(wifi: Boolean) {
-    val container = if (wifi) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
-    val content = if (wifi) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    Row(
-        Modifier.clip(RoundedCornerShape(6.dp)).background(container).padding(horizontal = 6.dp, vertical = 1.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        Icon(if (wifi) Icons.Filled.Wifi else Icons.Filled.Usb, contentDescription = null, Modifier.size(12.dp), tint = content)
-        Text(if (wifi) "Wi-Fi" else "USB", style = MaterialTheme.typography.labelSmall, color = content)
     }
 }
 
@@ -695,11 +721,31 @@ private fun SaveAsDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     )
 }
 
-/** The device column header's "Restart adb server" icon; disabled with a spinner while a restart runs. */
+/**
+ * The device column header's "Restart adb server" icon. While a restart runs the button is disabled and the icon
+ * spins; when it ends the icon slows to rest with a small overshoot, and a check pops in on the button for a moment
+ * when [succeeded] says the restart worked (null: not known yet, so it waits briefly for the answer).
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun RestartAdbButton(restarting: Boolean, onClick: () -> Unit) {
+internal fun RestartAdbButton(restarting: Boolean, onClick: () -> Unit, succeeded: Boolean? = true) {
     val label = if (restarting) "Restarting adb…" else "Restart adb server"
+    var check by remember { mutableStateOf(false) }
+    val currentSucceeded by rememberUpdatedState(succeeded)
+    var settledAt by remember { mutableStateOf(0L) }
+    val rotation = rememberSpinSettle(restarting) { settledAt = System.nanoTime() }
+    LaunchedEffect(restarting) { if (restarting) check = false }
+    LaunchedEffect(settledAt) {
+        if (settledAt == 0L) return@LaunchedEffect
+        val worked = withTimeoutOrNull(RESTART_OUTCOME_WAIT_MILLIS) {
+            snapshotFlow { currentSucceeded }.filterNotNull().first()
+        }
+        if (worked == true) {
+            check = true
+            delay(RESTART_CHECK_MILLIS)
+            check = false
+        }
+    }
     TooltipArea(
         tooltip = {
             Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
@@ -712,9 +758,21 @@ internal fun RestartAdbButton(restarting: Boolean, onClick: () -> Unit) {
             }
         },
     ) {
-        IconButton(onClick = onClick, enabled = !restarting, modifier = Modifier.size(32.dp)) {
-            if (restarting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-            else Icon(Icons.Filled.Refresh, contentDescription = label, Modifier.size(20.dp))
+        Box {
+            IconButton(
+                onClick = onClick,
+                enabled = !restarting,
+                modifier = Modifier.size(32.dp),
+                // The spinning icon is the progress indicator, so it keeps an active color while the button is disabled.
+                colors = IconButtonDefaults.iconButtonColors(disabledContentColor = MaterialTheme.colorScheme.primary),
+            ) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = label,
+                    Modifier.size(20.dp).graphicsLayer { rotationZ = rotation.value },
+                )
+            }
+            RestartCheckBadge(check, Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp))
         }
     }
 }

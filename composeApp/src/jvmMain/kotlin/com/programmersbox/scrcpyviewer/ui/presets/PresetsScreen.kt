@@ -63,6 +63,8 @@ import com.programmersbox.scrcpyviewer.ui.common.ResizableListDetail
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.OptionRow
+import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
+import androidx.compose.runtime.key
 import com.programmersbox.scrcpyviewer.ui.devices.initialValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -238,19 +240,26 @@ private fun PresetList(
             OutlinedButton(onExportAll, enabled = state.presets.isNotEmpty(), contentPadding = ToolbarPadding) { Text("Export all", maxLines = 1) }
         }
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            state.presets.forEach { preset ->
-                PresetRow(preset, selected = preset.id == state.selected?.id, isDefault = preset.id == state.defaultId) { onSelect(preset.id) }
+            state.presets.forEachIndexed { i, preset ->
+                // Keyed, so a row's entrance stays with its preset when rows are added or removed above it.
+                key(preset.id) {
+                    PresetRow(
+                        preset, selected = preset.id == state.selected?.id, isDefault = preset.id == state.defaultId,
+                        // The rows fill in one after another when the list appears.
+                        modifier = Modifier.staggeredEntrance(i, trigger = Unit),
+                    ) { onSelect(preset.id) }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun PresetRow(preset: Preset, selected: Boolean, isDefault: Boolean, onClick: () -> Unit) {
+private fun PresetRow(preset: Preset, selected: Boolean, isDefault: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(12.dp)
     val n = preset.options.entries.size
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .clip(shape)
             .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)

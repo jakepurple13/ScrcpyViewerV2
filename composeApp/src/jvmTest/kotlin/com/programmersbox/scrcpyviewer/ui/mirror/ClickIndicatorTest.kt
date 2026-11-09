@@ -25,10 +25,40 @@ class ClickIndicatorTest {
         dots.release(nowMs = 1_000)
         assertTrue(dots.isFading(1_000))
         assertEquals(1f, dots.state(1_000)!!.alpha)
-        assertEquals(0.5f, dots.state(1_150)!!.alpha, 0.001f)
-        assertEquals(Offset(300f, 100f), dots.state(1_150)!!.position, "a fading dot stays where it was released")
-        assertNull(dots.state(1_300))
-        assertFalse(dots.isFading(1_300))
+        assertEquals(1f, dots.state(1_120)!!.alpha, "the dot holds for the delay after the release")
+        assertEquals(0.5f, dots.state(1_270)!!.alpha, 0.001f)
+        assertEquals(0.8f, dots.state(1_270)!!.scale, 0.001f, "halfway through its fade the dot is halfway to 0.6")
+        assertEquals(Offset(300f, 100f), dots.state(1_270)!!.position, "a fading dot stays where it was released")
+        assertTrue(dots.isFading(1_500), "the ring is still running")
+        assertEquals(0f, dots.state(1_500)!!.alpha, "the dot is gone; only the ring is left")
+        assertNull(dots.state(1_520))
+        assertFalse(dots.isFading(1_520))
+    }
+
+    @Test
+    fun `the release ring ripples out from 20 percent and fades`() {
+        dots.press(Offset(250f, 250f))
+        assertNull(dots.state(0)!!.ring, "no ring while held")
+        dots.release(nowMs = 0)
+        val start = dots.state(0)!!.ring!!
+        assertEquals(ClickIndicator.RING_START, start.radiusFraction, 0.001f)
+        assertEquals(1f, start.alpha)
+        val mid = dots.state(260)!!.ring!!
+        assertTrue(mid.radiusFraction > 0.2f + 0.8f * 0.5f, "emphasized-decelerate: past the linear halfway point")
+        assertEquals(0.5f, mid.alpha, 0.001f)
+        val late = dots.state(519)!!.ring!!
+        assertEquals(1f, late.radiusFraction, 0.01f)
+        assertTrue(late.alpha < 0.01f)
+        assertNull(dots.state(520), "ring and dot are both done")
+    }
+
+    @Test
+    fun `a new press stops the ring`() {
+        dots.press(Offset(250f, 250f))
+        dots.release(nowMs = 0)
+        dots.press(Offset(260f, 260f))
+        assertEquals(ClickIndicator.Dot(Offset(260f, 260f), 1f), dots.state(100))
+        assertFalse(dots.isFading(100))
     }
 
     @Test

@@ -16,10 +16,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.common.staggerDelayMillis
+import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
 
 /** One category's settings as rows in a card; [entries] is the (possibly search-filtered) subset to show. */
 @Composable
@@ -36,12 +36,16 @@ fun SettingsDetailPane(
             if (category == null) return@Column
             Text(category.title, style = MaterialTheme.typography.headlineSmall)
             Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large) {
+                // The rows fill in one after another when they appear and whenever search changes which are shown.
+                val shownIds = remember(entries) { entries.map { it.id } }
                 Column {
                     entries.forEachIndexed { i, entry ->
                         // Keyed so a row keeps its own state when search hides the rows above it.
                         key(entry.id) {
-                            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            SettingRow(entry, query, bindings)
+                            Column(Modifier.staggeredEntrance(i, trigger = shownIds)) {
+                                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                SettingRow(entry, query, bindings, staggerDelayMillis(i), shownIds)
+                            }
                         }
                     }
                 }
@@ -61,11 +65,14 @@ private fun PersistenceError(message: String) {
 }
 
 @Composable
-private fun SettingRow(entry: SettingEntry, query: String, bindings: SettingsBindings) {
+private fun SettingRow(entry: SettingEntry, query: String, bindings: SettingsBindings, entranceDelayMillis: Int, shownIds: Any) {
     val text = @Composable {
-        Text(highlighted(entry.title, query), style = MaterialTheme.typography.bodyLarge)
+        HighlightedText(entry.title, query, MaterialTheme.typography.bodyLarge, sweepDelayMillis = entranceDelayMillis, trigger = shownIds)
         entry.description?.let {
-            Text(highlighted(it, query), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HighlightedText(
+                it, query, MaterialTheme.typography.bodySmall, MaterialTheme.colorScheme.onSurfaceVariant,
+                sweepDelayMillis = entranceDelayMillis, trigger = shownIds,
+            )
         }
         entry.notes(bindings)
     }
@@ -79,16 +86,5 @@ private fun SettingRow(entry: SettingEntry, query: String, bindings: SettingsBin
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { text() }
             entry.content(bindings)
         }
-    }
-}
-
-@Composable
-private fun highlighted(text: String, query: String): AnnotatedString {
-    val ranges = matchRanges(text, query)
-    if (ranges.isEmpty()) return AnnotatedString(text)
-    val style = SpanStyle(background = MaterialTheme.colorScheme.primaryContainer, color = MaterialTheme.colorScheme.onPrimaryContainer)
-    return buildAnnotatedString {
-        append(text)
-        ranges.forEach { addStyle(style, it.first, it.last + 1) }
     }
 }

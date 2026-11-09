@@ -176,4 +176,19 @@ class ZoomTest {
         assertEquals(false, f.handle(P, AwtKeyEvent.VK_0, 0) {})
         assertEquals(false, f.handle(T, AwtKeyEvent.VK_UNDEFINED, cmd) {})
     }
+
+    @Test
+    fun `the readout rolls up when the zoom grows and down when it shrinks`() {
+        assertEquals(1, Zoom.roll(ZoomReading(1f, fit = false), ZoomReading(1.25f, fit = false)))
+        assertEquals(-1, Zoom.roll(ZoomReading(1f, fit = false), ZoomReading(0.75f, fit = false)))
+        assertEquals(1, Zoom.roll(ZoomReading(0.37f, fit = true), ZoomReading(1f, fit = false)), "Fit to 100 %")
+        assertEquals(-1, Zoom.roll(ZoomReading(1f, fit = false), ZoomReading(0.37f, fit = true)), "100 % back to Fit")
+    }
+
+    @Test
+    fun `the readout does not roll for a window resize under Fit or an unchanged label`() {
+        assertEquals(0, Zoom.roll(ZoomReading(0.37f, fit = true), ZoomReading(0.41f, fit = true)))
+        assertEquals(0, Zoom.roll(ZoomReading(0.37f, fit = true), ZoomReading(0.37f, fit = false)), "Fit left at its scale")
+        assertEquals(0, Zoom.roll(ZoomReading(1f, fit = false), ZoomReading(1.001f, fit = false)))
+    }
 }

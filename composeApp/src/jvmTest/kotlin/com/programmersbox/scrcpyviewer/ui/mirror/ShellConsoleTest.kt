@@ -161,6 +161,26 @@ class ShellConsoleTest {
     }
 
     @Test
+    fun `line seqs stay stable across trimming, clearing and filtering`() {
+        val text = (1..12).joinToString("") { "l$it\n" }
+        val c = console(FakeRunner(listOf(ShellEvent.Output(text), ShellEvent.Exit(0, 1))), maxLines = 10)
+        c.input = "x"
+        c.submit()
+        // Header + 12 lines + exit = 14 appended, the first 4 trimmed.
+        assertEquals(4L, c.firstSeq)
+        assertEquals(14L, c.nextSeq)
+        assertEquals((4L until 14L).toList(), c.visibleKeyed.map { it.seq })
+        assertEquals("l4", c.visibleKeyed.first().line.text)
+        c.filter = "l12"
+        assertEquals(listOf(12L), c.visibleKeyed.filter { it.line is ConsoleLine.Out }.map { it.seq })
+        assertEquals(c.visible, c.visibleKeyed.map { it.line })
+        c.filter = ""
+        c.clear()
+        assertEquals(14L, c.nextSeq)
+        assertTrue(c.visibleKeyed.isEmpty())
+    }
+
+    @Test
     fun `clear empties the console`() {
         val c = console(FakeRunner(listOf(ShellEvent.Output("a\n"), ShellEvent.Exit(0, 1))))
         c.input = "x"

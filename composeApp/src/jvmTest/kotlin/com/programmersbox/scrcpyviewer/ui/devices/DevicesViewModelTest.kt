@@ -177,6 +177,7 @@ class DevicesViewModelTest {
         vm.requestRestartAdb()
         assertNull(vm.state.value.restartConfirm)
         assertEquals(listOf("restart"), wireless.calls)
+        assertEquals(true, vm.state.value.restartSucceeded)
         assertEquals("Restarted adb.", seen.single().text)
         assertFalse(vm.state.value.restartingAdb)
     }
@@ -232,6 +233,7 @@ class DevicesViewModelTest {
         vm.requestRestartAdb()
         assertEquals("Couldn't restart adb: adb start-server failed (1): cannot bind", seen.single().text)
         assertFalse(vm.state.value.restartingAdb)
+        assertEquals(false, vm.state.value.restartSucceeded)
     }
 
     @Test

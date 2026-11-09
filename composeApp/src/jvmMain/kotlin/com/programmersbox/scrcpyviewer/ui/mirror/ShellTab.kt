@@ -159,7 +159,11 @@ private fun LiveBar(console: ShellConsole, onCopy: () -> Unit) {
 private fun Console(console: ShellConsole, modifier: Modifier, onCopy: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val state = rememberLazyListState()
-    val visible = console.visible
+    val visible = console.visibleKeyed
+    val running = console.running
+    // Lines appended from here on rise in; the history already there, filter changes and scrolling do not animate.
+    val arrivals = remember { LineArrivals() }
+    arrivals.observe(console.nextSeq, console.filter)
     // Follow the bottom until the user scrolls up; reaching the bottom again resumes. Only the user's scrolling (wheel,
     // drag) stops it: it arrives through nested scroll, which our own scrollToItem does not dispatch.
     var following by remember { mutableStateOf(true) }
@@ -176,14 +180,22 @@ private fun Console(console: ShellConsole, modifier: Modifier, onCopy: () -> Uni
     }
     // Pause holds the view only while output can still arrive; once the command ends its last lines show.
     val paused = console.paused && console.running
-    LaunchedEffect(visible.size, visible.lastOrNull(), paused) {
+    // The caret is the last item while a command runs.
+    val lastIndex = visible.size - if (running) 0 else 1
+    LaunchedEffect(visible.size, visible.lastOrNull(), paused, running) {
         if (!state.canScrollForward) following = true
-        if (following && !paused && visible.isNotEmpty()) state.scrollToItem(visible.lastIndex)
+        if (following && !paused && lastIndex >= 0) state.scrollToItem(lastIndex)
     }
     Box(modifier.nestedScroll(userScroll).clip(FieldShape).background(colors.surfaceContainerLowest).border(1.dp, colors.outlineVariant, FieldShape)) {
         SelectionContainer {
             LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 8.dp)) {
-                items(visible) { line -> ConsoleRow(line, console.filter) }
+                items(visible, key = { it.seq }, contentType = { it.line::class }) { keyed ->
+                    val animate = remember { arrivals.claim(keyed.seq) }
+                    ConsoleRow(keyed.line, console.filter, animate)
+                }
+                if (running) {
+                    item(key = CaretKey) { BlinkingCaret(MonoStyle, colors.primary) }
+                }
             }
         }
         Row(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(8.dp)).background(colors.surfaceContainerLowest.copy(alpha = 0.9f))) {
@@ -197,19 +209,22 @@ private fun Console(console: ShellConsole, modifier: Modifier, onCopy: () -> Uni
     }
 }
 
+/** The running caret's item key, never equal to a line's seq. */
+private object CaretKey
+
+/** One console line; [animate] rises it in (and pops an exit pill) as it arrives. */
 @Composable
-private fun ConsoleRow(line: ConsoleLine, filter: String) {
+private fun ConsoleRow(line: ConsoleLine, filter: String, animate: Boolean) {
     val colors = MaterialTheme.colorScheme
     val highlight = colors.primary.copy(alpha = 0.3f)
+    val rise = Modifier.riseIn(animate)
     when (line) {
         is ConsoleLine.Header -> Text(
-            line.text, Modifier.padding(top = 6.dp), style = MonoStyle,
+            line.text, Modifier.padding(top = 6.dp).then(rise), style = MonoStyle,
             color = if (line.typed) colors.primary else colors.tertiary, fontWeight = FontWeight.SemiBold,
         )
-        is ConsoleLine.Out -> Text(highlighted(line.text, filter, highlight), style = MonoStyle, color = colors.onSurface)
-        is ConsoleLine.Exit -> Text(
-            line.text, style = MonoStyle, color = if (line.code != null && line.code != 0) colors.error else colors.onSurfaceVariant,
-        )
+        is ConsoleLine.Out -> Text(highlighted(line.text, filter, highlight), rise, style = MonoStyle, color = colors.onSurface)
+        is ConsoleLine.Exit -> ExitPill(line.code, line.millis, MonoStyle, animate, rise)
     }
 }
 

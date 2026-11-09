@@ -38,6 +38,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.programmersbox.scrcpyviewer.ui.common.dialogEntrance
 import com.programmersbox.scrcpyviewer.ui.onboarding.IconBadge
 import com.programmersbox.scrcpyviewer.ui.onboarding.PageDots
 
@@ -103,7 +104,7 @@ fun ActionsIntroDialog(page: Int, onPage: (Int) -> Unit, onFinish: () -> Unit) {
       BoxWithConstraints {
         val pageHeight = minOf(PAGE_HEIGHT, (maxHeight - DIALOG_CHROME).coerceAtLeast(120.dp))
         Surface(
-            modifier = Modifier.width(560.dp),
+            modifier = Modifier.dialogEntrance().width(560.dp),
             shape = MaterialTheme.shapes.extraLarge,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp,

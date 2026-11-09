@@ -22,6 +22,15 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.scene.Scene
 import kotlinx.serialization.Serializable
+import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /** The destinations of the navigation rail. */
 @Serializable
@@ -121,4 +130,56 @@ fun <T : Any> fadeThrough(): AnimatedContentTransitionScope<Scene<T>>.() -> Cont
         fadeIn(tween(incoming, delayMillis = FADE_OUT_MILLIS, easing = EmphasizedDecelerate)) +
             scaleIn(tween(incoming, delayMillis = FADE_OUT_MILLIS, easing = EmphasizedDecelerate), initialScale = 0.96f)
         ) togetherWith fadeOut(tween(FADE_OUT_MILLIS, easing = EmphasizedAccelerate))
+}
+
+/** One edge's move in the rail indicator's stretch: how long it takes and how long it waits. */
+data class EdgeTiming(val durationMillis: Int, val delayMillis: Int)
+
+/** The edge facing the move goes first; the trailing edge follows later and slower, so the pill stretches. */
+val LeadingEdge = EdgeTiming(durationMillis = 220, delayMillis = 0)
+val TrailingEdge = EdgeTiming(durationMillis = 380, delayMillis = 60)
+
+/** (top, bottom) timings for a move down the rail ([down]) or up it: moving down, the bottom edge leads. */
+fun indicatorEdgeTimings(down: Boolean): Pair<EdgeTiming, EdgeTiming> =
+    if (down) TrailingEdge to LeadingEdge else LeadingEdge to TrailingEdge
+
+/**
+ * The rail's selection pill, drawn behind the items instead of each item's own indicator, so it can travel between
+ * destinations with a "caterpillar" stretch. Items report their icon centers ([centers], in the coordinates of the
+ * box that draws the pill); [top] and [bottom] are the pill's animated edges, read only while drawing.
+ */
+@Stable
+class RailIndicator {
+    val centers = mutableStateMapOf<Any, Offset>()
+    val top = Animatable(0f)
+    val bottom = Animatable(0f)
+    var centerX by mutableFloatStateOf(0f)
+        private set
+    var placed by mutableStateOf(false)
+        private set
+    private var shown: Any? = null
+
+    /** Moves the pill to [key]'s item at [center] with half-height [halfHeight]; snaps when there is no travel to show. */
+    suspend fun moveTo(key: Any, center: Offset, halfHeight: Float) {
+        val newTop = center.y - halfHeight
+        val newBottom = center.y + halfHeight
+        centerX = center.x
+        if (!placed || key == shown) {
+            // First placement, or the same item moved (a layout change).
+            shown = key
+            top.snapTo(newTop)
+            bottom.snapTo(newBottom)
+            placed = true
+            return
+        }
+        shown = key
+        // Measured from where the pill is now, so a reversal mid-move picks the right leading edge.
+        val (topTiming, bottomTiming) = indicatorEdgeTimings(down = center.y > (top.value + bottom.value) / 2)
+        coroutineScope {
+            launch { top.animateTo(newTop, topTiming.spec()) }
+            launch { bottom.animateTo(newBottom, bottomTiming.spec()) }
+        }
+    }
+
+    private fun EdgeTiming.spec() = tween<Float>(durationMillis, delayMillis = delayMillis, easing = EmphasizedDecelerate)
 }

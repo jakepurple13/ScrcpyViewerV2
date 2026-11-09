@@ -4,6 +4,9 @@ import java.awt.event.KeyEvent as AwtKeyEvent
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
+/** What the zoom readout shows: the image's on-screen [scale], and whether that is Fit's. */
+data class ZoomReading(val scale: Float, val fit: Boolean)
+
 /** What a zoom control or shortcut asks for. */
 enum class ZoomCommand { In, Out, Fit, Actual }
 
@@ -48,6 +51,18 @@ object Zoom {
     }
 
     fun label(scale: Float): String = "${(scale * 100).roundToInt()}%"
+
+    /**
+     * Which way the zoom readout rolls from [from] to [to]: 1 (the new value comes up from below) when the zoom
+     * grows, -1 when it shrinks, 0 (no roll) when the label stays or only the fitted scale moved with the window
+     * (Fit on both sides).
+     */
+    fun roll(from: ZoomReading, to: ZoomReading): Int = when {
+        label(from.scale) == label(to.scale) -> 0
+        from.fit && to.fit -> 0
+        to.scale > from.scale -> 1
+        else -> -1
+    }
 
     /**
      * Cmd (macOS) or Ctrl + `=`/`+` zoom in, `-` zoom out, `0` fit. Null for any other key. [modifiersEx] is the AWT

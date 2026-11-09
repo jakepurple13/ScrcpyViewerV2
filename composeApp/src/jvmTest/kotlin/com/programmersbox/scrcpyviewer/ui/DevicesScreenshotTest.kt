@@ -1,6 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
@@ -244,4 +246,100 @@ class DevicesScreenshotTest {
         "wifi-dark-ip.png", ThemeMode.Dark,
         pairing.copy(tab = PairingTab.Ip, error = "Wrong pairing code. Check the code on the phone and try again."),
     )
+
+    /**
+     * Renders [content] at each of [steps] (frame time in ms, then an action run before that frame), writing
+     * `<prefix>-<ms>.png` per step, so mid-animation frames can be inspected.
+     */
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+    private fun renderFrames(
+        prefix: String,
+        width: Int,
+        height: Int,
+        steps: List<Pair<Long, () -> Unit>>,
+        content: @androidx.compose.runtime.Composable () -> Unit,
+    ) {
+        javax.swing.SwingUtilities.invokeAndWait {
+            val scene = androidx.compose.ui.ImageComposeScene(width, height, androidx.compose.ui.unit.Density(1f), content = content)
+            try {
+                scene.render(0)
+                steps.forEach { (ms, action) ->
+                    action()
+                    androidx.compose.runtime.snapshots.Snapshot.sendApplyNotifications()
+                    val image = scene.render(ms * 1_000_000)
+                    val out = outDir.resolve("motion/$prefix-${ms.toString().padStart(5, '0')}.png")
+                    Files.createDirectories(out.parent)
+                    Files.write(out, image.encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG)!!.bytes)
+                }
+            } finally {
+                scene.close()
+            }
+        }
+    }
+
+    private fun frames(vararg ms: Long, at: Map<Long, () -> Unit> = emptyMap()): List<Pair<Long, () -> Unit>> =
+        ms.map { it to (at[it] ?: {}) }
+
+    @Test
+    fun `motion pairing dialog grows from its button`() {
+        val anchor = com.programmersbox.scrcpyviewer.ui.devices.PairDialogAnchor()
+        var open by androidx.compose.runtime.mutableStateOf(false)
+        renderFrames(
+            "pairing", 1280, 800,
+            frames(
+                100, 116, 132, 148, 160, 220, 300, 400, 560, 900, 1000, 1050, 1100, 1150, 1200, 1300, 1500,
+                at = mapOf(100L to { open = true }, 1000L to { open = false }),
+            ),
+        ) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        state, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        panes = screenshotPanes(null, false),
+                        pairAnchor = anchor,
+                    )
+                    anchor.visibility.targetState = open
+                    if (anchor.showing) {
+                        WifiPairingDialog(pairing, WifiPairingActions(), onDismiss = {}, visibleState = anchor.visibility, anchor = anchor)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `motion device list arrival, chip and restart`() {
+        val usb = state.devices[0]
+        var devices by androidx.compose.runtime.mutableStateOf(state.devices.take(2))
+        var switching by androidx.compose.runtime.mutableStateOf(emptySet<String>())
+        var restarting by androidx.compose.runtime.mutableStateOf(false)
+        val wifi = Device("192.168.1.31:5555", DeviceState.Device, "device", "Pixel_8_Pro", null, 9, true)
+        renderFrames(
+            "list", 560, 420,
+            frames(
+                50, 800, 860, 950, 1100, 1300, 1700, 2300, 2400, 2460, 2560, 2700, 3000, 3150, 3300, 3450, 3800,
+                4000, 4350, 4700, 5000, 5200, 5400, 5600, 5800, 6000, 6200, 6300, 6400, 6500, 6600, 6800, 7000, 7500,
+                9000,
+                at = mapOf(
+                    // Past the first-load grace (wall clock), so the new device counts as an arrival.
+                    800L to { Thread.sleep(700); devices = state.devices },
+                    2400L to { devices = state.devices.take(2) },
+                    3000L to { switching = setOf(usb.serial) },
+                    3800L to { switching = emptySet(); devices = state.devices.take(2) + wifi },
+                    4000L to { restarting = true },
+                    5000L to { restarting = false },
+                ),
+            ),
+        ) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        state.copy(devices = devices, switching = switching, restartingAdb = restarting),
+                        {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        panes = screenshotPanes(560, false),
+                    )
+                }
+            }
+        }
+    }
 }

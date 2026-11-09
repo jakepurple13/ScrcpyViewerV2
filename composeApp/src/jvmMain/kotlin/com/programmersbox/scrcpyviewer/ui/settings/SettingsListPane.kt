@@ -23,6 +23,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,28 +63,40 @@ fun SettingsListPane(
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }
-        matches.forEach { match ->
+        // The categories fill in one after another when the list appears and whenever search changes which are shown.
+        val shownIds = matches.map { it.category.id }
+        matches.forEachIndexed { i, match ->
             val id = match.category.id
-            CategoryItem(
-                title = match.category.title,
-                selected = id == selected,
-                count = if (searching) match.entries.size else null,
-                badge = id == SettingsCategoryId.Updates && updateAvailable,
-                onClick = { onSelect(id) },
-            )
+            key(id) {
+                CategoryItem(
+                    title = match.category.title,
+                    selected = id == selected,
+                    count = if (searching) match.entries.size else null,
+                    badge = id == SettingsCategoryId.Updates && updateAvailable,
+                    onClick = { onSelect(id) },
+                    modifier = Modifier.staggeredEntrance(i, trigger = shownIds),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun CategoryItem(title: String, selected: Boolean, count: Int?, badge: Boolean, onClick: () -> Unit) {
+private fun CategoryItem(
+    title: String,
+    selected: Boolean,
+    count: Int?,
+    badge: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val shape = RoundedCornerShape(8.dp)
     val fill by animateColorAsState(
         if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, label = "categoryFill",
     )
     val bar by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, label = "categoryBar")
     Row(
-        Modifier.fillMaxWidth().clip(shape)
+        modifier.fillMaxWidth().clip(shape)
             .drawBehind { drawRect(fill) }
             .selectable(selected = selected, role = Role.Tab, onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,

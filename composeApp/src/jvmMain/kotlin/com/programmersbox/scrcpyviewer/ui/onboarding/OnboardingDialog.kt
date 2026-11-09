@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.programmersbox.scrcpyviewer.AppIcon
+import com.programmersbox.scrcpyviewer.ui.common.dialogEntrance
 
 const val ONBOARDING_PAGE_COUNT = 4
 
@@ -56,7 +57,7 @@ fun OnboardingDialog(
 ) {
     Dialog(onDismissRequest = onFinish, properties = DialogProperties(dismissOnClickOutside = false)) {
         Surface(
-            modifier = Modifier.width(560.dp),
+            modifier = Modifier.dialogEntrance().width(560.dp),
             shape = MaterialTheme.shapes.extraLarge,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp,

@@ -27,6 +27,9 @@ class ShellHistory(private val max: Int = 100) {
     }
 }
 
+/** A shown line with its [seq]: its position in everything the console ever appended, a stable key for the UI. */
+data class KeyedLine(val seq: Long, val line: ConsoleLine)
+
 sealed interface ConsoleLine {
     val text: String
 
@@ -58,6 +61,13 @@ class ShellConsole(
 ) {
     var lines: List<ConsoleLine> by mutableStateOf(emptyList())
         private set
+
+    /** The [KeyedLine.seq] of `lines[0]`: how many lines were dropped (trimmed or cleared) before it. */
+    var firstSeq: Long by mutableStateOf(0L)
+        private set
+
+    /** The seq the next appended line gets. Never decreases, not even on [clear]. */
+    val nextSeq: Long get() = firstSeq + lines.size
     var running: Boolean by mutableStateOf(false)
         private set
     var filter: String by mutableStateOf("")
@@ -74,31 +84,39 @@ class ShellConsole(
 
     val lineCount: Int get() = lines.size
 
-    /** [lines] with the filter applied: matching output, plus the header and exit of every run that has one. */
-    val visible: List<ConsoleLine> by derivedStateOf {
+    /** [visible] with each line's seq, for keys. */
+    val visibleKeyed: List<KeyedLine> by derivedStateOf {
         val all = lines
+        val first = firstSeq
         val needle = filter
-        if (needle.isEmpty()) return@derivedStateOf all
-        val result = ArrayList<ConsoleLine>()
-        var run = ArrayList<ConsoleLine>()
+        // Unfiltered: a view over the (immutable) lines, so a streaming append doesn't copy up to maxLines entries.
+        if (needle.isEmpty()) return@derivedStateOf object : AbstractList<KeyedLine>() {
+            override val size get() = all.size
+            override fun get(index: Int) = KeyedLine(first + index, all[index])
+        }
+        val result = ArrayList<KeyedLine>()
+        var run = ArrayList<KeyedLine>()
         var hit = false
         fun flush() {
             if (hit) result += run
             run = ArrayList()
             hit = false
         }
-        for (line in all) {
+        all.forEachIndexed { i, line ->
             if (line is ConsoleLine.Header) flush()
             if (line !is ConsoleLine.Out) {
-                run += line
+                run += KeyedLine(first + i, line)
             } else if (line.text.contains(needle, ignoreCase = true)) {
-                run += line
+                run += KeyedLine(first + i, line)
                 hit = true
             }
         }
         flush()
         result
     }
+
+    /** [lines] with the filter applied: matching output, plus the header and exit of every run that has one. */
+    val visible: List<ConsoleLine> by derivedStateOf { if (filter.isEmpty()) lines else visibleKeyed.map { it.line } }
 
     /** Output lines that contain the filter; 0 while the filter is empty. */
     val matchCount: Int by derivedStateOf {
@@ -173,6 +191,7 @@ class ShellConsole(
     /** Empties the scrollback and the unfinished line. A running command keeps running; its later output appends. */
     fun clear() {
         partial = StringBuilder()
+        firstSeq += lines.size
         lines = emptyList()
     }
 
@@ -226,7 +245,13 @@ class ShellConsole(
 
     private fun append(added: List<ConsoleLine>) {
         val all = lines + added
-        lines = if (all.size > maxLines) all.subList(all.size - maxLines, all.size).toList() else all
+        if (all.size > maxLines) {
+            val dropped = all.size - maxLines
+            firstSeq += dropped
+            lines = all.subList(dropped, all.size).toList()
+        } else {
+            lines = all
+        }
     }
 
     companion object {

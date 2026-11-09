@@ -58,7 +58,7 @@ class SettingsScreenshotTest {
         customTitleBarSupported: Boolean = true,
     ) {
         val out = outDir.resolve(name)
-        renderToPng(1280, 800, out) {
+        renderToPng(1280, 800, out, settleMillis = 1_000) {
             ScrcpyViewerTheme(mode) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     SettingsContent(
@@ -145,7 +145,7 @@ class SettingsScreenshotTest {
         // Fake adb: fixed devices, nothing on this machine is touched.
         val out = outDir.resolve("app-light.png")
         koin.get<AppSettings>().update { it.copy(themeMode = ThemeMode.Light) }
-        renderToPng(1280, 800, out) { App() }
+        renderToPng(1280, 800, out, settleMillis = 1_000) { App() }
         assertTrue(Files.size(out) > 10_000, "app-light should not be blank")
     }
 }
