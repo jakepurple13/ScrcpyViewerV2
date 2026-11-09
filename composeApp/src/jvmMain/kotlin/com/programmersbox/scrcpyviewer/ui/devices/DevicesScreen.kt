@@ -117,13 +117,9 @@ fun DevicesScreen(
     val state = pageState.copy(query = query)
     var pairing by remember { mutableStateOf(false) }
     val pairAnchor = remember { PairDialogAnchor() }
-    // Whether the last adb restart worked, from its notice; null until the notice arrives (see RestartAdbButton).
-    var restartSucceeded by remember { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(pageState.restartingAdb) { if (pageState.restartingAdb) restartSucceeded = null }
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(viewModel, snackbar) {
         viewModel.notices.collect { notice ->
-            restartOutcome(notice.text)?.let { restartSucceeded = it }
             val host = snackbar ?: return@collect
             val result = host.showSnackbar(
                 notice.text,
@@ -175,7 +171,7 @@ fun DevicesScreen(
         onDisconnect = viewModel::disconnect,
         canMirror = viewModel::canMirror,
         onRestartAdb = viewModel::requestRestartAdb,
-        restartSucceeded = restartSucceeded,
+        restartSucceeded = pageState.restartSucceeded,
         pairAnchor = pairAnchor,
     )
     state.restartConfirm?.let { impact ->

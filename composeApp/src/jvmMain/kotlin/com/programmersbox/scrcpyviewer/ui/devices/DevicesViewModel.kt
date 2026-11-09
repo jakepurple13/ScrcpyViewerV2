@@ -67,6 +67,8 @@ data class DevicesUiState(
     val switching: Set<String> = emptySet(),
     /** True while the header's restart button is restarting the adb server. */
     val restartingAdb: Boolean = false,
+    /** Whether the last adb restart worked; null before the first one finishes and while one runs. */
+    val restartSucceeded: Boolean? = null,
     /** What a restart would close, while its confirmation dialog is showing; null otherwise. */
     val restartConfirm: RestartAdbImpact? = null,
 )
@@ -94,7 +96,7 @@ const val RESTART_ADB_HINT = "adb was started by another app, so macOS blocks it
 
 private data class Filters(val query: String, val group: OptionGroup?, val switching: Set<String>, val restart: RestartUi)
 
-private data class RestartUi(val running: Boolean = false, val confirm: RestartAdbImpact? = null)
+private data class RestartUi(val running: Boolean = false, val confirm: RestartAdbImpact? = null, val succeeded: Boolean? = null)
 
 @KoinViewModel
 class DevicesViewModel(
@@ -181,6 +183,7 @@ class DevicesViewModel(
             persistenceError = persistenceError,
             switching = filters.switching,
             restartingAdb = filters.restart.running,
+            restartSucceeded = filters.restart.succeeded,
             restartConfirm = filters.restart.confirm,
         )
     }
@@ -326,12 +329,14 @@ class DevicesViewModel(
     /** Restarts the adb server so this app owns it, then reports [success] or the error. Ignored while one runs. */
     private fun runRestart(success: String) {
         var started = false
-        restart.update { if (it.running) it else { started = true; it.copy(running = true) } }
+        restart.update { if (it.running) it else { started = true; it.copy(running = true, succeeded = null) } }
         if (!started) return
         viewModelScope.launch {
+            var worked = false
             try {
                 val text = try {
                     wireless.restartServer()
+                    worked = true
                     success
                 } catch (e: CancellationException) {
                     throw e
@@ -340,7 +345,7 @@ class DevicesViewModel(
                 }
                 _notices.emit(WifiNotice(text))
             } finally {
-                restart.update { it.copy(running = false) }
+                restart.update { it.copy(running = false, succeeded = worked) }
             }
         }
     }

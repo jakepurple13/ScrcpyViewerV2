@@ -389,18 +389,9 @@ internal fun rememberSpinSettle(restarting: Boolean, onSettled: () -> Unit): Ani
     return rotation
 }
 
-/** How long a settled restart button waits for the restart's notice before giving up on the check. */
+/** How long a settled restart button waits for the restart's outcome before giving up on the check. */
 internal const val RESTART_OUTCOME_WAIT_MILLIS = 1_500L
 
-/**
- * Whether a notice reports a finished adb restart that worked (true) or failed (false); null for other notices.
- * Matches the texts DevicesViewModel's restart emits ("Restarted adb…" / "Couldn't restart adb: …").
- */
-internal fun restartOutcome(noticeText: String): Boolean? = when {
-    noticeText.startsWith("Restarted adb") -> true
-    noticeText.startsWith("Couldn't restart adb") -> false
-    else -> null
-}
 
 /** The small check that pops onto the restart button after a restart worked. */
 @Composable

@@ -564,7 +564,7 @@ fun MirrorWindow(
         icon = AppIcon.painter,
         titleBarHeight = 40.dp,
         titleBar = {
-            // The strip's Copy command shows its "Copied" message in the window's snackbar.
+            // The overflow menu's Copy command shows its "Copied" message in the window's snackbar.
             CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, applyZoom) }
         },
     ) {

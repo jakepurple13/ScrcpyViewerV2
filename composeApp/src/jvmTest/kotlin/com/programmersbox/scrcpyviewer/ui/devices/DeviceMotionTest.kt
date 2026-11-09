@@ -144,12 +144,4 @@ class DeviceMotionTest {
         }
     }
 
-    @Test
-    fun `restart outcome comes from the restart notices`() {
-        assertEquals(true, restartOutcome("Restarted adb."))
-        assertEquals(true, restartOutcome("Restarted adb. Try connecting again."))
-        assertEquals(false, restartOutcome("Couldn't restart adb: boom"))
-        assertNull(restartOutcome("Connected to 10.0.0.7:5555"))
-        assertFalse(restartOutcome("Couldn't restart adb: x")!!)
-    }
 }
