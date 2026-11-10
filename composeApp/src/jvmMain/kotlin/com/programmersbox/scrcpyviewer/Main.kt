@@ -21,7 +21,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
-import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.state.appTheme
+import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
@@ -77,7 +78,7 @@ fun main() {
         AppWindow(
             onCloseRequest = shutdown::request,
             title = appTitle(),
-            themeMode = settings.themeMode,
+            theme = settings.appTheme,
             chrome = mainChrome,
             visible = shuttingDown == null,
             titleBar = { if (chrome == WindowChrome.Custom) MainTitle() },
@@ -90,10 +91,10 @@ fun main() {
         }
         for ((serial, session) in mirrors) {
             key(serial) {
-                MirrorWindow(serial, session, mirrorController, settings.themeMode, settings.useSystemTitleBar, settings.captureDir, adb = adbClient)
+                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.useSystemTitleBar, settings.captureDir, adb = adbClient)
             }
         }
-        if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.themeMode)
+        if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.appTheme)
     }
     // Sessions are closed and recordings finished. With a downloaded update, Nucleus starts its install script and
     // exits the JVM here; otherwise (or if it could not start) the app exits normally.
@@ -123,7 +124,7 @@ private fun MainTitle() {
 
 /** Shown while quitting waits for recorders to write their trailers. It cannot be closed. */
 @Composable
-private fun FinishingRecordingWindow(themeMode: ThemeMode) {
+private fun FinishingRecordingWindow(theme: AppTheme) {
     Window(
         onCloseRequest = {},
         title = "Scrcpy Vwr",
@@ -131,7 +132,7 @@ private fun FinishingRecordingWindow(themeMode: ThemeMode) {
         state = rememberWindowState(size = DpSize(340.dp, 120.dp), position = WindowPosition(Alignment.Center)),
         resizable = false,
     ) {
-        ScrcpyViewerTheme(themeMode) {
+        ScrcpyViewerTheme(theme) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                 Row(
                     Modifier.fillMaxSize().padding(24.dp),

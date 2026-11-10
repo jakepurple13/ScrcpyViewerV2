@@ -31,18 +31,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
 
 @Composable
 internal fun ThemeControl(b: SettingsBindings) {
+    val origin = LocalThemeRevealOrigin.current
     SingleChoiceSegmentedButtonRow {
         ThemeMode.entries.forEachIndexed { i, mode ->
+            val source = rememberRevealSource()
             SegmentedButton(
                 selected = b.state.settings.themeMode == mode,
-                onClick = { b.actions.onTheme(mode) },
+                onClick = {
+                    source.mark(origin)
+                    b.actions.onTheme(mode)
+                },
                 shape = SegmentedButtonDefaults.itemShape(i, ThemeMode.entries.size),
+                modifier = source.modifier,
             ) { Text(mode.name) }
         }
     }

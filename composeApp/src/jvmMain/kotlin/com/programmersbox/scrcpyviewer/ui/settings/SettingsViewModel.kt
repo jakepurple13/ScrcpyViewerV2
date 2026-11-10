@@ -13,7 +13,9 @@ import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.Settings
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
+import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -165,6 +167,13 @@ class SettingsViewModel(
     fun setQuery(query: String) = navState.update { it.withQuery(query) }
 
     fun setTheme(mode: ThemeMode) = appSettings.update { it.copy(themeMode = mode) }
+
+    fun setPalette(palette: ThemePalette) = appSettings.update { it.copy(themePalette = palette.name) }
+
+    fun setPureBlack(value: Boolean) = appSettings.update { it.copy(pureBlack = value) }
+
+    /** Called when a Custom slider is released, not on every drag step (each call writes the settings file). */
+    fun setCustomPalette(custom: CustomPalette) = appSettings.update { it.copy(customPalette = custom) }
 
     /** Read when a window opens, so it applies to windows opened after this. */
     fun setUseSystemTitleBar(value: Boolean) = appSettings.update { it.copy(useSystemTitleBar = value) }

@@ -200,7 +200,8 @@ fun App(
             if (request.new || request.actionId != null) actionsPanes.navigation.openDetail()
         }
     }
-    ScrcpyViewerTheme(settings.themeMode) {
+    // Inside AppWindow: follow the window's revealed theme, not the settings directly.
+    ScrcpyViewerTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             CompositionLocalProvider(LocalSnackbarHostState provides snackbar) {
                 Row(Modifier.fillMaxSize()) {

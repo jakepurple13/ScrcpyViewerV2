@@ -5,7 +5,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.programmersbox.scrcpyviewer.actions.SkillTarget
+import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
 import com.programmersbox.scrcpyviewer.ui.update.UpdatesContent
 
@@ -26,6 +28,9 @@ class SettingsBindings(
 /** All Settings callbacks; every one defaults to a no-op so tests and previews pass only what they need. */
 class SettingsActions(
     val onTheme: (ThemeMode) -> Unit = {},
+    val onPalette: (ThemePalette) -> Unit = {},
+    val onPureBlack: (Boolean) -> Unit = {},
+    val onCustomPalette: (CustomPalette) -> Unit = {},
     val onUseSystemTitleBar: (Boolean) -> Unit = {},
     val onDefaultPreset: (String?) -> Unit = {},
     val onUseBundledAdb: () -> Unit = {},
@@ -70,6 +75,19 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 "theme", "Theme", "Light, dark, or follow the system.",
                 keywords = listOf("dark mode", "light", "color", "colour"),
                 content = { ThemeControl(it) },
+            ),
+            SettingEntry(
+                "pure-black", "Pure black", "Black backgrounds with the dark theme. Easier on OLED screens.",
+                keywords = listOf("amoled", "oled", "black"),
+                notes = { PureBlackNotes(it) },
+                rowModifier = { pureBlackToggle(it) },
+                content = { PureBlackSwitch(it) },
+            ),
+            SettingEntry(
+                "palette", "Color palette", "Colors used across the app. Custom lets you pick your own.",
+                keywords = listOf("color", "colour", "accent", "palette", "custom", "hue"),
+                layout = EntryLayout.Block,
+                content = { PaletteControl(it) },
             ),
             SettingEntry(
                 "title-bar", "Use system title bar",
