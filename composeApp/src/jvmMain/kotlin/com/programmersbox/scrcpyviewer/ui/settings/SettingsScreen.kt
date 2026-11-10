@@ -39,6 +39,8 @@ fun SettingsScreen(
         onPalette = viewModel::setPalette,
         onPureBlack = viewModel::setPureBlack,
         onCustomPalette = viewModel::setCustomPalette,
+        onNeon = viewModel::setNeon,
+        onCustomNeon = viewModel::setCustomNeon,
         onUseSystemTitleBar = viewModel::setUseSystemTitleBar,
         onDefaultPreset = viewModel::setDefaultPreset,
         onUseBundledAdb = viewModel::useBundledAdb,

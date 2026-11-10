@@ -61,7 +61,8 @@ class ThemeRevealState internal constructor(initial: AppTheme, val origin: Theme
 
     internal suspend fun moveTo(target: AppTheme) {
         if (target == shown) return
-        val sameLook = target.palette == shown.palette && target.mode == shown.mode && target.pureBlack == shown.pureBlack
+        val sameLook = target.palette == shown.palette && target.mode == shown.mode &&
+            target.pureBlack == shown.pureBlack && target.neon == shown.neon
         if (sameLook) {
             shown = target
             return

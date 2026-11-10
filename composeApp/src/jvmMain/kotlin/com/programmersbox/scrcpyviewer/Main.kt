@@ -23,6 +23,7 @@ import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.state.appTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
+import com.programmersbox.scrcpyviewer.ui.theme.neonText
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
@@ -118,7 +119,8 @@ private fun MainTitle() {
         if (Os.isWindows) {
             Image(AppIcon.painter, contentDescription = null, Modifier.padding(start = 12.dp, end = 8.dp).size(16.dp))
         }
-        Text(appTitle(), style = MaterialTheme.typography.titleSmall)
+        // Neon themes light the app name up in the glow color.
+        Text(appTitle(), style = neonText(MaterialTheme.typography.titleSmall, MaterialTheme.colorScheme.primary))
     }
 }
 

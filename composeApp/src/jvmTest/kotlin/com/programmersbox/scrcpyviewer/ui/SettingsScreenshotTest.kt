@@ -15,6 +15,7 @@ import com.programmersbox.scrcpyviewer.ui.settings.SettingsContent
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsNav
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsUiState
 import com.programmersbox.scrcpyviewer.state.appTheme
+import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
@@ -100,6 +101,20 @@ class SettingsScreenshotTest {
         "settings-palette-custom-light.png", ThemeMode.Light,
         state.settings.copy(themePalette = "Custom", customPalette = CustomPalette(25f, 0.14f, 60f)),
     )
+
+    @Test fun `settings palette synthwave dark`() =
+        palette("settings-palette-synthwave-dark.png", ThemeMode.Dark, state.settings.copy(themePalette = "Synthwave"))
+
+    @Test fun `settings palette rose neon switch dark`() =
+        palette("settings-palette-rose-neon-dark.png", ThemeMode.Dark, state.settings.copy(themePalette = "Rose", neon = true))
+
+    @Test fun `settings palette custom neon dark`() = palette(
+        "settings-palette-custom-neon-dark.png", ThemeMode.Dark,
+        state.settings.copy(themePalette = "CustomNeon", customNeon = CustomNeon(300f, 190f, 0.8f)),
+    )
+
+    @Test fun `settings palette cyber light`() =
+        palette("settings-palette-cyber-light.png", ThemeMode.Light, state.settings.copy(themePalette = "Cyber"))
 
     @Test fun `settings palette custom dark`() = palette(
         "settings-palette-custom-dark.png", ThemeMode.Dark,

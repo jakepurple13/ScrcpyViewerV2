@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.state
 
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
+import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
@@ -38,11 +39,15 @@ data class Settings(
     val pureBlack: Boolean = false,
     /** The Custom palette's sliders, kept when another palette is chosen. */
     val customPalette: CustomPalette = CustomPalette(),
+    /** The Neon switch: neon colors and glow for any palette. */
+    val neon: Boolean = false,
+    /** The Custom neon palette's sliders, kept when another palette is chosen. */
+    val customNeon: CustomNeon = CustomNeon(),
 )
 
 /** Everything the theme reads from [Settings]. */
 val Settings.appTheme: AppTheme
-    get() = AppTheme(themeMode, ThemePalette.fromName(themePalette), pureBlack, customPalette)
+    get() = AppTheme(themeMode, ThemePalette.fromName(themePalette), pureBlack, customPalette, neon, customNeon)
 
 internal fun defaultCaptureDir(): String {
     val home = Paths.get(System.getProperty("user.home"))

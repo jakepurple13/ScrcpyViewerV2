@@ -41,7 +41,9 @@ import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsUiState
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickToggle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.dropHint
+import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
+import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
@@ -107,11 +109,11 @@ class MirrorScreenshotTest {
         command = "scrcpy -s 39121FDJH004AB --max-size=1920",
     )
 
-    private fun render(name: String, mode: ThemeMode, state: MirrorUiState = this.state, clickIndicator: ClickIndicator? = null, width: Int = 1280, height: Int = 800, showTopStrip: Boolean = true, settleMillis: Long = 0, shellConsole: ShellConsole? = null) {
+    private fun render(name: String, mode: ThemeMode, state: MirrorUiState = this.state, clickIndicator: ClickIndicator? = null, width: Int = 1280, height: Int = 800, showTopStrip: Boolean = true, settleMillis: Long = 0, shellConsole: ShellConsole? = null, theme: AppTheme = AppTheme(mode)) {
         val out = outDir.resolve(name)
         val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
         renderToPng(width, height, out, settleMillis) {
-            ScrcpyViewerTheme(mode) {
+            ScrcpyViewerTheme(theme) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     MirrorContent(
                         state, frame, {}, {}, {}, {}, {}, {}, clickIndicator = clickIndicator, showTopStrip = showTopStrip,
@@ -128,6 +130,11 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror dark`() = render("mirror-dark.png", ThemeMode.Dark)
+
+    @Test
+    fun `mirror neon synthwave`() = render(
+        "mirror-neon-synthwave.png", ThemeMode.Dark, theme = AppTheme(ThemeMode.Dark, ThemePalette.Synthwave), settleMillis = 1_000,
+    )
 
     /** The window's content when the strip is drawn by the window's title bar instead. */
     @Test

@@ -53,6 +53,20 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `picking a neon palette turns neon on, and it can be turned off again`() {
+        val vm = vm()
+        vm.setPalette(com.programmersbox.scrcpyviewer.ui.theme.ThemePalette.CustomNeon)
+        assertEquals(true, settings.settings.value.neon)
+        vm.setNeon(false)
+        assertEquals(false, settings.settings.value.neon)
+        assertEquals("CustomNeon", settings.settings.value.themePalette)
+        // A regular palette leaves the switch as it is.
+        vm.setNeon(true)
+        vm.setPalette(com.programmersbox.scrcpyviewer.ui.theme.ThemePalette.Rose)
+        assertEquals(true, settings.settings.value.neon)
+    }
+
+    @Test
     fun `theme change is saved`() {
         val vm = vm()
         vm.setTheme(ThemeMode.Dark)

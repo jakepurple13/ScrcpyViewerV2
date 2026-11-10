@@ -22,7 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesomeMotion
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu

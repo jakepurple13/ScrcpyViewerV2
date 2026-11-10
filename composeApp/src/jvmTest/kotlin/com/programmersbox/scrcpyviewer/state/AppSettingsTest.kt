@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.state
 
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
+import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
@@ -110,6 +111,17 @@ class AppSettingsTest {
         AppSettings(file).update { it.copy(themePalette = "Ember", pureBlack = true, customPalette = CustomPalette(200f, 0.1f, 90f)) }
         val theme = AppSettings(file).settings.value.appTheme
         assertEquals(AppTheme(ThemeMode.Dark, ThemePalette.Ember, true, CustomPalette(200f, 0.1f, 90f)), theme)
+    }
+
+    @Test
+    fun `neon fields default for older files and persist`() {
+        Files.writeString(file, """{"themePalette":"Rose"}""")
+        assertEquals(AppTheme(palette = ThemePalette.Rose), AppSettings(file).settings.value.appTheme)
+        AppSettings(file).update { it.copy(themePalette = "CustomNeon", neon = true, customNeon = CustomNeon(20f, 200f, 0.4f)) }
+        val theme = AppSettings(file).settings.value.appTheme
+        assertEquals(ThemePalette.CustomNeon, theme.palette)
+        assertTrue(theme.neon)
+        assertEquals(CustomNeon(20f, 200f, 0.4f), theme.customNeon)
     }
 
     @Test

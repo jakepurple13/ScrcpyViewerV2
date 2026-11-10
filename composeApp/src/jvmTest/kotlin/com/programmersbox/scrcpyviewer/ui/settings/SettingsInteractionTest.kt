@@ -20,8 +20,8 @@ class SettingsInteractionTest {
         })
         try {
             driver.frames(5)
-            // "Use system title bar" label, left of the switch, below the palette grid (see settings-appearance-light.png).
-            driver.drag(fromX = 320f, toX = 320f, y = 540f)
+            // "Use system title bar" label, left of the switch, below both palette rows (see settings-appearance-light.png).
+            driver.drag(fromX = 320f, toX = 320f, y = 772f)
             assertEquals(listOf(true), toggles)
         } finally {
             driver.scene.close()

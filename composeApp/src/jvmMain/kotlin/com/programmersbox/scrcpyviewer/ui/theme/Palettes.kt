@@ -10,10 +10,12 @@ import kotlinx.serialization.Serializable
 data class PaletteSeed(val hue: Float, val chroma: Float, val tertiaryHue: Float)
 
 /**
- * The app's color palettes. [seed] is null for [Teal] (the original hand-tuned scheme) and [Custom]
- * (built from [CustomPalette]). Persisted by [name], so renaming an entry resets users to Teal.
+ * The app's color palettes. [seed] is null for [Teal] (the original hand-tuned scheme), [Custom]
+ * (built from [CustomPalette]) and [CustomNeon] (from [CustomNeon]). Picking a [neon] palette turns the Neon
+ * switch on; it can still be turned off.
+ * Persisted by [name], so renaming an entry resets users to Teal.
  */
-enum class ThemePalette(val label: String, val seed: PaletteSeed?) {
+enum class ThemePalette(val label: String, val seed: PaletteSeed?, val neon: Boolean = false) {
     Teal("Teal", null),
     Ocean("Ocean", PaletteSeed(245f, 0.13f, 200f)),
     Indigo("Indigo", PaletteSeed(275f, 0.15f, 330f)),
@@ -25,7 +27,12 @@ enum class ThemePalette(val label: String, val seed: PaletteSeed?) {
     Forest("Forest", PaletteSeed(160f, 0.07f, 90f)),
     Espresso("Espresso", PaletteSeed(60f, 0.05f, 30f)),
     Slate("Slate", PaletteSeed(250f, 0.025f, 250f)),
-    Custom("Custom", null);
+    Custom("Custom", null),
+    Synthwave("Synthwave", PaletteSeed(350f, NEON_CHROMA, 215f), neon = true),
+    Cyber("Cyber", PaletteSeed(205f, NEON_CHROMA, 345f), neon = true),
+    Toxic("Toxic", PaletteSeed(135f, NEON_CHROMA, 300f), neon = true),
+    // Shown under the Neon heading, so "Custom" is enough and fits the tile.
+    CustomNeon("Custom", null, neon = true);
 
     companion object {
         /** The palette saved as [name], or [Teal] for a missing or unknown name. */
@@ -51,22 +58,65 @@ data class CustomPalette(
     }
 }
 
-/** Everything that decides the app's colors. */
+/** Chroma every neon palette uses; out-of-gamut tones lose some of it (see [oklch]). */
+const val NEON_CHROMA = 0.26f
+
+/** The user's neon palette: the glow (primary) and accent hues set directly, and how strong the glow is (0..1). */
+@Serializable
+data class CustomNeon(
+    val glowHue: Float = 300f,
+    val accentHue: Float = 190f,
+    val glow: Float = DEFAULT_GLOW,
+) {
+    val seed: PaletteSeed
+        get() = PaletteSeed(glowHue.coerceIn(0f, 359f), NEON_CHROMA, accentHue.coerceIn(0f, 359f))
+
+    companion object {
+        const val DEFAULT_GLOW = 0.7f
+    }
+}
+
+/** Everything that decides the app's colors. [neon] is the Neon switch, which makes any palette neon. */
 data class AppTheme(
     val mode: ThemeMode = ThemeMode.System,
     val palette: ThemePalette = ThemePalette.Teal,
     val pureBlack: Boolean = false,
     val custom: CustomPalette = CustomPalette(),
-)
+    val neon: Boolean = false,
+    val customNeon: CustomNeon = CustomNeon(),
+) {
+    /** Neon colors and glow: the Neon switch, for any palette. Picking a neon palette turns it on (see settings). */
+    val isNeon: Boolean get() = neon
+
+    /** Glow strength 0..1, or 0 when not neon. Only Custom neon changes it. */
+    val glow: Float
+        get() = when {
+            !isNeon -> 0f
+            palette == ThemePalette.CustomNeon -> customNeon.glow.coerceIn(0f, 1f)
+            else -> CustomNeon.DEFAULT_GLOW
+        }
+
+    /**
+     * The seed this theme generates from; null only for plain (non-neon) Teal. A neon palette with the switch off
+     * keeps its hues at a regular palette's vividness.
+     */
+    val seed: PaletteSeed?
+        get() {
+            val s = when (palette) {
+                ThemePalette.Teal -> if (neon) TealSeed else null
+                ThemePalette.Custom -> custom.seed
+                ThemePalette.CustomNeon -> customNeon.seed
+                else -> palette.seed
+            }
+            return if (s != null && palette.neon && !neon) s.copy(chroma = CustomPalette.MAX_CHROMA * 0.8f) else s
+        }
+}
 
 /** The Material 3 scheme for [theme] in light or [dark] mode. */
 fun colorSchemeFor(theme: AppTheme, dark: Boolean): ColorScheme {
-    val seed = when (theme.palette) {
-        ThemePalette.Teal -> null
-        ThemePalette.Custom -> theme.custom.seed
-        else -> theme.palette.seed
-    }
+    val seed = theme.seed
     val base = when {
+        seed != null && theme.isNeon -> generateNeonScheme(seed, dark)
         seed != null -> generateScheme(seed, dark)
         dark -> DarkColors
         else -> LightColors
@@ -74,7 +124,37 @@ fun colorSchemeFor(theme: AppTheme, dark: Boolean): ColorScheme {
     return if (dark && theme.pureBlack) base.pureBlack(seed ?: TealSeed) else base
 }
 
-/** Teal's approximate seed, used to tint pure-black surfaces. */
+/**
+ * The neon look: [seed]'s hues at [NEON_CHROMA], whatever its own chroma. Dark mode sits on near-black
+ * surfaces with bright primaries; light mode keeps regular surfaces with a vivid primary.
+ */
+fun generateNeonScheme(seed: PaletteSeed, dark: Boolean): ColorScheme {
+    val h = seed.hue
+    val th = seed.tertiaryHue
+    val base = generateScheme(seed.copy(chroma = NEON_CHROMA), dark)
+    fun p(l: Float, c: Float) = oklch(l, c, h)
+    fun t(l: Float, c: Float) = oklch(l, c, th)
+    return if (dark) base.copy(
+        primary = p(0.80f, 0.21f), onPrimary = p(0.15f, 0.05f),
+        primaryContainer = p(0.30f, 0.14f), onPrimaryContainer = p(0.90f, 0.12f),
+        secondary = p(0.80f, 0.08f), onSecondary = p(0.20f, 0.05f),
+        secondaryContainer = p(0.24f, 0.06f), onSecondaryContainer = p(0.90f, 0.1f),
+        tertiary = t(0.80f, 0.18f), onTertiary = t(0.18f, 0.08f),
+        tertiaryContainer = t(0.32f, 0.16f), onTertiaryContainer = t(0.88f, 0.16f),
+        background = p(0.12f, 0.025f), surface = p(0.12f, 0.025f), surfaceDim = p(0.12f, 0.025f),
+        surfaceContainerLowest = p(0.09f, 0.02f), surfaceContainerLow = p(0.14f, 0.03f),
+        surfaceContainer = p(0.155f, 0.035f), surfaceContainerHigh = p(0.175f, 0.038f),
+        surfaceContainerHighest = p(0.19f, 0.04f), surfaceBright = p(0.24f, 0.045f),
+        surfaceVariant = p(0.24f, 0.05f),
+        outline = p(0.60f, 0.12f), outlineVariant = p(0.32f, 0.09f),
+        surfaceTint = p(0.80f, 0.21f), inversePrimary = p(0.55f, 0.24f),
+    ) else base.copy(
+        primary = p(0.55f, 0.26f), onPrimary = Color.White, surfaceTint = p(0.55f, 0.26f),
+        tertiaryContainer = t(0.88f, 0.12f), onTertiaryContainer = t(0.30f, 0.2f),
+    )
+}
+
+/** Teal's approximate seed, used to tint pure-black surfaces and for neon Teal. */
 private val TealSeed = PaletteSeed(195f, 0.11f, 250f)
 
 /** A full M3 scheme from [seed]: tones picked in OKLCH, neutrals tinted toward the seed hue. */

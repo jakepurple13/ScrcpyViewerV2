@@ -52,7 +52,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
+import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material3.CircularProgressIndicator
