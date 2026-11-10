@@ -1,6 +1,9 @@
 package com.programmersbox.scrcpyviewer.state
 
+import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
+import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -94,5 +97,25 @@ class AppSettingsTest {
         settings.addAiSkillFolder("/b")
         settings.addAiSkillFolder("/a")
         assertEquals(listOf("/a", "/b"), AppSettings(file).settings.value.aiSkillFolders)
+    }
+
+    @Test
+    fun `theme palette fields default for older files and persist`() {
+        Files.writeString(file, """{"themeMode":"Dark"}""")
+        val old = AppSettings(file).settings.value
+        assertEquals(ThemePalette.Teal, old.appTheme.palette)
+        assertFalse(old.pureBlack)
+        assertEquals(CustomPalette(), old.customPalette)
+
+        AppSettings(file).update { it.copy(themePalette = "Ember", pureBlack = true, customPalette = CustomPalette(200f, 0.1f, 90f)) }
+        val theme = AppSettings(file).settings.value.appTheme
+        assertEquals(AppTheme(ThemeMode.Dark, ThemePalette.Ember, true, CustomPalette(200f, 0.1f, 90f)), theme)
+    }
+
+    @Test
+    fun `removed palette name loads as teal without corrupting the file`() {
+        Files.writeString(file, """{"themePalette":"Gone"}""")
+        assertEquals(ThemePalette.Teal, AppSettings(file).settings.value.appTheme.palette)
+        assertFalse(Files.exists(dir.resolve("settings.json.bak")))
     }
 }

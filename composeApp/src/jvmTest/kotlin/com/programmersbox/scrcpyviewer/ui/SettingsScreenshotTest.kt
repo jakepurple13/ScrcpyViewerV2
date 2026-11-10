@@ -14,6 +14,8 @@ import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsContent
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsNav
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsUiState
+import com.programmersbox.scrcpyviewer.state.appTheme
+import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
@@ -59,7 +61,7 @@ class SettingsScreenshotTest {
     ) {
         val out = outDir.resolve(name)
         renderToPng(1280, 800, out, settleMillis = 1_000) {
-            ScrcpyViewerTheme(mode) {
+            ScrcpyViewerTheme(state.settings.copy(themeMode = mode).appTheme) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     SettingsContent(
                         state.copy(settings = state.settings.copy(themeMode = mode)), updates, nav, SettingsActions(),
@@ -84,6 +86,25 @@ class SettingsScreenshotTest {
     @Test fun `settings updates dark`() = category(SettingsCategoryId.Updates, ThemeMode.Dark)
     @Test fun `settings help light`() = category(SettingsCategoryId.Help, ThemeMode.Light)
     @Test fun `settings help dark`() = category(SettingsCategoryId.Help, ThemeMode.Dark)
+
+    private fun palette(name: String, mode: ThemeMode, settings: Settings) =
+        render(name, SettingsNav(selected = SettingsCategoryId.Appearance), mode, state.copy(settings = settings))
+
+    @Test fun `settings palette ocean dark pure black`() =
+        palette("settings-palette-ocean-dark-black.png", ThemeMode.Dark, state.settings.copy(themePalette = "Ocean", pureBlack = true))
+
+    @Test fun `settings palette rose light`() =
+        palette("settings-palette-rose-light.png", ThemeMode.Light, state.settings.copy(themePalette = "Rose"))
+
+    @Test fun `settings palette custom light`() = palette(
+        "settings-palette-custom-light.png", ThemeMode.Light,
+        state.settings.copy(themePalette = "Custom", customPalette = CustomPalette(25f, 0.14f, 60f)),
+    )
+
+    @Test fun `settings palette custom dark`() = palette(
+        "settings-palette-custom-dark.png", ThemeMode.Dark,
+        state.settings.copy(themePalette = "Custom", customPalette = CustomPalette(280f, 0.16f, 120f)),
+    )
 
     @Test
     fun `settings search folder`() = render("settings-search-folder.png", SettingsNav(query = "folder"))

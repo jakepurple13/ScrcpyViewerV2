@@ -1,7 +1,10 @@
 package com.programmersbox.scrcpyviewer.state
 
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
+import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
@@ -29,7 +32,17 @@ data class Settings(
     val aiSkillFolders: List<String> = emptyList(),
     /** Whether the Devices screen shows the full options pane instead of the simple one (preset, Mirror, Wi-Fi). */
     val advancedDeviceOptions: Boolean = false,
+    /** A [ThemePalette] name; unknown or missing names fall back to Teal. A string so a removed palette never corrupts the file. */
+    val themePalette: String = ThemePalette.Teal.name,
+    /** Black backgrounds in dark mode. */
+    val pureBlack: Boolean = false,
+    /** The Custom palette's sliders, kept when another palette is chosen. */
+    val customPalette: CustomPalette = CustomPalette(),
 )
+
+/** Everything the theme reads from [Settings]. */
+val Settings.appTheme: AppTheme
+    get() = AppTheme(themeMode, ThemePalette.fromName(themePalette), pureBlack, customPalette)
 
 internal fun defaultCaptureDir(): String {
     val home = Paths.get(System.getProperty("user.home"))

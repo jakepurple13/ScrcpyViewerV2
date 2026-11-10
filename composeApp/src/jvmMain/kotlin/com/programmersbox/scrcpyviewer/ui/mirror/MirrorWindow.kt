@@ -159,7 +159,7 @@ import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
 import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
-import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
@@ -321,7 +321,7 @@ fun MirrorWindow(
     serial: String,
     session: ScrcpySession,
     controller: MirrorController,
-    themeMode: ThemeMode,
+    theme: AppTheme,
     /** `Settings.useSystemTitleBar`, read when the window opens. */
     useSystemTitleBar: Boolean?,
     /** `Settings.captureDir`: where screenshots and recordings started from the toolbar go. */
@@ -557,7 +557,7 @@ fun MirrorWindow(
     AppWindow(
         onCloseRequest = { controller.close(serial) },
         title = mirrorTitle(model, serial, values),
-        themeMode = themeMode,
+        theme = theme,
         chrome = remember { windowChrome(useSystemTitleBar) },
         state = windowState,
         alwaysOnTop = "always-on-top" in e,
@@ -801,7 +801,7 @@ fun MirrorWindow(
         // minimized mirror stops invalidating its canvas until it is restored. Read only at draw time by the stage.
         val frame = session.frames.collectAsStateWithLifecycle()
 
-        ScrcpyViewerTheme(themeMode) {
+        ScrcpyViewerTheme {
             Box(Modifier.fillMaxSize()) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     CompositionLocalProvider(LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus) {

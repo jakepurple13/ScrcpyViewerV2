@@ -1,5 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.window
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
@@ -29,9 +33,12 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.AppIcon
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
+import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
-import com.programmersbox.scrcpyviewer.ui.theme.isDark
+import com.programmersbox.scrcpyviewer.ui.theme.rememberThemeRevealState
+import com.programmersbox.scrcpyviewer.ui.theme.themeReveal
 import org.jetbrains.jewel.foundation.theme.JewelTheme
 import org.jetbrains.jewel.intui.standalone.theme.IntUiTheme
 import org.jetbrains.jewel.intui.standalone.theme.darkThemeDefinition
@@ -84,13 +91,14 @@ private object SystemTitleBarScope : AppTitleBarScope {
  * macOS / Windows, centred on Linux), or above [content] in System mode — render nothing there if
  * the window wants no extra strip. The slot is as wide as its content, up to the room between the
  * window controls, so a `fillMaxWidth` child spans exactly that. [titleBarHeight] is the custom bar's
- * height. Only pass [WindowChrome.Custom] on JetBrains Runtime (see [windowChrome]).
+ * height. Only pass [WindowChrome.Custom] on JetBrains Runtime (see [windowChrome]). A change of [theme] is
+ * revealed in a growing circle over [content] (see [rememberThemeRevealState]); the title bar's colors tween.
  */
 @Composable
 fun AppWindow(
     onCloseRequest: () -> Unit,
     title: String,
-    themeMode: ThemeMode,
+    theme: AppTheme,
     chrome: WindowChrome,
     state: WindowState = rememberWindowState(),
     visible: Boolean = true,
@@ -100,57 +108,74 @@ fun AppWindow(
     titleBar: @Composable AppTitleBarScope.() -> Unit,
     content: @Composable FrameWindowScope.() -> Unit,
 ) {
-    when (chrome) {
-        WindowChrome.System -> Window(
-            onCloseRequest = onCloseRequest,
-            state = state,
-            visible = visible,
-            title = title,
-            icon = icon,
-            alwaysOnTop = alwaysOnTop,
-        ) {
-            Column(Modifier.fillMaxSize()) {
-                ScrcpyViewerTheme(themeMode) {
-                    CompositionLocalProvider(LocalContentColor provides barColors(MaterialTheme.colorScheme).content) {
-                        SystemTitleBarScope.titleBar()
+    val reveal = rememberThemeRevealState(theme)
+    val shown = reveal.shown
+    val dark = shown.mode == ThemeMode.Dark
+    CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
+        when (chrome) {
+            WindowChrome.System -> Window(
+                onCloseRequest = onCloseRequest,
+                state = state,
+                visible = visible,
+                title = title,
+                icon = icon,
+                alwaysOnTop = alwaysOnTop,
+            ) {
+                ScrcpyViewerTheme(shown) {
+                    Column(Modifier.fillMaxSize().themeReveal(reveal)) {
+                        CompositionLocalProvider(LocalContentColor provides barColors(MaterialTheme.colorScheme).content) {
+                            SystemTitleBarScope.titleBar()
+                        }
+                        Box(Modifier.fillMaxWidth().weight(1f)) { content() }
                     }
                 }
-                Box(Modifier.fillMaxWidth().weight(1f)) { content() }
             }
-        }
-        WindowChrome.Custom -> ScrcpyViewerTheme(themeMode) {
-            val bar = barColors(MaterialTheme.colorScheme)
-            val dark = themeMode.isDark()
-            IntUiTheme(
-                theme = if (dark) JewelTheme.darkThemeDefinition() else JewelTheme.lightThemeDefinition(),
-                styling = ComponentStyling.default().decoratedWindow(
-                    windowStyle = decoratedWindowStyle(bar, dark),
-                    titleBarStyle = titleBarStyle(bar, dark, titleBarHeight),
-                ),
-            ) {
-                // Jewel's theme replaces LocalIndication; give the window Material's locals back.
-                ScrcpyViewerTheme(themeMode) {
-                    DecoratedWindow(
-                        onCloseRequest = onCloseRequest,
-                        state = state,
-                        visible = visible,
-                        title = title,
-                        icon = icon,
-                        alwaysOnTop = alwaysOnTop,
-                    ) {
-                        TitleBar { _ ->
-                            BoundedSlot {
-                                CompositionLocalProvider(LocalContentColor provides bar.content) {
-                                    CustomTitleBarScope.titleBar()
+            WindowChrome.Custom -> ScrcpyViewerTheme(shown) {
+                val bar = animatedBarColors(barColors(MaterialTheme.colorScheme))
+                IntUiTheme(
+                    theme = if (dark) JewelTheme.darkThemeDefinition() else JewelTheme.lightThemeDefinition(),
+                    styling = ComponentStyling.default().decoratedWindow(
+                        windowStyle = decoratedWindowStyle(bar, dark),
+                        titleBarStyle = titleBarStyle(bar, dark, titleBarHeight),
+                    ),
+                ) {
+                    // Jewel's theme replaces LocalIndication; give the window Material's locals back.
+                    ScrcpyViewerTheme(shown) {
+                        DecoratedWindow(
+                            onCloseRequest = onCloseRequest,
+                            state = state,
+                            visible = visible,
+                            title = title,
+                            icon = icon,
+                            alwaysOnTop = alwaysOnTop,
+                        ) {
+                            TitleBar { _ ->
+                                BoundedSlot {
+                                    CompositionLocalProvider(LocalContentColor provides bar.content) {
+                                        CustomTitleBarScope.titleBar()
+                                    }
                                 }
                             }
+                            val window = this
+                            Box(Modifier.fillMaxSize().themeReveal(reveal)) { window.content() }
                         }
-                        content()
                     }
                 }
             }
         }
     }
+}
+
+/** [colors] tweened over the reveal's length, so the custom title bar follows the window's new palette. */
+@Composable
+private fun animatedBarColors(colors: BarColors): BarColors {
+    val spec = tween<Color>(500, easing = CubicBezierEasing(0.2f, 0f, 0f, 1f))
+    return BarColors(
+        background = animateColorAsState(colors.background, spec).value,
+        inactiveBackground = animateColorAsState(colors.inactiveBackground, spec).value,
+        content = animateColorAsState(colors.content, spec).value,
+        border = animateColorAsState(colors.border, spec).value,
+    )
 }
 
 /**

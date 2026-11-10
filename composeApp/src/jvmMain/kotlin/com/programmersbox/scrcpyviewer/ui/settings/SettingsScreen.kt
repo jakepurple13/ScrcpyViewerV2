@@ -36,6 +36,9 @@ fun SettingsScreen(
     var showAiSkillDialog by remember { mutableStateOf(false) }
     val actions = SettingsActions(
         onTheme = viewModel::setTheme,
+        onPalette = viewModel::setPalette,
+        onPureBlack = viewModel::setPureBlack,
+        onCustomPalette = viewModel::setCustomPalette,
         onUseSystemTitleBar = viewModel::setUseSystemTitleBar,
         onDefaultPreset = viewModel::setDefaultPreset,
         onUseBundledAdb = viewModel::useBundledAdb,
