@@ -56,7 +56,7 @@ import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CropSquare
-import androidx.compose.material3.Button
+import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -160,6 +160,8 @@ import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
 import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
+import com.programmersbox.scrcpyviewer.ui.theme.LocalNeonGlow
+import com.programmersbox.scrcpyviewer.ui.theme.drawNeonFrame
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
@@ -1255,6 +1257,7 @@ private fun Stage(
     }
     val dotColor = MaterialTheme.colorScheme.primary
     val dotRing = MaterialTheme.colorScheme.onPrimary
+    val glow = LocalNeonGlow.current?.takeIf { it.strength > 0f }
     fun DrawScope.drawClickDot() {
         val dot = clickIndicator?.state(now) ?: return
         dot.ring?.let { ring ->
@@ -1319,6 +1322,7 @@ private fun Stage(
                 .stageMotionLayer(motion) { size -> fs?.let { InputMapper.contentRect(it, Rect(Offset.Zero, size), stretch) } ?: Rect(Offset.Zero, size) },
         ) {
             frame.value // subscribe: a new frame redraws
+            if (glow != null && fs != null) drawNeonFrame(InputMapper.contentRect(fs, Rect(0f, 0f, size.width, size.height), stretch), glow)
             drawLatestFrame(latestFrame, FilterQuality.Low, orientation, greyColorFilter(motion.grey.value)) { f ->
                 InputMapper.contentRect(orientation.orientedSize(IntSize(f.width, f.height)), Rect(0f, 0f, size.width, size.height), state.stretch)
             }

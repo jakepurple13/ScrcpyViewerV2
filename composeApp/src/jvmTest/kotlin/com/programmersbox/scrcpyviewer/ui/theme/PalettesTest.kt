@@ -40,7 +40,10 @@ class PalettesTest {
     fun `every palette keeps text readable in both modes`() {
         val themes = ThemePalette.entries.map { AppTheme(palette = it) } +
             listOf(CustomPalette(0f, 0f, 0f), CustomPalette(90f, CustomPalette.MAX_CHROMA, 180f), CustomPalette(300f, 0.18f, 45f))
-                .map { AppTheme(palette = ThemePalette.Custom, custom = it) }
+                .map { AppTheme(palette = ThemePalette.Custom, custom = it) } +
+            ThemePalette.entries.map { AppTheme(palette = it, neon = true) } +
+            listOf(CustomNeon(), CustomNeon(60f, 120f, 1f), CustomNeon(240f, 0f, 0f), CustomNeon(100f, 100f, 0.5f))
+                .map { AppTheme(palette = ThemePalette.CustomNeon, customNeon = it) }
         for (theme in themes) for (dark in listOf(false, true)) for (black in listOf(false, true)) {
             val s = colorSchemeFor(theme.copy(pureBlack = black), dark)
             val name = "${theme.palette} ${theme.custom} dark=$dark black=$black"
@@ -74,6 +77,41 @@ class PalettesTest {
         assertEquals(359f, seed.hue)
         assertEquals(CustomPalette.MAX_CHROMA, seed.chroma)
         assertEquals((359f + 180f) % 360f, seed.tertiaryHue)
+    }
+
+    @Test
+    fun `neon comes only from the switch, and only custom neon changes the glow`() {
+        assertEquals(0f, AppTheme().glow)
+        assertEquals(CustomNeon.DEFAULT_GLOW, AppTheme(neon = true).glow)
+        assertEquals(CustomNeon.DEFAULT_GLOW, AppTheme(palette = ThemePalette.Cyber, neon = true).glow)
+        assertEquals(0.3f, AppTheme(palette = ThemePalette.CustomNeon, neon = true, customNeon = CustomNeon(glow = 0.3f)).glow)
+        assertEquals(1f, AppTheme(palette = ThemePalette.CustomNeon, neon = true, customNeon = CustomNeon(glow = 4f)).glow)
+        // A neon palette with the switch turned off is not neon.
+        assertEquals(0f, AppTheme(palette = ThemePalette.CustomNeon).glow)
+        assertEquals(0f, AppTheme(palette = ThemePalette.Synthwave).glow)
+        // Custom neon's sliders only matter while it is the palette.
+        assertEquals(CustomNeon.DEFAULT_GLOW, AppTheme(palette = ThemePalette.Rose, neon = true, customNeon = CustomNeon(glow = 0.1f)).glow)
+    }
+
+    @Test
+    fun `neon switch makes teal neon instead of its hand-tuned scheme`() {
+        val neonTeal = colorSchemeFor(AppTheme(neon = true), dark = true)
+        assertTrue(neonTeal != DarkColors)
+        assertTrue(neonTeal.surface.luminance() < DarkColors.surface.luminance(), "neon dark surfaces are darker")
+    }
+
+    @Test
+    fun `custom neon uses its two hues directly`() {
+        val theme = AppTheme(palette = ThemePalette.CustomNeon, neon = true, customNeon = CustomNeon(glowHue = 40f, accentHue = 280f))
+        val seed = theme.seed!!
+        assertEquals(40f, seed.hue)
+        assertEquals(280f, seed.tertiaryHue)
+        assertEquals(NEON_CHROMA, seed.chroma)
+        // Switched off: same hues at a regular palette's vividness, regular scheme.
+        val off = theme.copy(neon = false)
+        assertEquals(40f, off.seed!!.hue)
+        assertTrue(off.seed!!.chroma <= CustomPalette.MAX_CHROMA)
+        assertEquals(generateScheme(off.seed!!, dark = true).surface, colorSchemeFor(off, dark = true).surface)
     }
 
     @Test

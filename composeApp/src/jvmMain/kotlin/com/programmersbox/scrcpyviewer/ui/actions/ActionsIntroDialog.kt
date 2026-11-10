@@ -21,7 +21,7 @@ import androidx.compose.material.icons.filled.DataObject
 import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.ToggleOn
-import androidx.compose.material3.Button
+import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text

@@ -5,6 +5,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.programmersbox.scrcpyviewer.actions.SkillTarget
+import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
@@ -31,6 +32,8 @@ class SettingsActions(
     val onPalette: (ThemePalette) -> Unit = {},
     val onPureBlack: (Boolean) -> Unit = {},
     val onCustomPalette: (CustomPalette) -> Unit = {},
+    val onNeon: (Boolean) -> Unit = {},
+    val onCustomNeon: (CustomNeon) -> Unit = {},
     val onUseSystemTitleBar: (Boolean) -> Unit = {},
     val onDefaultPreset: (String?) -> Unit = {},
     val onUseBundledAdb: () -> Unit = {},
@@ -82,6 +85,12 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 notes = { PureBlackNotes(it) },
                 rowModifier = { pureBlackToggle(it) },
                 content = { PureBlackSwitch(it) },
+            ),
+            SettingEntry(
+                "neon", "Neon", "Vivid colors with a glow on buttons, switches and the mirror frame. Works with any palette.",
+                keywords = listOf("neon", "glow", "vivid", "synthwave", "cyberpunk"),
+                rowModifier = { neonToggle(it) },
+                content = { NeonSwitch(it) },
             ),
             SettingEntry(
                 "palette", "Color palette", "Colors used across the app. Custom lets you pick your own.",
