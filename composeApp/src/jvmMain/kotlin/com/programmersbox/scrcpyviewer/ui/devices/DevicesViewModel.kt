@@ -15,6 +15,7 @@ import com.programmersbox.scrcpyviewer.options.OptionType
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetStore
+import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -71,6 +72,8 @@ data class DevicesUiState(
     val restartSucceeded: Boolean? = null,
     /** What a restart would close, while its confirmation dialog is showing; null otherwise. */
     val restartConfirm: RestartAdbImpact? = null,
+    /** True when the detail pane shows every option; false for the simple pane (preset, Mirror, Wi-Fi). Saved. */
+    val advanced: Boolean = false,
 )
 
 /** What restarting the adb server would end: open mirror windows and Wi-Fi connections, by device name. */
@@ -94,7 +97,13 @@ data class WifiNotice(
 /** Why a restart can help, shown when the app may not restart adb by itself (mirror windows are open). */
 const val RESTART_ADB_HINT = "adb was started by another app, so macOS blocks it. Restarting adb closes open mirror windows."
 
-private data class Filters(val query: String, val group: OptionGroup?, val switching: Set<String>, val restart: RestartUi)
+private data class Filters(
+    val query: String,
+    val group: OptionGroup?,
+    val switching: Set<String>,
+    val restart: RestartUi,
+    val advanced: Boolean,
+)
 
 private data class RestartUi(val running: Boolean = false, val confirm: RestartAdbImpact? = null, val succeeded: Boolean? = null)
 
@@ -106,6 +115,7 @@ class DevicesViewModel(
     private val mirrorRequests: MirrorRequests,
     private val wireless: WirelessAdb,
     private val openMirrors: OpenMirrors,
+    private val settings: AppSettings,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val switching = MutableStateFlow<Set<String>>(emptySet())
@@ -137,7 +147,9 @@ class DevicesViewModel(
 
     val state: StateFlow<DevicesUiState> = combine(
         selection.state,
-        combine(_query, group, switching, restart) { q, g, busy, r -> Filters(q, g, busy, r) },
+        combine(_query, group, switching, restart, settings.settings) { q, g, busy, r, s ->
+            Filters(q, g, busy, r, s.advancedDeviceOptions)
+        },
         workingValues,
         presets.presets,
         options.persistenceError,
@@ -147,7 +159,7 @@ class DevicesViewModel(
         // Built now, so the first frame after the screen creates this ViewModel already shows the options.
         selection.state.value.let { sel ->
             uiState(
-                sel, Filters(_query.value, group.value, switching.value, restart.value),
+                sel, Filters(_query.value, group.value, switching.value, restart.value, settings.settings.value.advancedDeviceOptions),
                 sel.key?.let { options.workingSet(it).value.values }, presets.presets.value, options.persistenceError.value,
             )
         },
@@ -185,6 +197,7 @@ class DevicesViewModel(
             restartingAdb = filters.restart.running,
             restartSucceeded = filters.restart.succeeded,
             restartConfirm = filters.restart.confirm,
+            advanced = filters.advanced,
         )
     }
 
@@ -198,6 +211,11 @@ class DevicesViewModel(
 
     fun setGroup(g: OptionGroup?) {
         group.value = g
+    }
+
+    /** Switches the detail pane between the simple view and every option; remembered across devices and launches. */
+    fun setAdvanced(advanced: Boolean) {
+        settings.update { it.copy(advancedDeviceOptions = advanced) }
     }
 
     /** Checking an option gives it a starting value; unchecking removes it. */
