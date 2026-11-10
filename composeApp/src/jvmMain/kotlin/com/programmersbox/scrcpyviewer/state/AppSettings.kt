@@ -27,6 +27,8 @@ data class Settings(
     val shellWidth: Int = 400,
     /** Folders the user picked to install the AI skill into (absolute paths, no duplicates). */
     val aiSkillFolders: List<String> = emptyList(),
+    /** Whether the Devices screen shows the full options pane instead of the simple one (preset, Mirror, Wi-Fi). */
+    val advancedDeviceOptions: Boolean = false,
 )
 
 internal fun defaultCaptureDir(): String {

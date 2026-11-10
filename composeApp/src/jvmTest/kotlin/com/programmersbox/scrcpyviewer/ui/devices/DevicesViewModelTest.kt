@@ -19,6 +19,7 @@ import com.programmersbox.scrcpyviewer.options.OptionGroup
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetStore
+import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,7 @@ class DevicesViewModelTest {
     private val dir = Files.createTempDirectory("devices-vm")
     private val presets = PresetStore(dir.resolve("presets.json"), scope)
     private val options = DeviceOptionsStore(dir.resolve("devices.json"), presets, scope)
+    private val settings = AppSettings(dir.resolve("settings.json"))
 
     private fun device(serial: String, state: DeviceState = DeviceState.Device, model: String? = null, info: DeviceInfo? = null) =
         Device(serial, state, state.name.lowercase(), model, null, null, false, info)
@@ -57,7 +59,7 @@ class DevicesViewModelTest {
     private fun vm(options: DeviceOptionsStore = this.options, wireless: WirelessAdb = this.wireless) =
         DevicesViewModel(
             DeviceSelection(devices, connected, scope), options, presets, MirrorRequests(mirrorRequests), wireless,
-            OpenMirrors { openMirrors }, scope,
+            OpenMirrors { openMirrors }, settings, scope,
         )
 
     private val pixel = device("R1", info = DeviceInfo("Pixel 8 Pro", "15", 35, "R1"))
@@ -498,5 +500,23 @@ class DevicesViewModelTest {
         val vm = vm(options = broken)
         vm.toggle("no-audio", true)
         assertTrue(vm.state.value.persistenceError?.contains("devices.json") == true, "${vm.state.value.persistenceError}")
+    }
+
+    @Test
+    fun `device options open in the simple view by default`() {
+        assertFalse(vm().state.value.advanced)
+    }
+
+    @Test
+    fun `choosing the advanced view is saved and kept across device switches`() {
+        val vm = vm()
+        vm.setAdvanced(true)
+        assertTrue(vm.state.value.advanced)
+        vm.select(readyToo.serial)
+        assertTrue(vm.state.value.advanced)
+        assertTrue(AppSettings(dir.resolve("settings.json")).settings.value.advancedDeviceOptions)
+        vm.setAdvanced(false)
+        assertFalse(vm.state.value.advanced)
+        assertFalse(AppSettings(dir.resolve("settings.json")).settings.value.advancedDeviceOptions)
     }
 }

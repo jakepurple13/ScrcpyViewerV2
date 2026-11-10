@@ -60,7 +60,12 @@ class DevicesScreenshotTest {
         canMirror = false,
         adbConnected = true,
         hasBasePreset = true,
+        presets = listOf(Preset("qa", "QA default", "Stay awake, H.265, no audio", OptionValues(emptyMap()))),
+        basePresetId = "qa",
+        advanced = true,
     )
+
+    private val simple = state.copy(advanced = false, canMirror = true, errors = emptyMap())
 
     private fun render(
         name: String,
@@ -104,6 +109,27 @@ class DevicesScreenshotTest {
 
     @Test
     fun `devices dark`() = render("devices-dark.png", ThemeMode.Dark)
+
+    @Test
+    fun `devices simple light`() = render("devices-simple-light.png", ThemeMode.Light, simple)
+
+    @Test
+    fun `devices simple dark`() = render("devices-simple-dark.png", ThemeMode.Dark, simple)
+
+    @Test
+    fun `devices simple narrow detail`() =
+        render("devices-simple-light-narrow-detail.png", ThemeMode.Light, simple, width = 760, detailOpen = true)
+
+    @Test
+    fun `devices simple wifi device`() = render(
+        "devices-simple-light-wifi.png", ThemeMode.Light,
+        simple.copy(selectedSerial = "adb-R5CT90ABCDE-xK2fPq._adb-tls-connect._tcp", basePresetId = null, presetLabel = "No preset"),
+    )
+
+    @Test
+    fun `devices simple unauthorized`() = render(
+        "devices-simple-light-unauthorized.png", ThemeMode.Light, simple.copy(selectedSerial = "ZY22H8KLMN", canMirror = false),
+    )
 
     @Test
     fun `devices light filtered`() = render(
@@ -279,6 +305,27 @@ class DevicesScreenshotTest {
 
     private fun frames(vararg ms: Long, at: Map<Long, () -> Unit> = emptyMap()): List<Pair<Long, () -> Unit>> =
         ms.map { it to (at[it] ?: {}) }
+
+    @Test
+    fun `motion simple to advanced and back`() {
+        var advanced by androidx.compose.runtime.mutableStateOf(false)
+        renderFrames(
+            "view-switch", 1280, 800,
+            frames(
+                100, 150, 200, 250, 300, 350, 400, 500, 700, 1000, 1050, 1100, 1150, 1200, 1250, 1300, 1400, 1600,
+                at = mapOf(100L to { advanced = true }, 1000L to { advanced = false }),
+            ),
+        ) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        simple.copy(advanced = advanced), {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        panes = screenshotPanes(null, false),
+                    )
+                }
+            }
+        }
+    }
 
     @Test
     fun `motion pairing dialog grows from its button`() {

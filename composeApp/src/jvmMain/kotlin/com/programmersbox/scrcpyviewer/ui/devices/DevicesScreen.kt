@@ -53,6 +53,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -173,6 +175,7 @@ fun DevicesScreen(
         onRestartAdb = viewModel::requestRestartAdb,
         restartSucceeded = pageState.restartSucceeded,
         pairAnchor = pairAnchor,
+        onAdvanced = viewModel::setAdvanced,
     )
     state.restartConfirm?.let { impact ->
         RestartAdbDialog(impact, onConfirm = viewModel::confirmRestartAdb, onDismiss = viewModel::cancelRestartAdb)
@@ -217,6 +220,8 @@ fun DevicesContent(
     restartSucceeded: Boolean? = true,
     /** Where the Pair over Wi-Fi button is, so the pairing dialog can grow out of it. */
     pairAnchor: PairDialogAnchor? = null,
+    /** Switches the detail pane between the simple view (false) and every option (true). */
+    onAdvanced: (Boolean) -> Unit = {},
 ) {
     val rowActions = RowActions(onOpen = onOpen, onConnectWifi = onConnectWifi, onDisconnect = onDisconnect, canMirror = canMirror)
     Column(modifier.fillMaxSize()) {
@@ -247,8 +252,27 @@ fun DevicesContent(
                             Text("Select a device to choose its options", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     } else {
-                        OptionsPane(state, onQuery, onGroup, onToggle, onValue, onBack, Modifier.weight(1f))
-                        Footer(state, onSave, onSaveAsNew, onMirror, onPreset, presetMenuOpen)
+                        ViewSwitch(state.advanced, Modifier.weight(1f)) { advanced, motion ->
+                            if (advanced) {
+                                Box(Modifier.fillMaxSize()) {
+                                    ViewSwitchContainer(motion, isPane = true, Modifier.matchParentSize())
+                                    Column(Modifier.fillMaxSize()) {
+                                        OptionsPane(
+                                            state, onQuery, onGroup, onToggle, onValue, onBack,
+                                            onSimple = { onAdvanced(false) },
+                                            modifier = Modifier.weight(1f).advancedContentMotion(motion),
+                                        )
+                                        Footer(state, onSave, onSaveAsNew, onMirror, onPreset, presetMenuOpen, onConnectWifi, motion)
+                                    }
+                                }
+                            } else {
+                                SimpleDevicePane(
+                                    state, onPreset, onMirror, onConnectWifi,
+                                    onAdvanced = { onAdvanced(true) }, onBack = onBack, presetMenuOpen = presetMenuOpen,
+                                    motion = motion,
+                                )
+                            }
+                        }
                     }
                 }
             },
@@ -474,11 +498,16 @@ private fun OptionsPane(
     onToggle: (String, Boolean) -> Unit,
     onValue: (String, String) -> Unit,
     onBack: (() -> Unit)?,
+    onSimple: () -> Unit,
     modifier: Modifier,
 ) {
     Column(modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (onBack != null) DetailBackButton(onBack, Modifier.offset(x = (-8).dp))
+            TextButton(onSimple, modifier = Modifier.offset(x = (-8).dp)) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, Modifier.size(18.dp))
+                Text("Simple view")
+            }
             Text("Options", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             OutlinedTextField(
                 value = state.query,
@@ -629,28 +658,45 @@ private fun Footer(
     onMirror: () -> Unit,
     onPreset: (String?) -> Unit,
     presetMenuOpen: Boolean,
+    onConnectWifi: (String) -> Unit,
+    motion: ViewSwitchMotion? = null,
 ) {
     var naming by rememberSaveable { mutableStateOf(false) }
     val modified = state.isModified
     Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 12.dp)) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        // Everything but the shared controls fades with the pane; those glide in from the simple view instead.
+        HorizontalDivider(Modifier.advancedContentMotion(motion), color = MaterialTheme.colorScheme.outlineVariant)
         Row(
             Modifier.fillMaxWidth().padding(top = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            PresetChip(state, onPreset, presetMenuOpen)
+            PresetChip(state, onPreset, presetMenuOpen, Modifier.sharedPart(motion, SharedPart.Preset))
             if (modified) {
-                if (state.hasBasePreset) TextButton(onSave) { Text("Save") }
+                if (state.hasBasePreset) TextButton(onSave, Modifier.advancedContentMotion(motion)) { Text("Save") }
             }
             if (modified || !state.hasBasePreset) {
-                TextButton({ naming = true }) { Text("Save as new preset") }
+                TextButton({ naming = true }, Modifier.advancedContentMotion(motion)) { Text("Save as new preset") }
             }
             Spacer(Modifier.weight(1f))
-            Button(onClick = onMirror, enabled = state.canMirror) { Text("Mirror") }
+            state.devices.firstOrNull { it.serial == state.selectedSerial }?.let { device ->
+                val wifi = wifiButtonState(device, state)
+                OutlinedButton(
+                    onClick = { onConnectWifi(device.serial) },
+                    enabled = wifi.enabled,
+                    modifier = Modifier.sharedPart(motion, SharedPart.Wifi),
+                ) {
+                    Icon(Icons.Filled.Wifi, contentDescription = null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(wifi.label)
+                }
+            }
+            Button(onClick = onMirror, enabled = state.canMirror, modifier = Modifier.sharedPart(motion, SharedPart.Mirror)) {
+                Text("Mirror")
+            }
         }
         Row(
-            Modifier.fillMaxWidth().padding(top = 6.dp),
+            Modifier.fillMaxWidth().padding(top = 6.dp).advancedContentMotion(motion),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -677,9 +723,9 @@ private fun Footer(
 }
 
 @Composable
-private fun PresetChip(state: DevicesUiState, onPreset: (String?) -> Unit, initiallyOpen: Boolean) {
+private fun PresetChip(state: DevicesUiState, onPreset: (String?) -> Unit, initiallyOpen: Boolean, modifier: Modifier = Modifier) {
     var open by remember { mutableStateOf(initiallyOpen) }
-    Box {
+    Box(modifier) {
         AssistChip(
             onClick = { open = true },
             enabled = state.selectedSerial != null,
@@ -696,7 +742,7 @@ private fun PresetChip(state: DevicesUiState, onPreset: (String?) -> Unit, initi
 }
 
 @Composable
-private fun PresetMenuItem(label: String, checked: Boolean, onClick: () -> Unit) {
+internal fun PresetMenuItem(label: String, checked: Boolean, onClick: () -> Unit) {
     DropdownMenuItem(
         text = { Text(label) },
         onClick = onClick,
