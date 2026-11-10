@@ -18,7 +18,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.styleSunken
+import androidx.compose.foundation.background
+import com.programmersbox.scrcpyviewer.ui.theme.styledFieldColors
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -31,10 +36,10 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -184,7 +189,7 @@ private fun Fact(
     contentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     mono: Boolean = false,
 ) {
-    Surface(color = containerColor, contentColor = contentColor, shape = RoundedCornerShape(8.dp)) {
+    Surface(color = containerColor, contentColor = contentColor, shape = styledCorner(8.dp)) {
         Text(
             text,
             style = MaterialTheme.typography.labelMedium,
@@ -208,12 +213,11 @@ private fun PresetSection(state: DevicesUiState, onPreset: (String?) -> Unit, in
             color = MaterialTheme.colorScheme.primary,
         )
         Box(Modifier.sharedPart(motion, SharedPart.Preset)) {
-            val shape = RoundedCornerShape(12.dp)
+            val shape = styledCorner(12.dp)
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clip(shape)
-                    .border(1.dp, MaterialTheme.colorScheme.outline, shape)
+                    .presetField(shape)
                     .clickable { open = true }
                     .padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -251,7 +255,7 @@ internal fun flagSummary(values: OptionValues): List<String> =
 
 @Composable
 private fun FlagChip(text: String) {
-    val shape = RoundedCornerShape(6.dp)
+    val shape = styledCorner(6.dp)
     Text(
         text,
         style = MaterialTheme.typography.labelSmall,
@@ -270,7 +274,7 @@ private fun AdvancedLink(onAdvanced: () -> Unit, motion: ViewSwitchMotion?) {
             ViewSwitchContainer(motion, isPane = false, Modifier.matchParentSize())
             TextButton(
                 onClick = onAdvanced,
-                shape = RoundedCornerShape(8.dp),
+                shape = styledCorner(8.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Advanced options", fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurface)
@@ -284,5 +288,16 @@ private fun AdvancedLink(onAdvanced: () -> Unit, motion: ViewSwitchMotion?) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
             }
         }
+    }
+}
+
+/** The preset picker's frame: Material's outline, or the style's pressed-in field. */
+@Composable
+private fun Modifier.presetField(shape: androidx.compose.ui.graphics.Shape): Modifier {
+    val scheme = MaterialTheme.colorScheme
+    return when (currentStyle) {
+        ThemeStyle.Material -> clip(shape).border(1.dp, scheme.outline, shape)
+        ThemeStyle.Retro -> background(scheme.surfaceContainerLowest).styleSunken(shape).clip(shape)
+        else -> styleSunken(shape).clip(shape).background(styledFieldColors().unfocusedContainerColor)
     }
 }

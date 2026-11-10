@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.DeveloperMode
@@ -35,7 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -126,7 +126,7 @@ internal fun PageHeader(icon: @Composable () -> Unit, title: String, subtitle: S
 @Composable
 internal fun IconBadge(icon: ImageVector) {
     Box(
-        Modifier.size(64.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(20.dp)),
+        Modifier.size(64.dp).background(MaterialTheme.colorScheme.primaryContainer, styledCorner(20.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)

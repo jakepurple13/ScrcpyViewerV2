@@ -8,21 +8,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
+import com.programmersbox.scrcpyviewer.ui.theme.AlertDialog
+import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -128,7 +129,7 @@ private fun Commands(action: CustomAction) {
         is ToggleAction -> listOfNotNull("on" to action.on, "off" to action.off, action.read?.let { READ_LABEL to it })
         is RunOnceAction -> listOf(null to action.command)
     }
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = styledCorner(8.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             lines.forEach { (label, command) ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -152,7 +153,7 @@ private fun ConflictChoices(selected: ConflictChoice, enabled: Boolean, onSelect
                 selected = choice == selected,
                 onClick = { onSelect(choice) },
                 enabled = enabled,
-                shape = SegmentedButtonDefaults.itemShape(i, entries.size),
+                shape = styledSegmentShape(i, entries.size),
             ) { Text(choiceLabels.getValue(choice), maxLines = 1) }
         }
     }

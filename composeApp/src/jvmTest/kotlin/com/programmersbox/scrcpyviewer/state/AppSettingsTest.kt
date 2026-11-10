@@ -5,6 +5,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -129,5 +130,27 @@ class AppSettingsTest {
         Files.writeString(file, """{"themePalette":"Gone"}""")
         assertEquals(ThemePalette.Teal, AppSettings(file).settings.value.appTheme.palette)
         assertFalse(Files.exists(dir.resolve("settings.json.bak")))
+    }
+
+    @Test
+    fun `style fields default for older files and persist`() {
+        Files.writeString(file, """{"themePalette":"Rose"}""")
+        val old = AppSettings(file).settings.value.appTheme
+        assertEquals(ThemeStyle.Material, old.style)
+        assertFalse(old.retroPalette)
+        assertTrue(old.desktopBlur)
+        assertEquals(0.3f, old.glassOpacity)
+        AppSettings(file).update { it.copy(themeStyle = "Retro", retroPalette = true, desktopBlur = false, glassOpacity = 0.7f) }
+        val theme = AppSettings(file).settings.value.appTheme
+        assertEquals(ThemeStyle.Retro, theme.style)
+        assertTrue(theme.retroPalette)
+        assertFalse(theme.desktopBlur)
+        assertEquals(0.7f, theme.glassOpacity)
+    }
+
+    @Test
+    fun `unknown style name loads as material`() {
+        Files.writeString(file, """{"themeStyle":"Aero"}""")
+        assertEquals(ThemeStyle.Material, AppSettings(file).settings.value.appTheme.style)
     }
 }

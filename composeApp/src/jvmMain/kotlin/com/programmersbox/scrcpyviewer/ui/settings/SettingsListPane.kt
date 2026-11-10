@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
@@ -19,7 +19,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -90,7 +90,7 @@ private fun CategoryItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = styledCorner(8.dp)
     val fill by animateColorAsState(
         if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, label = "categoryFill",
     )
@@ -101,7 +101,7 @@ private fun CategoryItem(
             .selectable(selected = selected, role = Role.Tab, onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(3.dp).height(20.dp).clip(RoundedCornerShape(2.dp)).drawBehind { drawRect(bar) })
+        Box(Modifier.width(3.dp).height(20.dp).clip(styledCorner(2.dp)).drawBehind { drawRect(bar) })
         Text(
             title, style = MaterialTheme.typography.bodyLarge,
             color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,

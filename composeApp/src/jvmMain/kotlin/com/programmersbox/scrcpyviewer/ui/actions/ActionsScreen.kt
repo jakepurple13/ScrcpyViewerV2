@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import com.programmersbox.scrcpyviewer.ui.theme.listRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,19 +30,19 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesomeMotion
 import androidx.compose.material.icons.filled.DragIndicator
-import androidx.compose.material3.AlertDialog
+import com.programmersbox.scrcpyviewer.ui.theme.AlertDialog
 import androidx.compose.material3.AssistChip
 import com.programmersbox.scrcpyviewer.ui.theme.Button
-import androidx.compose.material3.Checkbox
+import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -408,7 +410,7 @@ private fun ListHeader(total: Int, selection: Set<String>?, onEvent: (ActionsEve
             Text("Actions", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             TooltipArea(
                 tooltip = {
-                    Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
+                    Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
                         Text(
                             "How actions work",
                             Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -539,8 +541,7 @@ private fun ActionRow(action: CustomAction, selected: Boolean, checked: Boolean?
     Row(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) colors.secondaryContainer else colors.surface)
+            .listRow(selected, styledCorner(12.dp))
             .then(
                 if (checked == null) Modifier.clickable(onClick = onClick)
                 else Modifier.toggleable(checked, role = Role.Checkbox, onValueChange = { onClick() }),

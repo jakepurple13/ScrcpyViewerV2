@@ -75,6 +75,7 @@ kotlin {
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.nucleus.updater)
+            implementation(libs.jna)
             val ffmpeg = libs.versions.ffmpeg.get()
             val javacpp = libs.versions.javacpp.get()
             implementation("org.bytedeco:ffmpeg:$ffmpeg")

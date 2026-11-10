@@ -1,5 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
+import com.programmersbox.scrcpyviewer.ui.theme.stylePane
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,7 +37,7 @@ fun SettingsDetailPane(
             bindings.state.persistenceError?.let { PersistenceError(it) }
             if (category == null) return@Column
             Text(category.title, style = MaterialTheme.typography.headlineSmall)
-            Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large) {
+            Surface(Modifier.stylePane(MaterialTheme.shapes.large), color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large) {
                 // The rows fill in one after another when they appear and whenever search changes which are shown.
                 val shownIds = remember(entries) { entries.map { it.id } }
                 Column {

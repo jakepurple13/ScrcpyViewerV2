@@ -73,6 +73,10 @@ import com.programmersbox.scrcpyviewer.update.UpdateState
 import kotlinx.coroutines.flow.filter
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
 import org.koin.compose.koinInject
+import androidx.compose.ui.graphics.compositeOver
+import com.programmersbox.scrcpyviewer.ui.theme.LocalStyleTokens
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.drawBevel
 import org.koin.compose.viewmodel.koinViewModel
 
 private val TopLevelRoute.label: String
@@ -104,8 +108,22 @@ private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean) {
     LaunchedEffect(indicator, selected, selectedCenter, halfHeight) {
         selectedCenter?.let { indicator.moveTo(selected, it, halfHeight) }
     }
-    val pill = MaterialTheme.colorScheme.secondaryContainer
-    val container = MaterialTheme.colorScheme.surfaceContainer
+    val scheme = MaterialTheme.colorScheme
+    val tokens = LocalStyleTokens.current
+    // Glass fills the pill with the accent; Soft presses it in; Retro draws it as a pushed-in button.
+    val pill = when (tokens.style) {
+        ThemeStyle.Glass -> scheme.primary
+        ThemeStyle.Soft -> tokens.softDark.copy(alpha = 0.45f).compositeOver(scheme.surface)
+        ThemeStyle.Retro -> scheme.surfaceContainerHighest
+        ThemeStyle.Material -> scheme.secondaryContainer
+    }
+    val onPill = when (tokens.style) {
+        ThemeStyle.Glass -> scheme.onPrimary
+        ThemeStyle.Soft -> scheme.primary
+        ThemeStyle.Retro -> scheme.onSurface
+        ThemeStyle.Material -> scheme.onSecondaryContainer
+    }
+    val container = if (tokens.style == ThemeStyle.Glass) scheme.surfaceContainerLow else scheme.surfaceContainer
     // Set during placement, before the items report their positions.
     val railCoordinates = remember { arrayOfNulls<LayoutCoordinates>(1) }
     Box(
@@ -117,12 +135,11 @@ private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean) {
                 // Animated edges are read here, so the move only redraws.
                 val width = IndicatorWidth.toPx()
                 val top = indicator.top.value
-                drawRoundRect(
-                    pill,
-                    topLeft = Offset(indicator.centerX - width / 2, top),
-                    size = Size(width, indicator.bottom.value - top),
-                    cornerRadius = CornerRadius(IndicatorHeight.toPx() / 2),
-                )
+                val topLeft = Offset(indicator.centerX - width / 2, top)
+                val pillSize = Size(width, indicator.bottom.value - top)
+                val corner = if (tokens.style == ThemeStyle.Retro) 0f else IndicatorHeight.toPx() / 2
+                drawRoundRect(pill, topLeft = topLeft, size = pillSize, cornerRadius = CornerRadius(corner))
+                if (tokens.style == ThemeStyle.Retro) drawBevel(tokens.bevel, raised = false, topLeft, pillSize)
             },
     ) {
         NavigationRail(containerColor = Color.Transparent, contentColor = contentColorFor(container)) {
@@ -145,7 +162,9 @@ private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean) {
                     },
                     label = { Text(route.label) },
                     // The shared pill above replaces the item's own indicator.
-                    colors = NavigationRailItemDefaults.colors(indicatorColor = Color.Transparent),
+                    colors = NavigationRailItemDefaults.colors(
+                        indicatorColor = Color.Transparent, selectedIconColor = onPill,
+                    ),
                 )
             }
         }

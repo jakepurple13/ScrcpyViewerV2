@@ -26,7 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -36,7 +36,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -270,13 +270,13 @@ private fun TemplateCard(template: ActionTemplate, onClick: () -> Unit, modifier
     Surface(
         onClick = onClick,
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
+        shape = styledCorner(14.dp),
         color = colors.surface,
         border = BorderStroke(1.dp, colors.outlineVariant),
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(colors.primaryContainer), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(36.dp).clip(styledCorner(10.dp)).background(colors.primaryContainer), contentAlignment = Alignment.Center) {
                     Icon(
                         ActionIcons.forName(action.icon, action.defaultIcon), contentDescription = null,
                         tint = colors.onPrimaryContainer, modifier = Modifier.size(20.dp),
@@ -305,7 +305,7 @@ private fun kindName(kind: VariableKind) = when (kind) {
 
 @Composable
 private fun Pill(text: String, mono: Boolean = false) {
-    Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer) {
+    Surface(shape = styledCorner(50), color = MaterialTheme.colorScheme.secondaryContainer) {
         Text(
             text,
             Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
@@ -330,7 +330,7 @@ private fun CommandBox(action: CustomAction) {
             }
         }
     }
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(colors.surfaceContainerHighest).padding(horizontal = 10.dp, vertical = 8.dp)) {
+    Box(Modifier.fillMaxWidth().clip(styledCorner(8.dp)).background(colors.surfaceContainerHighest).padding(horizontal = 10.dp, vertical = 8.dp)) {
         Text(text, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), color = colors.onSurface)
     }
 }

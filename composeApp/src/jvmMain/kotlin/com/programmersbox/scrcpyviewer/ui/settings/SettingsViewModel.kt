@@ -17,6 +17,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -182,6 +183,15 @@ class SettingsViewModel(
 
     /** Like [setCustomPalette], called on slider release. */
     fun setCustomNeon(custom: CustomNeon) = appSettings.update { it.copy(customNeon = custom) }
+
+    fun setStyle(style: ThemeStyle) = appSettings.update { it.copy(themeStyle = style.name) }
+
+    fun setRetroPalette(value: Boolean) = appSettings.update { it.copy(retroPalette = value) }
+
+    fun setDesktopBlur(value: Boolean) = appSettings.update { it.copy(desktopBlur = value) }
+
+    /** Called on slider release, like [setCustomPalette]. */
+    fun setGlassOpacity(value: Float) = appSettings.update { it.copy(glassOpacity = value.coerceIn(0f, 1f)) }
 
     /** Read when a window opens, so it applies to windows opened after this. */
     fun setUseSystemTitleBar(value: Boolean) = appSettings.update { it.copy(useSystemTitleBar = value) }

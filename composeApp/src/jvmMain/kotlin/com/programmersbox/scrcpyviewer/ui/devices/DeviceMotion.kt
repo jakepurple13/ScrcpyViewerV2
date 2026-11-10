@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
@@ -277,7 +278,7 @@ internal fun StatusChip(status: ChipStatus, modifier: Modifier = Modifier) {
     )
     Row(
         modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(styledCorner(6.dp))
             .background(container)
             .animateContentSize(tween(CHIP_RESIZE_MILLIS, easing = EmphasizedDecelerate))
             .padding(horizontal = 6.dp, vertical = 1.dp),
