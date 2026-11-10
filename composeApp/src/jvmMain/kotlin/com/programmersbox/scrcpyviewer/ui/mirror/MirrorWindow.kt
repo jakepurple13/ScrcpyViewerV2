@@ -40,7 +40,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -72,7 +72,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -1432,7 +1432,7 @@ private fun AnimatedVisibilityScope.DisconnectedScrim(state: MirrorUiState, onRe
     val rise = with(density) { CARD_RISE.roundToPx() }
     Box(Modifier.fillMaxSize().background(colors.scrim.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = styledCorner(16.dp),
             color = colors.surfaceContainerHigh,
             tonalElevation = 3.dp,
             modifier = Modifier.animateEnterExit(
@@ -1520,7 +1520,7 @@ private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) 
 private fun ToolbarButton(action: MirrorAction, enabled: Boolean, label: String, tint: Color?, selected: Boolean = false, onClick: () -> Unit) {
     TooltipArea(
         tooltip = {
-            Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
+            Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
                 Text(
                     label,
                     Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

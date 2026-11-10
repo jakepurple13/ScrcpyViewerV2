@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -31,7 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -198,7 +199,7 @@ private fun Console(console: ShellConsole, modifier: Modifier, onCopy: () -> Uni
                 }
             }
         }
-        Row(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(8.dp)).background(colors.surfaceContainerLowest.copy(alpha = 0.9f))) {
+        Row(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(styledCorner(8.dp)).background(colors.surfaceContainerLowest.copy(alpha = 0.9f))) {
             IconButton(onClick = onCopy, Modifier.size(28.dp)) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = "Copy output", Modifier.size(15.dp), tint = colors.onSurfaceVariant)
             }

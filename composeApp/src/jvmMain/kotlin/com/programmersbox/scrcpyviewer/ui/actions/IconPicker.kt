@@ -13,13 +13,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -109,7 +109,7 @@ fun IconPickerContent(selected: String, onPick: (String) -> Unit, onDismiss: () 
             }
             true
         },
-        shape = RoundedCornerShape(16.dp),
+        shape = styledCorner(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 6.dp,
         shadowElevation = 8.dp,
@@ -151,7 +151,7 @@ fun IconPickerContent(selected: String, onPick: (String) -> Unit, onDismiss: () 
 @Composable
 private fun IconCell(icon: ActionIcon, isSelected: Boolean, isHighlighted: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(10.dp)
+    val shape = styledCorner(10.dp)
     Box(
         Modifier.size(CellSize).padding(2.dp).clip(shape)
             .background(if (isSelected) colors.primary else colors.surfaceContainerHigh)

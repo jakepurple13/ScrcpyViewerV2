@@ -1,0 +1,203 @@
+package com.programmersbox.scrcpyviewer.ui.window
+
+import androidx.compose.ui.awt.ComposeWindow
+import com.programmersbox.scrcpyviewer.Os
+import com.sun.jna.Callback
+import com.sun.jna.Function
+import com.sun.jna.NativeLibrary
+import com.sun.jna.Pointer
+import com.sun.jna.Structure
+import org.jetbrains.skiko.SkiaLayer
+import java.awt.Color
+import java.awt.Container
+import java.util.Collections
+
+/** NSVisualEffectMaterial values (AppKit). */
+enum class MacVibrancyMaterial(val value: Long) {
+    Titlebar(3), Menu(5), Popover(6), Sidebar(7), HeaderView(10), Sheet(11), WindowBackground(12),
+    HudWindow(13), FullScreenUI(15), ContentBackground(18), UnderWindowBackground(21), UnderPageBackground(22),
+}
+
+/**
+ * Puts a macOS NSVisualEffectView (blending mode behind-window) under this window's content, so whatever Compose
+ * leaves transparent shows the blurred desktop. Returns false when unsupported (not macOS, native call failed);
+ * never throws. Call after the window is displayable (e.g. from a LaunchedEffect inside the window content).
+ *
+ * Works on decorated windows (system title bar and the JBR custom title bar) without Compose's `transparent = true`:
+ * the Skia layer is switched to transparent through skiko's public [SkiaLayer.transparency], and the NSWindow, its
+ * Java2D content layer and the effect view are configured natively on the AppKit thread.
+ *
+ * [dark] picks the darkAqua or aqua appearance for the effect view; call again when the theme mode changes.
+ */
+fun ComposeWindow.setMacVibrancy(
+    enabled: Boolean,
+    dark: Boolean,
+    material: MacVibrancyMaterial = MacVibrancyMaterial.UnderWindowBackground,
+): Boolean {
+    if (!Os.isMac) return false
+    return try {
+        val skia = findSkiaLayer(this) ?: return false
+        val handle = windowHandle
+        if (handle == 0L) return false
+        skia.transparency = enabled
+        skia.background = if (enabled) Color(0, 0, 0, 0) else null
+        rootPane.isOpaque = !enabled
+        (contentPane as? javax.swing.JComponent)?.isOpaque = !enabled
+        // AWT sizes are in points, like AppKit's; the effect view follows later resizes by itself.
+        val w = width.toDouble()
+        val h = height.toDouble()
+        ObjC.onMain { MacVibrancyNative.apply(Pointer(handle), enabled, dark, material.value, w, h) }
+        skia.needRender()
+        true
+    } catch (t: Throwable) {
+        System.err.println("setMacVibrancy failed: $t")
+        false
+    }
+}
+
+private fun findSkiaLayer(container: Container): SkiaLayer? {
+    for (c in container.components) {
+        if (c is SkiaLayer) return c
+        if (c is Container) findSkiaLayer(c)?.let { return it }
+    }
+    return null
+}
+
+private object MacVibrancyNative {
+    private const val NS_WINDOW_BELOW = -1L
+    private const val NS_VIEW_WIDTH_SIZABLE_HEIGHT_SIZABLE = 2L or 16L
+    private const val BLENDING_BEHIND_WINDOW = 0L
+    private const val STATE_FOLLOWS_WINDOW = 0L
+    private const val IDENTIFIER = "scrcpyviewer.vibrancy"
+
+    /** Runs on the AppKit main thread. [handle] is skiko's window handle (an NSView or NSWindow). */
+    fun apply(handle: Pointer, enabled: Boolean, dark: Boolean, material: Long, width: Double, height: Double) {
+        val nsWindow = when {
+            ObjC.isKindOf(handle, "NSWindow") -> handle
+            ObjC.isKindOf(handle, "NSView") -> ObjC.msgPtr(handle, "window")
+            else -> null
+        } ?: return
+        val contentView = ObjC.msgPtr(nsWindow, "contentView") ?: return
+        val frameView = ObjC.msgPtr(contentView, "superview") ?: return
+
+        var effect = findEffectView(frameView)
+        if (!enabled) {
+            effect?.let { ObjC.msgVoid(it, "removeFromSuperview") }
+            ObjC.msgVoid(nsWindow, "setOpaque:", true)
+            ObjC.msgVoid(nsWindow, "setBackgroundColor:", ObjC.msgPtr(ObjC.cls("NSColor"), "windowBackgroundColor")!!)
+            ObjC.msgVoid(nsWindow, "setAppearance:", null) // back to following the system
+            ObjC.msgPtr(contentView, "layer")?.let { ObjC.msgVoid(it, "setOpaque:", true) }
+            return
+        }
+
+        if (effect == null) {
+            // Built from the window size rather than read back with [frameView]'s bounds: returning a struct needs
+            // objc_msgSend_stret on Intel Macs, which plain objc_msgSend would get wrong.
+            val bounds = ObjC.CGRect().apply { this.width = width; this.height = height }
+            effect = ObjC.msgPtr(ObjC.msgPtr(ObjC.cls("NSVisualEffectView"), "alloc")!!, "initWithFrame:", bounds)!!
+            ObjC.msgVoid(effect, "setAutoresizingMask:", NS_VIEW_WIDTH_SIZABLE_HEIGHT_SIZABLE)
+            ObjC.msgVoid(effect, "setBlendingMode:", BLENDING_BEHIND_WINDOW)
+            ObjC.msgVoid(effect, "setState:", STATE_FOLLOWS_WINDOW)
+            ObjC.msgVoid(effect, "setIdentifier:", ObjC.nsString(IDENTIFIER))
+            ObjC.msgVoid(frameView, "addSubview:positioned:relativeTo:", effect, NS_WINDOW_BELOW, contentView)
+            ObjC.msgVoid(effect, "release") // retained by its superview
+        }
+        ObjC.msgVoid(effect, "setMaterial:", material)
+        val appearanceName = ObjC.nsString(if (dark) "NSAppearanceNameDarkAqua" else "NSAppearanceNameAqua")
+        ObjC.msgPtr(ObjC.cls("NSAppearance"), "appearanceNamed:", appearanceName)
+            // On the window, not just the effect view, so the native title text and traffic lights match.
+            ?.let { ObjC.msgVoid(nsWindow, "setAppearance:", it) }
+
+        ObjC.msgVoid(nsWindow, "setOpaque:", false)
+        ObjC.msgVoid(nsWindow, "setBackgroundColor:", ObjC.msgPtr(ObjC.cls("NSColor"), "clearColor")!!)
+        // The AWT content view's layer holds the Java2D window surface; make it non-opaque so it does not cover us.
+        ObjC.msgPtr(contentView, "layer")?.let { ObjC.msgVoid(it, "setOpaque:", false) }
+    }
+
+    private fun findEffectView(frameView: Pointer): Pointer? {
+        val subviews = ObjC.msgPtr(frameView, "subviews") ?: return null
+        val id = ObjC.nsString(IDENTIFIER)
+        for (i in 0 until ObjC.msgLong(subviews, "count")) {
+            val view = ObjC.msgPtr(subviews, "objectAtIndex:", i) ?: continue
+            val viewId = ObjC.msgPtr(view, "identifier") ?: continue
+            if (ObjC.msgBool(viewId, "isEqualToString:", id)) return view
+        }
+        return null
+    }
+}
+
+/** Minimal Objective-C runtime bridge over JNA. */
+internal object ObjC {
+    private val objc = NativeLibrary.getInstance("objc")
+    private val msgSend: Function = objc.getFunction("objc_msgSend")
+    private val getClass: Function = objc.getFunction("objc_getClass")
+    private val selRegister: Function = objc.getFunction("sel_registerName")
+    private val system = NativeLibrary.getInstance("System")
+    private val dispatchAsync: Function = system.getFunction("dispatch_async_f")
+    private val mainQueue: Pointer = system.getGlobalVariableAddress("_dispatch_main_q")
+    private val pending = Collections.synchronizedSet(HashSet<Callback>())
+
+    @Structure.FieldOrder("x", "y", "width", "height")
+    class CGRect : Structure(), Structure.ByValue {
+        @JvmField var x = 0.0
+        @JvmField var y = 0.0
+        @JvmField var width = 0.0
+        @JvmField var height = 0.0
+    }
+
+    fun interface DispatchFunction : Callback {
+        fun invoke(context: Pointer?)
+    }
+
+    fun cls(name: String): Pointer = getClass.invokePointer(arrayOf(name)) ?: error("No class $name")
+    fun sel(name: String): Pointer = selRegister.invokePointer(arrayOf(name))
+
+    fun msgPtr(receiver: Pointer, selector: String, vararg args: Any?): Pointer? =
+        msgSend.invokePointer(arrayOf(receiver, sel(selector), *args))
+
+    fun msgVoid(receiver: Pointer, selector: String, vararg args: Any?) {
+        msgSend.invokeVoid(arrayOf(receiver, sel(selector), *args))
+    }
+
+    fun msgLong(receiver: Pointer, selector: String, vararg args: Any?): Long =
+        msgSend.invokeLong(arrayOf(receiver, sel(selector), *args))
+
+    fun msgBool(receiver: Pointer, selector: String, vararg args: Any?): Boolean =
+        msgSend.invokeInt(arrayOf(receiver, sel(selector), *args)) and 0xFF != 0
+
+    fun nsString(value: String): Pointer = msgPtr(cls("NSString"), "stringWithUTF8String:", value)!!
+
+    fun isKindOf(obj: Pointer, className: String): Boolean =
+        msgBool(obj, "isKindOfClass:", cls(className))
+
+    /** Runs [block] asynchronously on the AppKit main thread; exceptions are logged. */
+    fun onMain(block: () -> Unit) {
+        lateinit var callback: DispatchFunction
+        callback = DispatchFunction {
+            try {
+                block()
+            } catch (t: Throwable) {
+                System.err.println("MacVibrancy main-thread call failed: $t")
+            } finally {
+                pending.remove(callback)
+            }
+        }
+        pending.add(callback) // keep it reachable until AppKit runs it
+        dispatchAsync.invokeVoid(arrayOf(mainQueue, null, callback))
+    }
+}
+
+/**
+ * Keeps [window]'s desktop blur in step with [enabled] and [dark]. Never touches a window that has not had the blur,
+ * so the other styles keep AWT's untouched, opaque window.
+ */
+@androidx.compose.runtime.Composable
+fun MacVibrancyEffect(window: ComposeWindow, enabled: Boolean, dark: Boolean) {
+    val applied = androidx.compose.runtime.remember(window) { booleanArrayOf(false) }
+    androidx.compose.runtime.LaunchedEffect(window, enabled, dark) {
+        if (enabled || applied[0]) {
+            window.setMacVibrancy(enabled, dark)
+            applied[0] = enabled
+        }
+    }
+}

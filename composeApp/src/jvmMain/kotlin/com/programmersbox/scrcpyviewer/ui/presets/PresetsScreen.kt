@@ -17,13 +17,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import com.programmersbox.scrcpyviewer.ui.theme.listRow
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
-import androidx.compose.material3.AlertDialog
+import com.programmersbox.scrcpyviewer.ui.theme.AlertDialog
 import androidx.compose.material3.AssistChip
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.DropdownMenu
@@ -31,11 +32,11 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -256,13 +257,12 @@ private fun PresetList(
 
 @Composable
 private fun PresetRow(preset: Preset, selected: Boolean, isDefault: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = styledCorner(12.dp)
     val n = preset.options.entries.size
     Row(
         modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)
+            .listRow(selected, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -352,7 +352,7 @@ private fun FlagGrid(values: OptionValues) {
                 pair.forEach { (flag, value) ->
                     val label = OptionCatalog.byFlag(flag)?.label ?: flag
                     Row(
-                        Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 12.dp, vertical = 8.dp),
+                        Modifier.weight(1f).clip(styledCorner(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -375,7 +375,7 @@ private fun FlagGrid(values: OptionValues) {
 
 @Composable
 private fun JsonPanel(json: String) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = styledCorner(12.dp), modifier = Modifier.fillMaxWidth()) {
         Box {
             SelectionContainer {
                 Text(

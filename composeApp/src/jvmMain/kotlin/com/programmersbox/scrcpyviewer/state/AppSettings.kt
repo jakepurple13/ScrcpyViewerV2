@@ -6,6 +6,8 @@ import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.DEFAULT_GLASS_OPACITY
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
@@ -43,11 +45,22 @@ data class Settings(
     val neon: Boolean = false,
     /** The Custom neon palette's sliders, kept when another palette is chosen. */
     val customNeon: CustomNeon = CustomNeon(),
+    /** A [ThemeStyle] name; unknown or missing names fall back to Material. */
+    val themeStyle: String = ThemeStyle.Material.name,
+    /** Retro 95 follows the palette instead of the classic gray and navy. */
+    val retroPalette: Boolean = false,
+    /** Glass shows the blurred desktop behind windows (macOS). */
+    val desktopBlur: Boolean = true,
+    /** Glass panes' opacity, 0..1. */
+    val glassOpacity: Float = DEFAULT_GLASS_OPACITY,
 )
 
 /** Everything the theme reads from [Settings]. */
 val Settings.appTheme: AppTheme
-    get() = AppTheme(themeMode, ThemePalette.fromName(themePalette), pureBlack, customPalette, neon, customNeon)
+    get() = AppTheme(
+        themeMode, ThemePalette.fromName(themePalette), pureBlack, customPalette, neon, customNeon,
+        ThemeStyle.fromName(themeStyle), retroPalette, desktopBlur, glassOpacity,
+    )
 
 internal fun defaultCaptureDir(): String {
     val home = Paths.get(System.getProperty("user.home"))

@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.HorizontalDivider
@@ -53,7 +53,7 @@ internal fun ReadStateExplainer() {
 private fun FlowBox(label: String, text: String, modifier: Modifier) {
     Surface(
         modifier.fillMaxHeight(),
-        shape = RoundedCornerShape(12.dp),
+        shape = styledCorner(12.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
     ) {
         Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -72,7 +72,7 @@ private fun FlowArrow() {
 private fun ResultChip(text: String, filled: Boolean) {
     val colors = MaterialTheme.colorScheme
     Surface(
-        shape = RoundedCornerShape(8.dp),
+        shape = styledCorner(8.dp),
         color = if (filled) colors.primary else colors.surfaceContainerHigh,
         contentColor = if (filled) colors.onPrimary else colors.onSurface,
         border = if (filled) null else BorderStroke(1.dp, colors.outlineVariant),

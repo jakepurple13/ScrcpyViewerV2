@@ -29,7 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -42,7 +42,7 @@ import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.TooltipArea
-import androidx.compose.material3.AlertDialog
+import com.programmersbox.scrcpyviewer.ui.theme.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -53,22 +53,22 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.material3.AssistChip
 import com.programmersbox.scrcpyviewer.ui.theme.Button
-import androidx.compose.material3.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalButton
+import com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -106,6 +106,7 @@ import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
 import org.koin.compose.viewmodel.koinViewModel
 import com.programmersbox.scrcpyviewer.ui.common.OptionRow
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
+import com.programmersbox.scrcpyviewer.ui.theme.selectedRow
 
 @Composable
 fun DevicesScreen(
@@ -423,7 +424,7 @@ private fun DeviceRow(
     interactive: Boolean = true,
 ) {
     var menuAt by remember { mutableStateOf(if (menuInitiallyOpen) Offset(120f, 40f) else null) }
-    val shape = RoundedCornerShape(12.dp)
+    val shape = styledCorner(12.dp)
     val dot = when (device.state) {
         DeviceState.Device -> MaterialTheme.colorScheme.primary
         DeviceState.Unauthorized -> warnColor()
@@ -447,7 +448,7 @@ private fun DeviceRow(
             }
             .clip(shape)
             .arrivalGlow(glow, MaterialTheme.colorScheme.surface)
-            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
+            .then(if (selected) Modifier.selectedRow(shape) else Modifier)
             .combinedClickable(enabled = interactive, onClick = onClick, onDoubleClick = onDoubleClick)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -515,7 +516,7 @@ private fun OptionsPane(
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 placeholder = { Text("Search ${OptionCatalog.all.size} options") },
-                shape = RoundedCornerShape(28.dp),
+                shape = styledCorner(28.dp),
                 modifier = Modifier.width(260.dp),
             )
         }
@@ -702,7 +703,7 @@ private fun Footer(
         ) {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                shape = RoundedCornerShape(10.dp),
+                shape = styledCorner(10.dp),
                 modifier = Modifier.weight(1f),
             ) {
                 SelectionContainer {
@@ -794,7 +795,7 @@ internal fun RestartAdbButton(restarting: Boolean, onClick: () -> Unit, succeede
     }
     TooltipArea(
         tooltip = {
-            Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
+            Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
                 Text(
                     label,
                     Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

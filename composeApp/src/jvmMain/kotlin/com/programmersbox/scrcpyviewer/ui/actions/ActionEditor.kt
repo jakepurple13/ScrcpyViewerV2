@@ -15,15 +15,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoAwesomeMotion
-import androidx.compose.material3.AlertDialog
+import com.programmersbox.scrcpyviewer.ui.theme.AlertDialog
 import com.programmersbox.scrcpyviewer.ui.theme.Button
-import androidx.compose.material3.Checkbox
+import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -32,14 +32,15 @@ import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -180,7 +181,7 @@ fun ActionEditor(
 /** Says the unsaved draft came from a built-in template. */
 @Composable
 private fun TemplateBanner(name: String) {
-    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+    Surface(Modifier.fillMaxWidth(), shape = styledCorner(12.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(Icons.Filled.AutoAwesomeMotion, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(20.dp))
             Text(
@@ -338,7 +339,7 @@ private fun VariableRowItem(
 
 @Composable
 private fun VariableRow(name: String, variable: Variable, monospace: TextStyle, modifier: Modifier, onChange: (Variable) -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(12.dp), modifier = modifier.fillMaxWidth()) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = styledCorner(12.dp), modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("{$name}", style = monospace, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(120.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -440,7 +441,7 @@ private fun TestOutput(test: TestResult, modifier: Modifier = Modifier) {
             test.shownLines?.let { Text("Showing last $it lines", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant) }
         }
         if (test.output.isNotEmpty() || test.running) {
-            Surface(color = colors.surfaceContainerHighest, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+            Surface(color = colors.surfaceContainerHighest, shape = styledCorner(12.dp), modifier = Modifier.fillMaxWidth()) {
                 SelectionContainer(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
                     Text(
                         test.output.ifEmpty { "…" },
@@ -484,7 +485,7 @@ private fun <T> Segments(options: List<Pair<T, String>>, selected: T, modifier: 
             SegmentedButton(
                 selected = value == selected,
                 onClick = { onSelect(value) },
-                shape = SegmentedButtonDefaults.itemShape(i, options.size),
+                shape = styledSegmentShape(i, options.size),
             ) { Text(label, maxLines = 1) }
         }
     }

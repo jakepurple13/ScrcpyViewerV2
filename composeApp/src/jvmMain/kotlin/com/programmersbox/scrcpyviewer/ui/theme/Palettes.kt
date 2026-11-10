@@ -84,6 +84,13 @@ data class AppTheme(
     val custom: CustomPalette = CustomPalette(),
     val neon: Boolean = false,
     val customNeon: CustomNeon = CustomNeon(),
+    val style: ThemeStyle = ThemeStyle.Material,
+    /** Retro 95 only: use the palette's colors instead of the classic gray and navy. */
+    val retroPalette: Boolean = false,
+    /** Glass only: show the blurred desktop behind windows where the OS supports it (macOS). */
+    val desktopBlur: Boolean = true,
+    /** Glass only: how solid the panes are, 0 (nearly clear) to 1 (nearly solid). */
+    val glassOpacity: Float = DEFAULT_GLASS_OPACITY,
 ) {
     /** Neon colors and glow: the Neon switch, for any palette. Picking a neon palette turns it on (see settings). */
     val isNeon: Boolean get() = neon
@@ -121,7 +128,9 @@ fun colorSchemeFor(theme: AppTheme, dark: Boolean): ColorScheme {
         dark -> DarkColors
         else -> LightColors
     }
-    return if (dark && theme.pureBlack) base.pureBlack(seed ?: TealSeed) else base
+    // Retro has its own dark scheme (High Contrast Black), so pure black doesn't apply to it.
+    val black = if (dark && theme.pureBlack && theme.style != ThemeStyle.Retro) base.pureBlack(seed ?: TealSeed) else base
+    return black.styled(theme, dark)
 }
 
 /**
@@ -217,3 +226,6 @@ private fun ColorScheme.pureBlack(seed: PaletteSeed): ColorScheme {
         outlineVariant = n(0.30f, 0.1f),
     )
 }
+
+/** Glass panes' default opacity: see-through, with text still easy to read over a busy desktop. */
+const val DEFAULT_GLASS_OPACITY = 0.3f

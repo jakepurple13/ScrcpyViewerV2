@@ -37,6 +37,9 @@ import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.ui.theme.LocalStyleTokens
+import com.programmersbox.scrcpyviewer.ui.theme.styleBackdrop
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.rememberThemeRevealState
 import com.programmersbox.scrcpyviewer.ui.theme.themeReveal
 import org.jetbrains.jewel.foundation.theme.JewelTheme
@@ -111,6 +114,8 @@ fun AppWindow(
     val reveal = rememberThemeRevealState(theme)
     val shown = reveal.shown
     val dark = shown.mode == ThemeMode.Dark
+    // Glass on macOS: the window turns see-through and AppKit blurs the desktop behind it (see setMacVibrancy).
+    val desktopBlur = shown.style == ThemeStyle.Glass && shown.desktopBlur && Os.isMac
     CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
         when (chrome) {
             WindowChrome.System -> Window(
@@ -121,9 +126,10 @@ fun AppWindow(
                 icon = icon,
                 alwaysOnTop = alwaysOnTop,
             ) {
+                MacVibrancyEffect(window, desktopBlur, dark)
                 ScrcpyViewerTheme(shown) {
-                    Column(Modifier.fillMaxSize().themeReveal(reveal)) {
-                        CompositionLocalProvider(LocalContentColor provides barColors(MaterialTheme.colorScheme).content) {
+                    Column(Modifier.fillMaxSize().themeReveal(reveal).styleBackdrop(transparent = desktopBlur)) {
+                        CompositionLocalProvider(LocalContentColor provides barColors(MaterialTheme.colorScheme, LocalStyleTokens.current).content) {
                             SystemTitleBarScope.titleBar()
                         }
                         Box(Modifier.fillMaxWidth().weight(1f)) { content() }
@@ -131,7 +137,7 @@ fun AppWindow(
                 }
             }
             WindowChrome.Custom -> ScrcpyViewerTheme(shown) {
-                val bar = animatedBarColors(barColors(MaterialTheme.colorScheme))
+                val bar = animatedBarColors(barColors(MaterialTheme.colorScheme, LocalStyleTokens.current, desktopBlur))
                 IntUiTheme(
                     theme = if (dark) JewelTheme.darkThemeDefinition() else JewelTheme.lightThemeDefinition(),
                     styling = ComponentStyling.default().decoratedWindow(
@@ -157,7 +163,8 @@ fun AppWindow(
                                 }
                             }
                             val window = this
-                            Box(Modifier.fillMaxSize().themeReveal(reveal)) { window.content() }
+                            MacVibrancyEffect(window.window, desktopBlur, dark)
+                            Box(Modifier.fillMaxSize().themeReveal(reveal).styleBackdrop(transparent = desktopBlur)) { window.content() }
                         }
                     }
                 }
@@ -254,3 +261,4 @@ private fun titleBarStyle(bar: BarColors, dark: Boolean, height: Dp): TitleBarSt
 
 private fun IconButtonStyle.round(): IconButtonStyle =
     IconButtonStyle(colors, with(metrics) { IconButtonMetrics(CornerSize(50), borderWidth, padding, minSize) })
+

@@ -14,11 +14,12 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
+import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import com.programmersbox.scrcpyviewer.ui.theme.Switch
 import androidx.compose.material3.Text
@@ -48,7 +49,7 @@ internal fun ThemeControl(b: SettingsBindings) {
                     source.mark(origin)
                     b.actions.onTheme(mode)
                 },
-                shape = SegmentedButtonDefaults.itemShape(i, ThemeMode.entries.size),
+                shape = styledSegmentShape(i, ThemeMode.entries.size),
                 modifier = source.modifier,
             ) { Text(mode.name) }
         }

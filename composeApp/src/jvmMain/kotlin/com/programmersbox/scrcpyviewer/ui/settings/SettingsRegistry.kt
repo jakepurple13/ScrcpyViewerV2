@@ -1,6 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
-import androidx.compose.material3.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -9,6 +9,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
 import com.programmersbox.scrcpyviewer.ui.update.UpdatesContent
 
@@ -34,6 +35,10 @@ class SettingsActions(
     val onCustomPalette: (CustomPalette) -> Unit = {},
     val onNeon: (Boolean) -> Unit = {},
     val onCustomNeon: (CustomNeon) -> Unit = {},
+    val onStyle: (ThemeStyle) -> Unit = {},
+    val onRetroPalette: (Boolean) -> Unit = {},
+    val onDesktopBlur: (Boolean) -> Unit = {},
+    val onGlassOpacity: (Float) -> Unit = {},
     val onUseSystemTitleBar: (Boolean) -> Unit = {},
     val onDefaultPreset: (String?) -> Unit = {},
     val onUseBundledAdb: () -> Unit = {},
@@ -78,6 +83,12 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 "theme", "Theme", "Light, dark, or follow the system.",
                 keywords = listOf("dark mode", "light", "color", "colour"),
                 content = { ThemeControl(it) },
+            ),
+            SettingEntry(
+                "style", "Style", "How panes, buttons and switches are drawn. Works with any palette.",
+                keywords = listOf("style", "glass", "glassmorphism", "frosted", "blur", "soft", "neumorphism", "retro", "windows 95", "win95", "classic"),
+                layout = EntryLayout.Block,
+                content = { StyleControl(it) },
             ),
             SettingEntry(
                 "pure-black", "Pure black", "Black backgrounds with the dark theme. Easier on OLED screens.",

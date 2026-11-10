@@ -27,7 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -39,12 +39,12 @@ import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
@@ -242,7 +242,7 @@ private fun Steps(vararg steps: List<Pair<String, Boolean>>) {
 private fun QrTab(state: WifiPairingState) {
     Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
         // White behind the code in both themes: phone scanners expect dark modules on a light ground.
-        Box(Modifier.size(176.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(10.dp)) {
+        Box(Modifier.size(176.dp).clip(styledCorner(12.dp)).background(Color.White).padding(10.dp)) {
             Image(rememberQrCodePainter(state.qrPayload) {}, contentDescription = "Pairing QR code", Modifier.size(156.dp))
         }
         Box(Modifier.weight(1f)) {
@@ -259,7 +259,7 @@ private fun QrTab(state: WifiPairingState) {
 @Composable
 private fun StatusLine(text: String, trailing: String? = null) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow)
+        Modifier.fillMaxWidth().clip(styledCorner(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow)
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -297,7 +297,7 @@ private fun CodeTab(state: WifiPairingState, actions: WifiPairingActions) {
 
 @Composable
 private fun ServiceRow(service: MdnsService, selected: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = styledCorner(12.dp)
     Row(
         Modifier.fillMaxWidth().clip(shape).background(MaterialTheme.colorScheme.surfaceContainerLow)
             .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
@@ -341,7 +341,7 @@ private fun IpTab(state: WifiPairingState, actions: WifiPairingActions) {
         )
     }
     Row(
-        Modifier.clip(RoundedCornerShape(8.dp)).clickable { pairOpen = !pairOpen }.padding(vertical = 4.dp, horizontal = 2.dp),
+        Modifier.clip(styledCorner(8.dp)).clickable { pairOpen = !pairOpen }.padding(vertical = 4.dp, horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(if (pairOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, contentDescription = null, Modifier.size(20.dp))
@@ -363,7 +363,7 @@ private fun ScanSection(state: WifiPairingState, actions: WifiPairingActions) {
             "Scan network for devices",
             style = MaterialTheme.typography.bodyMedium.copy(textDecoration = TextDecoration.Underline),
             color = if (state.scanning) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
-            modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(enabled = !state.scanning, onClick = actions.startScan)
+            modifier = Modifier.clip(styledCorner(6.dp)).clickable(enabled = !state.scanning, onClick = actions.startScan)
                 .padding(horizontal = 2.dp, vertical = 2.dp),
         )
         if (state.scanning) {
@@ -390,7 +390,7 @@ private fun ScanSection(state: WifiPairingState, actions: WifiPairingActions) {
     }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         results.forEach { ip ->
-            val shape = RoundedCornerShape(8.dp)
+            val shape = styledCorner(8.dp)
             Text(
                 ip,
                 fontFamily = FontFamily.Monospace,

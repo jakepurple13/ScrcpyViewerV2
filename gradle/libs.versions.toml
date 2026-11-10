@@ -15,6 +15,7 @@ koin = "4.2.2"
 koin-compiler = "1.2.1"
 # Packaging plugin, updater runtime and CI composite actions (.github/workflows/build.yml) move together.
 nucleus = "2.5.18"
+jna = "5.17.0"
 
 [libraries]
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
@@ -32,6 +33,7 @@ koin-annotations = { module = "io.insert-koin:koin-annotations" }
 koin-compose = { module = "io.insert-koin:koin-compose" }
 koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel" }
 nucleus-updater = { module = "dev.nucleusframework:nucleus.updater-runtime", version.ref = "nucleus" }
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 
 [plugins]

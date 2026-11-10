@@ -24,10 +24,19 @@ val LocalAppTheme = staticCompositionLocalOf<AppTheme?> { null }
 fun ScrcpyViewerTheme(theme: AppTheme, content: @Composable () -> Unit) {
     val dark = theme.mode.isDark()
     val scheme = remember(theme, dark) { colorSchemeFor(theme, dark) }
-    // Light mode keeps the neon colors with a softer glow.
-    val glow = theme.glow.takeIf { it > 0f }?.let { NeonGlow(scheme.primary, if (dark) it else it * 0.6f) }
-    CompositionLocalProvider(LocalAppTheme provides theme, LocalNeonGlow provides glow) {
-        MaterialTheme(colorScheme = scheme, content = content)
+    val tokens = remember(theme, scheme, dark) { styleTokens(theme, scheme, dark) }
+    // Light mode keeps the neon colors with a softer glow. Retro never glows.
+    val glow = theme.glow.takeIf { it > 0f && theme.style != ThemeStyle.Retro }
+        ?.let { NeonGlow(scheme.primary, if (dark) it else it * 0.6f) }
+    CompositionLocalProvider(
+        LocalAppTheme provides theme, LocalNeonGlow provides glow, LocalStyleTokens provides tokens,
+    ) {
+        MaterialTheme(
+            colorScheme = scheme,
+            shapes = remember(theme.style) { shapesFor(theme.style) },
+            typography = remember(theme.style) { typographyFor(theme.style) },
+            content = content,
+        )
     }
 }
 

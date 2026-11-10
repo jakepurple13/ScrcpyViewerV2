@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Block
@@ -323,7 +323,7 @@ fun DropOverlay(hint: DropHint, modifier: Modifier = Modifier) {
                 translationY = (1f - t) * 8.dp.toPx()
                 translationX = shake.value.dp.toPx()
             },
-            shape = RoundedCornerShape(16.dp), color = colors.surfaceContainerHigh, tonalElevation = 3.dp,
+            shape = styledCorner(16.dp), color = colors.surfaceContainerHigh, tonalElevation = 3.dp,
         ) {
             Column(
                 Modifier.padding(horizontal = 24.dp, vertical = 20.dp).widthIn(max = 300.dp),
