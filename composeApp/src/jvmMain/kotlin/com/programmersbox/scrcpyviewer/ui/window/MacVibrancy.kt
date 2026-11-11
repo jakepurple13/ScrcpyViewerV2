@@ -8,6 +8,7 @@ import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
 import org.jetbrains.skiko.SkiaLayer
+import androidx.compose.ui.graphics.toArgb
 import java.awt.Color
 import java.awt.Container
 import java.util.Collections
@@ -55,7 +56,7 @@ fun ComposeWindow.setMacVibrancy(
     }
 }
 
-private fun findSkiaLayer(container: Container): SkiaLayer? {
+internal fun findSkiaLayer(container: Container): SkiaLayer? {
     for (c in container.components) {
         if (c is SkiaLayer) return c
         if (c is Container) findSkiaLayer(c)?.let { return it }
@@ -199,5 +200,50 @@ fun MacVibrancyEffect(window: ComposeWindow, enabled: Boolean, dark: Boolean) {
             window.setMacVibrancy(enabled, dark)
             applied[0] = enabled
         }
+    }
+}
+
+/**
+ * Paints the window's own background in [color] (opaque), so a resize shows the theme's color in the strip Skia has
+ * not drawn yet instead of the default light gray or white: the AWT window, its panes and Skia layer, and on macOS
+ * the NSWindow. Never throws.
+ */
+fun ComposeWindow.setWindowBackground(color: Color) {
+    try {
+        background = color
+        rootPane.background = color
+        contentPane.background = color
+        findSkiaLayer(this)?.background = color
+        if (Os.isMac) {
+            val handle = windowHandle
+            if (handle != 0L) {
+                val r = color.red / 255.0
+                val g = color.green / 255.0
+                val b = color.blue / 255.0
+                ObjC.onMain {
+                    val h = Pointer(handle)
+                    val nsWindow = when {
+                        ObjC.isKindOf(h, "NSWindow") -> h
+                        ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
+                        else -> null
+                    } ?: return@onMain
+                    val ns = ObjC.msgPtr(ObjC.cls("NSColor"), "colorWithSRGBRed:green:blue:alpha:", r, g, b, 1.0)
+                        ?: return@onMain
+                    ObjC.msgVoid(nsWindow, "setBackgroundColor:", ns)
+                }
+            }
+        }
+    } catch (t: Throwable) {
+        System.err.println("setWindowBackground failed: $t")
+    }
+}
+
+/** Keeps the window's background at [color] while [enabled] (off for the see-through Glass window). */
+@androidx.compose.runtime.Composable
+fun WindowBackgroundEffect(window: ComposeWindow, color: androidx.compose.ui.graphics.Color, enabled: Boolean) {
+    val argb = color.toArgb()
+    // After MacVibrancyEffect in composition order, so turning the blur off ends with this color, not the system's.
+    androidx.compose.runtime.LaunchedEffect(window, argb, enabled) {
+        if (enabled) window.setWindowBackground(Color(argb, false))
     }
 }

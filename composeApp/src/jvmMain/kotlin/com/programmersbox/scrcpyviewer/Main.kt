@@ -93,7 +93,7 @@ fun main() {
         }
         for ((serial, session) in mirrors) {
             key(serial) {
-                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.useSystemTitleBar, settings.captureDir, adb = adbClient)
+                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.useSystemTitleBar, settings.captureDir, animate = settings.animateMirrorWindows, adb = adbClient)
             }
         }
         if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.appTheme)

@@ -128,6 +128,7 @@ fun AppWindow(
             ) {
                 MacVibrancyEffect(window, desktopBlur, dark)
                 ScrcpyViewerTheme(shown) {
+                    WindowBackgroundEffect(window, MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
                     Column(Modifier.fillMaxSize().themeReveal(reveal).styleBackdrop(transparent = desktopBlur)) {
                         CompositionLocalProvider(LocalContentColor provides barColors(MaterialTheme.colorScheme, LocalStyleTokens.current).content) {
                             SystemTitleBarScope.titleBar()
@@ -164,6 +165,7 @@ fun AppWindow(
                             }
                             val window = this
                             MacVibrancyEffect(window.window, desktopBlur, dark)
+                            WindowBackgroundEffect(window.window, MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
                             Box(Modifier.fillMaxSize().themeReveal(reveal).styleBackdrop(transparent = desktopBlur)) { window.content() }
                         }
                     }

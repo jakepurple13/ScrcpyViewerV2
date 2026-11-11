@@ -29,5 +29,6 @@ class SettingsRegistryTest {
         assertEquals(listOf("updates"), hit("github"))
         assertEquals(listOf("welcome-guide"), hit("wifi"))
         assertEquals(listOf("ai-skill"), hit("gemini"))
+        assertEquals(listOf("animate-mirror"), hit("animation"))
     }
 }

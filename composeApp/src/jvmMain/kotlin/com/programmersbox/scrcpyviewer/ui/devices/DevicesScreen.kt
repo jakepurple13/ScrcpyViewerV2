@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.devices
 
+import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.animateBounds
 import androidx.compose.animation.core.Animatable
@@ -692,7 +693,7 @@ private fun Footer(
                     Text(wifi.label)
                 }
             }
-            Button(onClick = onMirror, enabled = state.canMirror, modifier = Modifier.sharedPart(motion, SharedPart.Mirror)) {
+            Button(onClick = onMirror, enabled = state.canMirror, modifier = Modifier.sharedPart(motion, SharedPart.Mirror).mirrorOrigin()) {
                 Text("Mirror")
             }
         }
