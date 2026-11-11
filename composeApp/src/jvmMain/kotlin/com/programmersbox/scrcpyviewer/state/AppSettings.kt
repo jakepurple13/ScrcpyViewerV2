@@ -53,6 +53,8 @@ data class Settings(
     val desktopBlur: Boolean = true,
     /** Glass panes' opacity, 0..1. */
     val glassOpacity: Float = DEFAULT_GLASS_OPACITY,
+    /** Mirror windows grow out of the Mirror button and the device screen switches on with the first frame. */
+    val animateMirrorWindows: Boolean = true,
 )
 
 /** Everything the theme reads from [Settings]. */

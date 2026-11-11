@@ -41,6 +41,7 @@ class SettingsActions(
     val onGlassOpacity: (Float) -> Unit = {},
     val onUseSystemTitleBar: (Boolean) -> Unit = {},
     val onDefaultPreset: (String?) -> Unit = {},
+    val onAnimateMirrorWindows: (Boolean) -> Unit = {},
     val onUseBundledAdb: () -> Unit = {},
     val onUseCustomAdb: (String) -> Unit = {},
     val onBrowseAdb: () -> Unit = {},
@@ -126,6 +127,13 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 "default-preset", "Default preset", "Applied to a device the first time it is selected.",
                 keywords = listOf("preset", "profile", "defaults"),
                 content = { DefaultPresetControl(it) },
+            ),
+            SettingEntry(
+                "animate-mirror", "Animate mirror windows",
+                "The window grows out of the Mirror button and the screen switches on with the first frame. Plays in reverse on close.",
+                keywords = listOf("animation", "motion", "zoom", "transition", "open", "close", "window"),
+                rowModifier = { animateMirrorToggle(it) },
+                content = { AnimateMirrorSwitch(it) },
             ),
             SettingEntry(
                 "capture-dir", "Screenshots and recordings folder", "Where screenshots and screen recordings are saved.",

@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.devices
 
+import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -95,7 +96,7 @@ internal fun SimpleDevicePane(
                     Button(
                         onClick = onMirror,
                         enabled = state.canMirror,
-                        modifier = Modifier.sharedPart(motion, SharedPart.Mirror).fillMaxWidth().height(52.dp),
+                        modifier = Modifier.sharedPart(motion, SharedPart.Mirror).mirrorOrigin(device.serial).fillMaxWidth().height(52.dp),
                     ) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = null, Modifier.size(22.dp))
                         Spacer(Modifier.width(8.dp))

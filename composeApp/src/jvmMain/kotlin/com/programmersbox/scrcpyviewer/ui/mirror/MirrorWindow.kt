@@ -88,6 +88,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -167,6 +168,8 @@ import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
+import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
+import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
 import java.awt.Dimension
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
@@ -186,6 +189,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Side toolbar buttons; [keycode] buttons send that Android key down and up. */
 enum class MirrorAction(val label: String, val keycode: Int? = null) {
@@ -328,6 +332,8 @@ fun MirrorWindow(
     useSystemTitleBar: Boolean?,
     /** `Settings.captureDir`: where screenshots and recordings started from the toolbar go. */
     captureDir: String,
+    /** `Settings.animateMirrorWindows`, read when the window opens: grow from the Mirror button, wake the screen. */
+    animate: Boolean = false,
     /** Runs `adb install` / `adb push` for dropped files and the Install APK… / Push file… buttons; null disables them. */
     adb: AdbClient? = null,
     fileDialogs: TransferFileDialogs = AwtTransferFileDialogs,
@@ -444,18 +450,40 @@ fun MirrorWindow(
     val explicitSize = e["window-width"]?.toIntOrNull()?.takeIf { it > 0 } != null ||
         e["window-height"]?.toIntOrNull()?.takeIf { it > 0 } != null
 
+    val requestedX = e["window-x"]?.toIntOrNull()
+    val requestedY = e["window-y"]?.toIntOrNull()
+    val positioned = requestedX != null || requestedY != null
+    val requestedWidth = e["window-width"]?.toIntOrNull()?.takeIf { it > 0 } ?: 480
+    val requestedHeight = e["window-height"]?.toIntOrNull()?.takeIf { it > 0 } ?: 900
+    // Read once as the window opens: the setting, the OS's reduce motion, and the Mirror button that was pressed.
+    // The window starts at the button's bounds and grows to its own (centered unless the options place it).
+    val motionOn = remember { animate && !systemReducesMotion() }
+    val zoomFrom = remember { if (motionOn && "fullscreen" !in e) MirrorOrigins.take() else null }
+    val zoomTo = remember {
+        zoomFrom?.let {
+            zoomTarget(
+                if (positioned) requestedX ?: 100 else null, if (positioned) requestedY ?: 100 else null,
+                requestedWidth, requestedHeight, usableScreenBounds(it),
+            )
+        }
+    }
     val windowState = rememberWindowState(
         placement = if ("fullscreen" in e) WindowPlacement.Fullscreen else WindowPlacement.Floating,
-        position = run {
-            val x = e["window-x"]?.toIntOrNull()
-            val y = e["window-y"]?.toIntOrNull()
-            if (x == null && y == null) WindowPosition.PlatformDefault else WindowPosition((x ?: 100).dp, (y ?: 100).dp)
+        position = when {
+            zoomFrom != null -> WindowPosition(zoomFrom.x.dp, zoomFrom.y.dp)
+            !positioned -> WindowPosition.PlatformDefault
+            else -> WindowPosition((requestedX ?: 100).dp, (requestedY ?: 100).dp)
         },
-        size = DpSize(
-            (e["window-width"]?.toIntOrNull()?.takeIf { it > 0 } ?: 480).dp,
-            (e["window-height"]?.toIntOrNull()?.takeIf { it > 0 } ?: 900).dp,
-        ),
+        size = if (zoomFrom != null) DpSize(zoomFrom.width.dp, zoomFrom.height.dp) else DpSize(requestedWidth.dp, requestedHeight.dp),
     )
+    // The device screen: 0 off, 1 on (wakeFrame). Null when the window does not animate.
+    val wake = remember { if (motionOn) Animatable(0f) else null }
+    val readWake = remember(wake) { wake?.let { w -> { w.value } } }
+    // True while the window's bounds animate: the first-frame sizing and the aspect lock wait.
+    var zooming by remember { mutableStateOf(zoomFrom != null) }
+    var closing by remember { mutableStateOf(false) }
+    // A growing window stays hidden until its content is composed, then shows at the button and grows at once.
+    var shown by remember { mutableStateOf(zoomFrom == null) }
 
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     // The visible stage in window pixels: the zoomed canvas can be larger than it.
@@ -556,8 +584,30 @@ fun MirrorWindow(
         quickActions = quickActions.uiState,
     )
 
+    // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now
+    // (or a little, in place, when the main window does not show it), then it closes.
+    val requestClose: () -> Unit = close@{
+        val w = awtWindowRef
+        if (wake == null || w == null) return@close controller.close(serial)
+        if (closing) return@close
+        closing = true
+        uiScope.launch {
+            try {
+                wake.animateTo(0f, tween(SCREEN_SLEEP_MILLIS, easing = EmphasizedAccelerate))
+                if (windowState.placement == WindowPlacement.Floating) {
+                    zooming = true
+                    val to = MirrorOrigins.buttonOnScreen(serial) ?: shrunkAroundCenter(w.bounds, MIRROR_SHRINK_IN_PLACE)
+                    animateWindowBounds(w, to, MIRROR_ZOOM_OUT_MILLIS, grow = false)
+                }
+            } finally {
+                controller.close(serial)
+            }
+        }
+    }
+
     AppWindow(
-        onCloseRequest = { controller.close(serial) },
+        onCloseRequest = requestClose,
+        visible = shown,
         title = mirrorTitle(model, serial, values),
         theme = theme,
         chrome = remember { windowChrome(useSystemTitleBar) },
@@ -668,7 +718,8 @@ fun MirrorWindow(
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
         // Keyed on the pin clearing too: a height the user dragged during a sheet animation is corrected once it ends.
-        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null) {
+        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null, zooming) {
+            if (zooming) return@LaunchedEffect // sized once the window has grown (or not at all while it shrinks)
             val fs = displayedSize ?: return@LaunchedEffect
             if (stage == IntSize.Zero || windowState.placement != WindowPlacement.Floating) return@LaunchedEffect
             if (autoSized) {
@@ -731,6 +782,43 @@ fun MirrorWindow(
             }
         }
 
+        // Opening: grow out of the Mirror button, then wake the screen once the first frame is in and the window
+        // has taken its size from it (the size jump happens while the screen is still dark).
+        val sizedForWake by rememberUpdatedState(
+            displayedSize != null && (autoSized || windowState.placement != WindowPlacement.Floating),
+        )
+        val downForWake by rememberUpdatedState(state.disconnected)
+        if (wake != null) {
+            LaunchedEffect(Unit) {
+                if (zoomFrom != null && zoomTo != null) {
+                    // macOS would play its own zoom as the window appears, on top of this one.
+                    awtWindow.disableMacAppearAnimation()
+                    // A hidden window is held to the screen it was made on: macOS moves one meant for another screen
+                    // to that screen's edge (and narrows it) until it is shown. So it shows see-through, is put at
+                    // the button once on screen, and only then becomes visible.
+                    val masked = awtWindow.setMacAlpha(0.0)
+                    shown = true
+                    // Compose shows the window from a job of its own: wait until it is really on screen.
+                    withTimeoutOrNull(1_000) { while (!awtWindow.isShowing) delay(8) }
+                    if (awtWindow.bounds != zoomFrom) {
+                        awtWindow.bounds = zoomFrom
+                        withTimeoutOrNull(300) { while (awtWindow.bounds != zoomFrom) delay(8) }
+                    }
+                    repeat(2) { withFrameNanos { } }
+                    if (masked) awtWindow.setMacAlpha(1.0)
+                    animateWindowBounds(awtWindow, zoomTo, MIRROR_ZOOM_IN_MILLIS, grow = true)
+                    zooming = false
+                }
+                snapshotFlow { sizedForWake || downForWake }.first { it }
+                if (downForWake) {
+                    wake.snapTo(1f) // no frame coming: show the stage's Disconnected card as usual
+                } else {
+                    repeat(3) { withFrameNanos { } } // let the native window take its new size
+                    wake.animateTo(1f, tween(SCREEN_WAKE_MILLIS, easing = EmphasizedDecelerate))
+                }
+            }
+        }
+
         // The quick actions sheet grows the window to the right instead of taking width from the stage: by the
         // current tab's sheet width (280 dp on Actions and 400 dp on Shell by default). While it opens, closes or
         // switches tabs the stage is pinned to its width (px), so the image never changes size, and the window's right
@@ -746,7 +834,10 @@ fun MirrorWindow(
         val sheetTab = state.quickActions.tab
         val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
         val lastSheet = remember { SheetRun(false, sheetTab) }
-        LaunchedEffect(sheetOpen, sheetTab, sheetTarget) {
+        LaunchedEffect(sheetOpen, sheetTab, sheetTarget, zooming) {
+            // While the window grows or shrinks its bounds are the zoom's: a base taken now would be pinned back on
+            // every frame below (the window jumped to where it sat before it was placed). Runs again once it ends.
+            if (zooming) return@LaunchedEffect
             // Same open tab as the last run: only its width changed, by the drag bar.
             val resized = sheetOpen && lastSheet.open && lastSheet.tab == sheetTab
             lastSheet.open = sheetOpen
@@ -838,6 +929,7 @@ fun MirrorWindow(
                         onStageSize = { stage = it },
                         onQuickAction = quickActions::onEvent,
                         pinnedStageWidth = pinnedStage,
+                        wake = readWake,
                         shellConsole = quickActions.console,
                         onStageBounds = { stageBounds = it },
                         clickIndicator = clickIndicator,
@@ -973,6 +1065,8 @@ fun MirrorContent(
      * shows in whatever width is left. Null: the sheet animates its own width, taken from the stage.
      */
     pinnedStageWidth: Int? = null,
+    /** The device screen's wake (0 off, 1 on; see [WakeStage]), read at draw time. Null: no wake animation. */
+    wake: (() -> Float)? = null,
     /** The quick actions sheet's Shell tab console; null shows an empty Shell tab. */
     shellConsole: ShellConsole? = null,
 ) {
@@ -1015,11 +1109,19 @@ fun MirrorContent(
                     .onSizeChanged(onStageSize)
                     .onGloballyPositioned { onStageBounds(it.boundsInWindow()) },
             ) {
-                Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
                 val disconnected = state.disconnected
+                if (wake == null) {
+                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
+                } else {
+                    WakeStage(wake, standby = !disconnected) {
+                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
+                    }
+                }
+                // While the screen is still asleep its standby line stands in for the skeleton.
+                val awake by remember(wake) { derivedStateOf { wake == null || wake() >= 1f } }
                 // Fully qualified: the enclosing Row's RowScope.AnimatedVisibility would otherwise win.
                 androidx.compose.animation.AnimatedVisibility(
-                    visible = !disconnected && (state.status == SessionStatus.Connecting || state.frameSize == null),
+                    visible = awake && !disconnected && (state.status == SessionStatus.Connecting || state.frameSize == null),
                     enter = fadeIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)),
                     // Quick: the frame is already fading in underneath, and the skeleton is not its shape.
                     exit = fadeOut(tween(SKELETON_OUT_MILLIS, easing = EmphasizedAccelerate)),

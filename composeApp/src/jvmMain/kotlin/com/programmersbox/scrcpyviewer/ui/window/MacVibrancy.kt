@@ -8,6 +8,7 @@ import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
 import org.jetbrains.skiko.SkiaLayer
+import androidx.compose.ui.graphics.toArgb
 import java.awt.Color
 import java.awt.Container
 import java.util.Collections
@@ -55,7 +56,7 @@ fun ComposeWindow.setMacVibrancy(
     }
 }
 
-private fun findSkiaLayer(container: Container): SkiaLayer? {
+internal fun findSkiaLayer(container: Container): SkiaLayer? {
     for (c in container.components) {
         if (c is SkiaLayer) return c
         if (c is Container) findSkiaLayer(c)?.let { return it }
@@ -199,5 +200,146 @@ fun MacVibrancyEffect(window: ComposeWindow, enabled: Boolean, dark: Boolean) {
             window.setMacVibrancy(enabled, dark)
             applied[0] = enabled
         }
+    }
+}
+
+/**
+ * Paints the window's own background in [color] (opaque), so a resize shows the theme's color in the strip Skia has
+ * not drawn yet instead of the default light gray or white: the AWT window, its panes and Skia layer, and on macOS
+ * the NSWindow. Never throws.
+ */
+fun ComposeWindow.setWindowBackground(color: Color) {
+    try {
+        background = color
+        rootPane.background = color
+        contentPane.background = color
+        findSkiaLayer(this)?.background = color
+        if (Os.isMac) {
+            val handle = windowHandle
+            if (handle != 0L) {
+                val r = color.red / 255.0
+                val g = color.green / 255.0
+                val b = color.blue / 255.0
+                ObjC.onMain {
+                    val h = Pointer(handle)
+                    val nsWindow = when {
+                        ObjC.isKindOf(h, "NSWindow") -> h
+                        ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
+                        else -> null
+                    } ?: return@onMain
+                    val ns = ObjC.msgPtr(ObjC.cls("NSColor"), "colorWithSRGBRed:green:blue:alpha:", r, g, b, 1.0)
+                        ?: return@onMain
+                    ObjC.msgVoid(nsWindow, "setBackgroundColor:", ns)
+                }
+            }
+        }
+    } catch (t: Throwable) {
+        System.err.println("setWindowBackground failed: $t")
+    }
+}
+
+/** Keeps the window's background at [color] while [enabled] (off for the see-through Glass window). */
+@androidx.compose.runtime.Composable
+fun WindowBackgroundEffect(window: ComposeWindow, color: androidx.compose.ui.graphics.Color, enabled: Boolean) {
+    val argb = color.toArgb()
+    // After MacVibrancyEffect in composition order, so turning the blur off ends with this color, not the system's.
+    androidx.compose.runtime.LaunchedEffect(window, argb, enabled) {
+        if (enabled) window.setWindowBackground(Color(argb, false))
+    }
+}
+
+/**
+ * Animates this window to [to] (AWT screen units) natively on macOS, over [millis] along the cubic-bezier [curve]
+ * (x1, y1, x2, y2). AppKit moves the frame itself, so it stays smooth while the content catches up. Returns false
+ * (nothing started) when not on macOS or the window has no native handle; never throws.
+ */
+fun java.awt.Window.animateMacFrame(to: java.awt.Rectangle, millis: Int, curve: FloatArray): Boolean {
+    if (!Os.isMac || this !is ComposeWindow) return false
+    return try {
+        val handle = windowHandle
+        if (handle == 0L) return false
+        // AppKit's origin is the bottom-left of the main screen (the one AWT puts at 0,0); AWT's is its top-left.
+        val main = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices
+            .map { it.defaultConfiguration.bounds }
+            .firstOrNull { it.x == 0 && it.y == 0 } ?: return false
+        val frame = ObjC.CGRect().apply {
+            x = to.x.toDouble()
+            y = (main.height - to.y - to.height).toDouble()
+            width = to.width.toDouble()
+            height = to.height.toDouble()
+        }
+        ObjC.onMain {
+            val h = Pointer(handle)
+            val nsWindow = when {
+                ObjC.isKindOf(h, "NSWindow") -> h
+                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
+                else -> null
+            } ?: return@onMain
+            val contexts = ObjC.cls("NSAnimationContext")
+            ObjC.msgVoid(contexts, "beginGrouping")
+            val context = ObjC.msgPtr(contexts, "currentContext")!!
+            ObjC.msgVoid(context, "setDuration:", millis / 1000.0)
+            ObjC.msgPtr(
+                ObjC.cls("CAMediaTimingFunction"), "functionWithControlPoints::::",
+                curve[0], curve[1], curve[2], curve[3],
+            )?.let { ObjC.msgVoid(context, "setTimingFunction:", it) }
+            ObjC.msgVoid(ObjC.msgPtr(nsWindow, "animator")!!, "setFrame:display:", frame, true)
+            ObjC.msgVoid(contexts, "endGrouping")
+        }
+        true
+    } catch (t: Throwable) {
+        System.err.println("animateMacFrame failed: $t")
+        false
+    }
+}
+
+/**
+ * Sets the window's native opacity on macOS (NSWindow alphaValue, 0..1), which, unlike AWT's opacity, works with a
+ * title bar. Returns false (nothing done) when not on macOS or the window has no native handle; never throws.
+ */
+fun java.awt.Window.setMacAlpha(alpha: Double): Boolean {
+    if (!Os.isMac || this !is ComposeWindow) return false
+    return try {
+        val handle = windowHandle
+        if (handle == 0L) return false
+        ObjC.onMain {
+            val h = Pointer(handle)
+            val nsWindow = when {
+                ObjC.isKindOf(h, "NSWindow") -> h
+                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
+                else -> null
+            } ?: return@onMain
+            ObjC.msgVoid(nsWindow, "setAlphaValue:", alpha)
+        }
+        true
+    } catch (t: Throwable) {
+        System.err.println("setMacAlpha failed: $t")
+        false
+    }
+}
+
+/** NSWindowAnimationBehaviorNone. */
+private const val NS_WINDOW_ANIMATION_NONE = 2L
+
+/**
+ * Turns off the zoom macOS plays as this window appears, for windows that animate their own opening. Call while the
+ * window is displayable but not yet shown. No-op elsewhere; never throws.
+ */
+fun java.awt.Window.disableMacAppearAnimation() {
+    if (!Os.isMac || this !is ComposeWindow) return
+    try {
+        val handle = windowHandle
+        if (handle == 0L) return
+        ObjC.onMain {
+            val h = Pointer(handle)
+            val nsWindow = when {
+                ObjC.isKindOf(h, "NSWindow") -> h
+                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
+                else -> null
+            } ?: return@onMain
+            ObjC.msgVoid(nsWindow, "setAnimationBehavior:", NS_WINDOW_ANIMATION_NONE)
+        }
+    } catch (t: Throwable) {
+        System.err.println("disableMacAppearAnimation failed: $t")
     }
 }

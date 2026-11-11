@@ -156,6 +156,14 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `mirror window animation is on by default and saved`() {
+        val vm = vm()
+        assertEquals(true, settings.settings.value.animateMirrorWindows)
+        vm.setAnimateMirrorWindows(false)
+        assertEquals(false, settings.settings.value.animateMirrorWindows)
+    }
+
+    @Test
     fun `parses adb version output`() {
         assertEquals(
             "1.0.41 (35.0.2)",

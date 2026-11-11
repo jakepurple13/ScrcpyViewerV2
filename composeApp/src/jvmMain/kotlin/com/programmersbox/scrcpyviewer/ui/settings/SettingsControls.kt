@@ -151,3 +151,14 @@ internal fun DefaultPresetControl(b: SettingsBindings) {
         }
     }
 }
+
+/** The whole row toggles. */
+internal fun animateMirrorToggle(b: SettingsBindings) = Modifier.toggleable(
+    value = b.state.settings.animateMirrorWindows, role = Role.Switch,
+    onValueChange = b.actions.onAnimateMirrorWindows,
+)
+
+@Composable
+internal fun AnimateMirrorSwitch(b: SettingsBindings) {
+    Switch(checked = b.state.settings.animateMirrorWindows, onCheckedChange = null)
+}
