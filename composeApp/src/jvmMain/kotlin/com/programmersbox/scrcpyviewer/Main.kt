@@ -67,7 +67,8 @@ fun main() {
             onDispose { }
         }
         LaunchedEffect(shutdownState) { shutdown.run() }
-        LaunchedEffect(Unit) { updateManager.check(userInitiated = false) }
+        // Checks on launch, then every 6 hours while the app runs.
+        LaunchedEffect(Unit) { updateManager.checkPeriodically() }
         // A downloaded update installs once the app has shut down (installPending below).
         LaunchedEffect(Unit) {
             updateManager.state.first { it is UpdateState.Installing }
