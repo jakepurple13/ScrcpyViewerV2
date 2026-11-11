@@ -39,6 +39,14 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # See the build job: the runner's default apt mirror can stall on every package.
+      - name: Use the main Ubuntu apt mirror (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+          sudo find /etc/apt -name '*.list' -o -name '*.sources' | xargs -r sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g'
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99ci-network
+
       - name: Install Linux runtime libraries and Xvfb
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb libgl1 libfontconfig1
@@ -80,6 +88,16 @@ jobs:
             assets: release-assets-Linux-amd64
     steps:
       - uses: actions/checkout@v4
+
+      # The runner's default apt mirror (azure.archive.ubuntu.com) can stall on every package (20 s each, then a
+      # fallback), which makes setup-nucleus's apt-get install take most of an hour. Use the main Ubuntu archive,
+      # and give up on a slow connection sooner.
+      - name: Use the main Ubuntu apt mirror (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt
+          sudo find /etc/apt -name '*.list' -o -name '*.sources' | xargs -r sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g'
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99ci-network
 
       # JDK for Gradle (the app's JBR 25 runtime comes from the Gradle toolchain), Node.js for electron-builder,
       # Gradle, and on Linux the packaging tools (fakeroot and friends). Nucleus actions are pinned to the commit of
