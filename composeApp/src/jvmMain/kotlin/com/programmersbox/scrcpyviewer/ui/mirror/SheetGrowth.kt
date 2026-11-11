@@ -23,6 +23,15 @@ internal fun grownBounds(base: Rectangle, growth: Int, screenRight: Int): Rectan
 }
 
 /**
+ * One frame of the sheet's open, close or tab switch: [grownBounds] at [growth], with the window's [height] now (a
+ * height the user drags meanwhile is kept). The top always comes from [base], never from the window as it is now:
+ * mid-resize, macOS can report a window at y = 0 for an instant, and writing that back moves the window to the top
+ * of the screen.
+ */
+internal fun sheetFrameBounds(base: Rectangle, growth: Int, screenRight: Int, height: Int): Rectangle =
+    grownBounds(base, growth, screenRight).apply { this.height = height }
+
+/**
  * How the open sheet's width is made up in a floating window: [growth], what the window grew by for it, plus
  * [fromStage], what the stage gave up (the drag bar's moves, or what the screen had no room for; negative when the
  * stage has more than before the sheet opened). Closing shrinks the window by [growth] only and gives the stage

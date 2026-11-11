@@ -156,4 +156,13 @@ class SheetGrowthTest {
         w.close()
         w.assertClosed()
     }
+
+    @Test
+    fun `each frame keeps the window's top from before the animation`() {
+        val base = Rectangle(624, 125, 424, 853)
+        // macOS reported the window at (0, 0) mid-resize; the frame never reads that back.
+        assertEquals(Rectangle(624, 125, 828, 853), sheetFrameBounds(base, 404, screenRight, height = 853))
+        // Near the edge it still only moves left, and takes the height the window has now.
+        assertEquals(Rectangle(1520, 125, 400, 900), sheetFrameBounds(Rectangle(1700, 125, 200, 853), 200, screenRight, 900))
+    }
 }

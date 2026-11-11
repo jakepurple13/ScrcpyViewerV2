@@ -874,9 +874,9 @@ fun MirrorWindow(
             sheetFromStage[0] = split.fromStage.value
             pinnedStage = pinFrom
             sheetGrowth.animateTo(target, sheetWidthSpec(sheetGrowth.value.dp, target.dp)) {
-                val grown = grownBounds(base, value.roundToInt(), screenRight)
+                val grown = sheetFrameBounds(base, value.roundToInt(), screenRight, awtWindow.height)
                 sheetShift[0] = base.x - grown.x
-                awtWindow.setBounds(grown.x, awtWindow.y, grown.width, awtWindow.height)
+                awtWindow.bounds = grown
                 val progress = if (target == growthFrom) 1f else (value - growthFrom) / (target - growthFrom)
                 pinnedStage = pinFrom + ((pinTo - pinFrom) * progress).roundToInt()
             }
