@@ -13,6 +13,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -20,6 +22,7 @@ import java.io.File
 import java.nio.file.Files
 import java.time.Instant
 import kotlin.test.AfterTest
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -259,6 +262,30 @@ class UpdateManagerTest {
         assertTrue(m.popupDismissed.value)
         assertEquals(v160, m.available.value)
         assertIs<UpdateState.Available>(m.state.value)
+    }
+
+    @Test
+    fun `checkPeriodically checks at once and again after each interval`() {
+        val backend = FakeUpdateBackend { FakeUpdateBackend.available("1.6.0") }
+        val m = manager(backend)
+        val loop = scope.launch { m.checkPeriodically(interval = 50.milliseconds) }
+        await { while (backend.checks.get() < 3) delay(10) }
+        loop.cancel()
+        assertIs<UpdateState.Available>(m.awaitState { it is UpdateState.Available })
+    }
+
+    @Test
+    fun `a newer release found later shows the popup again`() {
+        var version = "1.6.0"
+        val m = manager(FakeUpdateBackend { FakeUpdateBackend.available(version) })
+        m.checkAndAwaitAvailable()
+        m.dismissPopup()
+        assertEquals("1.6.0", m.checkAndAwaitAvailable().version)
+        assertTrue(m.popupDismissed.value)
+        version = "1.7.0"
+        m.check(userInitiated = false)
+        await { m.available.first { it?.version == "1.7.0" } }
+        assertFalse(m.popupDismissed.value)
     }
 
     @Test

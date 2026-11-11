@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,11 @@ import java.io.File
 import java.nio.file.Path
 import java.time.Instant
 import java.util.concurrent.TimeUnit
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+
+/** How often the running app checks for a new release in the background. */
+val UPDATE_CHECK_INTERVAL: Duration = 6.hours
 
 sealed interface UpdateState {
     data object Idle : UpdateState
@@ -70,7 +76,7 @@ class UpdateManager(
 
     private val _popupDismissed = MutableStateFlow(false)
 
-    /** True once "Later" is chosen; for this launch only. */
+    /** True once "Later" is chosen; for this launch, until a newer release is found. */
     val popupDismissed: StateFlow<Boolean> = _popupDismissed.asStateFlow()
 
     /** Whether this copy can install updates at all; see [canSelfUpdate] for a given release. */
@@ -102,6 +108,17 @@ class UpdateManager(
     /** The version this copy was updated from, on the first launch after a successful update. */
     val updatedFrom: String? = lastUpdate?.takeIf { it.newVersion == currentVersion }?.previousVersion
 
+    /**
+     * Checks at once, then again every [interval] until cancelled. Failures stay silent, as on launch; a check
+     * that would overlap a running check or update is skipped.
+     */
+    suspend fun checkPeriodically(interval: Duration = UPDATE_CHECK_INTERVAL) {
+        while (true) {
+            check(userInitiated = false)
+            delay(interval)
+        }
+    }
+
     /** Asks for the latest release. A failure is shown only when [userInitiated]. */
     fun check(userInitiated: Boolean) {
         val previous = synchronized(lock) {
@@ -127,6 +144,8 @@ class UpdateManager(
                 val notes = found?.let { releaseNotes(it.version) }
                 synchronized(lock) {
                     val release = found?.copy(body = notes)
+                    // "Later" covers the release it was chosen for; a newer one found later shows the popup again.
+                    if (release != null && release.version != _available.value?.version) _popupDismissed.value = false
                     pendingInfo = info
                     _available.value = release
                     _lastChecked.value = now()
