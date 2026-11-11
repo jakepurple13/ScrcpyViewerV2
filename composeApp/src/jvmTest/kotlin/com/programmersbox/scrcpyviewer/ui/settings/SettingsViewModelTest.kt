@@ -13,6 +13,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
@@ -47,6 +48,15 @@ class SettingsViewModelTest {
             runBlocking { withTimeout(10_000) { vm.state.first { it.aiSkill.isNotEmpty() } } }
         }
 
+    /**
+     * The state once [until] holds, or after 5 s the state as it is (so the assertion that follows reports the value).
+     * The view model's state combines flows some of which update on an IO thread; while that thread is inside the
+     * combine, an update from the test's thread reaches the state a moment later, so state.value read right after an
+     * action can still hold the value from before it.
+     */
+    private fun SettingsViewModel.settled(until: (SettingsUiState) -> Boolean): SettingsUiState =
+        runBlocking { withTimeoutOrNull(5_000) { state.first(until) } } ?: state.value
+
     private fun executable(name: String): Path {
         assumePosix()
         return Files.createFile(dir.resolve(name)).also { Files.setPosixFilePermissions(it, PosixFilePermissions.fromString("rwxr-xr-x")) }
@@ -71,7 +81,7 @@ class SettingsViewModelTest {
         val vm = vm()
         vm.setTheme(ThemeMode.Dark)
         assertEquals(ThemeMode.Dark, settings.settings.value.themeMode)
-        assertEquals(ThemeMode.Dark, vm.state.value.settings.themeMode)
+        assertEquals(ThemeMode.Dark, vm.settled { it.settings.themeMode == ThemeMode.Dark }.settings.themeMode)
     }
 
     @Test
@@ -79,17 +89,17 @@ class SettingsViewModelTest {
         assumePosix()
         val vm = vm()
         vm.useCustomAdb(dir.resolve("nope").toString())
-        assertNotNull(vm.state.value.adbPathError)
+        assertNotNull(vm.settled { it.adbPathError != null }.adbPathError)
         assertNull(settings.settings.value.adbPathOverride)
 
         val plain = Files.createFile(dir.resolve("plain"))
         Files.setPosixFilePermissions(plain, PosixFilePermissions.fromString("rw-r--r--"))
         vm.useCustomAdb(plain.toString())
-        assertEquals("Not executable: $plain", vm.state.value.adbPathError)
+        assertEquals("Not executable: $plain", vm.settled { it.adbPathError == "Not executable: $plain" }.adbPathError)
         assertNull(settings.settings.value.adbPathOverride)
 
         vm.useCustomAdb(dir.toString())
-        assertEquals("Not a file: $dir", vm.state.value.adbPathError)
+        assertEquals("Not a file: $dir", vm.settled { it.adbPathError == "Not a file: $dir" }.adbPathError)
         assertEquals(0, restarts)
     }
 
@@ -99,10 +109,13 @@ class SettingsViewModelTest {
         vm.useCustomAdb(dir.resolve("nope").toString())
         val adb = executable("adb")
         vm.useCustomAdb(adb.toString())
-        assertNull(vm.state.value.adbPathError)
+        val settled = vm.settled {
+            it.adbPathError == null && it.customAdbVersion == "1.0.41 (35.0.2)" && it.bundledAdbVersion == "1.0.41 (34.0.0)"
+        }
+        assertNull(settled.adbPathError)
         assertEquals(adb.toString(), settings.settings.value.adbPathOverride)
-        assertEquals("1.0.41 (35.0.2)", vm.state.value.customAdbVersion)
-        assertEquals("1.0.41 (34.0.0)", vm.state.value.bundledAdbVersion)
+        assertEquals("1.0.41 (35.0.2)", settled.customAdbVersion)
+        assertEquals("1.0.41 (34.0.0)", settled.bundledAdbVersion)
         assertEquals(1, restarts)
         vm.useCustomAdb(adb.toString())
         assertEquals(1, restarts, "same path again does not restart")
@@ -114,7 +127,7 @@ class SettingsViewModelTest {
         vm.useCustomAdb(executable("adb").toString())
         vm.useBundledAdb()
         assertNull(settings.settings.value.adbPathOverride)
-        assertNull(vm.state.value.customAdbVersion)
+        assertNull(vm.settled { it.customAdbVersion == null }.customAdbVersion)
         assertEquals(2, restarts)
         vm.useBundledAdb()
         assertEquals(2, restarts)
@@ -123,9 +136,9 @@ class SettingsViewModelTest {
     @Test
     fun `version is Unknown when adb fails`() {
         val vm = vm { null }
-        assertEquals(UNKNOWN_VERSION, vm.state.value.bundledAdbVersion)
+        assertEquals(UNKNOWN_VERSION, vm.settled { it.bundledAdbVersion == UNKNOWN_VERSION }.bundledAdbVersion)
         val broken = SettingsViewModel(settings, presets, adb(bundledAdb = { error("missing") }, version = { null }), installer(), scope)
-        assertEquals(UNKNOWN_VERSION, broken.state.value.bundledAdbVersion)
+        assertEquals(UNKNOWN_VERSION, broken.settled { it.bundledAdbVersion == UNKNOWN_VERSION }.bundledAdbVersion)
     }
 
     @Test
@@ -133,9 +146,9 @@ class SettingsViewModelTest {
         val vm = vm()
         presets.upsert(Preset("qa", "QA default", options = OptionValues(emptyMap())))
         vm.setDefaultPreset("qa")
-        assertEquals("qa", vm.state.value.defaultPresetId)
+        assertEquals("qa", vm.settled { it.defaultPresetId == "qa" }.defaultPresetId)
         vm.setDefaultPreset(null)
-        assertNull(vm.state.value.defaultPresetId)
+        assertNull(vm.settled { it.defaultPresetId == null }.defaultPresetId)
         assertNull(presets.defaultPresetId.value)
     }
 
