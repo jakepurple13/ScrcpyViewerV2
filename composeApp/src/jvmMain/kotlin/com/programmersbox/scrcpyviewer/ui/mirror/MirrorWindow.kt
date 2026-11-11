@@ -168,6 +168,8 @@ import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
+import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
+import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
 import java.awt.Dimension
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
@@ -187,6 +189,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Side toolbar buttons; [keycode] buttons send that Android key down and up. */
 enum class MirrorAction(val label: String, val keycode: Int? = null) {
@@ -581,7 +584,8 @@ fun MirrorWindow(
         quickActions = quickActions.uiState,
     )
 
-    // Animated: the screen collapses to a line, the window shrinks back into the Mirror button, then it closes.
+    // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now
+    // (or a little, in place, when the main window does not show it), then it closes.
     val requestClose: () -> Unit = close@{
         val w = awtWindowRef
         if (wake == null || w == null) return@close controller.close(serial)
@@ -590,12 +594,10 @@ fun MirrorWindow(
         uiScope.launch {
             try {
                 wake.animateTo(0f, tween(SCREEN_SLEEP_MILLIS, easing = EmphasizedAccelerate))
-                if (zoomFrom != null && windowState.placement == WindowPlacement.Floating) {
+                if (windowState.placement == WindowPlacement.Floating) {
                     zooming = true
-                    val from = w.bounds
-                    Animatable(0f).animateTo(1f, tween(MIRROR_ZOOM_OUT_MILLIS, easing = EmphasizedAccelerate)) {
-                        w.bounds = lerpBounds(from, zoomFrom, value)
-                    }
+                    val to = MirrorOrigins.buttonOnScreen(serial) ?: shrunkAroundCenter(w.bounds, MIRROR_SHRINK_IN_PLACE)
+                    animateWindowBounds(w, to, MIRROR_ZOOM_OUT_MILLIS, grow = false)
                 }
             } finally {
                 controller.close(serial)
@@ -789,11 +791,22 @@ fun MirrorWindow(
         if (wake != null) {
             LaunchedEffect(Unit) {
                 if (zoomFrom != null && zoomTo != null) {
+                    // macOS would play its own zoom as the window appears, on top of this one.
+                    awtWindow.disableMacAppearAnimation()
+                    // A hidden window is held to the screen it was made on: macOS moves one meant for another screen
+                    // to that screen's edge (and narrows it) until it is shown. So it shows see-through, is put at
+                    // the button once on screen, and only then becomes visible.
+                    val masked = awtWindow.setMacAlpha(0.0)
                     shown = true
-                    withFrameNanos { } // on screen at the button before the first step
-                    Animatable(0f).animateTo(1f, tween(MIRROR_ZOOM_IN_MILLIS, easing = EmphasizedDecelerate)) {
-                        awtWindow.bounds = lerpBounds(zoomFrom, zoomTo, value)
+                    // Compose shows the window from a job of its own: wait until it is really on screen.
+                    withTimeoutOrNull(1_000) { while (!awtWindow.isShowing) delay(8) }
+                    if (awtWindow.bounds != zoomFrom) {
+                        awtWindow.bounds = zoomFrom
+                        withTimeoutOrNull(300) { while (awtWindow.bounds != zoomFrom) delay(8) }
                     }
+                    repeat(2) { withFrameNanos { } }
+                    if (masked) awtWindow.setMacAlpha(1.0)
+                    animateWindowBounds(awtWindow, zoomTo, MIRROR_ZOOM_IN_MILLIS, grow = true)
                     zooming = false
                 }
                 snapshotFlow { sizedForWake || downForWake }.first { it }
@@ -821,7 +834,10 @@ fun MirrorWindow(
         val sheetTab = state.quickActions.tab
         val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
         val lastSheet = remember { SheetRun(false, sheetTab) }
-        LaunchedEffect(sheetOpen, sheetTab, sheetTarget) {
+        LaunchedEffect(sheetOpen, sheetTab, sheetTarget, zooming) {
+            // While the window grows or shrinks its bounds are the zoom's: a base taken now would be pinned back on
+            // every frame below (the window jumped to where it sat before it was placed). Runs again once it ends.
+            if (zooming) return@LaunchedEffect
             // Same open tab as the last run: only its width changed, by the drag bar.
             val resized = sheetOpen && lastSheet.open && lastSheet.tab == sheetTab
             lastSheet.open = sheetOpen

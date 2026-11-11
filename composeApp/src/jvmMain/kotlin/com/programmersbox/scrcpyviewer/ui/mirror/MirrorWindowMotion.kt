@@ -1,5 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -11,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -32,6 +35,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.window.ObjC
+import com.programmersbox.scrcpyviewer.ui.window.animateMacFrame
+import kotlinx.coroutines.delay
 import com.sun.jna.Function
 import com.sun.jna.ptr.IntByReference
 import java.awt.GraphicsEnvironment
@@ -43,6 +48,31 @@ import kotlin.math.roundToInt
 
 /** The mirror window grows out of the Mirror button over this long. */
 const val MIRROR_ZOOM_IN_MILLIS = 380
+
+/**
+ * The window's growth curve (cubic-bezier x1, y1, x2, y2): decelerating, but gentler at the start than the emphasized
+ * curve. Every step resizes a native window, so a curve that covers a third of the way in its first frame reads as a jump.
+ */
+private val ZOOM_IN_CURVE = floatArrayOf(0.2f, 0f, 0f, 1f)
+
+/** The window's shrink on close: the app's emphasized-accelerate curve. */
+private val ZOOM_OUT_CURVE = floatArrayOf(0.3f, 0f, 0.8f, 0.15f)
+
+/**
+ * Moves and resizes [window] to [to] over [millis], growing ([grow]) or shrinking. On macOS AppKit animates the
+ * frame (smooth even while the content redraws); elsewhere, or if that cannot start, one setBounds per frame.
+ */
+internal suspend fun animateWindowBounds(window: Window, to: Rectangle, millis: Int, grow: Boolean) {
+    val curve = if (grow) ZOOM_IN_CURVE else ZOOM_OUT_CURVE
+    if (window.animateMacFrame(to, millis, curve)) {
+        delay(millis + 20L)
+        window.bounds = to // in step with AppKit's last frame, should a resize event be still on its way
+        return
+    }
+    val from = window.bounds
+    val easing = CubicBezierEasing(curve[0], curve[1], curve[2], curve[3])
+    Animatable(0f).animateTo(1f, tween(millis, easing = easing)) { window.bounds = lerpBounds(from, to, value) }
+}
 
 /** The device screen switches on over this long, once the first frame is in and the window has its size. */
 const val SCREEN_WAKE_MILLIS = 320
@@ -75,7 +105,32 @@ object MirrorOrigins {
         last = null
         return press.bounds.takeIf { nowMs - press.atMs in 0..ORIGIN_MAX_AGE_MS }
     }
+
+    // The Mirror buttons on screen now, by the serial they mirror, so a closing window can shrink into its button.
+    private val buttons = java.util.concurrent.ConcurrentHashMap<String, () -> Rectangle?>()
+
+    internal fun registerButton(serial: String, locate: () -> Rectangle?) {
+        buttons[serial] = locate
+    }
+
+    internal fun unregisterButton(serial: String, locate: () -> Rectangle?) {
+        buttons.remove(serial, locate)
+    }
+
+    /** Where [serial]'s Mirror button is on screen now, or null when the main window does not show it. */
+    fun buttonOnScreen(serial: String): Rectangle? =
+        buttons[serial]?.invoke()?.takeIf { it.width > 1 && it.height > 1 }
 }
+
+/** [r] scaled by [scale] around its center. */
+internal fun shrunkAroundCenter(r: Rectangle, scale: Float): Rectangle {
+    val w = (r.width * scale).roundToInt()
+    val h = (r.height * scale).roundToInt()
+    return Rectangle(r.x + (r.width - w) / 2, r.y + (r.height - h) / 2, w, h)
+}
+
+/** With no Mirror button to land on, a closing window shrinks to this share of its size before it goes. */
+const val MIRROR_SHRINK_IN_PLACE = 0.9f
 
 /** Holds a composable's layout so its screen bounds can be read on press. A plain holder: never read in composition. */
 private class OriginTracker(val window: Window?, val density: Float) {
@@ -99,13 +154,23 @@ private class OriginTracker(val window: Window?, val density: Float) {
     }
 }
 
-/** Marks a Mirror button: a press records its screen bounds in [MirrorOrigins], so the window it opens grows from it. */
+/**
+ * Marks [serial]'s Mirror button: a press records its screen bounds in [MirrorOrigins], so the window it opens grows
+ * from it, and a closing window of [serial] shrinks back into it while it is on screen.
+ */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-fun Modifier.mirrorOrigin(): Modifier {
+fun Modifier.mirrorOrigin(serial: String?): Modifier {
     val window = LocalAwtWindow.current
     val density = LocalDensity.current.density
     val tracker = remember(window, density) { OriginTracker(window, density) }
+    if (serial != null) {
+        DisposableEffect(serial, tracker) {
+            val locate: () -> Rectangle? = tracker::screenBounds
+            MirrorOrigins.registerButton(serial, locate)
+            onDispose { MirrorOrigins.unregisterButton(serial, locate) }
+        }
+    }
     return onGloballyPositioned { tracker.coordinates = it }
         .pointerInput(tracker) {
             awaitPointerEventScope {

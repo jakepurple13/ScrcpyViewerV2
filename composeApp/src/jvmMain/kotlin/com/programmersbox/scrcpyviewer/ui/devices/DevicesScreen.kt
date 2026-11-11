@@ -693,7 +693,7 @@ private fun Footer(
                     Text(wifi.label)
                 }
             }
-            Button(onClick = onMirror, enabled = state.canMirror, modifier = Modifier.sharedPart(motion, SharedPart.Mirror).mirrorOrigin()) {
+            Button(onClick = onMirror, enabled = state.canMirror, modifier = Modifier.sharedPart(motion, SharedPart.Mirror).mirrorOrigin(state.selectedSerial)) {
                 Text("Mirror")
             }
         }

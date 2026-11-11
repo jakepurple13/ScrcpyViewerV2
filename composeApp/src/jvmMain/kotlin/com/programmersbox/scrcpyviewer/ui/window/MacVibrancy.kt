@@ -247,3 +247,99 @@ fun WindowBackgroundEffect(window: ComposeWindow, color: androidx.compose.ui.gra
         if (enabled) window.setWindowBackground(Color(argb, false))
     }
 }
+
+/**
+ * Animates this window to [to] (AWT screen units) natively on macOS, over [millis] along the cubic-bezier [curve]
+ * (x1, y1, x2, y2). AppKit moves the frame itself, so it stays smooth while the content catches up. Returns false
+ * (nothing started) when not on macOS or the window has no native handle; never throws.
+ */
+fun java.awt.Window.animateMacFrame(to: java.awt.Rectangle, millis: Int, curve: FloatArray): Boolean {
+    if (!Os.isMac || this !is ComposeWindow) return false
+    return try {
+        val handle = windowHandle
+        if (handle == 0L) return false
+        // AppKit's origin is the bottom-left of the main screen (the one AWT puts at 0,0); AWT's is its top-left.
+        val main = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices
+            .map { it.defaultConfiguration.bounds }
+            .firstOrNull { it.x == 0 && it.y == 0 } ?: return false
+        val frame = ObjC.CGRect().apply {
+            x = to.x.toDouble()
+            y = (main.height - to.y - to.height).toDouble()
+            width = to.width.toDouble()
+            height = to.height.toDouble()
+        }
+        ObjC.onMain {
+            val h = Pointer(handle)
+            val nsWindow = when {
+                ObjC.isKindOf(h, "NSWindow") -> h
+                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
+                else -> null
+            } ?: return@onMain
+            val contexts = ObjC.cls("NSAnimationContext")
+            ObjC.msgVoid(contexts, "beginGrouping")
+            val context = ObjC.msgPtr(contexts, "currentContext")!!
+            ObjC.msgVoid(context, "setDuration:", millis / 1000.0)
+            ObjC.msgPtr(
+                ObjC.cls("CAMediaTimingFunction"), "functionWithControlPoints::::",
+                curve[0], curve[1], curve[2], curve[3],
+            )?.let { ObjC.msgVoid(context, "setTimingFunction:", it) }
+            ObjC.msgVoid(ObjC.msgPtr(nsWindow, "animator")!!, "setFrame:display:", frame, true)
+            ObjC.msgVoid(contexts, "endGrouping")
+        }
+        true
+    } catch (t: Throwable) {
+        System.err.println("animateMacFrame failed: $t")
+        false
+    }
+}
+
+/**
+ * Sets the window's native opacity on macOS (NSWindow alphaValue, 0..1), which, unlike AWT's opacity, works with a
+ * title bar. Returns false (nothing done) when not on macOS or the window has no native handle; never throws.
+ */
+fun java.awt.Window.setMacAlpha(alpha: Double): Boolean {
+    if (!Os.isMac || this !is ComposeWindow) return false
+    return try {
+        val handle = windowHandle
+        if (handle == 0L) return false
+        ObjC.onMain {
+            val h = Pointer(handle)
+            val nsWindow = when {
+                ObjC.isKindOf(h, "NSWindow") -> h
+                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
+                else -> null
+            } ?: return@onMain
+            ObjC.msgVoid(nsWindow, "setAlphaValue:", alpha)
+        }
+        true
+    } catch (t: Throwable) {
+        System.err.println("setMacAlpha failed: $t")
+        false
+    }
+}
+
+/** NSWindowAnimationBehaviorNone. */
+private const val NS_WINDOW_ANIMATION_NONE = 2L
+
+/**
+ * Turns off the zoom macOS plays as this window appears, for windows that animate their own opening. Call while the
+ * window is displayable but not yet shown. No-op elsewhere; never throws.
+ */
+fun java.awt.Window.disableMacAppearAnimation() {
+    if (!Os.isMac || this !is ComposeWindow) return
+    try {
+        val handle = windowHandle
+        if (handle == 0L) return
+        ObjC.onMain {
+            val h = Pointer(handle)
+            val nsWindow = when {
+                ObjC.isKindOf(h, "NSWindow") -> h
+                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
+                else -> null
+            } ?: return@onMain
+            ObjC.msgVoid(nsWindow, "setAnimationBehavior:", NS_WINDOW_ANIMATION_NONE)
+        }
+    } catch (t: Throwable) {
+        System.err.println("disableMacAppearAnimation failed: $t")
+    }
+}

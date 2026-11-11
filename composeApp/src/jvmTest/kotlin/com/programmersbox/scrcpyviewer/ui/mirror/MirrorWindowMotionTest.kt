@@ -47,6 +47,21 @@ class MirrorWindowMotionTest {
     }
 
     @Test
+    fun `shrinking in place keeps the center`() {
+        assertEquals(Rectangle(124, 245, 432, 810), shrunkAroundCenter(Rectangle(100, 200, 480, 900), 0.9f))
+    }
+
+    @Test
+    fun `a closing window finds its device's button only while it is registered`() {
+        val locate: () -> Rectangle? = { Rectangle(5, 6, 100, 36) }
+        MirrorOrigins.registerButton("abc", locate)
+        assertEquals(Rectangle(5, 6, 100, 36), MirrorOrigins.buttonOnScreen("abc"))
+        assertNull(MirrorOrigins.buttonOnScreen("other"))
+        MirrorOrigins.unregisterButton("abc", locate)
+        assertNull(MirrorOrigins.buttonOnScreen("abc"))
+    }
+
+    @Test
     fun `an origin is taken once and only while fresh`() {
         val button = Rectangle(10, 20, 100, 36)
         MirrorOrigins.record(button, nowMs = 1_000)
