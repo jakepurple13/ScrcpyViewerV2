@@ -55,7 +55,7 @@ class TopLevelNavDisplayTest {
             driver.frames(5)
 
             navigator.select(TopLevelRoute.Presets)
-            driver.frames(40) // past the 300 ms fade-through; Devices leaves composition
+            driver.frames(40) // past the 390 ms shared-axis switch; Devices leaves composition
             navigator.select(TopLevelRoute.Settings)
             driver.frames(40)
             navigator.select(TopLevelRoute.Devices)
