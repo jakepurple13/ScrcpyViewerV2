@@ -246,6 +246,7 @@ internal fun FilesTab(
     // The device went away: a drag out of the window ends with it (nothing more can be pulled).
     LaunchedEffect(dragOut, browser.connected) {
         if (!browser.connected && dragOut.active) {
+            logDragOut("cancel: device disconnected, phase=${dragOut.phase}")
             dragOut.cancel()
             drop.cancelMove()
         }
@@ -332,6 +333,7 @@ internal fun FilesTab(
                 if (event.type != KeyEventType.KeyDown || event.key != Key.Escape) return@onPreviewKeyEvent false
                 // A row drag in progress takes Esc before anything else: it ends, nothing moves.
                 if (drop.moving != null) {
+                    logDragOut("Esc: cancel row drag, phase=${dragOut.phase}")
                     dragOut.cancel()
                     drop.cancelMove()
                     true

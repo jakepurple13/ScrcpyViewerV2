@@ -366,6 +366,7 @@ internal fun Modifier.filesMoveGesture(
                         when {
                             !dragging -> deferred?.let(browser::click)
                             dragOut?.active == true -> {
+                                logDragOut("gesture: released, phase=${dragOut.phase}")
                                 dragOut.released()
                                 state.cancelMove()
                             }
@@ -380,10 +381,12 @@ internal fun Modifier.filesMoveGesture(
                         val entries = names.mapNotNull { n -> browser.visible.firstOrNull { it.name == n } }
                         val single = entries.singleOrNull()
                         dragging = state.startMove(names, dragLabel(names.size, single?.isDir == true), toRoot(change.position), entries)
+                        logDragOut("gesture: move drag started=$dragging, names=$names")
                     }
                     if (dragging) {
                         // Esc cancelled it, or the drag-out ended (the OS drag returned): the rest of the gesture is nobody's.
                         if (state.moving == null) {
+                            logDragOut("gesture: move ended elsewhere (Esc or drag-out finished), phase=${dragOut?.phase}")
                             dragging = false
                             break
                         }
@@ -392,11 +395,17 @@ internal fun Modifier.filesMoveGesture(
                         if (dragOut != null) {
                             val outside = tabBounds()?.contains(root) == false
                             when {
-                                outside && !dragOut.active && !outRefused ->
+                                outside && !dragOut.active && !outRefused -> {
+                                    logDragOut("gesture: pointer left tab bounds, root=$root, tabBounds=${tabBounds()}, inWindow=${inWindow(root)}")
                                     outRefused = !dragOut.begin(state.moving.orEmpty(), change.position)
+                                    if (outRefused) logDragOut("gesture: drag-out refused, not retried until re-entry")
+                                }
                                 !outside -> {
                                     outRefused = false
-                                    if (dragOut.active) dragOut.cancel()
+                                    if (dragOut.active) {
+                                        logDragOut("gesture: pointer re-entered tab, cancel (phase=${dragOut.phase}), root=$root")
+                                        dragOut.cancel()
+                                    }
                                 }
                             }
                             dragOut.pointerAt(change.position, outsideWindow = !inWindow(root))
@@ -406,6 +415,7 @@ internal fun Modifier.filesMoveGesture(
                 }
             } finally {
                 if (dragging) {
+                    logDragOut("gesture: ended while dragging (cancel), phase=${dragOut?.phase}")
                     dragOut?.cancel()
                     state.cancelMove()
                 }

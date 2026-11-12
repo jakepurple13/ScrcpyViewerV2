@@ -36,6 +36,13 @@ import kotlin.coroutines.CoroutineContext
  */
 const val DRAG_DIR_KEEP_MILLIS = 30_000L
 
+private val dragLog = System.getLogger("scrcpyviewer.DragOut")
+
+/** Diagnostic line for the drag-out flow (INFO, single line). */
+internal fun logDragOut(message: String) = dragLog.log(System.Logger.Level.INFO, message)
+
+internal fun logDragOutWarn(message: String, error: Throwable) = dragLog.log(System.Logger.Level.WARNING, message, error)
+
 /** Hands files to the computer's own drag and drop. */
 interface OutboundDragStarter {
     /**
@@ -100,6 +107,7 @@ class DragOutController(
     private class Drag(val dir: Path, val ids: Set<Long>) {
         /** The jobs that showed up in the queue's list; one that leaves it before it ended was dropped. */
         val seen = HashSet<Long>()
+        val states = HashMap<Long, JobState>()
         var deleteScheduled = false
     }
 
@@ -129,15 +137,23 @@ class DragOutController(
 
     /** Pulls [names] into a new drag folder; false (nothing left behind) when nothing could be queued. */
     fun begin(names: List<String>, at: Offset): Boolean {
-        if (active || names.isEmpty()) return false
+        if (active || names.isEmpty()) {
+            logDragOut("begin refused: active=$active, phase=$phase, names=$names")
+            return false
+        }
         val dir = cache.newDragDir(serial)
+        logDragOut("begin: names=$names, at=$at, dragDir=$dir, rule=$rule")
         val ids = pull(names, dir)
-        if (ids.isEmpty()) return false
+        if (ids.isEmpty()) {
+            logDragOut("begin refused: pull queued no jobs (names=$names, dragDir=$dir)")
+            return false
+        }
+        logDragOut("pulls enqueued: jobIds=$ids, dragDir=$dir")
         current = Drag(dir, ids.toSet())
         pointer = at
         progress = 0f
         readyFiles = null
-        phase = DragOutPhase.Pulling
+        moveToPhase(DragOutPhase.Pulling)
         onJobs(lastJobs)
         return true
     }
@@ -158,7 +174,11 @@ class DragOutController(
 
     private fun giveUp() {
         val drag = current ?: return
-        if (phase == DragOutPhase.OsDrag) return
+        if (phase == DragOutPhase.OsDrag) {
+            logDragOut("giveUp ignored: OS drag already running")
+            return
+        }
+        logDragOut("giveUp: phase=$phase, jobIds=${drag.ids}, dragDir=${drag.dir}")
         current = null
         reset()
         cancelPulls(drag)
@@ -173,11 +193,18 @@ class DragOutController(
         val drag = current ?: return
         if (phase != DragOutPhase.Pulling) return
         val mine = jobs.filter { it.id in drag.ids }
-        mine.forEach { drag.seen += it.id }
+        mine.forEach {
+            if (drag.states[it.id] != it.state) {
+                logDragOut("job ${it.id} state ${drag.states[it.id]} -> ${it.state} (bytes=${it.bytes}, total=${it.total})")
+                drag.states[it.id] = it.state
+            }
+            drag.seen += it.id
+        }
         progress = progressOf(mine)
         // A pull that failed, was cancelled elsewhere, or left the list (the queue dropped it): nothing to drag.
         val gone = drag.seen.any { id -> mine.none { it.id == id } }
         if (gone || mine.any { it.state is JobState.Failed || it.state == JobState.Cancelled }) {
+            logDragOut("giveUp: pull failed/cancelled/dropped (gone=$gone, states=${mine.map { it.id to it.state }}), dragDir=${drag.dir}")
             current = null
             reset()
             cancelPulls(drag)
@@ -188,7 +215,8 @@ class DragOutController(
         }
         if (mine.size == drag.ids.size && mine.all { it.state == JobState.Done }) {
             readyFiles = mine.mapNotNull { it.hostResult?.toFile() }
-            phase = DragOutPhase.Ready
+            logDragOut("all pulls done: files=${readyFiles?.map { it.name + " exists=" + it.exists() + " size=" + it.length() }}")
+            moveToPhase(DragOutPhase.Ready)
             startIfAllowed()
         }
     }
@@ -201,22 +229,40 @@ class DragOutController(
     }
 
     private fun startIfAllowed() {
-        if (rule == DragOutStartRule.WhenReadyAndOutside && !outsideWindow) return
-        val drag = current ?: return
-        val files = readyFiles ?: return
+        if (rule == DragOutStartRule.WhenReadyAndOutside && !outsideWindow) {
+            logDragOut("startIfAllowed: waiting, pointer still inside the window (rule=$rule)")
+            return
+        }
+        val drag = current ?: run {
+            logDragOut("startIfAllowed: no current drag (phase=$phase)")
+            return
+        }
+        val files = readyFiles ?: run {
+            logDragOut("startIfAllowed: no ready files (phase=$phase)")
+            return
+        }
+        logDragOut("startIfAllowed: launching OS drag, phase=$phase, pointer=$pointer, files=${files.map { it.name }}")
         // Out of the caller (a pointer handler or the jobs collector): the drag blocks until the drop.
         scope.launch {
             // Released (or cancelled) since: never start after a release.
-            if (current !== drag || phase != DragOutPhase.Ready) return@launch
-            phase = DragOutPhase.OsDrag
+            if (current !== drag || phase != DragOutPhase.Ready) {
+                logDragOut("OS drag skipped: released or cancelled before launch (phase=$phase, stillCurrent=${current === drag})")
+                return@launch
+            }
+            moveToPhase(DragOutPhase.OsDrag)
             onOsDrag(true)
             val started = try {
-                starter.start(files, pointer) { deleteLater(drag, keepMillis) }
+                starter.start(files, pointer) { dropped ->
+                    logDragOut("OS drag ended: dropped=$dropped")
+                    deleteLater(drag, keepMillis)
+                }
             } catch (e: Exception) {
+                logDragOutWarn("starter.start threw", e)
                 false
             } finally {
                 onOsDrag(false)
             }
+            logDragOut("starter.start returned started=$started")
             if (current === drag) {
                 current = null
                 reset()
@@ -226,8 +272,13 @@ class DragOutController(
         }
     }
 
+    private fun moveToPhase(next: DragOutPhase) {
+        if (phase != next) logDragOut("phase $phase -> $next")
+        phase = next
+    }
+
     private fun reset() {
-        phase = DragOutPhase.Idle
+        moveToPhase(DragOutPhase.Idle)
         progress = 0f
         readyFiles = null
         outsideWindow = false
@@ -257,10 +308,12 @@ class DragOutController(
     private fun deleteLater(drag: Drag, afterMillis: Long) {
         if (drag.deleteScheduled) return
         drag.deleteScheduled = true
+        logDragOut("deleteLater scheduled: dir=${drag.dir}, afterMillis=$afterMillis")
         cleanupScope.launch(io) {
             if (afterMillis > 0) delay(afterMillis)
             cache.delete(drag.dir)
             drag.ids.forEach(dismissJob)
+            logDragOut("deleteLater ran: dir=${drag.dir}")
         }
     }
 }
@@ -285,28 +338,48 @@ class ComposeDragOutStarter : OutboundDragStarter {
     internal var accepted: Boolean? = null
 
     override fun start(files: List<File>, at: Offset, onEnd: (dropped: Boolean) -> Unit): Boolean {
-        val n = node ?: return false
+        val n = node ?: run {
+            logDragOut("starter.start refused: no DragAndDropSourceModifierNode attached (dragOutSource missing)")
+            return false
+        }
         pending = DragAndDropTransferData(
             transferable = DragAndDropTransferable(FileListTransferable(files)),
             supportedActions = listOf(DragAndDropTransferAction.Copy),
             // The completion signal: the drop's action, null when nothing was dropped.
-            onTransferCompleted = { action -> onEnd(action != null) },
+            onTransferCompleted = { action ->
+                logDragOut("onTransferCompleted: action=$action")
+                onEnd(action != null)
+            },
         )
         accepted = null
+        logDragOut("requestDragAndDropTransfer: at=$at, files=${files.map { it.name + " exists=" + it.exists() + " size=" + it.length() }}")
         try {
             n.requestDragAndDropTransfer(at)
+        } catch (e: Throwable) {
+            logDragOutWarn("requestDragAndDropTransfer threw", e)
+            throw e
         } finally {
             pending = null
         }
+        logDragOut("requestDragAndDropTransfer returned: accepted=$accepted")
         return accepted == true
     }
 }
 
 private class DragOutNode(var starter: ComposeDragOutStarter) : DelegatingNode() {
     private val dnd = delegate(DragAndDropSourceModifierNode { _ ->
-        val data = starter.pending ?: return@DragAndDropSourceModifierNode
+        val data = starter.pending ?: run {
+            logDragOut("drag source callback: no pending transfer data")
+            return@DragAndDropSourceModifierNode
+        }
         // Tao ignores the decoration; the OS shows its own file icon.
-        starter.accepted = startDragAndDropTransfer(data, Size(96f, 96f)) {}
+        starter.accepted = try {
+            startDragAndDropTransfer(data, Size(96f, 96f)) {}
+        } catch (e: Throwable) {
+            logDragOutWarn("startDragAndDropTransfer threw", e)
+            throw e
+        }
+        logDragOut("startDragAndDropTransfer returned: ${starter.accepted}")
     })
 
     override fun onAttach() {
