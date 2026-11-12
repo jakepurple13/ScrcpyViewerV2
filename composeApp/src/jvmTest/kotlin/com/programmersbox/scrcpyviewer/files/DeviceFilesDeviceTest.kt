@@ -62,6 +62,38 @@ class DeviceFilesDeviceTest {
     }
 
     @Test
+    fun `replace never deletes the folder that holds the moved item`() = runBlocking<Unit> {
+        val files = DeviceFiles(ShellRunner(adb, serial)) {}
+        val runner = ShellRunner(adb, serial)
+        val outer = "/sdcard/Download/svwt"
+        val inner = "$outer/svwt"
+        val a = shellQuote("$inner/a.txt")
+        try {
+            runner.run("mkdir -p ${shellQuote(inner)} && echo keep > $a")
+            // Moving the inner svwt to Download with Replace would rm -rf the outer svwt, the inner one with it.
+            val e = assertFailsWith<IOException> { files.move(outer, listOf("svwt"), "/sdcard/Download", replace = setOf("svwt")) }
+            assertEquals("svwt: contains the items being moved", e.message)
+            assertEquals("keep", runner.run("cat $a").output.trim())
+
+            // The device-side guard alone (another case of the folder, as a link or another spelling would reach it).
+            val guarded = keepOutsideGuard(inner, "/sdcard/download/SVWT", "svwt", CONTAINS_MOVED) +
+                " && rm -rf -- ${shellQuote("/sdcard/download/SVWT")}"
+            val r = runner.run(guarded)
+            assertTrue(r.exitCode != 0, "guard refused: $r")
+            assertEquals("svwt: contains the items being moved", r.output.trim())
+            assertEquals("keep", runner.run("cat $a").output.trim())
+            // Through the emulated spelling too.
+            val r2 = runner.run(keepOutsideGuard("/storage/emulated/0/Download/svwt/svwt", outer, "svwt", CONTAINS_MOVED))
+            assertTrue(r2.exitCode != 0, "guard refused: $r2")
+            // An unrelated target passes.
+            assertEquals(0, runner.run(keepOutsideGuard(inner, "/sdcard/Download/svwt-other", "x", CONTAINS_MOVED)).exitCode)
+            assertEquals(0, runner.run(keepOutsideGuard(outer, inner, "x", CONTAINS_MOVED)).exitCode, "a folder's child is not above it")
+        } finally {
+            runCatching { files.delete("/sdcard/Download", listOf("svwt")) }
+        }
+    }
+
+    @Test
     fun `replace never deletes an item moved onto itself through another spelling`() = runBlocking<Unit> {
         val files = DeviceFiles(ShellRunner(adb, serial)) {}
         val runner = ShellRunner(adb, serial)

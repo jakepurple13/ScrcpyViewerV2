@@ -59,12 +59,40 @@ class DeviceFilesTest {
             listOf(
                 // An item that is already its own target (another spelling of the same folder) is left alone first.
                 "if [ $s1 -ef $t1 ]; then :; elif [ -e $t1 ] || [ -L $t1 ]; then printf '%s: already exists\\n' 'it'\\''s a'; false; else " +
-                    "mv $s1 $t1; fi && if [ $s2 -ef $t2 ]; then :; else rm -rf -- $t2 && mv $s2 $t2; fi",
+                    "mv $s1 $t1; fi && if [ $s2 -ef $t2 ]; then :; else " +
+                    keepOutsideGuard("/sdcard/A/x", "/sdcard/B/x (1)", "x (1)", CONTAINS_MOVED) +
+                    " && rm -rf -- $t2 && mv $s2 $t2; fi",
             ),
             runner.commands,
         )
         assertEquals(listOf(120_000L), runner.timeouts)
         assertEquals(listOf("/sdcard/A", "/sdcard/B"), scans)
+    }
+
+    @Test
+    fun keepOutsideGuardComparesRealPathsIgnoringCase() {
+        assertEquals(
+            "case \"\$( (realpath '/sdcard/D/it'\\''s' 2>/dev/null || printf '%s\\n' '/sdcard/D/it'\\''s') | tr A-Z a-z)/\" in " +
+                "\"\$( (realpath '/sdcard/it'\\''s' 2>/dev/null || printf '%s\\n' '/sdcard/it'\\''s') | tr A-Z a-z)\"/*) " +
+                "printf '%s: %s\\n' 'it'\\''s' 'contains the items being moved'; false;; esac",
+            keepOutsideGuard("/sdcard/D/it's", "/sdcard/it's", "it's", CONTAINS_MOVED),
+        )
+    }
+
+    @Test
+    fun replaceOntoAnAncestorOfTheItemIsRefusedBeforeAnythingRuns() = runBlocking<Unit> {
+        // /sdcard/Docs holds Docs: replacing /sdcard/Docs with it would rm -rf the item and its whole folder.
+        val e = assertFailsWith<IOException> {
+            files.move("/sdcard/Docs", listOf("Docs"), "/sdcard", replace = setOf("Docs"))
+        }
+        assertEquals("Docs: contains the items being moved", e.message)
+        // Another case, the emulated spelling, a rename onto the parent's name: all refused.
+        assertFailsWith<IOException> { files.move("/sdcard/docs", listOf("Docs"), "/sdcard", replace = setOf("Docs")) }
+        assertFailsWith<IOException> {
+            files.move("/storage/emulated/0/A/B", listOf("x"), "/sdcard/A", mapOf("x" to "b"), setOf("x"))
+        }
+        assertTrue(runner.commands.isEmpty(), runner.commands.toString())
+        assertTrue(scans.isEmpty())
     }
 
     @Test

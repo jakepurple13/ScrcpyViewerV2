@@ -467,6 +467,42 @@ class FilesBrowserTest {
     }
 
     @Test
+    fun replaceIsNeverOfferedForTheFolderHoldingTheMovedItems() = runTest {
+        // /sdcard/Docs holds Docs; moving it to Internal storage clashes with /sdcard/Docs, its own folder.
+        files.dirs["/sdcard"] = Listing.Entries(listOf(dir("Docs"), dir("Download")))
+        files.dirs["/sdcard/Docs"] = Listing.Entries(listOf(dir("Docs"), file("a.txt")))
+        val b = browser("/sdcard/Docs")
+        b.move(listOf("Docs"), "/sdcard")
+        runCurrent()
+        val clash = assertIs<FilesDialog.Clash>(b.dialog)
+        assertEquals(listOf("Docs"), clash.clashing)
+        assertFalse(clash.canReplace, "no Replace: it would delete the moved folder with its parent")
+        // Even if Replace were chosen, the holder is skipped with a word, never replaced.
+        clash.onChoice(ClashChoice.Replace)
+        settle()
+        assertTrue(files.mutations.isEmpty(), files.mutations.toString())
+        assertEquals("Can’t replace Docs: it contains the items being moved", snacks.single().message)
+
+        // Keep both still works; another case of the holder's name counts too.
+        files.dirs["/sdcard"] = Listing.Entries(listOf(dir("docs"), dir("Download")))
+        b.move(listOf("Docs"), "/sdcard")
+        runCurrent()
+        val again = assertIs<FilesDialog.Clash>(b.dialog)
+        assertFalse(again.canReplace)
+        again.onChoice(ClashChoice.KeepBoth)
+        settle()
+        assertEquals(listOf("move /sdcard/Docs [Docs] /sdcard {Docs=Docs (1)} []"), files.mutations)
+
+        // An unrelated clash still offers Replace.
+        files.dirs["/sdcard/Docs"] = Listing.Entries(listOf(dir("Download")))
+        b.refresh()
+        runCurrent()
+        b.move(listOf("Download"), "/sdcard")
+        runCurrent()
+        assertTrue(assertIs<FilesDialog.Clash>(b.dialog).canReplace)
+    }
+
+    @Test
     fun pushIntoTheCurrentFolderWithAClash() = runTest {
         val b = browser()
         val a = Paths.get("/x/a.jpg")

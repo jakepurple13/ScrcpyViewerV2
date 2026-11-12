@@ -47,7 +47,8 @@ open class DeviceFiles(
      * when a later item fails, since earlier ones may already have moved. An item whose target is its own path is
      * skipped: removing the "existing" target would delete the item itself. Each item also checks on the device that
      * source and target are not the same file (`-ef`) before anything else, since `/sdcard` ignores case and other
-     * spellings reach the same folder.
+     * spellings reach the same folder. A Replace whose target is the item's own folder or one above it fails with
+     * "<name>: contains the items being moved" (checked here and again on the device), before anything is removed.
      */
     open suspend fun move(
         dir: String,
@@ -60,14 +61,32 @@ open class DeviceFiles(
             devicePath(normalizeDir(dir), it) != devicePath(normalizeDir(toDir), renames[it] ?: it)
         }
         if (moving.isEmpty()) return
+        // Replacing a folder that holds the item (moving /sdcard/Docs/Docs onto /sdcard/Docs) would delete the item
+        // and everything around it: refused before anything runs (nothing to rescan), and again on the device, which
+        // also catches links. The item as its own target (another case of the same path) is left to the `-ef` check.
+        for (it in moving) {
+            if (it !in replace) continue
+            val targetName = renames[it] ?: it
+            val source = normalizeDir(devicePath(dir, it))
+            val target = normalizeDir(devicePath(toDir, targetName))
+            if (!source.equals(target, ignoreCase = true) && isInsideIgnoreCase(source, target)) {
+                throw IOException("$targetName: $CONTAINS_MOVED")
+            }
+        }
         val cmd = moving.joinToString(" && ") {
             val targetName = renames[it] ?: it
-            val source = shellQuote(devicePath(dir, it))
-            val target = shellQuote(devicePath(toDir, targetName))
+            val sourcePath = devicePath(dir, it)
+            val targetPath = devicePath(toDir, targetName)
+            val source = shellQuote(sourcePath)
+            val target = shellQuote(targetPath)
             val mv = "mv $source $target"
             val same = "if [ $source -ef $target ]; then :;"
-            if (it in replace) "$same else rm -rf -- $target && $mv; fi"
-            else "$same elif ${exists(target)}; then ${clash(targetName)}; else $mv; fi"
+            if (it in replace) {
+                "$same else ${keepOutsideGuard(sourcePath, targetPath, targetName, CONTAINS_MOVED)} && " +
+                    "rm -rf -- $target && $mv; fi"
+            } else {
+                "$same elif ${exists(target)}; then ${clash(targetName)}; else $mv; fi"
+            }
         }
         try {
             mutate(cmd, LONG_TIMEOUT_MS)

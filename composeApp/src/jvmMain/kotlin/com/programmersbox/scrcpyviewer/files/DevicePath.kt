@@ -41,16 +41,21 @@ fun normalizeDir(path: String): String {
     }
 }
 
-/** [name], or "base (n).ext" with the lowest n >= 1 that is not in [taken]. */
-fun uniqueName(taken: Set<String>, name: String): String {
-    if (name !in taken) return name
-    val dot = name.lastIndexOf('.')
+/**
+ * [name], or "base (n).ext" with the lowest n >= 1 that is not in [taken]. A folder ([isDir]) has no extension: it
+ * gets " (n)" after its whole name ("v1.2 (1)"). [ignoreCase] compares as `/sdcard` does.
+ */
+fun uniqueName(taken: Set<String>, name: String, isDir: Boolean = false, ignoreCase: Boolean = false): String {
+    val used = if (ignoreCase) taken.mapTo(HashSet()) { it.lowercase() } else taken
+    fun free(n: String) = (if (ignoreCase) n.lowercase() else n) !in used
+    if (free(name)) return name
+    val dot = if (isDir) -1 else name.lastIndexOf('.')
     val base = if (dot > 0) name.substring(0, dot) else name
     val ext = if (dot > 0) name.substring(dot) else ""
     var n = 1
     while (true) {
         val candidate = "$base ($n)$ext"
-        if (candidate !in taken) return candidate
+        if (free(candidate)) return candidate
         n++
     }
 }
@@ -69,3 +74,21 @@ fun isInside(path: String, ancestor: String): Boolean {
     val p = path.trimEnd('/')
     return p == a || p.startsWith("$a/")
 }
+
+/** [isInside] for device paths, ignoring case and the `/storage/emulated/0` spelling: `/sdcard` ignores case. */
+fun isInsideIgnoreCase(path: String, ancestor: String): Boolean =
+    isInside(normalizeDir(path).lowercase(), normalizeDir(ancestor).lowercase())
+
+/**
+ * A device-side check to run right before `rm -rf -- [target]`: it fails (printing "<[name]>: [reason]") when [keep],
+ * which must survive the removal, is [target] itself or inside it. Real paths are compared (`realpath`, else the paths
+ * as given), ignoring case, so another spelling of the same folder is caught too. Both paths are quoted.
+ */
+fun keepOutsideGuard(keep: String, target: String, name: String, reason: String): String {
+    fun lower(p: String) = "\$( (realpath ${shellQuote(p)} 2>/dev/null || printf '%s\\n' ${shellQuote(p)}) | tr A-Z a-z)"
+    return "case \"${lower(keep)}/\" in \"${lower(target)}\"/*) " +
+        "printf '%s: %s\\n' ${shellQuote(name)} ${shellQuote(reason)}; false;; esac"
+}
+
+/** Why a Replace may not remove a folder: the items being moved are inside it. */
+const val CONTAINS_MOVED = "contains the items being moved"

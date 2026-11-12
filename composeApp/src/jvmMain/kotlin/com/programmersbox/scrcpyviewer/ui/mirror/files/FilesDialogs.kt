@@ -145,13 +145,19 @@ private fun ClashDialog(browser: FilesBrowser, dialog: FilesDialog.Clash) {
     val title = if (clashing.size == 1) "“${clashing.single()}” is already in $where" else "${clashing.size} files are already in $where"
     DialogCard(
         title,
-        buttons = listOf(
+        buttons = listOfNotNull(
             DialogButton("Skip", initialFocus = true) { dialog.onChoice(ClashChoice.Skip) },
             DialogButton("Keep both") { dialog.onChoice(ClashChoice.KeepBoth) },
-            DialogButton("Replace") { dialog.onChoice(ClashChoice.Replace) },
+            if (dialog.canReplace) DialogButton("Replace") { dialog.onChoice(ClashChoice.Replace) } else null,
         ),
     ) {
         if (clashing.size > 1) Names(listedNames(clashing) { false })
+        if (!dialog.canReplace) {
+            Text(
+                "Can’t replace: it contains the items being moved.",
+                fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

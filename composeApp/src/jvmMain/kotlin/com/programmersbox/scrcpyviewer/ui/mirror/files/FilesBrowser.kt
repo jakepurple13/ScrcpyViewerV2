@@ -28,7 +28,9 @@ import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import com.programmersbox.scrcpyviewer.files.TransferRequest
 import com.programmersbox.scrcpyviewer.files.devicePath
+import com.programmersbox.scrcpyviewer.files.CONTAINS_MOVED
 import com.programmersbox.scrcpyviewer.files.isInside
+import com.programmersbox.scrcpyviewer.files.isInsideIgnoreCase
 import com.programmersbox.scrcpyviewer.files.kindOf
 import com.programmersbox.scrcpyviewer.files.nameProblem
 import com.programmersbox.scrcpyviewer.files.normalizeDir
@@ -87,8 +89,16 @@ enum class ClashChoice { Skip, KeepBoth, Replace }
 sealed interface FilesDialog {
     data class Delete(val names: List<String>, val hasFolder: Boolean) : FilesDialog
 
-    /** Items named in [clashing] already exist in [toDir]; [onChoice] settles the whole batch. */
-    data class Clash(val toDir: String, val clashing: List<String>, val onChoice: (ClashChoice) -> Unit) : FilesDialog
+    /**
+     * Items named in [clashing] already exist in [toDir]; [onChoice] settles the whole batch. Without [canReplace] the
+     * dialog offers no Replace: one of the existing items holds what is being moved.
+     */
+    data class Clash(
+        val toDir: String,
+        val clashing: List<String>,
+        val canReplace: Boolean = true,
+        val onChoice: (ClashChoice) -> Unit,
+    ) : FilesDialog
 }
 
 data class Snack(val message: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
@@ -203,6 +213,9 @@ class FilesBrowser(
     }
 
     private val order: List<String> get() = visible.map { it.name }
+
+    /** The listing is the open folder's. Until it is, the rows shown are the folder before's and take no action. */
+    private val listed: Boolean get() = listingPath == path
 
     /** Every name in the open folder (hidden and filtered ones too), when its listing is current. */
     private val currentNames: Set<String>?
@@ -595,29 +608,44 @@ class FilesBrowser(
      * would land inside themselves are left out; moving into [from] does nothing. Names already in [toDir] wait for
      * one [FilesDialog.Clash]; the rest move now.
      */
-    fun move(names: List<String>, toDir: String, from: String = path) {
+    fun move(names: List<String>, toDir: String, from: String = path, folders: Set<String>? = null) {
         if (!connected) return
         val dir = normalizeDir(from)
+        // Rows of the folder before, still shown while the open one loads: their names are not this folder's.
+        if (dir == path && !listed) return
         val target = normalizeDir(toDir)
         // /sdcard ignores case: another spelling of the open folder is the open folder.
         if (target.equals(dir, ignoreCase = true)) return
-        val items = names.distinct().filter { !isInside(target, devicePath(dir, it)) }
+        val items = names.distinct().filter { !isInsideIgnoreCase(target, devicePath(dir, it)) }
         if (items.isEmpty()) return
+        val dirs = folders ?: (listing as? Listing.Entries)?.takeIf { listingPath == dir }?.entries
+            ?.filter { it.isDir }?.mapTo(HashSet()) { it.name }.orEmpty()
         scope.launch {
             val taken = namesIn(target) ?: return@launch
-            val clashing = items.filter { it in taken }
+            // /sdcard ignores case: "docs" there is in the way of "Docs".
+            val takenLower = taken.mapTo(HashSet()) { it.lowercase() }
+            val clashing = items.filter { it.lowercase() in takenLower }
             val ok = items - clashing.toSet()
             if (clashing.isNotEmpty()) {
-                showDialog(FilesDialog.Clash(target, clashing) { choice ->
+                // An existing item that is the source folder or one above it holds what moves: replacing it would
+                // delete the items with it (moving Docs out of /sdcard/Docs onto /sdcard/Docs).
+                val holders = clashing.filter { isInsideIgnoreCase(dir, devicePath(target, it)) }
+                showDialog(FilesDialog.Clash(target, clashing, canReplace = holders.isEmpty()) { choice ->
                     dialog = null
                     if (!connected) return@Clash
                     when (choice) {
                         ClashChoice.Skip -> Unit
-                        ClashChoice.Replace -> scope.launch { runMove(dir, clashing, target, replace = clashing.toSet()) }
+                        ClashChoice.Replace -> {
+                            holders.forEach { post(Snack("Can’t replace $it: it $CONTAINS_MOVED")) }
+                            val replacing = clashing - holders.toSet()
+                            if (replacing.isNotEmpty()) scope.launch { runMove(dir, replacing, target, replace = replacing.toSet()) }
+                        }
                         ClashChoice.KeepBoth -> {
                             val used = HashSet(taken + ok)
                             val renames = LinkedHashMap<String, String>()
-                            for (n in clashing) renames[n] = uniqueName(used, n).also { used += it }
+                            for (n in clashing) {
+                                renames[n] = uniqueName(used, n, isDir = n in dirs, ignoreCase = true).also { used += it }
+                            }
                             scope.launch { runMove(dir, clashing, target, renames = renames) }
                         }
                     }
