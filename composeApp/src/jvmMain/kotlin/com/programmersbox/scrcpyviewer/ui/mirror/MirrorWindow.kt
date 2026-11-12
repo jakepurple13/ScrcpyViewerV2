@@ -113,6 +113,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -518,6 +519,9 @@ fun MirrorWindow(
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     // The visible stage in window pixels: the zoomed canvas can be larger than it.
     var stageBounds by remember { mutableStateOf<Rect?>(null) }
+    // The quick actions sheet in root pixels while it shows (a plain holder, read by the window's file drop).
+    val sheetBounds = remember { arrayOfNulls<Rect>(1) }
+    val overSheet = remember { { p: Offset -> sheetBounds[0]?.contains(p) == true } }
     val currentFit by rememberUpdatedState(fit)
     val control = "no-control" !in e
     val hidKeyboard = remember(session) { if (control && e["keyboard"] == "uhid") HidKeyboard() else null }
@@ -910,8 +914,8 @@ fun MirrorWindow(
         val frame = session.frames.collectAsStateWithLifecycle()
 
         ScrcpyViewerTheme {
-            // Drops anywhere on the window install / push (COPY only, see fileDropTarget).
-            Box(Modifier.fillMaxSize().fileDropTarget(transfers)) {
+            // Drops anywhere on the window but the sheet install / push (COPY only, see fileDropTarget).
+            Box(Modifier.fillMaxSize().fileDropTarget(transfers, overSheet)) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     CompositionLocalProvider(
                         LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus, LocalMirrorWindowHandle provides handle,
@@ -955,6 +959,7 @@ fun MirrorWindow(
                         onStageBounds = { stageBounds = it },
                         onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
+                        onSheetBounds = { sheetBounds[0] = it },
                     )
                     }
                 }
@@ -1093,6 +1098,8 @@ fun MirrorContent(
     shellConsole: ShellConsole? = null,
     /** The quick actions sheet's Files tab content; null shows an empty Files tab. */
     filesTab: (@Composable () -> Unit)? = null,
+    /** The quick actions sheet's bounds in root pixels while it shows, null once it is gone. */
+    onSheetBounds: (Rect?) -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1180,14 +1187,21 @@ fun MirrorContent(
             val panel = rememberQuickActionsPanel(
                 state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab,
             )
+            // Where the sheet is, so the window's file drop leaves it to the sheet (the Files tab takes drops there).
+            val currentSheetBounds by rememberUpdatedState(onSheetBounds)
+            val sheetBounds = Modifier.onGloballyPositioned { currentSheetBounds(it.boundsInRoot()) }
             if (pinnedStageWidth != null) {
                 // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
                 // so a tab switch's width change leaves no gap while the window catches up.
                 Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                    panel(AtLeastAvailableWidth.then(sheetPresses))
+                    DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
+                    panel(AtLeastAvailableWidth.then(sheetPresses).then(sheetBounds))
                 }
             } else {
-                QuickActionsSheet(state.quickActions.open) { panel(sheetPresses) }
+                QuickActionsSheet(state.quickActions.open) {
+                    DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
+                    panel(sheetPresses.then(sheetBounds))
+                }
             }
         }
         HorizontalDivider(color = colors.outlineVariant)

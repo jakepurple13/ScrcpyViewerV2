@@ -41,6 +41,7 @@ import androidx.compose.ui.draganddrop.DragData
 import androidx.compose.ui.draganddrop.dragData
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
@@ -199,7 +200,7 @@ fun copyDropAction(sourceActions: Int, hasFiles: Boolean, enabled: Boolean): Int
 
 /** The drag's data, or null when it cannot be read (yet, or ever: no AWT event behind it). */
 @OptIn(ExperimentalComposeUiApi::class)
-private fun readDragData(event: DragAndDropEvent): DragData? = runCatching { event.dragData() }.getOrNull()
+internal fun readDragData(event: DragAndDropEvent): DragData? = runCatching { event.dragData() }.getOrNull()
 
 /**
  * The files of a drag or drop [event] (file URIs from [read]), or null when it carries no files or they cannot be
@@ -216,7 +217,7 @@ fun dropPaths(event: DragAndDropEvent, read: (DragAndDropEvent) -> DragData? = :
  * COPY_OR_MOVE), else COPY when Compose reports a Copy.
  */
 @OptIn(ExperimentalComposeUiApi::class)
-private fun DragAndDropEvent.sourceActions(): Int = when (val native = nativeEvent) {
+internal fun DragAndDropEvent.sourceActions(): Int = when (val native = nativeEvent) {
     is DropTargetDragEvent -> native.sourceActions
     is DropTargetDropEvent -> native.sourceActions
     else -> if (action == DragAndDropTransferAction.Copy) DnDConstants.ACTION_COPY else DnDConstants.ACTION_NONE
@@ -228,26 +229,43 @@ private fun DragAndDropEvent.sourceActions(): Int = when (val native = nativeEve
  * (its drops are copies and its synthetic events ignore this).
  */
 @OptIn(ExperimentalComposeUiApi::class)
-private fun DragAndDropEvent.acceptAsCopy() {
+internal fun DragAndDropEvent.acceptAsCopy() {
     (nativeEvent as? DropTargetDropEvent)?.let { runCatching { it.acceptDrop(DnDConstants.ACTION_COPY) } }
 }
 
+// Compose keeps a drag event's position internal; read once, by reflection. Null when a later Compose drops it.
+private val positionInRoot: java.lang.reflect.Field? = runCatching {
+    DragAndDropEvent::class.java.getDeclaredField("positionInRootImpl").apply { isAccessible = true }
+}.getOrNull()
+
+/** Where [this] drag event is, in the window's root coordinates, or null when that cannot be read. */
+@OptIn(ExperimentalComposeUiApi::class)
+internal fun DragAndDropEvent.rootPosition(): Offset? = runCatching {
+    // An Offset packs x (high 32 bits) and y (low 32 bits) as float bits.
+    val packed = positionInRoot?.getLong(this) ?: return null
+    Offset(Float.fromBits((packed ushr 32).toInt()), Float.fromBits(packed.toInt()))
+}.getOrNull()
+
 /**
  * The window's file drop: file lists start a drag (the overlay shows [FileTransfers.hint]), and a drop feeds
- * [transfers] when [copyDropAction] allows it, as a COPY. Equal per [transfers] and [read], so recomposing mid-drag
- * keeps the drop node and its session. Runs on the UI thread.
+ * [transfers] when [copyDropAction] allows it, as a COPY. While the pointer is [overSheet] it does nothing: no
+ * overlay, no drop (the Files tab's own targets take drops there). Equal per [transfers], [overSheet] and [read], so
+ * recomposing mid-drag keeps the drop node and its session. Runs on the UI thread.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 internal data class CopyOnlyFileDropTarget(
     private val transfers: FileTransfers,
+    private val overSheet: (Offset) -> Boolean = { false },
     private val read: (DragAndDropEvent) -> DragData? = ::readDragData,
 ) : DragAndDropTarget {
     /** `shouldStartDragAndDrop`: only drags that carry files. */
     fun accepts(event: DragAndDropEvent): Boolean = hasFiles(event)
 
-    override fun onStarted(event: DragAndDropEvent) = startDrag(event)
+    override fun onStarted(event: DragAndDropEvent) = track(event, refresh = true)
 
-    override fun onEntered(event: DragAndDropEvent) = startDrag(event)
+    override fun onEntered(event: DragAndDropEvent) = track(event, refresh = true)
+
+    override fun onMoved(event: DragAndDropEvent) = track(event, refresh = false)
 
     override fun onExited(event: DragAndDropEvent) = endDrag()
 
@@ -255,6 +273,7 @@ internal data class CopyOnlyFileDropTarget(
 
     override fun onDrop(event: DragAndDropEvent): Boolean {
         endDrag()
+        if (isOverSheet(event)) return false
         copyDropAction(event.sourceActions(), hasFiles(event), transfers.enabled) ?: return false
         event.acceptAsCopy()
         val paths = dropPaths(event, read)
@@ -262,6 +281,15 @@ internal data class CopyOnlyFileDropTarget(
     }
 
     private fun hasFiles(event: DragAndDropEvent) = runCatching { read(event) is DragData.FilesList }.getOrDefault(false)
+
+    private fun isOverSheet(event: DragAndDropEvent) = event.rootPosition()?.let(overSheet) == true
+
+    // Over the sheet the overlay hides; back over the stage it shows again (reading the files only when it does).
+    private fun track(event: DragAndDropEvent, refresh: Boolean) = when {
+        isOverSheet(event) -> endDrag()
+        refresh || !transfers.dragging -> startDrag(event)
+        else -> Unit
+    }
 
     private fun startDrag(event: DragAndDropEvent) {
         transfers.dragging = true
@@ -276,11 +304,24 @@ internal data class CopyOnlyFileDropTarget(
 
 /**
  * Makes this (the mirror window's root) a COPY-only drop target for files through Compose drag-and-drop, which the
- * AWT and Tao backends both feed. Drops install APKs and push other files through [transfers].
+ * AWT and Tao backends both feed. Drops install APKs and push other files through [transfers]; none while the pointer
+ * is [overSheet] (root coordinates; pass a remembered function).
  */
 @OptIn(ExperimentalComposeUiApi::class)
-fun Modifier.fileDropTarget(transfers: FileTransfers): Modifier {
-    val target = CopyOnlyFileDropTarget(transfers)
+fun Modifier.fileDropTarget(transfers: FileTransfers, overSheet: (Offset) -> Boolean = NoSheet): Modifier =
+    fileDropTarget(transfers, overSheet, ::readDragData)
+
+// One instance, so the target stays equal across recompositions.
+private val NoSheet: (Offset) -> Boolean = { false }
+
+/** [fileDropTarget] reading the drag's data through [read] (tests). */
+@OptIn(ExperimentalComposeUiApi::class)
+internal fun Modifier.fileDropTarget(
+    transfers: FileTransfers,
+    overSheet: (Offset) -> Boolean,
+    read: (DragAndDropEvent) -> DragData?,
+): Modifier {
+    val target = CopyOnlyFileDropTarget(transfers, overSheet, read)
     return dragAndDropTarget(shouldStartDragAndDrop = target::accepts, target = target)
 }
 

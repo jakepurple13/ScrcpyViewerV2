@@ -56,6 +56,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -96,6 +99,12 @@ private val CELL_FONT = 11.5.sp
 /** Hidden (dot) entries, when shown. */
 private const val HIDDEN_ALPHA = 0.6f
 
+/** Rows being dragged inside the tab. */
+private const val MOVING_ALPHA = 0.45f
+
+/** A drop target row's icon. */
+private const val DROP_ICON_SCALE = 1.12f
+
 /**
  * One 40 dp entry row. [arriving] rows grow in and then hold a primary-container highlight that fades over
  * [ARRIVING_FADE_MILLIS]; a row with a [leavingIndex] collapses out, [LEAVING_STAGGER_MILLIS] after the one before it.
@@ -124,8 +133,14 @@ internal fun FileRow(
     renaming: Boolean = false,
     renameError: String? = null,
     onRenameCommit: (String) -> Boolean = { false },
+    dropTarget: Boolean = false,
+    spring: () -> Float = { 0f },
+    moving: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
+    // A drop target: primary container and outline fade in, the icon grows to 112%.
+    val lit by animateFloatAsState(if (dropTarget) 1f else 0f, if (motion) tween(150) else snap())
+    val movingAlpha by animateFloatAsState(if (moving) MOVING_ALPHA else 1f, if (motion) tween(150) else snap())
     // Grows from nothing only when it arrived while the folder was already showing.
     val grow = remember { Animatable(if (arriving && motion) 0f else 1f) }
     val highlight = remember { Animatable(0f) }
@@ -159,7 +174,7 @@ internal fun FileRow(
             }
             .graphicsLayer {
                 val e = enter()
-                alpha = e * (if (motion) grow.value else 1f) * stay
+                alpha = e * (if (motion) grow.value else 1f) * stay * movingAlpha
                 translationY = (1f - e) * STAGGER_RISE.toPx()
                 translationX = -(1f - stay) * LEAVE_SHIFT.toPx()
                 clip = true
@@ -171,6 +186,17 @@ internal fun FileRow(
                 // Without motion the highlight simply holds while the browser marks the row as arriving.
                 val h = if (motion) highlight.value else if (arriving) 1f else 0f
                 if (h > 0f) drawRect(colors.primaryContainer.copy(alpha = h * 0.9f))
+                if (lit > 0f) drawRect(colors.primaryContainer.copy(alpha = lit))
+            }
+            .then(if (lit > 0f) Modifier.border(1.5.dp, colors.primary.copy(alpha = lit), shape) else Modifier)
+            // Spring-open: a line fills the bottom edge before the folder opens.
+            .drawWithContent {
+                drawContent()
+                val p = spring()
+                if (p > 0f) {
+                    val h = 2.dp.toPx()
+                    drawRect(colors.primary, Offset(0f, size.height - h), Size(size.width * p, h))
+                }
             }
             .pointerInput(Unit) {
                 awaitPointerEventScope {
@@ -196,7 +222,13 @@ internal fun FileRow(
         horizontalArrangement = Arrangement.spacedBy(COLUMN_GAP),
     ) {
         val dim = Modifier.graphicsLayer { alpha = if (hidden) HIDDEN_ALPHA else 1f }
-        KindTile(kind, dim)
+        KindTile(
+            kind,
+            dim.graphicsLayer {
+                scaleX = 1f + (DROP_ICON_SCALE - 1f) * lit
+                scaleY = scaleX
+            },
+        )
         if (renaming) {
             RenameField(name, kind == FileKind.Folder, renameError != null, motion, onRenameCommit, Modifier.weight(1f))
             if (renameError != null) {

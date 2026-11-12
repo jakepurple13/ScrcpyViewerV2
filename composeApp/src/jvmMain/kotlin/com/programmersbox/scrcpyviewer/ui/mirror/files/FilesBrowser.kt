@@ -585,12 +585,13 @@ class FilesBrowser(
     // Move
 
     /**
-     * Moves [names] from the open folder into [toDir]. Folders that would land inside themselves are left out; moving
-     * into the open folder does nothing. Names already in [toDir] wait for one [FilesDialog.Clash]; the rest move now.
+     * Moves [names] from [from] (the open folder unless a drag has sprung into another) into [toDir]. Folders that
+     * would land inside themselves are left out; moving into [from] does nothing. Names already in [toDir] wait for
+     * one [FilesDialog.Clash]; the rest move now.
      */
-    fun move(names: List<String>, toDir: String) {
+    fun move(names: List<String>, toDir: String, from: String = path) {
         if (!connected) return
-        val dir = path
+        val dir = normalizeDir(from)
         val target = normalizeDir(toDir)
         // /sdcard ignores case: another spelling of the open folder is the open folder.
         if (target.equals(dir, ignoreCase = true)) return

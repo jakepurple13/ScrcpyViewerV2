@@ -16,7 +16,21 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragData
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.IntOffset
+import com.programmersbox.scrcpyviewer.ui.mirror.readDragData
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -157,6 +171,9 @@ private const val DISCONNECTED_ALPHA = 0.38f
  *
  * Esc goes to the innermost thing that can use it: an open menu, the dialog, the rename field, the filter, the
  * selection. Only an Esc none of them used goes on to the sheet.
+ *
+ * Files dragged in from the computer push into the folder row, breadcrumb or open folder under the pointer; selected
+ * rows dragged onto a folder row or breadcrumb move there (see [FilesDropState]).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -170,8 +187,36 @@ fun FilesTab(
     locale: Locale = Locale.getDefault(),
     motion: Boolean = remember { !systemReducesMotion() },
     isMac: Boolean = Os.isMac,
+) = FilesTab(browser, modifier, onPushFiles, onPullTo, downloads, zone, locale, motion, isMac, ::readDragData)
+
+/** [FilesTab] reading a computer drag's data through [dragData] (tests). */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+internal fun FilesTab(
+    browser: FilesBrowser,
+    modifier: Modifier = Modifier,
+    onPushFiles: () -> Unit = {},
+    onPullTo: (List<String>) -> Unit = {},
+    downloads: Path = Paths.get(System.getProperty("user.home"), "Downloads"),
+    zone: ZoneId = ZoneId.systemDefault(),
+    locale: Locale = Locale.getDefault(),
+    motion: Boolean = remember { !systemReducesMotion() },
+    isMac: Boolean = Os.isMac,
+    dragData: (DragAndDropEvent) -> DragData?,
 ) {
     var menu by remember { mutableStateOf<FilesMenu?>(null) }
+    val drop = remember(browser) { FilesDropState(browser) }
+    val currentDragData by rememberUpdatedState(dragData)
+    val pushTarget = remember(browser, drop) { FilesPushDropTarget(browser, drop) { currentDragData } }
+    // Holding a drag over a folder row: the line fills its bottom edge, then the folder opens and the drag goes on.
+    val springDir = drop.hover?.takeIf { it.row != null }?.target?.dir
+    LaunchedEffect(springDir) {
+        drop.spring.snapTo(0f)
+        if (springDir == null) return@LaunchedEffect
+        drop.spring.animateTo(1f, tween(SPRING_OPEN_MILLIS, easing = LinearEasing))
+        browser.open(springDir)
+        drop.sprung()
+    }
     val listFocus = remember { FocusRequester() }
     var filterFocused by remember { mutableStateOf(false) }
     var listFocused by remember { mutableStateOf(false) }
@@ -221,6 +266,8 @@ fun FilesTab(
     Box(
         modifier.fillMaxSize()
             .onGloballyPositioned { tabCoords[0] = it }
+            .dragAndDropTarget(shouldStartDragAndDrop = pushTarget::accepts, target = pushTarget)
+            .filesMoveGesture(browser, drop) { local -> tabCoords[0]?.localToRoot(local) ?: local }
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -230,7 +277,14 @@ fun FilesTab(
                 }
             }
             .onPreviewKeyEvent { event ->
-                event.type == KeyEventType.KeyDown && event.key == Key.Escape && escape()
+                if (event.type != KeyEventType.KeyDown || event.key != Key.Escape) return@onPreviewKeyEvent false
+                // A row drag in progress takes Esc before anything else: it ends, nothing moves.
+                if (drop.moving != null) {
+                    drop.cancelMove()
+                    true
+                } else {
+                    escape()
+                }
             }
             .onKeyEvent { event ->
                 val key = filesKeyAction(event, isMac) ?: return@onKeyEvent false
@@ -256,7 +310,7 @@ fun FilesTab(
         }
         Column(Modifier.fillMaxSize()) {
             Column(commitOnPress) {
-                Toolbar(browser, motion, onPushFiles, onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) })
+                Toolbar(browser, drop, motion, onPushFiles, onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) })
                 FilterRow(
                     browser, motion,
                     onFocus = { filterFocused = it },
@@ -276,8 +330,26 @@ fun FilesTab(
             ) {
                 DisconnectedBanner()
             }
+            val colors = MaterialTheme.colorScheme
+            // The whole list outlined and tinted while a drop would go to the open folder.
+            val listLit by animateFloatAsState(
+                if (drop.hover?.target is FilesDropTarget.Current) 1f else 0f,
+                if (motion) tween(150) else snap(),
+            )
             Box(
                 Modifier.weight(1f).fillMaxWidth()
+                    .onGloballyPositioned { drop.listBounds = it.boundsInRoot() }
+                    .drawWithContent {
+                        drawContent()
+                        if (listLit > 0f) {
+                            val inset = 3.dp.toPx()
+                            val at = Offset(inset, inset)
+                            val box = Size(size.width - 2 * inset, size.height - 2 * inset)
+                            val r = CornerRadius(10.dp.toPx())
+                            drawRoundRect(colors.primary.copy(alpha = 0.06f * listLit), at, box, r)
+                            drawRoundRect(colors.primary.copy(alpha = listLit), at, box, r, style = Stroke(1.5.dp.toPx()))
+                        }
+                    }
                     .focusRequester(listFocus)
                     .onFocusChanged { listFocused = it.isFocused }
                     .focusable()
@@ -300,7 +372,7 @@ fun FilesTab(
                     },
             ) {
                 ListHost(
-                    browser, motion, onPushFiles, zone, locale, listFocused,
+                    browser, drop, motion, onPushFiles, zone, locale, listFocused,
                     onRowPress = { runCatching { listFocus.requestFocus() } },
                     onRowMenu = { name ->
                         if (name !in browser.selection.names) browser.click(name)
@@ -322,12 +394,27 @@ fun FilesTab(
                     onMore = { at -> menu = FilesMenu.Item(toTab(at), browser.selection.names) },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
+                DropChip(
+                    drop.hover?.label, motion,
+                    Modifier.align(Alignment.BottomCenter)
+                        .padding(bottom = if (browser.selection.names.isNotEmpty()) 72.dp else 14.dp),
+                )
             }
             TransfersTray(
                 browser.transferJobs, browser.pushTarget, downloads,
                 onCancel = browser::cancelTransfer, onDismiss = browser::dismissTransfer,
                 modifier = Modifier.onSizeChanged { trayHeight = it.height },
                 motion = motion,
+            )
+        }
+        if (drop.moving != null) {
+            // The ghost follows the pointer, a little below and right of it.
+            DragGhost(
+                drop.movingLabel,
+                Modifier.offset {
+                    val at = drop.pointer - (tabCoords[0]?.positionInRoot() ?: Offset.Zero)
+                    IntOffset((at.x + 14.dp.toPx()).roundToInt(), (at.y + 10.dp.toPx()).roundToInt())
+                },
             )
         }
         FilesSnackbar(browser, motion, Modifier.align(Alignment.BottomCenter).padding(bottom = with(LocalDensity.current) { trayHeight.toDp() }))
@@ -337,7 +424,7 @@ fun FilesTab(
 }
 
 @Composable
-private fun Toolbar(browser: FilesBrowser, motion: Boolean, onPushFiles: () -> Unit, onViewMenu: (Offset) -> Unit) {
+private fun Toolbar(browser: FilesBrowser, drop: FilesDropState, motion: Boolean, onPushFiles: () -> Unit, onViewMenu: (Offset) -> Unit) {
     val connected = browser.connected
     val listed = browser.listingPath == browser.path
     val scope = rememberCoroutineScope()
@@ -349,7 +436,7 @@ private fun Toolbar(browser: FilesBrowser, motion: Boolean, onPushFiles: () -> U
     ) {
         ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", connected && browser.canGoBack, onClick = browser::back)
         ToolButton(Icons.Filled.ArrowUpward, "Up one folder", connected && browser.canGoUp, onClick = browser::up)
-        Crumbs(browser, motion, Modifier.weight(1f))
+        Crumbs(browser, drop, motion, Modifier.weight(1f))
         ToolButton(Icons.Filled.Refresh, "Refresh", connected, iconModifier = Modifier.graphicsLayer { rotationZ = spin.value }) {
             browser.refresh()
             if (motion) {
@@ -390,7 +477,7 @@ private fun ToolButton(
 
 /** "Internal storage" and each folder below it; kept scrolled to its end. A crumb added later slides in. */
 @Composable
-private fun Crumbs(browser: FilesBrowser, motion: Boolean, modifier: Modifier = Modifier) {
+private fun Crumbs(browser: FilesBrowser, drop: FilesDropState, motion: Boolean, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val path = browser.path
     val items = remember(path) { crumbs(path) }
@@ -420,8 +507,17 @@ private fun Crumbs(browser: FilesBrowser, motion: Boolean, modifier: Modifier = 
                         Icon(Icons.Filled.ChevronRight, contentDescription = null, Modifier.size(14.dp), tint = colors.outline)
                     }
                     val last = index == items.lastIndex
+                    // Lights up while a drop on it would push or move there.
+                    val litColor by animateColorAsState(
+                        colors.primaryContainer.copy(alpha = if (drop.hover?.crumb == dir) 1f else 0f),
+                        if (motion) tween(150) else snap(),
+                    )
+                    DisposableEffect(dir) { onDispose { drop.removeCrumb(dir) } }
                     Box(
-                        Modifier.height(28.dp).clip(styledCorner(8.dp))
+                        Modifier.height(28.dp)
+                            .onGloballyPositioned { drop.placeCrumb(dir, label, it.boundsInRoot()) }
+                            .clip(styledCorner(8.dp))
+                            .background(litColor)
                             .clickable(enabled = browser.connected, role = Role.Button) { browser.open(dir) }
                             .padding(horizontal = 8.dp),
                         contentAlignment = Alignment.Center,
@@ -560,6 +656,7 @@ private class Page(val listing: Listing?, val rows: List<DeviceEntry>, val filte
 @Composable
 private fun ListHost(
     browser: FilesBrowser,
+    drop: FilesDropState,
     motion: Boolean,
     onPushFiles: () -> Unit,
     zone: ZoneId,
@@ -586,7 +683,7 @@ private fun ListHost(
             Listing.Blocked -> BlockedState(dir, browser.canGoUp && browser.connected, browser::up)
             is Listing.Failed -> ListingFailedState(listing.reason, browser.connected, browser::refresh)
             is Listing.Entries -> when {
-                page.rows.isNotEmpty() -> Rows(browser, page.rows, motion, zone, locale, listFocused, onRowPress, onRowMenu)
+                page.rows.isNotEmpty() -> Rows(browser, drop, dir, page.rows, motion, zone, locale, listFocused, onRowPress, onRowMenu)
                 page.filter.isNotBlank() -> NoMatchState(page.filter)
                 else -> EmptyFolderState(folderLabel(dir), browser.connected, onPushFiles)
             }
@@ -609,6 +706,8 @@ private fun AnimatedContentTransitionScope<String?>.navTransform(direction: Int,
 @Composable
 private fun Rows(
     browser: FilesBrowser,
+    drop: FilesDropState,
+    dir: String,
     rows: List<DeviceEntry>,
     motion: Boolean,
     zone: ZoneId,
@@ -630,9 +729,13 @@ private fun Rows(
     val arriving = browser.arriving
     val cursor = browser.selection.cursor
     val renaming = browser.renaming
+    val hoverRow = drop.hover?.row?.takeIf { dir == browser.path }
+    val moving = drop.moving?.takeIf { drop.movingFrom == dir }.orEmpty()
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 64.dp)) {
         itemsIndexed(rows, key = { _, e -> e.name }) { index, entry ->
             val sizeText = if (entry.isDir) entry.itemCount?.let(::formatItemCount) else formatSize(entry.size)
+            DisposableEffect(dir, entry.name) { onDispose { drop.removeRow(dir, entry.name) } }
+            val target = entry.name == hoverRow
             FileRow(
                 name = entry.name,
                 kind = kindOf(entry),
@@ -646,10 +749,21 @@ private fun Rows(
                 onPress = { event, double ->
                     // Presses inside the rename field are the field's.
                     if (browser.renaming != entry.name) {
-                        browser.press(entry.name, event, double)
+                        // A plain press on one of several selected rows may start dragging them all: it selects just
+                        // this row on release, if no drag started.
+                        val several = browser.selection.names.size > 1 && entry.name in browser.selection.names
+                        if (!double && several && event.isPlain()) {
+                            drop.deferClick(entry.name)
+                        } else {
+                            drop.deferClick(null)
+                            browser.press(entry.name, event, double)
+                        }
                         onRowPress()
                     }
                 },
+                dropTarget = target,
+                spring = { if (target) drop.spring.value else 0f },
+                moving = entry.name in moving,
                 onSecondaryPress = { if (browser.renaming != entry.name) onRowMenu(entry.name) },
                 focused = listFocused && entry.name == cursor,
                 renaming = entry.name == renaming,
@@ -663,15 +777,17 @@ private fun Rows(
                         browser.renaming == entry.name && browser.renameError != null
                     }
                 },
-                modifier = if (motion) {
-                    Modifier.animateItem(
-                        fadeInSpec = tween(OPEN_MILLIS),
-                        placementSpec = tween(SORT_MILLIS, easing = EmphasizedDecelerate),
-                        fadeOutSpec = tween(NAV_OUT_MILLIS),
-                    )
-                } else {
-                    Modifier
-                },
+                modifier = Modifier.onGloballyPositioned { drop.placeRow(dir, entry.name, entry.isDir, it.boundsInRoot()) }.then(
+                    if (motion) {
+                        Modifier.animateItem(
+                            fadeInSpec = tween(OPEN_MILLIS),
+                            placementSpec = tween(SORT_MILLIS, easing = EmphasizedDecelerate),
+                            fadeOutSpec = tween(NAV_OUT_MILLIS),
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
                 enter = if (index < STAGGER_ROWS) {
                     { staggerFraction(elapsed.value - index * STAGGER_STEP_MILLIS) }
                 } else {
@@ -685,6 +801,12 @@ private fun Rows(
 /** A row's eased progress [elapsed] milliseconds into its own stagger-in. */
 private fun staggerFraction(elapsed: Float): Float =
     EmphasizedDecelerate.transform((elapsed / OPEN_MILLIS).coerceIn(0f, 1f))
+
+/** No Shift, ⌘ or Ctrl held. */
+private fun PointerEvent.isPlain(): Boolean {
+    val mods = keyboardModifiers
+    return !mods.isShiftPressed && !mods.isMetaPressed && !mods.isCtrlPressed
+}
 
 /** Click selects, Shift extends, ⌘ (Ctrl off macOS) toggles; a plain double-click opens. */
 private fun FilesBrowser.press(name: String, event: PointerEvent, double: Boolean) {
