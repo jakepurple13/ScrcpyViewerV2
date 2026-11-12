@@ -52,6 +52,10 @@ import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.Font
 import org.jetbrains.skia.Paint
 import org.jetbrains.skia.TextLine
+import androidx.compose.ui.graphics.toComposeImageBitmap
+import com.programmersbox.scrcpyviewer.apps.AppFilter
+import com.programmersbox.scrcpyviewer.apps.DeviceApp
+import com.programmersbox.scrcpyviewer.ui.mirror.AppsUiState
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.test.Test
@@ -376,6 +380,43 @@ class MirrorScreenshotTest {
         renderShell("mirror-shell-streaming.png", ThemeMode.Light, console, shellChips)
         renderShell("mirror-shell-streaming-dark.png", ThemeMode.Dark, console, shellChips)
         console.stop()
+    }
+
+    /** A plain [argb] square standing in for an app icon read from an APK. */
+    private fun fakeIcon(argb: Int): androidx.compose.ui.graphics.ImageBitmap =
+        org.jetbrains.skia.Surface.makeRasterN32Premul(96, 96).use { s ->
+            s.canvas.clear(argb)
+            s.canvas.drawCircle(48f, 48f, 26f, org.jetbrains.skia.Paint().apply { color = 0xFFFFFFFF.toInt() })
+            s.makeImageSnapshot().toComposeImageBitmap()
+        }
+
+    @Test
+    fun `mirror quick actions apps tab`() {
+        val apps = listOf(
+            DeviceApp("com.android.chrome", "Chrome", false, "131.0.6778.135", 677813533),
+            DeviceApp("com.sec.android.app.camera", "Camera", true, "14.1.01.67", 1410167),
+            DeviceApp("com.google.android.gm", "Gmail", false, "2024.11.24.703081498", 64972154),
+            DeviceApp("com.gabb.messenger.android.app", "Gabb Messenger", true, "3.8.2", 30802),
+            DeviceApp("com.google.android.apps.maps", "Maps", false, "11.157.0102", 1066178372),
+            DeviceApp("com.android.settings", "Settings", true, "14", 34),
+            DeviceApp("com.spotify.music", "Spotify", false, null, null),
+            DeviceApp("com.samsung.android.app.notes", "Samsung Notes With A Long Name", false, "4.4.26.13", 442613000),
+        )
+        val appsState = AppsUiState(
+            apps = apps,
+            icons = mapOf(
+                "com.android.chrome" to fakeIcon(0xFF1F6FEB.toInt()),
+                "com.google.android.gm" to fakeIcon(0xFFD93025.toInt()),
+                "com.spotify.music" to fakeIcon(0xFF1DB954.toInt()),
+            ),
+            busy = setOf("com.google.android.apps.maps"),
+        )
+        val tab = state.copy(quickActions = tilesState.copy(tab = SheetTab.Apps, apps = appsState))
+        render("mirror-quick-actions-apps.png", ThemeMode.Light, tab, settleMillis = 1000)
+        render("mirror-quick-actions-apps-dark.png", ThemeMode.Dark, tab, settleMillis = 1000)
+        val filtered = tab.copy(quickActions = tab.quickActions.copy(apps = appsState.copy(query = "android", filter = AppFilter.System)))
+        render("mirror-quick-actions-apps-filtered.png", ThemeMode.Dark, filtered, settleMillis = 1000)
+        render("mirror-quick-actions-apps-loading.png", ThemeMode.Dark, tab.copy(quickActions = tab.quickActions.copy(apps = AppsUiState(loading = true))), settleMillis = 600)
     }
 
     @Test

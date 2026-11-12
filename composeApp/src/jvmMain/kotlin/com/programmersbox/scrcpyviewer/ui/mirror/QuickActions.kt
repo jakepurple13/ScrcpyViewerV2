@@ -17,6 +17,10 @@ import com.programmersbox.scrcpyviewer.actions.OutputTarget
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.actions.ToggleAction
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.apps.AppIconLoader
+import com.programmersbox.scrcpyviewer.apps.DeviceApps
+import com.programmersbox.scrcpyviewer.di.DataDir
+import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.adb.ShellTimeoutException
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
@@ -158,7 +162,8 @@ open class DeviceQuickActions(
     }
 }
 
-enum class SheetTab { Actions, Shell }
+/** The sheet's tabs, in the order the segmented control shows them. */
+enum class SheetTab { Actions, Apps, Shell }
 
 /**
  * A run-once action waiting for the user: the variable prompt while [needsValues], then the confirm dialog while
@@ -213,6 +218,8 @@ data class QuickActionsUiState(
     val packages: List<String>? = null,
     /** Each tab's sheet width, as the user dragged it. */
     val widths: SheetWidths = SheetWidths(),
+    /** The Apps tab. */
+    val apps: AppsUiState = AppsUiState(),
 )
 
 /** A tap in the quick actions sheet. */
@@ -251,6 +258,9 @@ sealed interface QuickActionEvent {
 
     /** Double-click or Home on the drag bar: the current tab goes back to its default width, saved. */
     data object ResetWidth : QuickActionEvent
+
+    /** Something done on the Apps tab. */
+    data class Apps(val event: AppsEvent) : QuickActionEvent
 }
 
 /**
@@ -273,6 +283,8 @@ class QuickActions internal constructor(
     /** Each tab's sheet width when the window opens; [saveWidth] persists one tab's width after a drag. */
     widths: SheetWidths = SheetWidths(),
     private val saveWidth: (SheetTab, Dp) -> Unit = { _, _ -> },
+    /** The Apps tab; it lists the apps the first time it shows. */
+    private val apps: AppExplorer? = null,
     private val notify: (String) -> Unit,
 ) {
     var open by mutableStateOf(false)
@@ -298,7 +310,7 @@ class QuickActions internal constructor(
     val uiState: QuickActionsUiState
         get() = QuickActionsUiState(
             open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages,
-            widths,
+            widths, apps?.uiState ?: AppsUiState(),
         )
 
     fun toggleSheet() {
@@ -306,6 +318,7 @@ class QuickActions internal constructor(
             tab = memory.tab
             open = true
             refresh()
+            if (tab == SheetTab.Apps) apps?.ensureLoaded()
         }
     }
 
@@ -342,6 +355,7 @@ class QuickActions internal constructor(
             is QuickActionEvent.SelectTab -> {
                 tab = event.tab
                 memory.tab = event.tab
+                if (event.tab == SheetTab.Apps) apps?.ensureLoaded()
             }
             is QuickActionEvent.CustomToggle -> setCustom(event.id, event.on)
             is QuickActionEvent.RunCustom -> startRun(event.id, event.fromChip)
@@ -362,6 +376,7 @@ class QuickActions internal constructor(
                 widths = widths.with(tab, SheetWidths.default(tab))
                 saveWidth(tab, widths[tab])
             }
+            is QuickActionEvent.Apps -> apps?.onEvent(event.event)
         }
     }
 
@@ -550,12 +565,19 @@ fun rememberQuickActions(
     memory: QuickActionsMemory = koinInject(),
     history: ShellHistory = koinInject(),
     settings: AppSettings = koinInject(),
+    tools: BundledTools = koinInject(),
+    dataDir: DataDir = koinInject(),
 ): QuickActions {
     val currentNotify by rememberUpdatedState(notify)
     val currentOnManage by rememberUpdatedState(onManage)
     val scope = rememberCoroutineScope()
     val actions = remember(serial, adb) {
         val runner = adb?.let { ShellRunner(it, serial) }
+        val apps = AppExplorer(
+            device = adb?.let { DeviceApps(it, serial, { tools.serverJarOrNull }, tools.serverVersion) },
+            iconLoader = adb?.let { AppIconLoader(it, serial, dataDir.path.resolve("app-icons")) },
+            scope = scope,
+        ) { currentNotify(it) }
         QuickActions(
             device = adb?.let { DeviceQuickActions(it, serial) },
             scope = scope,
@@ -565,12 +587,19 @@ fun rememberQuickActions(
             console = ShellConsole(runner, history, scope, { currentNotify(it) }),
             memory = memory,
             onManage = { id, new -> currentOnManage(id, new) },
-            widths = settings.settings.value.let { SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth) },
-            // Only the tab that changed: another mirror window may have saved the other one since this one opened.
+            widths = settings.settings.value.let { SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth, it.appsWidth) },
+            // Only the tab that changed: another mirror window may have saved the others since this one opened.
             saveWidth = { tab, width ->
                 val dp = width.value.roundToInt()
-                settings.update { if (tab == SheetTab.Shell) it.copy(shellWidth = dp) else it.copy(quickActionsWidth = dp) }
+                settings.update {
+                    when (tab) {
+                        SheetTab.Actions -> it.copy(quickActionsWidth = dp)
+                        SheetTab.Apps -> it.copy(appsWidth = dp)
+                        SheetTab.Shell -> it.copy(shellWidth = dp)
+                    }
+                }
             },
+            apps = apps,
         ) { currentNotify(it) }
     }
     LaunchedEffect(actions) { actions.watchActions() }

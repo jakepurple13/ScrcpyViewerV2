@@ -28,6 +28,8 @@ private fun renderOnThisThread(width: Int, height: Int, out: Path, settleMillis:
     val scene = ImageComposeScene(width, height, Density(1f), content = content)
     try {
         if (settleMillis > 0) scene.render(0)
+        // A frame halfway lets content composed during layout (lazy items) start its animations before the last one.
+        if (settleMillis > 0) scene.render(settleMillis * 500_000)
         val image = if (settleMillis > 0) scene.render(settleMillis * 1_000_000) else scene.render()
         val data = checkNotNull(image.encodeToData(EncodedImageFormat.PNG)) { "PNG encoding failed" }
         Files.createDirectories(out.parent)
