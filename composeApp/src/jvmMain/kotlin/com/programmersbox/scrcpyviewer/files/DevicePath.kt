@@ -57,6 +57,7 @@ fun uniqueName(taken: Set<String>, name: String): String {
 
 fun nameProblem(name: String, taken: Set<String>): String? = when {
     name.isBlank() -> "Name can’t be empty"
+    name == "." || name == ".." -> "Name not allowed"
     '/' in name -> "No “/” in names"
     name in taken -> "Name already used"
     else -> null

@@ -1,0 +1,1 @@
+ls: /sdcard/Android/data: Permission denied

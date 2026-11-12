@@ -83,6 +83,10 @@ class DevicePathTest {
         assertEquals("Name already used", nameProblem("a", setOf("a")))
         assertEquals("Name can’t be empty", nameProblem("  ", emptySet()))
         assertEquals("Name can’t be empty", nameProblem("", setOf("")))
+        assertEquals("Name not allowed", nameProblem(".", emptySet()))
+        assertEquals("Name not allowed", nameProblem("..", emptySet()))
+        assertEquals("Name can’t be empty", nameProblem(" ", setOf(".")))
+        assertNull(nameProblem("...", emptySet()))
         assertNull(nameProblem("ok", setOf("a")))
     }
 

@@ -1,0 +1,3 @@
+directory|4096|1731090720|/sdcard/Pictures/Trips|__svend__
+regular file|12998656|1731090000|/sdcard/Pictures/a.PNG|__svend__
+broken|0|0|/sdcard/Pictures/dangling|__svend__

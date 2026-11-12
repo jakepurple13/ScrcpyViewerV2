@@ -1,0 +1,2 @@
+Filesystem      1K-blocks     Used Available Use% Mounted on
+/data/media     25000000 12000000  12500000  49% /storage/emulated
