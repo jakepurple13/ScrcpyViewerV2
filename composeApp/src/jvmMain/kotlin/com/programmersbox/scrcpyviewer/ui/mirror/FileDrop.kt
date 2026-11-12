@@ -238,13 +238,32 @@ private val positionInRoot: java.lang.reflect.Field? = runCatching {
     DragAndDropEvent::class.java.getDeclaredField("positionInRootImpl").apply { isAccessible = true }
 }.getOrNull()
 
-/** Where [this] drag event is, in the window's root coordinates, or null when that cannot be read. */
+/**
+ * Where [this] drag event is, in the window's root coordinates: Compose's own position, else the location of a Tao
+ * synthetic event (which Tao gives in root coordinates); null when neither can be read.
+ */
 @OptIn(ExperimentalComposeUiApi::class)
 internal fun DragAndDropEvent.rootPosition(): Offset? = runCatching {
     // An Offset packs x (high 32 bits) and y (low 32 bits) as float bits.
-    val packed = positionInRoot?.getLong(this) ?: return null
-    Offset(Float.fromBits((packed ushr 32).toInt()), Float.fromBits(packed.toInt()))
-}.getOrNull()
+    positionInRoot?.getLong(this)?.let { packed ->
+        Offset(Float.fromBits((packed ushr 32).toInt()), Float.fromBits(packed.toInt()))
+    }
+}.getOrNull() ?: taoLocation()
+
+// Tao's synthetic AWT events (internal to Nucleus, so known by name); only these report root coordinates.
+private const val TAO_SYNTHETIC_EVENT = "dev.nucleusframework.window.tao.dnd.TaoSynthetic"
+
+@OptIn(ExperimentalComposeUiApi::class)
+private fun DragAndDropEvent.taoLocation(): Offset? {
+    val native = nativeEvent ?: return null
+    if (!native.javaClass.name.startsWith(TAO_SYNTHETIC_EVENT)) return null
+    val point = when (native) {
+        is DropTargetDragEvent -> native.location
+        is DropTargetDropEvent -> native.location
+        else -> null
+    } ?: return null
+    return Offset(point.x.toFloat(), point.y.toFloat())
+}
 
 /**
  * The window's file drop: file lists start a drag (the overlay shows [FileTransfers.hint]), and a drop feeds

@@ -638,7 +638,9 @@ class FilesBrowser(
         } catch (e: Exception) {
             post(Snack("Could not move: ${e.message}"))
         } finally {
-            refreshIfIn(dir)
+            // The open folder shows what left it, what arrived in it (a drag that sprang into the target), or a
+            // folder of it that changed.
+            if (path == dir || path == target || parentOf(target) == path) refresh()
         }
     }
 

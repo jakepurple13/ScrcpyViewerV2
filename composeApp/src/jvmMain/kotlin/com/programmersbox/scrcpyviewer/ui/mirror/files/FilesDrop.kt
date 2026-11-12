@@ -181,20 +181,26 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
             val target = dropTargetFor(null, false, current, emptySet(), currentBlocked(), internal = false) ?: return null
             return DropHover(target, null, null, "Push to ${current.trimEnd('/')}/")
         }
+        val current = browser.path
+        // A move that sprang out of its folder can go into the open one, as in Finder.
+        val sprung = internal && !current.equals(movingFrom, ignoreCase = true)
         crumbs.entries.firstOrNull { it.value.bounds.contains(root) }?.let { (dir, hit) ->
             if (internal && dir.equals(movingFrom, ignoreCase = true)) return null
-            if (isKnownBlocked(dir) || dir == browser.path && currentBlocked()) return null
-            return DropHover(FilesDropTarget.Folder(dir), null, dir, "$verb into ${hit.label}")
+            if (isKnownBlocked(dir) || dir == current && currentBlocked()) return null
+            val target = if (sprung && dir == current) FilesDropTarget.Current(dir) else FilesDropTarget.Folder(dir)
+            return DropHover(target, null, dir, "$verb into ${hit.label}")
         }
         if (listBounds?.contains(root) != true) return null
-        val current = browser.path
         val row = rowAt(root)?.let { name -> rows[devicePath(current, name)] }
         val blocked = if (row?.isDir == true) isKnownBlocked(devicePath(current, row.name)) else currentBlocked()
-        val dragged = if (internal && movingFrom == current) moving.orEmpty().toSet() else emptySet()
-        val target = dropTargetFor(row?.name, row?.isDir == true, current, dragged, blocked, internal) ?: return null
-        val label = when (target) {
-            is FilesDropTarget.Folder -> "$verb into ${row?.name}"
-            is FilesDropTarget.Current -> "Push to ${current.trimEnd('/')}/"
+        val dragged = if (internal && !sprung) moving.orEmpty().toSet() else emptySet()
+        // dropTargetFor refuses empty space and file rows to a move; in a folder sprung into they take it.
+        val target = dropTargetFor(row?.name, row?.isDir == true, current, dragged, blocked, internal && !sprung)
+            ?: return null
+        val label = when {
+            target is FilesDropTarget.Folder -> "$verb into ${row?.name}"
+            internal -> "Move into ${folderLabel(current)}"
+            else -> "Push to ${current.trimEnd('/')}/"
         }
         return DropHover(target, row?.name.takeIf { target is FilesDropTarget.Folder }, null, label)
     }
@@ -214,11 +220,14 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
 
     // Moves inside the tab
 
-    internal fun startMove(names: List<String>, label: String, root: Offset) {
+    /** Starts a move of [names]; false (nothing starts, no ghost) while the device is disconnected. */
+    internal fun startMove(names: List<String>, label: String, root: Offset): Boolean {
+        if (!browser.connected) return false
         moving = names
         movingFrom = browser.path
         movingLabel = label
         moveTo(root)
+        return true
     }
 
     internal fun moveTo(root: Offset) {
@@ -227,13 +236,13 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
         hover = hoverAt(root, internal = true)
     }
 
-    /** Ends the move: into the hovered folder, if any. */
+    /** Ends the move: into the hovered folder, or the open one when the drag sprang into it, if any. */
     internal fun dropMove() {
         val names = moving ?: return
         val from = movingFrom ?: return
         val target = hover?.target
         cancelMove()
-        if (target is FilesDropTarget.Folder) browser.move(names, target.dir, from)
+        if (target != null) browser.move(names, target.dir, from)
     }
 
     /** Drops the move without moving anything (Esc, or the gesture went away). */
@@ -320,8 +329,7 @@ internal fun Modifier.filesMoveGesture(browser: FilesBrowser, state: FilesDropSt
                         val selected = browser.selection.names
                         val names = if (pressed in selected) browser.visible.map { it.name }.filter { it in selected } else listOf(pressed)
                         val single = browser.visible.firstOrNull { it.name == names.singleOrNull() }
-                        state.startMove(names, dragLabel(names.size, single?.isDir == true), toRoot(change.position))
-                        dragging = true
+                        dragging = state.startMove(names, dragLabel(names.size, single?.isDir == true), toRoot(change.position))
                     }
                     if (dragging) {
                         // Esc cancelled it: the rest of the gesture is nobody's.

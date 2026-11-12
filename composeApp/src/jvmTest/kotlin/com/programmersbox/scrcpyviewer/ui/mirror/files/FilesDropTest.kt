@@ -68,12 +68,20 @@ private fun dir(name: String) = DeviceEntry(name, true, 4096, 1_731_000_000_000)
 private class DropFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "serial"), {}) {
     val dirs = mutableMapOf<String, Listing>()
     val moves = mutableListOf<String>()
+    val listed = mutableListOf<String>()
 
-    override suspend fun list(dir: String): Listing = dirs[dir] ?: Listing.Failed("ls: $dir: No such file or directory")
+    override suspend fun list(dir: String): Listing {
+        listed += dir
+        return dirs[dir] ?: Listing.Failed("ls: $dir: No such file or directory")
+    }
     override suspend fun counts(dir: String, folders: List<String>): Map<String, Int> = folders.associateWith { 3 }
     override suspend fun freeSpace() = DeviceSpace(44_236_955_648, 122_880_000_000)
     override suspend fun move(dir: String, names: List<String>, toDir: String, renames: Map<String, String>, replace: Set<String>) {
         moves += "move ${names.joinToString(",")} from $dir to $toDir"
+        val source = (dirs[dir] as Listing.Entries).entries
+        val moved = source.filter { it.name in names }
+        dirs[dir] = Listing.Entries(source - moved.toSet())
+        dirs[toDir] = Listing.Entries(((dirs[toDir] as? Listing.Entries)?.entries ?: emptyList()) + moved)
     }
 }
 
@@ -82,7 +90,8 @@ private class DropFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath = {
 class FilesDropTest {
     private val files = DropFiles().apply {
         dirs["/sdcard/Download"] = Listing.Entries(listOf(file("notes.txt"), dir("Telegram"), file("a.jpg"), dir("Old")))
-        dirs["/sdcard/Download/Telegram"] = Listing.Entries(listOf(file("voice.ogg")))
+        dirs["/sdcard/Download/Telegram"] = Listing.Entries(listOf(file("voice.ogg"), dir("Voice")))
+        dirs["/sdcard/Download/Telegram/Voice"] = Listing.Entries(emptyList())
         dirs["/sdcard"] = Listing.Entries(listOf(dir("Download"), dir("DCIM")))
     }
     private val scheduler = TestCoroutineScheduler()
@@ -392,6 +401,68 @@ class FilesDropTest {
         assertTrue("Move into Internal storage" in driver.texts(), driver.texts().toString())
         driver.mouseUp(driver.at("Internal storage"))
         assertEquals(listOf("move a.jpg from /sdcard/Download to /sdcard"), files.moves)
+    }
+
+    /** Presses a.jpg and holds the drag over Telegram until it springs open. */
+    private fun SceneDriver.springMoveIntoTelegram(b: FilesBrowser): Offset {
+        val from = at("a.jpg")
+        val telegram = at("Telegram")
+        mouseDown(from)
+        mouseTo(telegram, from)
+        assertTrue("Move into Telegram" in texts(), texts().toString())
+        frames(60) // past SPRING_OPEN_MILLIS
+        scheduler.advanceUntilIdle()
+        frames(10)
+        assertEquals("/sdcard/Download/Telegram", b.path)
+        assertTrue("1 file" in texts(), "the drag goes on: ${texts()}")
+        return telegram
+    }
+
+    @Test
+    fun `a move that sprang open drops onto a folder row there`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        val start = driver.springMoveIntoTelegram(b)
+        val voice = driver.at("Voice")
+        driver.mouseTo(voice, start)
+        assertTrue("Move into Voice" in driver.texts(), driver.texts().toString())
+        val listedBefore = files.listed.count { it == "/sdcard/Download/Telegram" }
+        driver.mouseUp(voice)
+        assertEquals(listOf("move a.jpg from /sdcard/Download to /sdcard/Download/Telegram/Voice"), files.moves)
+        assertTrue(files.listed.count { it == "/sdcard/Download/Telegram" } > listedBefore, "the open folder refreshes")
+    }
+
+    @Test
+    fun `a move that sprang open drops into the opened folder, its crumb too, not the source's`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        val start = driver.springMoveIntoTelegram(b)
+        val download = driver.at("Download")
+        driver.mouseTo(download, start)
+        assertFalse(driver.texts().any { it.startsWith("Move into") }, "the source folder's crumb: ${driver.texts()}")
+        val crumb = driver.nodes().last { it.text() == "Telegram" }.boundsInRoot.center
+        driver.mouseTo(crumb, download)
+        assertTrue("Move into Telegram" in driver.texts(), "the open folder's crumb: ${driver.texts()}")
+        val space = driver.emptySpace()
+        driver.mouseTo(space, crumb)
+        assertTrue("Move into Telegram" in driver.texts(), "empty space: ${driver.texts()}")
+        driver.mouseUp(space)
+        assertEquals(listOf("move a.jpg from /sdcard/Download to /sdcard/Download/Telegram"), files.moves)
+        assertTrue("a.jpg" in b.visible.map { it.name }, "the opened folder shows what arrived: ${b.visible}")
+    }
+
+    @Test
+    fun `no move starts while disconnected`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        b.onConnectionChanged(false)
+        driver.frames(5)
+        val from = driver.at("a.jpg")
+        driver.mouseDown(from)
+        driver.mouseTo(driver.at("Telegram"), from)
+        assertFalse("1 file" in driver.texts(), driver.texts().toString())
+        driver.mouseUp(driver.at("Telegram"))
+        assertEquals(emptyList(), files.moves)
     }
 
     @Test
