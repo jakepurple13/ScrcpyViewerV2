@@ -157,6 +157,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
+import com.programmersbox.scrcpyviewer.ui.common.PcClipboard
 import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
@@ -174,8 +175,6 @@ import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
 import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
-import java.awt.Toolkit
-import java.awt.datatransfer.DataFlavor
 import java.awt.event.KeyEvent as AwtKeyEvent
 import java.nio.file.Paths
 import javax.swing.SwingUtilities
@@ -339,6 +338,7 @@ fun MirrorWindow(
     /** "+ New action", "Edit…" and "Manage actions…" ask the main window to open the Actions screen through this. */
     actionsNavigation: ActionsNavigation = koinInject(),
     screenGeometry: ScreenGeometry = koinInject(),
+    pcClipboard: PcClipboard = koinInject(),
     /** Messages about action files AI tools dropped in the inbox show in every mirror window. */
     inbox: ActionInbox = koinInject(),
 ) {
@@ -674,12 +674,13 @@ fun MirrorWindow(
                 if (e["keyboard"] == "disabled") return@KeyEventDispatcher false
                 if (ev.keyCode == AwtKeyEvent.VK_V && ev.modifiersEx and paste != 0 && ev.id == AwtKeyEvent.KEY_PRESSED) {
                     pasteDown = true
-                    val text = runCatching {
-                        Toolkit.getDefaultToolkit().systemClipboard.getData(DataFlavor.stringFlavor) as String
-                    }.getOrNull()
-                    if (!text.isNullOrEmpty()) {
-                        if ("legacy-paste" in e) text.chunked(100).forEach { session.send(ControlMessage.InjectText(it)) }
-                        else session.send(ControlMessage.SetClipboard(0, paste = true, text = text))
+                    // The clipboard read is suspending: the press is consumed now, the text is sent when it arrives.
+                    uiScope.launch {
+                        val text = pcClipboard.text()
+                        if (!text.isNullOrEmpty()) {
+                            if ("legacy-paste" in e) text.chunked(100).forEach { session.send(ControlMessage.InjectText(it)) }
+                            else session.send(ControlMessage.SetClipboard(0, paste = true, text = text))
+                        }
                     }
                     return@KeyEventDispatcher true
                 }

@@ -14,6 +14,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalClipboard
+import com.programmersbox.scrcpyviewer.ui.common.PcClipboard
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.DpSize
@@ -93,6 +96,11 @@ fun main() {
             LaunchedEffect(actionsNavigation) {
                 actionsNavigation.requests.collect { bringToFront(window) }
             }
+            // Device clipboard sync and the mirror paste go through Compose's clipboard, bound here.
+            val clipboard = LocalClipboard.current
+            val clipboardScope = rememberCoroutineScope()
+            val pcClipboard = remember { koin.get<PcClipboard>() }
+            LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
             // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
             val handle = remember(window) { AwtMirrorWindowHandle(window, koin.get<ScreenGeometry>()) }
             CompositionLocalProvider(LocalMirrorWindowHandle provides handle) { App() }

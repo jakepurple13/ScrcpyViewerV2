@@ -38,14 +38,13 @@ import org.koin.core.Koin
 import org.koin.core.annotation.ComponentScan
 import org.koin.core.annotation.Configuration
 import org.koin.core.annotation.KoinApplication
+import com.programmersbox.scrcpyviewer.ui.common.PcClipboard
 import com.programmersbox.scrcpyviewer.ui.window.AwtScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import org.koin.core.annotation.Module
 import org.koin.core.annotation.Provided
 import org.koin.core.annotation.Singleton
 import org.koin.plugin.module.dsl.startKoin
-import java.awt.Toolkit
-import java.awt.datatransfer.StringSelection
 import java.nio.file.Path
 import java.nio.file.Paths
 
@@ -138,6 +137,10 @@ class MirrorModule {
     @Singleton
     fun screenGeometry(): ScreenGeometry = AwtScreenGeometry
 
+    /** The computer's clipboard; the main window binds it (see Main.kt). */
+    @Singleton
+    fun pcClipboard(): PcClipboard = PcClipboard()
+
     @Singleton
     fun mirrorRequests(): MirrorRequests = MirrorRequests()
 
@@ -167,6 +170,7 @@ class MirrorModule {
         deviceOptions: DeviceOptionsStore,
         serverLauncher: ServerLauncher,
         settings: AppSettings,
+        clipboard: PcClipboard,
     ): MirrorController = MirrorController(
         scope = scope,
         devices = tracker.devices,
@@ -186,7 +190,7 @@ class MirrorModule {
                 captureDir = { Paths.get(settings.settings.value.captureDir) },
             )
         },
-        setClipboard = { text -> Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null) },
+        setClipboard = clipboard::setText,
     )
 }
 
