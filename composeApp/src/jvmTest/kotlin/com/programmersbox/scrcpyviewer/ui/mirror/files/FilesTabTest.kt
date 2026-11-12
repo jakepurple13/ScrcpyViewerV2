@@ -282,16 +282,17 @@ class FilesTabTest {
         val b = browser()
         val driver = scene(b)
         driver.click(driver.described("New folder"))
-        driver.click(driver.described("Filter this folder"))
+        // The new row's rename field has focus; clicking away would create the folder.
         assertEquals("New folder", b.pendingNewFolder)
-        assertTrue("New folder" in driver.texts())
+        fun field() = driver.nodes().firstOrNull { it.config.getOrNull(SemanticsProperties.TestTag) == RENAME_FIELD_TAG }
+        assertEquals("New folder", field()?.config?.getOrNull(SemanticsProperties.EditableText)?.text)
         for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
             driver.scene.sendKeyEvent(KeyEvent(key = Key.Escape, type = type))
             driver.frame()
         }
         driver.frames(40)
         assertNull(b.pendingNewFolder)
-        assertNull(driver.texts().firstOrNull { it == "New folder" })
+        assertNull(field())
     }
 
     @Test

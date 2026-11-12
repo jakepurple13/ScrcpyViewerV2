@@ -5,6 +5,27 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.keyframes
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
@@ -79,7 +100,9 @@ private const val HIDDEN_ALPHA = 0.6f
  * One 40 dp entry row. [arriving] rows grow in and then hold a primary-container highlight that fades over
  * [ARRIVING_FADE_MILLIS]; a row with a [leavingIndex] collapses out, [LEAVING_STAGGER_MILLIS] after the one before it.
  * [enter] (0 to 1) is the row's share of the folder's stagger-in, read at draw time. [onPress] gets every primary
- * press with whether it completes a double-click.
+ * press with whether it completes a double-click; [onSecondaryPress] every right-click. Both are consumed, so a press
+ * the list sees unconsumed landed on empty space. [focused] draws the list's focus ring. While [renaming], the name is
+ * a [RenameField] ([onRenameCommit] answers true when the name was refused, with [renameError] shown beside it).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -96,6 +119,11 @@ internal fun FileRow(
     onPress: (PointerEvent, doubleClick: Boolean) -> Unit,
     modifier: Modifier = Modifier,
     enter: () -> Float = { 1f },
+    onSecondaryPress: () -> Unit = {},
+    focused: Boolean = false,
+    renaming: Boolean = false,
+    renameError: String? = null,
+    onRenameCommit: (String) -> Boolean = { false },
 ) {
     val colors = MaterialTheme.colorScheme
     // Grows from nothing only when it arrived while the folder was already showing.
@@ -120,6 +148,7 @@ internal fun FileRow(
     val muted = if (selected) colors.onSecondaryContainer.copy(alpha = 0.8f) else colors.onSurfaceVariant
     val shape = styledCorner(10.dp)
     val currentOnPress by rememberUpdatedState(onPress)
+    val currentOnSecondary by rememberUpdatedState(onSecondaryPress)
     val lastPress = remember { LongArray(1) { Long.MIN_VALUE } }
     Row(
         modifier.fillMaxWidth()
@@ -137,6 +166,7 @@ internal fun FileRow(
             }
             .clip(shape)
             .background(container)
+            .then(if (focused) Modifier.border(1.5.dp, colors.primary, shape) else Modifier)
             .drawBehind {
                 // Without motion the highlight simply holds while the browser marks the row as arriving.
                 val h = if (motion) highlight.value else if (arriving) 1f else 0f
@@ -146,7 +176,14 @@ internal fun FileRow(
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
-                        if (event.type != PointerEventType.Press || !event.buttons.isPrimaryPressed) continue
+                        if (event.type != PointerEventType.Press) continue
+                        if (event.buttons.isSecondaryPressed) {
+                            event.changes.forEach { it.consume() }
+                            currentOnSecondary()
+                            continue
+                        }
+                        if (!event.buttons.isPrimaryPressed) continue
+                        event.changes.forEach { it.consume() }
                         val time = event.changes.firstOrNull()?.uptimeMillis ?: continue
                         val double = lastPress[0] != Long.MIN_VALUE && time - lastPress[0] <= viewConfiguration.doubleTapTimeoutMillis
                         lastPress[0] = if (double) Long.MIN_VALUE else time
@@ -160,7 +197,17 @@ internal fun FileRow(
     ) {
         val dim = Modifier.graphicsLayer { alpha = if (hidden) HIDDEN_ALPHA else 1f }
         KindTile(kind, dim)
-        TooltipArea(
+        if (renaming) {
+            RenameField(name, kind == FileKind.Folder, renameError != null, motion, onRenameCommit, Modifier.weight(1f))
+            if (renameError != null) {
+                Text(
+                    renameError, Modifier.width(SIZE_COLUMN + DATE_COLUMN + COLUMN_GAP),
+                    fontSize = CELL_FONT, color = colors.error, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                )
+                return@Row
+            }
+        } else TooltipArea(
             tooltip = {
                 Surface(shape = styledCorner(4.dp), color = colors.inverseSurface) {
                     Text(
@@ -189,6 +236,78 @@ internal fun FileRow(
             textAlign = TextAlign.End,
         )
     }
+}
+
+/** Test tag of the rename field. */
+const val RENAME_FIELD_TAG = "files-rename-field"
+
+/** A refused name shakes the field this far, over [SHAKE_MILLIS]. */
+private val SHAKE = 4.dp
+private const val SHAKE_MILLIS = 180
+
+/** Where the name's stem ends: before the extension of a file ("notes" of "notes.txt"), the whole name for a folder. */
+internal fun stemEnd(name: String, isDir: Boolean): Int {
+    if (isDir) return name.length
+    val dot = name.lastIndexOf('.')
+    return if (dot > 0) dot else name.length
+}
+
+/**
+ * The name as a text field, focused with its stem selected. Enter, or focus leaving, commits through [onCommit],
+ * which answers true when the name was refused: then the field shakes and stays. Esc is the tab's (it cancels).
+ */
+@Composable
+private fun RenameField(name: String, isDir: Boolean, error: Boolean, motion: Boolean, onCommit: (String) -> Boolean, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    var value by remember { mutableStateOf(TextFieldValue(name, TextRange(0, stemEnd(name, isDir)))) }
+    val focus = remember { FocusRequester() }
+    val shake = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    // Whether the field has had focus, so its first unfocused state is not taken for clicking away. A plain holder.
+    val hadFocus = remember { BooleanArray(1) }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    fun commit() {
+        if (onCommit(value.text) && motion) {
+            scope.launch {
+                shake.snapTo(0f)
+                shake.animateTo(0f, keyframes {
+                    durationMillis = SHAKE_MILLIS
+                    1f at SHAKE_MILLIS / 6
+                    -1f at SHAKE_MILLIS * 2 / 6
+                    1f at SHAKE_MILLIS * 3 / 6
+                    -1f at SHAKE_MILLIS * 4 / 6
+                    0.5f at SHAKE_MILLIS * 5 / 6
+                })
+            }
+        }
+    }
+    BasicTextField(
+        value = value,
+        onValueChange = { value = it },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, color = colors.onSurface),
+        cursorBrush = SolidColor(colors.primary),
+        modifier = modifier
+            .graphicsLayer { translationX = shake.value * SHAKE.toPx() }
+            .testTag(RENAME_FIELD_TAG)
+            .focusRequester(focus)
+            .onFocusChanged {
+                if (it.isFocused) hadFocus[0] = true else if (hadFocus[0]) commit()
+            }
+            .onPreviewKeyEvent { event ->
+                if (event.key != Key.Enter && event.key != Key.NumPadEnter) return@onPreviewKeyEvent false
+                if (event.type == KeyEventType.KeyDown) commit()
+                true
+            },
+        decorationBox = { inner ->
+            Box(
+                Modifier.height(26.dp).clip(styledCorner(6.dp)).background(colors.surface)
+                    .border(1.5.dp, if (error) colors.error else colors.primary, styledCorner(6.dp))
+                    .padding(horizontal = 6.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) { inner() }
+        },
+    )
 }
 
 /** The kind's icon: a folder in the accent color, any other kind on its tinted tile. */

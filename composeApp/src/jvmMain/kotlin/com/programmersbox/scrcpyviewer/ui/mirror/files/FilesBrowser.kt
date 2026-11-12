@@ -6,7 +6,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
@@ -175,6 +174,10 @@ class FilesBrowser(
     var dialog by mutableStateOf<FilesDialog?>(null)
         private set
 
+    /** The result to show in the tab's snackbar; the newest replaces an older one. */
+    var snack by mutableStateOf<Snack?>(null)
+        private set
+
     /** +1 forward, -1 back (up, back, an ancestor crumb), 0 refresh. */
     var navDirection by mutableStateOf(0)
         private set
@@ -218,6 +221,16 @@ class FilesBrowser(
                 if (refresh && connected) refresh()
             }
         }
+    }
+
+    private fun post(s: Snack) {
+        snack = s
+        notify(s)
+    }
+
+    /** The snackbar showed [shown] for its time (or its action ran); a newer snack stays. */
+    fun dismissSnack(shown: Snack) {
+        if (snack === shown) snack = null
     }
 
     // Navigation
@@ -325,11 +338,23 @@ class FilesBrowser(
         val entry = entry(name) ?: return
         when {
             entry.isDir -> open(devicePath(path, name))
-            kindOf(entry) == FileKind.Apk ->
-                enqueue(listOf(TransferRequest(Paths.get(""), TransferKind.InstallFromDevice, path, name, size = entry.size)))
-            else ->
-                enqueue(listOf(TransferRequest(Paths.get(""), TransferKind.Pull, path, name, opensAfter = true, size = entry.size)))
+            kindOf(entry) == FileKind.Apk -> install(name)
+            else -> openOnComputer(name)
         }
+    }
+
+    /** Pulls file [name] to a temp folder, then opens it with the computer's default app. */
+    fun openOnComputer(name: String) {
+        if (!connected) return
+        val entry = entry(name)?.takeIf { !it.isDir } ?: return
+        enqueue(listOf(TransferRequest(Paths.get(""), TransferKind.Pull, path, name, opensAfter = true, size = entry.size)))
+    }
+
+    /** Installs the device-side `.apk` [name] (`adb install -r`, pulled to temp first). */
+    fun install(name: String) {
+        if (!connected) return
+        val entry = entry(name)?.takeIf { kindOf(it) == FileKind.Apk } ?: return
+        enqueue(listOf(TransferRequest(Paths.get(""), TransferKind.InstallFromDevice, path, name, size = entry.size)))
     }
 
     private fun entry(name: String): DeviceEntry? =
@@ -419,7 +444,7 @@ class FilesBrowser(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    notify(Snack("Could not create folder: ${e.message}"))
+                    post(Snack("Could not create folder: ${e.message}"))
                     if (path == dir) selection = selection.retain(order - text)
                 } finally {
                     if (pendingNewFolder == text) pendingNewFolder = null
@@ -446,7 +471,7 @@ class FilesBrowser(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                notify(Snack("Could not rename: ${e.message}"))
+                post(Snack("Could not rename: ${e.message}"))
             } finally {
                 refreshIfIn(dir)
             }
@@ -482,11 +507,11 @@ class FilesBrowser(
             try {
                 files.delete(dir, d.names)
                 collapse(dir, d.names)
-                notify(Snack(if (d.names.size == 1) "Deleted ${d.names.single()}" else "Deleted ${d.names.size} items"))
+                post(Snack(if (d.names.size == 1) "Deleted ${d.names.single()}" else "Deleted ${d.names.size} items"))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                notify(Snack("Could not delete: ${e.message}"))
+                post(Snack("Could not delete: ${e.message}"))
             } finally {
                 refreshIfIn(dir)
             }
@@ -505,7 +530,7 @@ class FilesBrowser(
         if (old is FilesDialog.Clash && old !== next) {
             val n = old.clashing.size
             val where = folderLabel(old.toDir)
-            notify(Snack(if (n == 1) "Skipped ${old.clashing.single()}, already in $where" else "Skipped $n items already in $where"))
+            post(Snack(if (n == 1) "Skipped ${old.clashing.single()}, already in $where" else "Skipped $n items already in $where"))
         }
     }
 
@@ -574,11 +599,11 @@ class FilesBrowser(
             files.move(dir, names, target, renames, replace)
             collapse(dir, names)
             val what = if (names.size == 1) names.single() else "${names.size} items"
-            notify(Snack("Moved $what to ${folderLabel(target)}", "Open") { open(target) })
+            post(Snack("Moved $what to ${folderLabel(target)}", "Open") { open(target) })
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            notify(Snack("Could not move: ${e.message}"))
+            post(Snack("Could not move: ${e.message}"))
         } finally {
             refreshIfIn(dir)
         }
@@ -600,7 +625,7 @@ class FilesBrowser(
         return when (result) {
             is Listing.Entries -> result.entries.mapTo(HashSet()) { it.name }
             Listing.Blocked -> {
-                notify(Snack("Android blocks this folder"))
+                post(Snack("Android blocks this folder"))
                 null
             }
             else -> emptySet()
@@ -679,8 +704,8 @@ class FilesBrowser(
 
 /**
  * The Files tab state for one mirror window, or null without adb. It opens at [transfers]' push target the first
- * time for [serial] in this app run (afterwards where [memory] left it), follows the session's connection, and shows
- * its results through [notify].
+ * time for [serial] in this app run (afterwards where [memory] left it) and follows the session's connection. Its
+ * results show in the tab's snackbar ([FilesBrowser.snack]).
  */
 @Composable
 fun rememberFilesBrowser(
@@ -688,11 +713,9 @@ fun rememberFilesBrowser(
     session: ScrcpySession,
     adb: AdbClient?,
     transfers: FileTransfers,
-    notify: (String) -> Unit,
     memory: QuickActionsMemory = koinInject(),
     settings: AppSettings = koinInject(),
 ): FilesBrowser? {
-    val currentNotify by rememberUpdatedState(notify)
     val parent = rememberCoroutineScope()
     // One scope per browser: a Reconnect (new session, new transfers) cancels the old browser's loads and collectors.
     val scope = remember(serial, session, adb, transfers) { childScope(parent) }
@@ -703,8 +726,8 @@ fun rememberFilesBrowser(
                 serial,
                 DeviceFiles(ShellRunner(it, serial)) { path -> session.send(ControlMessage.ScanFile(path)) },
                 transfers, memory, settings, transfers.pushTarget, scope,
-                // The snackbar's action button comes with the tab's own snackbar; the window's shows the message.
-                notify = { snack -> currentNotify(snack.message) },
+                // Results show in the tab's own snackbar (FilesBrowser.snack), with their action.
+                notify = {},
             )
         }
     } ?: return null

@@ -79,6 +79,9 @@ interface TransferFileDialogs {
 
     /** Files to push (multi-select); empty when cancelled. */
     suspend fun chooseFiles(pushTarget: String): List<Path>
+
+    /** A computer folder to pull into; null when cancelled. */
+    suspend fun chooseFolder(title: String): Path? = null
 }
 
 /** The platform's own open dialog through [NativeFileDialogs]; never touches the AWT toolkit. */
@@ -87,6 +90,9 @@ class NativeTransferFileDialogs(private val dialogs: NativeFileDialogs = nativeF
 
     override suspend fun chooseFiles(pushTarget: String): List<Path> =
         onPickerThread { dialogs.open("Push to $pushTarget", emptyList(), multiple = true) }
+
+    override suspend fun chooseFolder(title: String): Path? =
+        onPickerThread { dialogs.open(title, emptyList(), multiple = false, directories = true).firstOrNull() }
 }
 
 /**

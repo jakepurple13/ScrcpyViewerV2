@@ -16,6 +16,36 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
+import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
+import kotlinx.coroutines.delay
+import java.awt.datatransfer.StringSelection
+import java.nio.file.Path
+import java.nio.file.Paths
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -58,7 +88,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -121,62 +153,235 @@ private val CRUMB_SHIFT = 10.dp
 private const val SPIN_MILLIS = 500
 private const val SORT_MILLIS = 300
 
+/** The snackbar rises this far as it shows, and stays this long (longer with an action). */
+private val SNACK_RISE = 16.dp
+private const val SNACK_MILLIS = 4_000L
+private const val SNACK_ACTION_MILLIS = 8_000L
+
 /** The list while the session is down. */
 private const val DISCONNECTED_ALPHA = 0.38f
 
 /**
- * The Files tab: toolbar (Back, Up, breadcrumbs, Refresh, New folder, Push files here), the filter field and free
- * space, the column header, and the open folder's rows or its state. Dates format in [zone] and [locale]; [motion]
- * false (the OS asks for less motion) drops every animation here.
+ * The Files tab: toolbar (Back, Up, breadcrumbs, Refresh, New folder, Push files here, ⋮), the filter field and free
+ * space, the column header, and the open folder's rows or its state, with the selection bar, menus, dialogs and the
+ * snackbar over them. Dates format in [zone] and [locale]; [motion] false (the OS asks for less motion) drops every
+ * animation here. [onPushFiles] opens the push picker for the open folder, [onPullTo] the folder picker for a pull of
+ * the given names; "Pull to Downloads" pulls into [downloads].
+ *
+ * Esc goes to the innermost thing that can use it: an open menu, the dialog, the rename field, the filter, the
+ * selection. Only an Esc none of them used goes on to the sheet.
  */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun FilesTab(
     browser: FilesBrowser,
     modifier: Modifier = Modifier,
     onPushFiles: () -> Unit = {},
+    onPullTo: (List<String>) -> Unit = {},
+    downloads: Path = Paths.get(System.getProperty("user.home"), "Downloads"),
     zone: ZoneId = ZoneId.systemDefault(),
     locale: Locale = Locale.getDefault(),
     motion: Boolean = remember { !systemReducesMotion() },
+    isMac: Boolean = Os.isMac,
 ) {
-    Column(
-        modifier.fillMaxSize().onPreviewKeyEvent { event ->
-            // Until the rename field arrives, Esc drops a pending new folder so its row never sticks.
-            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && browser.pendingNewFolder != null) {
-                browser.cancelRename()
-                true
-            } else {
-                false
+    var menu by remember { mutableStateOf<FilesMenu?>(null) }
+    val listFocus = remember { FocusRequester() }
+    var filterFocused by remember { mutableStateOf(false) }
+    var listFocused by remember { mutableStateOf(false) }
+    // The tab's own coordinates and the last pointer position in them, for menus opened at the pointer. Plain holders.
+    val tabCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val pointer = remember { arrayOf(Offset.Zero) }
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    val currentPullTo by rememberUpdatedState(onPullTo)
+    val currentPushFiles by rememberUpdatedState(onPushFiles)
+    val actions = remember(browser, clipboard, downloads) {
+        MenuActions(
+            pullToDownloads = { names -> browser.pull(names, downloads) },
+            pullTo = { names -> currentPullTo(names) },
+            pushFiles = { currentPushFiles() },
+            copy = { text -> scope.launch { runCatching { clipboard.setClipEntry(ClipEntry(StringSelection(text))) } } },
+        )
+    }
+    // A menu opened for a selection that has since changed, another folder, or a dropped session closes.
+    val selected = browser.selection.names
+    LaunchedEffect(selected, browser.connected) {
+        val m = menu
+        if (!browser.connected || (m is FilesMenu.Item && m.names != selected)) menu = null
+    }
+    LaunchedEffect(browser.path) { menu = null }
+    // When a menu, dialog or rename ends, keys go back to the list (unless the filter has them).
+    val modal = menu != null || browser.dialog != null || browser.renaming != null
+    val wasModal = remember { BooleanArray(1) }
+    LaunchedEffect(modal) {
+        if (!modal && wasModal[0] && !filterFocused) runCatching { listFocus.requestFocus() }
+        wasModal[0] = modal
+    }
+    fun escape(): Boolean {
+        when {
+            menu != null -> menu = null
+            browser.dialog != null -> browser.dismissDialog()
+            browser.renaming != null -> browser.cancelRename()
+            browser.filter.isNotEmpty() -> browser.setFilter("")
+            browser.selection.names.isNotEmpty() -> browser.clearSelection()
+            else -> return false
+        }
+        return true
+    }
+    fun toTab(window: Offset): Offset = tabCoords[0]?.windowToLocal(window) ?: window
+    Box(
+        modifier.fillMaxSize()
+            .onGloballyPositioned { tabCoords[0] = it }
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        event.changes.firstOrNull()?.let { pointer[0] = it.position }
+                    }
+                }
             }
+            .onPreviewKeyEvent { event ->
+                event.type == KeyEventType.KeyDown && event.key == Key.Escape && escape()
+            }
+            .onKeyEvent { event ->
+                val key = filesKeyAction(event, isMac) ?: return@onKeyEvent false
+                when {
+                    key == FilesKey.Escape || menu != null || browser.dialog != null || browser.renaming != null -> false
+                    // The filter field keeps its own keys; only the tab-wide shortcuts reach the tab from it.
+                    filterFocused && key != FilesKey.Refresh && key != FilesKey.NewFolder -> false
+                    else -> browser.onKey(key)
+                }
+            },
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Toolbar(browser, motion, onPushFiles, onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) })
+            FilterRow(
+                browser, motion,
+                onFocus = { filterFocused = it },
+                onDown = {
+                    if (browser.selection.names.isEmpty()) browser.moveSelection(1, extend = false)
+                    runCatching { listFocus.requestFocus() }
+                },
+            )
+            ColumnHeader(browser, motion)
+            HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            // Fully qualified: the Column's ColumnScope.AnimatedVisibility would otherwise win.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !browser.connected,
+                enter = if (motion) expandFadeIn() else EnterTransition.None,
+                exit = if (motion) shrinkFadeOut() else ExitTransition.None,
+            ) {
+                DisconnectedBanner()
+            }
+            Box(
+                Modifier.weight(1f).fillMaxWidth()
+                    .focusRequester(listFocus)
+                    .onFocusChanged { listFocused = it.isFocused }
+                    .focusable()
+                    // A press no row took landed on empty space: a click clears the selection, a right-click opens
+                    // the empty-space menu.
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                if (event.type != PointerEventType.Press || event.changes.any { it.isConsumed }) continue
+                                if (event.buttons.isSecondaryPressed) {
+                                    menu = FilesMenu.Space(pointer[0])
+                                } else if (event.buttons.isPrimaryPressed && browser.renaming == null) {
+                                    browser.clearSelection()
+                                    runCatching { listFocus.requestFocus() }
+                                }
+                            }
+                        }
+                    },
+            ) {
+                ListHost(
+                    browser, motion, onPushFiles, zone, locale, listFocused,
+                    onRowPress = { runCatching { listFocus.requestFocus() } },
+                    onRowMenu = { name ->
+                        if (name !in browser.selection.names) browser.click(name)
+                        runCatching { listFocus.requestFocus() }
+                        menu = FilesMenu.Item(pointer[0], browser.selection.names)
+                    },
+                )
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = browser.loading,
+                    enter = fadeIn(if (motion) tween(150) else snap()),
+                    exit = fadeOut(if (motion) tween(150) else snap()),
+                    modifier = Modifier.align(Alignment.TopCenter),
+                ) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+                }
+                SelectionBar(
+                    browser, motion,
+                    onPull = { actions.pullToDownloads(browser.visible.map { it.name }.filter { it in browser.selection.names }) },
+                    onMore = { at -> menu = FilesMenu.Item(toTab(at), browser.selection.names) },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
+        }
+        FilesSnackbar(browser, motion, Modifier.align(Alignment.BottomCenter))
+        FilesDialogHost(browser, motion)
+        FilesMenuHost(menu, browser, actions, isMac, motion, onDismiss = { menu = null })
+    }
+}
+
+/** The browser's latest result, rising 16 dp and fading in; its action (such as Open) runs from the button. */
+@Composable
+private fun FilesSnackbar(browser: FilesBrowser, motion: Boolean, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val snack = browser.snack
+    // The last snack, so it keeps its text while it leaves. A plain holder.
+    val kept = remember { arrayOfNulls<Snack>(1) }
+    if (snack != null) kept[0] = snack
+    LaunchedEffect(snack) {
+        if (snack == null) return@LaunchedEffect
+        delay(if (snack.actionLabel != null) SNACK_ACTION_MILLIS else SNACK_MILLIS)
+        browser.dismissSnack(snack)
+    }
+    val rise = with(LocalDensity.current) { SNACK_RISE.roundToPx() }
+    androidx.compose.animation.AnimatedVisibility(
+        snack != null,
+        modifier = modifier,
+        enter = if (motion) {
+            slideInVertically(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) { rise } + fadeIn(tween(OPEN_MILLIS))
+        } else {
+            EnterTransition.None
+        },
+        exit = if (motion) {
+            slideOutVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { rise } + fadeOut(tween(CLOSE_MILLIS))
+        } else {
+            ExitTransition.None
         },
     ) {
-        Toolbar(browser, motion, onPushFiles)
-        FilterRow(browser, motion)
-        ColumnHeader(browser, motion)
-        HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
-        // Fully qualified: the Column's ColumnScope.AnimatedVisibility would otherwise win.
-        androidx.compose.animation.AnimatedVisibility(
-            visible = !browser.connected,
-            enter = if (motion) expandFadeIn() else EnterTransition.None,
-            exit = if (motion) shrinkFadeOut() else ExitTransition.None,
+        val shown = kept[0] ?: return@AnimatedVisibility
+        Surface(
+            Modifier.fillMaxWidth().padding(10.dp),
+            shape = styledCorner(10.dp),
+            color = colors.inverseSurface,
+            contentColor = colors.inverseOnSurface,
+            shadowElevation = 6.dp,
         ) {
-            DisconnectedBanner()
-        }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            ListHost(browser, motion, onPushFiles, zone, locale)
-            androidx.compose.animation.AnimatedVisibility(
-                visible = browser.loading,
-                enter = fadeIn(if (motion) tween(150) else snap()),
-                exit = fadeOut(if (motion) tween(150) else snap()),
-                modifier = Modifier.align(Alignment.TopCenter),
-            ) {
-                LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+            Row(Modifier.heightIn(min = 44.dp).padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(shown.message, Modifier.weight(1f).padding(vertical = 8.dp), fontSize = 13.sp)
+                val label = shown.actionLabel
+                val action = shown.action
+                if (label != null && action != null) {
+                    TextButton(
+                        onClick = {
+                            browser.dismissSnack(shown)
+                            action()
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = colors.inversePrimary),
+                    ) { Text(label) }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun Toolbar(browser: FilesBrowser, motion: Boolean, onPushFiles: () -> Unit) {
+private fun Toolbar(browser: FilesBrowser, motion: Boolean, onPushFiles: () -> Unit, onViewMenu: (Offset) -> Unit) {
     val connected = browser.connected
     val listed = browser.listingPath == browser.path
     val scope = rememberCoroutineScope()
@@ -205,6 +410,12 @@ private fun Toolbar(browser: FilesBrowser, motion: Boolean, onPushFiles: () -> U
             onClick = browser::newFolder,
         )
         ToolButton(Icons.Filled.FileUpload, "Push files here", connected && !(listed && browser.listing == Listing.Blocked), onClick = onPushFiles)
+        val more = remember { arrayOfNulls<LayoutCoordinates>(1) }
+        Box(Modifier.onGloballyPositioned { more[0] = it }) {
+            ToolButton(Icons.Filled.MoreVert, "View options", enabled = true) {
+                more[0]?.let { onViewMenu(it.localToWindow(Offset(0f, it.size.height.toFloat()))) }
+            }
+        }
     }
 }
 
@@ -273,7 +484,7 @@ private fun Crumbs(browser: FilesBrowser, motion: Boolean, modifier: Modifier = 
 
 /** The filter pill ("Filter in Download"; Esc clears it) and the device's free space. */
 @Composable
-private fun FilterRow(browser: FilesBrowser, motion: Boolean) {
+private fun FilterRow(browser: FilesBrowser, motion: Boolean, onFocus: (Boolean) -> Unit, onDown: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val filter = browser.filter
     Row(
@@ -299,9 +510,11 @@ private fun FilterRow(browser: FilesBrowser, motion: Boolean) {
                     cursorBrush = SolidColor(colors.primary),
                     modifier = Modifier.fillMaxWidth()
                         .semantics { contentDescription = "Filter this folder" }
+                        .onFocusChanged { onFocus(it.isFocused) }
+                        // ↓ moves to the list; Esc is the tab's (it clears the filter in its turn).
                         .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && filter.isNotEmpty()) {
-                                browser.setFilter("")
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                onDown()
                                 true
                             } else {
                                 false
@@ -389,7 +602,16 @@ private class Page(val listing: Listing?, val rows: List<DeviceEntry>, val filte
  * ready). Moving to another folder slides along the shared X axis by [FilesBrowser.navDirection].
  */
 @Composable
-private fun ListHost(browser: FilesBrowser, motion: Boolean, onPushFiles: () -> Unit, zone: ZoneId, locale: Locale) {
+private fun ListHost(
+    browser: FilesBrowser,
+    motion: Boolean,
+    onPushFiles: () -> Unit,
+    zone: ZoneId,
+    locale: Locale,
+    listFocused: Boolean,
+    onRowPress: () -> Unit,
+    onRowMenu: (String) -> Unit,
+) {
     val density = LocalDensity.current
     val dim by animateFloatAsState(if (browser.connected) 1f else DISCONNECTED_ALPHA, if (motion) tween(OPEN_MILLIS) else snap())
     AnimatedContent(
@@ -408,7 +630,7 @@ private fun ListHost(browser: FilesBrowser, motion: Boolean, onPushFiles: () -> 
             Listing.Blocked -> BlockedState(dir, browser.canGoUp && browser.connected, browser::up)
             is Listing.Failed -> ListingFailedState(listing.reason, browser.connected, browser::refresh)
             is Listing.Entries -> when {
-                page.rows.isNotEmpty() -> Rows(browser, page.rows, motion, zone, locale)
+                page.rows.isNotEmpty() -> Rows(browser, page.rows, motion, zone, locale, listFocused, onRowPress, onRowMenu)
                 page.filter.isNotBlank() -> NoMatchState(page.filter)
                 else -> EmptyFolderState(folderLabel(dir), browser.connected, onPushFiles)
             }
@@ -429,7 +651,16 @@ private fun AnimatedContentTransitionScope<String?>.navTransform(direction: Int,
 }
 
 @Composable
-private fun Rows(browser: FilesBrowser, rows: List<DeviceEntry>, motion: Boolean, zone: ZoneId, locale: Locale) {
+private fun Rows(
+    browser: FilesBrowser,
+    rows: List<DeviceEntry>,
+    motion: Boolean,
+    zone: ZoneId,
+    locale: Locale,
+    listFocused: Boolean,
+    onRowPress: () -> Unit,
+    onRowMenu: (String) -> Unit,
+) {
     val state = rememberLazyListState()
     // The folder's stagger-in, as elapsed time; each of the first rows starts STAGGER_STEP_MILLIS after the last.
     val total = (STAGGER_ROWS - 1) * STAGGER_STEP_MILLIS + OPEN_MILLIS
@@ -441,6 +672,8 @@ private fun Rows(browser: FilesBrowser, rows: List<DeviceEntry>, motion: Boolean
     val leavingOrder = if (leaving.isEmpty()) emptyList() else rows.map { it.name }.filter { it in leaving }
     val selection = browser.selection.names
     val arriving = browser.arriving
+    val cursor = browser.selection.cursor
+    val renaming = browser.renaming
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 64.dp)) {
         itemsIndexed(rows, key = { _, e -> e.name }) { index, entry ->
             val sizeText = if (entry.isDir) entry.itemCount?.let(::formatItemCount) else formatSize(entry.size)
@@ -454,7 +687,26 @@ private fun Rows(browser: FilesBrowser, rows: List<DeviceEntry>, motion: Boolean
                 arriving = entry.name in arriving || entry.name == browser.pendingNewFolder,
                 leavingIndex = leavingOrder.indexOf(entry.name),
                 motion = motion,
-                onPress = { event, double -> browser.press(entry.name, event, double) },
+                onPress = { event, double ->
+                    // Presses inside the rename field are the field's.
+                    if (browser.renaming != entry.name) {
+                        browser.press(entry.name, event, double)
+                        onRowPress()
+                    }
+                },
+                onSecondaryPress = { if (browser.renaming != entry.name) onRowMenu(entry.name) },
+                focused = listFocused && entry.name == cursor,
+                renaming = entry.name == renaming,
+                renameError = if (entry.name == renaming) browser.renameError else null,
+                onRenameCommit = { text ->
+                    // A field already committed or cancelled (focus leaving as it goes) does nothing.
+                    if (browser.renaming != entry.name) {
+                        false
+                    } else {
+                        browser.commitRename(text)
+                        browser.renaming == entry.name && browser.renameError != null
+                    }
+                },
                 modifier = if (motion) {
                     Modifier.animateItem(
                         fadeInSpec = tween(OPEN_MILLIS),

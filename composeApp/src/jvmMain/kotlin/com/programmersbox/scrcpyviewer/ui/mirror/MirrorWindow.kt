@@ -441,7 +441,7 @@ fun MirrorWindow(
     // Made the first time the Files tab shows, so a window that never opens it never lists a folder. A plain holder.
     val filesWanted = remember { BooleanArray(1) }
     quickActions.uiState.let { if (it.open && it.tab == SheetTab.Files) filesWanted[0] = true }
-    val filesBrowser = if (filesWanted[0]) rememberFilesBrowser(serial, session, adb, transfers, ::notify) else null
+    val filesBrowser = if (filesWanted[0]) rememberFilesBrowser(serial, session, adb, transfers) else null
     // Read when the picker closes, like currentTransfers.
     val currentFilesBrowser by rememberUpdatedState(filesBrowser)
     val filesTab: (@Composable () -> Unit)? = filesBrowser?.let { browser ->
@@ -452,6 +452,13 @@ fun MirrorWindow(
                         val dir = browser.path
                         val paths = transferDialogs.chooseFiles(dir)
                         currentFilesBrowser?.push(paths, dir)
+                    }
+                }, onPullTo = { names ->
+                    val from = browser.path
+                    picker.launch(uiScope) {
+                        val folder = transferDialogs.chooseFolder("Pull to") ?: return@launch
+                        // Only while the names' folder is still open: a pull reads them from the open folder.
+                        currentFilesBrowser?.takeIf { it === browser && it.path == from }?.pull(names, folder)
                     }
                 })
             }
