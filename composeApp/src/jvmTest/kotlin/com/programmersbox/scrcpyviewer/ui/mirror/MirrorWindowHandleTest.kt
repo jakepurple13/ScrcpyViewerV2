@@ -6,7 +6,9 @@ import androidx.compose.runtime.MonotonicFrameClock
 import androidx.compose.ui.unit.IntSize
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.sun.jna.Pointer
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -30,6 +32,7 @@ private class FakeMirrorWindowHandle(initial: Rectangle) : MirrorWindowHandle {
     override val size: IntSize get() = IntSize(current.width, current.height)
     override val isShowing = true
     override val focused: StateFlow<Boolean> = MutableStateFlow(true)
+    override val focusEvents: SharedFlow<Boolean> = MutableSharedFlow()
     override val nsWindow: Pointer? = null
     override fun toFront() = Unit
     override fun screen(): ScreenArea? = null

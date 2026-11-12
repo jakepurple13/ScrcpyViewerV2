@@ -173,11 +173,7 @@ import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
 import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
 import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
-import java.awt.KeyEventDispatcher
-import java.awt.KeyboardFocusManager
-import java.awt.event.KeyEvent as AwtKeyEvent
 import java.nio.file.Paths
-import javax.swing.SwingUtilities
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -605,6 +601,27 @@ fun MirrorWindow(
         }
     }
 
+    val currentQuickActions by rememberUpdatedState(quickActions)
+    // The device's keys: this window's key events before its content sees them (the sheet's fields get theirs back).
+    val keys = remember(session) {
+        MirrorKeys(
+            mapper = mapper,
+            hidKeyboard = hidKeyboard,
+            send = send,
+            clipboardText = pcClipboard::text,
+            scope = uiScope,
+            sheetOpen = { currentQuickActions.open },
+            sheetFocused = { sheetFocus.focused },
+            closeSheet = { currentQuickActions.close() },
+            applyZoom = { currentApplyZoom(it) },
+            captureKey = { id, code, location -> capture?.key(id, code, location) == true },
+            captureFocus = { if (it) capture?.focusGained() else capture?.focusLost() },
+            noControl = "no-control" in e,
+            keyboardDisabled = e["keyboard"] == "disabled",
+            legacyPaste = "legacy-paste" in e,
+        )
+    }
+
     AppWindow(
         onCloseRequest = requestClose,
         visible = shown,
@@ -615,6 +632,7 @@ fun MirrorWindow(
         alwaysOnTop = "always-on-top" in e,
         icon = AppIcon.painter,
         titleBarHeight = 40.dp,
+        onPreviewKeyEvent = keys::onKey,
         titleBar = {
             // The overflow menu's Copy command shows its "Copied" message in the window's snackbar.
             CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, applyZoom) }
@@ -628,77 +646,18 @@ fun MirrorWindow(
         if ("print-fps" in e) {
             LaunchedEffect(session) { session.fps.collect { if (it > 0) println("[$serial] %.1f fps".format(it)) } }
         }
-        // Still AWT, each behind its own seam later: the key dispatcher, pointer capture, file drop and file pickers.
+        // Still AWT, each behind its own seam later: pointer capture, file drop and file pickers.
         val awtWindow = window
-        val zoomKeys = remember(session) { ZoomKeyFilter(Os.isMac) }
         LaunchedEffect(session, handle) {
             windowHandle = handle
-            // The first value is where focus is now; each later one is a change.
-            var first = true
-            handle.focused.collect { focused ->
-                windowFocused = focused
-                if (first) {
-                    first = false
-                } else if (focused) {
-                    capture?.focusGained()
-                } else {
-                    zoomKeys.reset()
-                    capture?.focusLost()
-                    // Releases that happen in another window never arrive: release what the device holds.
-                    hidKeyboard?.let { send(it.releaseAll()) }
-                    send(mapper.releaseButtons())
-                }
-            }
+            handle.focused.collect { windowFocused = it }
         }
-        DisposableEffect(session) {
-            val paste = if (Os.isMac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
-            var pasteDown = false
+        // Every gain and loss, not the merged state: each loss releases what the device holds.
+        LaunchedEffect(keys, handle) { handle.focusEvents.collect(keys::onFocusChanged) }
+        DisposableEffect(keys) {
             // Keys held for the device when focus moves into the sheet would never see their release: let them go.
-            sheetFocus.onGained = { hidKeyboard?.let { send(it.releaseAll()) } }
-            val dispatcher = KeyEventDispatcher { ev ->
-                val inWindow = ev.component === awtWindow || SwingUtilities.getWindowAncestor(ev.component) === awtWindow
-                if (!inWindow) return@KeyEventDispatcher false
-                when (keyTarget(quickActions.open, sheetFocus.focused, ev.keyCode)) {
-                    // Typed into the quick actions sheet: Compose gets every key, the device none (keyTarget).
-                    KeyTarget.Sheet -> return@KeyEventDispatcher false
-                    KeyTarget.Window -> {
-                        if (ev.id == AwtKeyEvent.KEY_PRESSED) quickActions.close()
-                        return@KeyEventDispatcher true
-                    }
-                    KeyTarget.Device -> Unit
-                }
-                // Zoom shortcuts belong to the window: never forwarded to the device (any keyboard mode).
-                if (zoomKeys.handle(ev.id, ev.keyCode, ev.modifiersEx) { currentApplyZoom(it) }) return@KeyEventDispatcher true
-                if ("no-control" in e) return@KeyEventDispatcher false
-                if (capture != null && capture.key(ev.id, ev.keyCode, ev.keyLocation)) return@KeyEventDispatcher true
-                if (e["keyboard"] == "disabled") return@KeyEventDispatcher false
-                if (ev.keyCode == AwtKeyEvent.VK_V && ev.modifiersEx and paste != 0 && ev.id == AwtKeyEvent.KEY_PRESSED) {
-                    pasteDown = true
-                    // The clipboard read is suspending: the press is consumed now, the text is sent when it arrives.
-                    uiScope.launch {
-                        val text = pcClipboard.text()
-                        if (!text.isNullOrEmpty()) {
-                            if ("legacy-paste" in e) text.chunked(100).forEach { session.send(ControlMessage.InjectText(it)) }
-                            else session.send(ControlMessage.SetClipboard(0, paste = true, text = text))
-                        }
-                    }
-                    return@KeyEventDispatcher true
-                }
-                if (pasteDown && (ev.keyCode == AwtKeyEvent.VK_V || ev.id == AwtKeyEvent.KEY_TYPED)) {
-                    if (ev.id == AwtKeyEvent.KEY_RELEASED) pasteDown = false
-                    return@KeyEventDispatcher true
-                }
-                if (hidKeyboard != null) {
-                    send(hidKeyboard.awtKey(ev.id, ev.keyCode, ev.keyLocation))
-                    return@KeyEventDispatcher true // HID keys never become text
-                }
-                val msgs = mapper.awtKey(ev.id, ev.keyCode, ev.keyChar, ev.modifiersEx, ev.keyLocation)
-                send(msgs)
-                msgs.isNotEmpty()
-            }
-            val kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager()
-            kfm.addKeyEventDispatcher(dispatcher)
-            onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
+            sheetFocus.onGained = keys::onSheetFocusGained
+            onDispose { sheetFocus.onGained = {} }
         }
 
         // Drops anywhere on the window install / push (COPY only, see FileDropTarget).

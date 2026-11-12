@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.positionInParent
@@ -108,6 +109,8 @@ fun AppWindow(
     alwaysOnTop: Boolean = false,
     icon: Painter? = AppIcon.painter,
     titleBarHeight: Dp = 38.dp,
+    /** Sees each key event of this window before its focused content; true consumes it. */
+    onPreviewKeyEvent: (KeyEvent) -> Boolean = { false },
     titleBar: @Composable AppTitleBarScope.() -> Unit,
     content: @Composable FrameWindowScope.() -> Unit,
 ) {
@@ -125,6 +128,7 @@ fun AppWindow(
                 title = title,
                 icon = icon,
                 alwaysOnTop = alwaysOnTop,
+                onPreviewKeyEvent = onPreviewKeyEvent,
             ) {
                 MacVibrancyEffect(window, desktopBlur, dark)
                 ScrcpyViewerTheme(shown) {
@@ -155,6 +159,7 @@ fun AppWindow(
                             title = title,
                             icon = icon,
                             alwaysOnTop = alwaysOnTop,
+                            onPreviewKeyEvent = onPreviewKeyEvent,
                         ) {
                             TitleBar { _ ->
                                 BoundedSlot {

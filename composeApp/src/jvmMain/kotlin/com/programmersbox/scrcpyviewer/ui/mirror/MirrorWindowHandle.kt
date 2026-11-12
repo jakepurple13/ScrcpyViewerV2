@@ -12,8 +12,11 @@ import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import com.sun.jna.Pointer
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.awt.Rectangle
 import java.awt.event.WindowAdapter
@@ -36,6 +39,12 @@ interface MirrorWindowHandle {
     val focused: StateFlow<Boolean>
 
     /**
+     * Every focus change as it happens (true gained, false lost), none replayed. Unlike [focused], a quick loss and
+     * gain are two events, so held device keys are still released.
+     */
+    val focusEvents: SharedFlow<Boolean>
+
+    /**
      * The window's NSWindow on macOS (or, until it is resolved on the main thread, a view in it: the functions in
      * MacVibrancy.kt take either). Null off macOS or before the window has a native peer.
      */
@@ -54,16 +63,19 @@ val LocalMirrorWindowHandle: ProvidableCompositionLocal<MirrorWindowHandle?> = s
 /** A [MirrorWindowHandle] over an AWT window; kept until the windows move to Tao. */
 class AwtMirrorWindowHandle(private val window: java.awt.Window, private val geometry: ScreenGeometry) : MirrorWindowHandle {
     private val focusState = MutableStateFlow(window.isFocused)
+    private val focusChanges = MutableSharedFlow<Boolean>(extraBufferCapacity = 16)
 
     init {
         // Lives as long as the window: the listener goes with it.
         window.addWindowFocusListener(object : WindowAdapter() {
             override fun windowGainedFocus(e: WindowEvent) {
                 focusState.value = true
+                focusChanges.tryEmit(true)
             }
 
             override fun windowLostFocus(e: WindowEvent) {
                 focusState.value = false
+                focusChanges.tryEmit(false)
             }
         })
     }
@@ -77,6 +89,7 @@ class AwtMirrorWindowHandle(private val window: java.awt.Window, private val geo
     override val size: IntSize get() = IntSize(window.width, window.height)
     override val isShowing: Boolean get() = window.isShowing
     override val focused: StateFlow<Boolean> = focusState.asStateFlow()
+    override val focusEvents: SharedFlow<Boolean> = focusChanges.asSharedFlow()
 
     override val nsWindow: Pointer?
         get() {
