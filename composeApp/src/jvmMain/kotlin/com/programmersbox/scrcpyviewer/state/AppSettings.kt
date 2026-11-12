@@ -31,6 +31,8 @@ data class Settings(
     val quickActionsWidth: Int = 280,
     /** The sheet's width (dp) on the Shell tab. */
     val shellWidth: Int = 400,
+    /** The sheet's width (dp) on the Apps tab. */
+    val appsWidth: Int = 480,
     /** Folders the user picked to install the AI skill into (absolute paths, no duplicates). */
     val aiSkillFolders: List<String> = emptyList(),
     /** Whether the Devices screen shows the full options pane instead of the simple one (preset, Mirror, Wi-Fi). */

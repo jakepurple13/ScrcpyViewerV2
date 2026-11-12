@@ -77,6 +77,11 @@ kotlin {
             implementation(libs.nucleus.window.tao)
             implementation(libs.nucleus.window.material3)
             implementation(libs.jna)
+            // Only icon and resource parsing is used: the signing parts (BouncyCastle) and annotations stay out.
+            implementation("net.dongliu:apk-parser:${libs.versions.apk.parser.get()}") {
+                exclude(group = "org.bouncycastle")
+                exclude(group = "com.google.code.findbugs")
+            }
             val ffmpeg = libs.versions.ffmpeg.get()
             val javacpp = libs.versions.javacpp.get()
             implementation("org.bytedeco:ffmpeg:$ffmpeg")

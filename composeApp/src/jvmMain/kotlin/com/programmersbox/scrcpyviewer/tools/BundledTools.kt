@@ -37,6 +37,10 @@ class BundledTools(
     val serverJar: Path
         get() = find("scrcpy-server")
 
+    /** [serverJar], or null when it is missing. */
+    val serverJarOrNull: Path?
+        get() = findOrNull("scrcpy-server")
+
     /** Copies adb (and the Windows DLLs) into `dataDir/tools/adb-<sha256 prefix>/` once and returns the copy. */
     fun adbExecutable(): Path {
         val windows = isWindows()

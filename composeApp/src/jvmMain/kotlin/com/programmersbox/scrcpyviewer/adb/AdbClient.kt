@@ -73,6 +73,25 @@ open class AdbClient(
     }
 
     /**
+     * Runs `exec:<cmd>` on [serial] and returns its output byte for byte (no pty, so binary output such as a file
+     * read with `unzip -p` arrives intact). Throws [java.net.SocketTimeoutException] like [shell].
+     */
+    open suspend fun execOut(serial: String, cmd: String): ByteArray = withContext(Dispatchers.IO) {
+        openSocket().use { socket ->
+            socket.soTimeout = shellReadTimeoutMs
+            val out = socket.getOutputStream()
+            val input = socket.getInputStream()
+            out.write(AdbWire.encodeRequest("host:transport:$serial"))
+            out.flush()
+            AdbWire.readStatus(input)
+            out.write(AdbWire.encodeRequest("exec:$cmd"))
+            out.flush()
+            AdbWire.readStatus(input)
+            input.readBytes()
+        }
+    }
+
+    /**
      * Runs `shell:<cmd>` on [serial] and emits its output as UTF-8 text chunks as they arrive. Unlike [shell] there
      * is no read timeout and nothing is buffered. Cancelling the collector (or completion) closes the socket.
      */

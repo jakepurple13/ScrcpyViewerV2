@@ -89,6 +89,9 @@ val QUICK_ACTIONS_WIDTH = 280.dp
 /** Default and minimum width of the open sheet on the Shell tab, its drag bar included. */
 val QUICK_ACTIONS_SHELL_WIDTH = 400.dp
 
+/** Default and minimum width of the open sheet on the Apps tab (three app cards a row), its drag bar included. */
+val QUICK_ACTIONS_APPS_WIDTH = 480.dp
+
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
 private val SLIDE_OFFSET = 40.dp
 private const val FADE_IN_DELAY_MILLIS = 60
@@ -296,11 +299,12 @@ private fun RowScope.SheetContent(
         AnimatedContent(
             targetState = state.tab,
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            transitionSpec = { slideTransform(targetState == SheetTab.Shell, density) },
+            transitionSpec = { slideTransform(targetState.ordinal > initialState.ordinal, density) },
             contentAlignment = Alignment.TopStart,
         ) { tab ->
             when (tab) {
                 SheetTab.Actions -> ActionsTabContent(state, onEvent, columns)
+                SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,
@@ -317,23 +321,28 @@ private val TrackShape = RoundedCornerShape(10.dp)
 private val SegmentShape = RoundedCornerShape(8.dp)
 
 /**
- * The two-segment Actions / Shell control. The highlight glides to the selected segment with the tab switch's timing;
- * the Shell segment shows a red dot while a console command runs.
+ * The Actions / Apps / Shell segmented control. The highlight glides to the selected segment with the tab switch's
+ * timing; the Shell segment shows a red dot while a console command runs.
  */
 @Composable
 private fun SheetTabs(tab: SheetTab, consoleRunning: Boolean, onSelect: (SheetTab) -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    val toShell = tab == SheetTab.Shell
-    val position by animateFloatAsState(if (toShell) 1f else 0f, growSpec(toShell))
+    val segments = SheetTab.entries.size
+    val target = tab.ordinal.toFloat()
+    // Forward (to the right) uses the open timing, backward the close one, like the content's slide.
+    val lastTarget = remember { floatArrayOf(target) }
+    val forward = target >= lastTarget[0]
+    lastTarget[0] = target
+    val position by animateFloatAsState(target, growSpec(forward))
     Box(modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest).padding(3.dp)) {
         Box(
             Modifier.fillMaxHeight()
                 .layout { measurable, constraints ->
-                    // Half the track, offset by the animated position (read here, in layout, not in composition).
-                    val half = constraints.maxWidth / 2
-                    val placeable = measurable.measure(constraints.copy(minWidth = half, maxWidth = half))
+                    // One segment wide, offset by the animated position (read here, in layout, not in composition).
+                    val segment = constraints.maxWidth / segments
+                    val placeable = measurable.measure(constraints.copy(minWidth = segment, maxWidth = segment))
                     layout(constraints.maxWidth, placeable.height) {
-                        placeable.placeRelative((position * (constraints.maxWidth - half)).roundToInt(), 0)
+                        placeable.placeRelative((position * segment).roundToInt(), 0)
                     }
                 }
                 .clip(SegmentShape)
