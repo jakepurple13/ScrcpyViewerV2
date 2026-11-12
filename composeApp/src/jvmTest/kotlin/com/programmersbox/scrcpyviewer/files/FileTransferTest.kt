@@ -574,6 +574,20 @@ class FileTransferTest {
     }
 
     @Test
+    fun `a drag-out pull goes into its drag folder and reports nothing`() = runBlocking<Unit> {
+        val drag = java.nio.file.Files.createDirectories(tmp.resolve("drag"))
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "data"); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        val results = async(start = CoroutineStart.UNDISPATCHED) { q.results.take(1).toList() }
+        val id = q.enqueue(listOf(pull(drag, "a.txt").copy(dragOut = true))).single()
+        val job = q.awaitJob(id) { it.state == JobState.Done }
+        assertEquals(drag.resolve("a.txt"), job.hostResult)
+        // The next result is the plain pull's: the drag-out pull said nothing.
+        q.enqueue(listOf(pull(drag, "b.txt")))
+        assertEquals(listOf("Pulled b.txt to drag"), withTimeout(5_000) { results.await() }.map { it.message })
+    }
+
+    @Test
     fun `hostUniquePath never names an existing file`() {
         val d = java.nio.file.Files.createDirectories(tmp.resolve("u"))
         fun touch(name: String) = java.nio.file.Files.createFile(d.resolve(name))

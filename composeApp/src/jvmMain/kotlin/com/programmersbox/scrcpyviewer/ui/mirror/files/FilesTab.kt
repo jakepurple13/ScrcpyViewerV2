@@ -30,6 +30,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.layout.findRootCoordinates
+import com.programmersbox.scrcpyviewer.files.DragCache
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.unit.IntSize
 import com.programmersbox.scrcpyviewer.ui.mirror.readDragData
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.mutableStateOf
@@ -173,7 +177,8 @@ private const val DISCONNECTED_ALPHA = 0.38f
  * selection. Only an Esc none of them used goes on to the sheet.
  *
  * Files dragged in from the computer push into the folder row, breadcrumb or open folder under the pointer; selected
- * rows dragged onto a folder row or breadcrumb move there (see [FilesDropState]).
+ * rows dragged onto a folder row or breadcrumb move there (see [FilesDropState]); dragged out past the tab, they are
+ * pulled and handed to the computer's own drag (see [DragOutController]).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -189,7 +194,10 @@ fun FilesTab(
     isMac: Boolean = Os.isMac,
 ) = FilesTab(browser, modifier, onPushFiles, onPullTo, downloads, zone, locale, motion, isMac, ::readDragData)
 
-/** [FilesTab] reading a computer drag's data through [dragData] (tests). */
+/**
+ * [FilesTab] reading a computer drag's data through [dragData], handing drags out of the window to [dragOutStarter]
+ * through the drag folders of [dragCache] (tests).
+ */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun FilesTab(
@@ -203,9 +211,35 @@ internal fun FilesTab(
     motion: Boolean = remember { !systemReducesMotion() },
     isMac: Boolean = Os.isMac,
     dragData: (DragAndDropEvent) -> DragData?,
+    dragOutStarter: OutboundDragStarter = remember { ComposeDragOutStarter() },
+    dragCache: DragCache = remember { DragCache() },
 ) {
     var menu by remember { mutableStateOf<FilesMenu?>(null) }
     val drop = remember(browser) { FilesDropState(browser) }
+    val dragScope = rememberCoroutineScope()
+    val dragOut = remember(browser, dragOutStarter, dragCache) {
+        DragOutController(
+            browser.serial, dragCache,
+            pull = { names, dir ->
+                val from = drop.movingFrom ?: browser.path
+                browser.pullForDrag(from, drop.movingEntries.filter { it.name in names }, dir)
+            },
+            cancelJob = browser::cancelTransfer,
+            dismissJob = browser::dismissTransfer,
+            starter = dragOutStarter,
+            scope = dragScope,
+        ).also { it.onFinished = drop::cancelMove }
+    }
+    LaunchedEffect(dragOut) { snapshotFlow { browser.transferJobs }.collect(dragOut::onJobs) }
+    // The tab going away mid-pull: the pulls stop (the window's close deletes the folder).
+    DisposableEffect(dragOut) { onDispose { dragOut.cancel() } }
+    // The device went away: a drag out of the window ends with it (nothing more can be pulled).
+    LaunchedEffect(dragOut, browser.connected) {
+        if (!browser.connected && dragOut.active) {
+            dragOut.cancel()
+            drop.cancelMove()
+        }
+    }
     val currentDragData by rememberUpdatedState(dragData)
     val pushTarget = remember(browser, drop) { FilesPushDropTarget(browser, drop) { currentDragData } }
     // Holding a drag over a folder row: the line fills its bottom edge, then the folder opens and the drag goes on.
@@ -267,7 +301,15 @@ internal fun FilesTab(
         modifier.fillMaxSize()
             .onGloballyPositioned { tabCoords[0] = it }
             .dragAndDropTarget(shouldStartDragAndDrop = pushTarget::accepts, target = pushTarget)
-            .filesMoveGesture(browser, drop) { local -> tabCoords[0]?.localToRoot(local) ?: local }
+            .dragOutSource(dragOutStarter)
+            .filesMoveGesture(
+                browser, drop, dragOut,
+                tabBounds = { tabCoords[0]?.takeIf { it.isAttached }?.boundsInRoot() },
+                inWindow = { root ->
+                    val size = tabCoords[0]?.takeIf { it.isAttached }?.findRootCoordinates()?.size
+                    size == null || root.x >= 0 && root.y >= 0 && root.x < size.width && root.y < size.height
+                },
+            ) { local -> tabCoords[0]?.localToRoot(local) ?: local }
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -280,6 +322,7 @@ internal fun FilesTab(
                 if (event.type != KeyEventType.KeyDown || event.key != Key.Escape) return@onPreviewKeyEvent false
                 // A row drag in progress takes Esc before anything else: it ends, nothing moves.
                 if (drop.moving != null) {
+                    dragOut.cancel()
                     drop.cancelMove()
                     true
                 } else {
@@ -401,20 +444,35 @@ internal fun FilesTab(
                 )
             }
             TransfersTray(
-                browser.transferJobs, browser.pushTarget, downloads,
+                // Drag-out pulls show on the drag ghost instead.
+                browser.transferJobs.filterNot { it.request.dragOut }, browser.pushTarget, downloads,
                 onCancel = browser::cancelTransfer, onDismiss = browser::dismissTransfer,
                 modifier = Modifier.onSizeChanged { trayHeight = it.height },
                 motion = motion,
             )
         }
-        if (drop.moving != null) {
-            // The ghost follows the pointer, a little below and right of it.
+        // Once the OS drag runs, the platform shows its own file icon instead.
+        if (drop.moving != null && dragOut.phase != DragOutPhase.OsDrag) {
+            // The ghost follows the pointer, a little below and right of it. Out of the tab (a drag-out pulling) it
+            // stays at the tab's edge, where the sheet still shows it, with the pull's progress.
+            val pulling = dragOut.phase == DragOutPhase.Pulling || dragOut.phase == DragOutPhase.Ready
+            var ghostSize by remember { mutableStateOf(IntSize.Zero) }
             DragGhost(
                 drop.movingLabel,
-                Modifier.offset {
+                Modifier.onSizeChanged { ghostSize = it }.offset {
                     val at = drop.pointer - (tabCoords[0]?.positionInRoot() ?: Offset.Zero)
-                    IntOffset((at.x + 14.dp.toPx()).roundToInt(), (at.y + 10.dp.toPx()).roundToInt())
+                    val tab = tabCoords[0]?.size ?: IntSize.Zero
+                    val x = (at.x + 14.dp.toPx()).roundToInt()
+                    val y = (at.y + 10.dp.toPx()).roundToInt()
+                    if (!pulling) return@offset IntOffset(x, y)
+                    IntOffset(
+                        x.coerceIn(0, (tab.width - ghostSize.width).coerceAtLeast(0)),
+                        y.coerceIn(0, (tab.height - ghostSize.height).coerceAtLeast(0)),
+                    )
                 },
+                pulling = pulling,
+                progress = dragOut.progress,
+                motion = motion,
             )
         }
         FilesSnackbar(browser, motion, Modifier.align(Alignment.BottomCenter).padding(bottom = with(LocalDensity.current) { trayHeight.toDp() }))

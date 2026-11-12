@@ -719,6 +719,18 @@ class FilesBrowser(
         if (requests.isNotEmpty()) enqueue(requests)
     }
 
+    /**
+     * Pulls [entries] of the device folder [fromDir] into the drag folder [toDir], for a drag out of the window;
+     * returns their job ids (none while disconnected). A folder being made is not on the device yet: it is skipped.
+     */
+    fun pullForDrag(fromDir: String, entries: List<DeviceEntry>, toDir: Path): List<Long> {
+        if (!connected) return emptyList()
+        val requests = entries.filter { it.name != pendingNewFolder }.map {
+            TransferRequest(toDir, TransferKind.Pull, fromDir, it.name, size = it.size, isDirectory = it.isDir, dragOut = true)
+        }
+        return if (requests.isEmpty()) emptyList() else enqueue(requests)
+    }
+
     // Connection
 
     /** The session dropped or came back: while down every operation is off and the list stays; back up refreshes. */

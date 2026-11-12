@@ -1,6 +1,16 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
@@ -42,6 +52,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.files.DEVICE_ROOT
+import com.programmersbox.scrcpyviewer.files.DeviceEntry
 import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.files.devicePath
 import com.programmersbox.scrcpyviewer.files.isInside
@@ -124,6 +135,10 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
 
     /** The folder [moving] comes from. */
     var movingFrom by mutableStateOf<String?>(null)
+        private set
+
+    /** The rows of [moving] as listed when the drag started (a drag out of the window pulls them). */
+    var movingEntries: List<DeviceEntry> = emptyList()
         private set
 
     /** "1 file" / "3 items", for the drag ghost. */
@@ -220,10 +235,11 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
 
     // Moves inside the tab
 
-    /** Starts a move of [names]; false (nothing starts, no ghost) while the device is disconnected. */
-    internal fun startMove(names: List<String>, label: String, root: Offset): Boolean {
+    /** Starts a move of [names] ([entries]: their rows); false (nothing starts, no ghost) while the device is disconnected. */
+    internal fun startMove(names: List<String>, label: String, root: Offset, entries: List<DeviceEntry> = emptyList()): Boolean {
         if (!browser.connected) return false
         moving = names
+        movingEntries = entries
         movingFrom = browser.path
         movingLabel = label
         moveTo(root)
@@ -248,6 +264,7 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
     /** Drops the move without moving anything (Esc, or the gesture went away). */
     internal fun cancelMove() {
         moving = null
+        movingEntries = emptyList()
         movingFrom = null
         hover = null
     }
@@ -306,9 +323,21 @@ internal class FilesPushDropTarget(
  * Row drags inside the tab: a press on a row that moves past the touch slop starts a move of the selection (or of
  * that row alone when it is not selected); release drops it on the hovered folder. On the tab itself, not the row, so
  * the drag outlives the rows of a folder it springs out of. [toRoot] maps the tab's positions to root coordinates.
+ *
+ * The same gesture drags rows out of the window ([dragOut]): once the pointer leaves the tab's own bounds ([tabBounds],
+ * root coordinates; the tab fills the sheet), the rows are pulled for an OS drag, which starts by itself once they are
+ * ready (see [DragOutController]). Coming back inside before that cancels the pull and the drag is a move again; a
+ * release before that cancels both. [inWindow] says whether a root position is inside the window.
  */
-internal fun Modifier.filesMoveGesture(browser: FilesBrowser, state: FilesDropState, toRoot: (Offset) -> Offset): Modifier =
-    pointerInput(browser, state) {
+internal fun Modifier.filesMoveGesture(
+    browser: FilesBrowser,
+    state: FilesDropState,
+    dragOut: DragOutController? = null,
+    tabBounds: () -> Rect? = { null },
+    inWindow: (Offset) -> Boolean = { true },
+    toRoot: (Offset) -> Offset,
+): Modifier =
+    pointerInput(browser, state, dragOut) {
         awaitEachGesture {
             // The row has already taken the press (Main pass, children first); only a primary press counts.
             val down = awaitFirstDown(requireUnconsumed = false)
@@ -316,33 +345,64 @@ internal fun Modifier.filesMoveGesture(browser: FilesBrowser, state: FilesDropSt
             if (!currentEvent.buttons.isPrimaryPressed) return@awaitEachGesture
             val pressed = state.rowAt(toRoot(down.position))?.takeIf { it != browser.renaming }
             var dragging = false
+            // A drag-out that could not begin (nothing to pull) is not retried until the pointer comes back in.
+            var outRefused = false
             try {
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Main)
                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    // The OS drag runs its own loop until the drop; what Compose sees meanwhile is not ours.
+                    if (dragOut?.phase == DragOutPhase.OsDrag) {
+                        change.consume()
+                        continue
+                    }
                     if (!change.pressed) {
-                        if (dragging) state.dropMove() else deferred?.let(browser::click)
+                        when {
+                            !dragging -> deferred?.let(browser::click)
+                            dragOut?.active == true -> {
+                                dragOut.released()
+                                state.cancelMove()
+                            }
+                            else -> state.dropMove()
+                        }
                         dragging = false
                         break
                     }
                     if (!dragging && pressed != null && (change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
                         val selected = browser.selection.names
                         val names = if (pressed in selected) browser.visible.map { it.name }.filter { it in selected } else listOf(pressed)
-                        val single = browser.visible.firstOrNull { it.name == names.singleOrNull() }
-                        dragging = state.startMove(names, dragLabel(names.size, single?.isDir == true), toRoot(change.position))
+                        val entries = names.mapNotNull { n -> browser.visible.firstOrNull { it.name == n } }
+                        val single = entries.singleOrNull()
+                        dragging = state.startMove(names, dragLabel(names.size, single?.isDir == true), toRoot(change.position), entries)
                     }
                     if (dragging) {
-                        // Esc cancelled it: the rest of the gesture is nobody's.
+                        // Esc cancelled it, or the drag-out ended (the OS drag returned): the rest of the gesture is nobody's.
                         if (state.moving == null) {
                             dragging = false
                             break
                         }
                         change.consume()
-                        state.moveTo(toRoot(change.position))
+                        val root = toRoot(change.position)
+                        if (dragOut != null) {
+                            val outside = tabBounds()?.contains(root) == false
+                            when {
+                                outside && !dragOut.active && !outRefused ->
+                                    outRefused = !dragOut.begin(state.moving.orEmpty(), change.position)
+                                !outside -> {
+                                    outRefused = false
+                                    if (dragOut.active) dragOut.cancel()
+                                }
+                            }
+                            dragOut.pointerAt(change.position, outsideWindow = !inWindow(root))
+                        }
+                        state.moveTo(root)
                     }
                 }
             } finally {
-                if (dragging) state.cancelMove()
+                if (dragging) {
+                    dragOut?.cancel()
+                    state.cancelMove()
+                }
             }
         }
     }
@@ -370,18 +430,46 @@ internal fun DropChip(label: String?, motion: Boolean, modifier: Modifier = Modi
     }
 }
 
-/** The pill that follows the pointer during a move: download icon and "1 file" / "3 items". */
+/**
+ * The pill that follows the pointer during a move: download icon and "1 file" / "3 items". While the rows are
+ * [pulling] for a drag out of the window, a line under the label shows the pull's [progress] (null: unknown, a sweep).
+ */
 @Composable
-internal fun DragGhost(label: String, modifier: Modifier = Modifier) {
+internal fun DragGhost(
+    label: String,
+    modifier: Modifier = Modifier,
+    pulling: Boolean = false,
+    progress: Float? = null,
+    motion: Boolean = true,
+) {
     val colors = MaterialTheme.colorScheme
     Surface(modifier, shape = styledCorner(14.dp), color = colors.primaryContainer, tonalElevation = 3.dp, shadowElevation = 4.dp) {
-        Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(14.dp), tint = colors.onPrimaryContainer)
-            Text(label, fontSize = 12.sp, color = colors.onPrimaryContainer, maxLines = 1)
+        Column(Modifier.width(IntrinsicSize.Max)) {
+            Row(
+                Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(14.dp), tint = colors.onPrimaryContainer)
+                Text(label, fontSize = 12.sp, color = colors.onPrimaryContainer, maxLines = 1)
+            }
+            AnimatedVisibility(
+                pulling,
+                enter = if (motion) expandVertically(tween(150)) + fadeIn(tween(150)) else EnterTransition.None,
+                exit = if (motion) shrinkVertically(tween(150)) + fadeOut(tween(150)) else ExitTransition.None,
+            ) {
+                val bar = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 5.dp).height(2.dp)
+                if (progress == null) {
+                    LinearProgressIndicator(bar, color = colors.onPrimaryContainer, trackColor = colors.onPrimaryContainer.copy(alpha = 0.2f))
+                } else {
+                    val shown by animateFloatAsState(progress, if (motion) tween(250) else snap())
+                    LinearProgressIndicator(
+                        { shown }, bar,
+                        color = colors.onPrimaryContainer, trackColor = colors.onPrimaryContainer.copy(alpha = 0.2f),
+                        gapSize = 0.dp, drawStopIndicator = {},
+                    )
+                }
+            }
         }
     }
 }

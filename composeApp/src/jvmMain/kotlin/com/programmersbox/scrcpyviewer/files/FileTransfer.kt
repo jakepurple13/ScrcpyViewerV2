@@ -47,7 +47,8 @@ enum class TransferKind { Install, Push, Pull, InstallFromDevice }
  * InstallFromDevice reads [deviceName] from; a Push names the device file [deviceName], else after the host file.
  * [opensAfter] pulls into the temp "open" folder instead of [path] (Open on computer) and sets
  * [TransferJob.hostResult]. [size] is the device file's size from the listing (a Pull's progress total; null when
- * unknown) and [isDirectory] says the pulled device entry is a folder.
+ * unknown) and [isDirectory] says the pulled device entry is a folder. [dragOut] marks a pull into the drag cache for
+ * a drag out of the window: it reports nothing when it succeeds (the drop is the result) and the tray does not list it.
  */
 data class TransferRequest(
     val path: Path,
@@ -57,6 +58,7 @@ data class TransferRequest(
     val opensAfter: Boolean = false,
     val size: Long? = null,
     val isDirectory: Boolean = false,
+    val dragOut: Boolean = false,
 ) {
     val name: String get() = deviceName ?: path.fileName?.toString() ?: path.toString()
 }
@@ -439,9 +441,9 @@ class FileTransferQueue(
             val dir = if (request.opensAfter) tempRoot.resolve(serialPathSegment(serial)).resolve("open") else request.path
             when (val pulled = pull(id, request, dir)) {
                 is Pulled.Failed -> failed(request, pulled.reason)
-                // Open on computer reports nothing: the caller opens [hostResult].
+                // Open on computer and drag-out pulls report nothing: the caller uses [hostResult].
                 is Pulled.Ok -> Outcome(
-                    if (request.opensAfter) null else TransferResult.Pulled(pulled.target.fileName.toString(), dir),
+                    if (request.opensAfter || request.dragOut) null else TransferResult.Pulled(pulled.target.fileName.toString(), dir),
                     JobState.Done, pulled.bytes, pulled.target,
                 )
             }

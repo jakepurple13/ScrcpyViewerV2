@@ -78,6 +78,8 @@ import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import com.programmersbox.scrcpyviewer.files.DragCache
+import kotlin.concurrent.thread
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
@@ -435,6 +437,10 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
+    // Files dragged out of the Files tab wait in the drag cache; the window takes them with it when it closes.
+    DisposableEffect(serial) {
+        onDispose { thread(name = "drag-cache-delete") { DragCache().deleteSession(serial) } }
+    }
     // Read when a picker closes: a Reconnect meanwhile replaces the transfers (pickAndStart).
     val currentTransfers by rememberUpdatedState(transfers)
     val picker = rememberPickerGuard()
