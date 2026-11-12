@@ -667,6 +667,47 @@ class FileTransferTest {
         assertEquals("data", java.nio.file.Files.readString(dir.resolve("a.txt")))
     }
 
+    @Test
+    fun `pulls into a cache root that is not this user's own fail without running adb`() = runBlocking<Unit> {
+        val adb = FakeAdb { ProcessResult(0, "", "") }
+        val checked = Collections.synchronizedList(mutableListOf<java.nio.file.Path>())
+        val root = tmp.resolve("cache")
+        val q = FileTransferQueue(
+            "SER", adb, DEFAULT_PUSH_TARGET, { true }, {}, scope, tempRoot = root,
+            securePrivateRoot = { checked.add(it); throw java.io.IOException("The cache folder $it belongs to another user; not using it") },
+        )
+        val results = async(start = CoroutineStart.UNDISPATCHED) { q.results.take(3).toList() }
+        q.enqueue(
+            listOf(
+                TransferRequest(tmp, TransferKind.Pull, "/sdcard/Download", "a.pdf", opensAfter = true),
+                TransferRequest(tmp, TransferKind.InstallFromDevice, "/sdcard/Download", "app.apk"),
+                // A drag-out pull into the cache's drag folder.
+                TransferRequest(root.resolve("SER").resolve("drag").resolve("x"), TransferKind.Pull, "/sdcard/Download", "b.jpg", dragOut = true),
+            ),
+        )
+        val messages = withTimeout(5_000) { results.await() }.map { it.message }
+        assertEquals(
+            listOf(
+                "Could not pull a.pdf: The cache folder $root belongs to another user; not using it",
+                "Could not install app.apk: The cache folder $root belongs to another user; not using it",
+                "Could not pull b.jpg: The cache folder $root belongs to another user; not using it",
+            ),
+            messages,
+        )
+        assertTrue(adb.calls.isEmpty(), adb.calls.toString())
+        assertFalse(java.nio.file.Files.exists(root), "nothing written under it")
+        assertEquals(3, checked.size)
+
+        // A pull to a folder the user picked is not the cache: no check.
+        val picked = java.nio.file.Files.createDirectories(tmp.resolve("picked"))
+        val ok = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "x"); ProcessResult(0, "", "") }
+        val q2 = FileTransferQueue(
+            "SER", ok, DEFAULT_PUSH_TARGET, { true }, {}, scope, tempRoot = root,
+            securePrivateRoot = { throw java.io.IOException("unexpected") },
+        )
+        q2.awaitJob(q2.enqueue(listOf(pull(picked, "c.txt"))).single()) { it.state == JobState.Done }
+    }
+
     // ---- Replace pushes ----
 
     private val swapOf = { dir: String, name: String, temp: String ->

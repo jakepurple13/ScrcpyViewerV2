@@ -114,8 +114,11 @@ fun hostUniquePath(dir: Path, name: String, isDirectory: Boolean = false): Path 
 fun serialPathSegment(serial: String): String =
     serial.replace(Regex("[^A-Za-z0-9._-]"), "_").takeUnless { it.isEmpty() || it == "." || it == ".." } ?: "_"
 
-/** `<java.io.tmpdir>/scrcpy-vwr`: per serial ([serialPathSegment]), `install/` holds device APKs being installed, `open/` opened files. */
-fun defaultTransferTempRoot(): Path = Paths.get(System.getProperty("java.io.tmpdir"), "scrcpy-vwr")
+/**
+ * The per-user [transferCacheRoot]: per serial ([serialPathSegment]), `install/` holds device APKs being installed,
+ * `open/` opened files, `drag/` files dragged out ([DragCache]).
+ */
+fun defaultTransferTempRoot(): Path = transferCacheRoot()
 
 
 /**
@@ -214,7 +217,8 @@ sealed interface TransferResult {
  *
  * Each request is a [TransferJob] in [jobs], kept after it ends until [dismiss]. [cancel] kills a running job's adb
  * (and removes what it wrote) or drops a queued one. Pulls and device installs use temp folders under
- * [tempRoot]/<serial>.
+ * [tempRoot]/<serial>; before a pull writes anywhere under [tempRoot], [securePrivateRoot] makes sure it is this
+ * user's own (see [ensurePrivateDir]), and the pull fails without running adb when it is not.
  *
  * [canTransfer] is false while the session is disconnected: requests are then refused instead of running adb
  * against a missing device (v5.0 ignores drops once `im->disconnected`).
@@ -228,6 +232,7 @@ class FileTransferQueue(
     private val scope: CoroutineScope,
     private val timeoutMs: Long = TRANSFER_TIMEOUT_MS,
     private val tempRoot: Path = defaultTransferTempRoot(),
+    private val securePrivateRoot: (Path) -> Unit = { ensurePrivateDir(it) },
 ) {
     private val queue = Channel<Long>(Channel.UNLIMITED)
 
@@ -558,6 +563,15 @@ class FileTransferQueue(
     private suspend fun pull(id: Long, request: TransferRequest, hostDir: Path): Pulled {
         val deviceDir = request.deviceDir ?: return Pulled.Failed("no device folder")
         val name = request.deviceName ?: return Pulled.Failed("no device file")
+        // The cache (open/, install/, a drag's folder): only when it is this user's alone.
+        val root = tempRoot.toAbsolutePath().normalize()
+        if (hostDir.toAbsolutePath().normalize().startsWith(root)) {
+            try {
+                securePrivateRoot(root)
+            } catch (e: java.io.IOException) {
+                return Pulled.Failed(e.message ?: "the cache folder can’t be used")
+            }
+        }
         Files.createDirectories(hostDir)
         val target = hostUniquePath(hostDir, name, request.isDirectory)
         synchronized(lock) { updateJob(id) { it.copy(total = if (request.isDirectory) null else request.size) } }

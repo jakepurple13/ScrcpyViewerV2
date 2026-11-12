@@ -91,6 +91,45 @@ class DragCacheTest {
     }
 
     @Test
+    fun `sweep clears old opened and installing files too, never the folders or young ones`() {
+        fun file(kind: String, name: String, ageMillis: Long): Path {
+            val f = Files.createDirectories(root.resolve("A").resolve(kind)).resolve(name)
+            Files.writeString(f, "x")
+            Files.setLastModifiedTime(f, FileTime.fromMillis(System.currentTimeMillis() - ageMillis))
+            return f
+        }
+        val oldOpen = file("open", "report.pdf", 2 * DRAG_SWEEP_MIN_AGE_MILLIS)
+        val youngOpen = file("open", "photo.jpg", 60_000)
+        val oldApk = file("install", "app.apk", 2 * DRAG_SWEEP_MIN_AGE_MILLIS)
+        val other = file("keep", "mine.txt", 2 * DRAG_SWEEP_MIN_AGE_MILLIS)
+        cache.sweep()
+        assertFalse(Files.exists(oldOpen))
+        assertFalse(Files.exists(oldApk))
+        assertTrue(Files.exists(youngOpen), "a file opened a minute ago may still be open in an app")
+        assertTrue(Files.exists(other), "only drag/, open/ and install/ are swept")
+        assertTrue(Files.isDirectory(root.resolve("A").resolve("open")))
+    }
+
+    @Test
+    fun `an opened file that is a link is not followed by the sweep`() {
+        val v = victim()
+        val open = Files.createDirectories(root.resolve("A").resolve("open"))
+        symlink(open.resolve("abc"), v.resolve("drag").resolve("abc")) ?: return
+        cache.sweep()
+        assertTrue(Files.exists(v.resolve("drag").resolve("abc").resolve("keep.txt")))
+    }
+
+    @Test
+    fun `a root of another user is left alone`() {
+        val old = made("A", ageMillis = 2 * DRAG_SWEEP_MIN_AGE_MILLIS)
+        val foreign = DragCache(root) { false }
+        foreign.sweep()
+        foreign.deleteSession("A")
+        foreign.delete(old)
+        assertTrue(Files.exists(old.resolve("photo.jpg")))
+    }
+
+    @Test
     fun `sweep without a cache folder does nothing`() {
         DragCache(Files.createTempDirectory("none").resolve("missing")).sweep()
     }
