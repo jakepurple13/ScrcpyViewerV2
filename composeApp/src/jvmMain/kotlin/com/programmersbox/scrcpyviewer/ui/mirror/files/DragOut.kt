@@ -93,6 +93,8 @@ class DragOutController(
     private val io: CoroutineContext = Dispatchers.IO,
     private val keepMillis: Long = DRAG_DIR_KEEP_MILLIS,
     private val rule: DragOutStartRule = DragOutStartRule.WhenReady,
+    /** Hears the OS drag start (true) and end (false): the window's drop targets refuse it meanwhile. */
+    private val onOsDrag: (Boolean) -> Unit = {},
 ) {
     /** One drag-out: its folder and pull jobs. */
     private class Drag(val dir: Path, val ids: Set<Long>) {
@@ -207,10 +209,13 @@ class DragOutController(
             // Released (or cancelled) since: never start after a release.
             if (current !== drag || phase != DragOutPhase.Ready) return@launch
             phase = DragOutPhase.OsDrag
+            onOsDrag(true)
             val started = try {
                 starter.start(files, pointer) { deleteLater(drag, keepMillis) }
             } catch (e: Exception) {
                 false
+            } finally {
+                onOsDrag(false)
             }
             if (current === drag) {
                 current = null

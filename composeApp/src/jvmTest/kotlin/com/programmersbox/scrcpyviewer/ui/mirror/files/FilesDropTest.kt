@@ -254,6 +254,33 @@ class FilesDropTest {
     }
 
     @Test
+    fun `rows dragged out and let go back over the tab push nothing`() = onEdt {
+        // The dragged file sits in the window's cache: it is the tab's own drag out.
+        val own = FileTransfers(queue = null, pushTarget = "/sdcard/Download/", cacheRoot = computer.single().parent) {}
+        val b = FilesBrowser(
+            "SER", files, own, QuickActionsMemory(),
+            AppSettings(Files.createTempDirectory("files-drop").resolve("settings.json")), "/sdcard/Download",
+            CoroutineScope(UnconfinedTestDispatcher(scheduler)), {},
+            enqueue = { queued += it; it.indices.map { i -> i.toLong() } }, jobs = emptyFlow(),
+        )
+        val driver = scene(b)
+        driver.dragIn(driver.emptySpace())
+        driver.dragTo(driver.at("Telegram"))
+        assertFalse(driver.dropAt(driver.at("Telegram")))
+        assertFalse(driver.dropAt(driver.emptySpace()))
+        assertEquals(emptyList(), queued)
+
+        // While the OS drag runs nothing lights up, and nothing drops, whatever the files.
+        own.draggingOut = true
+        assertTrue(b.isOwnDragOut(listOf(java.nio.file.Paths.get("/elsewhere/x.jpg"))))
+        driver.dragIn(driver.emptySpace())
+        driver.dragTo(driver.at("Telegram"))
+        assertFalse(driver.texts().any { it.startsWith("Push") }, driver.texts().toString())
+        assertFalse(driver.dropAt(driver.at("Telegram")))
+        assertEquals(emptyList(), queued)
+    }
+
+    @Test
     fun `holding over a folder row springs it open, leaving early does not`() = onEdt {
         val b = browser()
         val driver = scene(b)

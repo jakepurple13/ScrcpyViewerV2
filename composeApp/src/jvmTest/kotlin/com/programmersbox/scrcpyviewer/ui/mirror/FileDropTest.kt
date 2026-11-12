@@ -9,6 +9,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.files.FileTransferQueue
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import java.awt.dnd.DnDConstants
+import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.test.Test
@@ -178,6 +179,43 @@ class FileDropTest {
         } finally {
             scope.cancel()
             dir.toFile().delete()
+        }
+    }
+
+    @Test
+    fun `the window's own drag out is never dropped back onto the mirror`() {
+        val cache = createTempDirectory("cache")
+        val cached = Files.createDirectories(cache.resolve("SER").resolve("drag").resolve("abc")).resolve("photo.jpg")
+        Files.writeString(cached, "x")
+        val outside = createTempDirectory("computer").resolve("photo.jpg")
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        try {
+            var asked = 0
+            val queue = FileTransferQueue("SER", AdbClient({ Paths.get("adb") }), "/sdcard/Download/", { asked++; false }, {}, scope)
+            val transfers = FileTransfers(queue, "/sdcard/Download/", cache) {}
+            // Every file from the cache: no overlay, no drop.
+            val own = CopyOnlyFileDropTarget(transfers) { filesOf(cached) }
+            own.onEntered(fakeEvent())
+            assertNull(transfers.hint, "no overlay for the window's own drag out")
+            assertFalse(own.onDrop(fakeEvent()))
+            assertEquals(0, asked, "nothing reached the queue")
+
+            // While the OS drag runs, whatever it carries.
+            transfers.draggingOut = true
+            val other = CopyOnlyFileDropTarget(transfers) { filesOf(outside) }
+            other.onEntered(fakeEvent())
+            assertNull(transfers.hint)
+            assertFalse(other.onDrop(fakeEvent()))
+            assertEquals(0, asked)
+
+            // A computer file, once the drag out ended, goes ahead (here: refused by the disconnected queue).
+            transfers.draggingOut = false
+            other.onEntered(fakeEvent())
+            assertEquals("Drop to push to /sdcard/Download/", transfers.hint?.label)
+            other.onDrop(fakeEvent())
+            assertEquals(1, asked)
+        } finally {
+            scope.cancel()
         }
     }
 

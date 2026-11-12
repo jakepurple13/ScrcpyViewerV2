@@ -297,12 +297,13 @@ internal class FilesPushDropTarget(
 ) : DragAndDropTarget {
     fun accepts(event: DragAndDropEvent): Boolean = hasFiles(event)
 
-    override fun onEntered(event: DragAndDropEvent) {
-        state.externalAt(event.rootPosition())
-    }
+    override fun onEntered(event: DragAndDropEvent) = track(event)
 
-    override fun onMoved(event: DragAndDropEvent) {
-        state.externalAt(event.rootPosition())
+    override fun onMoved(event: DragAndDropEvent) = track(event)
+
+    // The tab's own drag out lights nothing up: it never drops here.
+    private fun track(event: DragAndDropEvent) {
+        if (browser.isOwnDragOut(null)) state.externalEnded() else state.externalAt(event.rootPosition())
     }
 
     override fun onExited(event: DragAndDropEvent) = state.externalEnded()
@@ -314,8 +315,10 @@ internal class FilesPushDropTarget(
         state.externalEnded()
         target ?: return false
         copyDropAction(event.sourceActions(), hasFiles(event), browser.connected) ?: return false
-        event.acceptAsCopy()
         val paths = dropPaths(event, read()) ?: return false
+        // Rows dragged out and let go back over the tab: not a push of their cached copies.
+        if (browser.isOwnDragOut(paths)) return false
+        event.acceptAsCopy()
         return browser.push(paths, target.dir)
     }
 

@@ -52,6 +52,8 @@ import com.programmersbox.scrcpyviewer.files.FileTransferQueue
 import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import com.programmersbox.scrcpyviewer.files.TransferProgress
+import com.programmersbox.scrcpyviewer.files.isInsideHostDir
+import com.programmersbox.scrcpyviewer.files.transferCacheRoot
 import com.programmersbox.scrcpyviewer.files.pushTarget
 import com.programmersbox.scrcpyviewer.files.requestsFor
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
@@ -105,11 +107,25 @@ class NativeTransferFileDialogs(private val dialogs: NativeFileDialogs = nativeF
 class FileTransfers internal constructor(
     val queue: FileTransferQueue?,
     val pushTarget: String,
+    /** Where files dragged out of the window wait ([transferCacheRoot]): such files are never taken back in. */
+    private val cacheRoot: Path = transferCacheRoot(),
     private val notify: (String) -> Unit,
 ) {
     /** The session is not Disconnected or Failed. */
     var connected by mutableStateOf(true)
         internal set
+
+    /** Rows of the Files tab are being dragged out of the window (the OS drag runs). Plain: read by drop callbacks. */
+    @Volatile
+    var draggingOut = false
+        internal set
+
+    /**
+     * A drag of [paths] is this window's own drag out (it runs, or every path is in the cache): dropping it back in
+     * would push the cached copies onto the device, so drop targets refuse it.
+     */
+    fun isOwnDragOut(paths: List<Path>?): Boolean =
+        draggingOut || !paths.isNullOrEmpty() && paths.all { isInsideHostDir(it, cacheRoot) }
 
     /** Files are being dragged over the window. */
     var dragging by mutableStateOf(false)
@@ -298,8 +314,10 @@ internal data class CopyOnlyFileDropTarget(
         endDrag()
         if (isOverSheet(event)) return false
         copyDropAction(event.sourceActions(), hasFiles(event), transfers.enabled) ?: return false
-        event.acceptAsCopy()
         val paths = dropPaths(event, read)
+        // The Files tab's own drag out, let go over the mirror: not a push of the cached copies.
+        if (transfers.isOwnDragOut(paths)) return false
+        event.acceptAsCopy()
         return paths != null && transfers.start(paths)
     }
 
@@ -315,8 +333,11 @@ internal data class CopyOnlyFileDropTarget(
     }
 
     private fun startDrag(event: DragAndDropEvent) {
+        val paths = dropPaths(event, read)
+        // No overlay for the window's own drag out: it never drops here.
+        if (transfers.isOwnDragOut(paths)) return endDrag()
         transfers.dragging = true
-        transfers.dragPaths = dropPaths(event, read)
+        transfers.dragPaths = paths
     }
 
     private fun endDrag() {

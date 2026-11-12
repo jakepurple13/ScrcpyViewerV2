@@ -269,6 +269,14 @@ class FilesBrowser(
     /** The push target a push without a folder goes to. */
     val pushTarget: String get() = transfers.pushTarget
 
+    /** See [FileTransfers.isOwnDragOut]: drops of the window's own drag out are refused. */
+    fun isOwnDragOut(paths: List<Path>?): Boolean = transfers.isOwnDragOut(paths)
+
+    /** The OS drag of rows dragged out of the tab started ([running]) or ended. */
+    internal fun setDraggingOut(running: Boolean) {
+        transfers.draggingOut = running
+    }
+
     fun cancelTransfer(id: Long) {
         transfers.queue?.cancel(id)
     }

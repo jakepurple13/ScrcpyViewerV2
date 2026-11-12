@@ -41,6 +41,13 @@ fun transferCacheRoot(
     }
 }
 
+/** [path] is [dir] or inside it, as given or (when both exist) through their real paths. */
+fun isInsideHostDir(path: Path, dir: Path): Boolean {
+    fun norm(p: Path) = p.toAbsolutePath().normalize()
+    if (norm(path).startsWith(norm(dir))) return true
+    return runCatching { path.toRealPath().startsWith(dir.toRealPath()) }.getOrDefault(false)
+}
+
 /** Whether this file system has POSIX owners and permissions (not Windows). */
 internal fun hasPosixPermissions(): Boolean = "posix" in java.nio.file.FileSystems.getDefault().supportedFileAttributeViews()
 

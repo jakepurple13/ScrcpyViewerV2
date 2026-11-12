@@ -97,6 +97,22 @@ class DragOutTest {
     }
 
     @Test
+    fun `the window hears the OS drag start and end, around the platform's loop`() = runTest {
+        val heard = mutableListOf<Boolean>()
+        val c = DragOutController(
+            "S", cache, pull = { names, dir -> pulls += names to dir; names.map { nextId++ } }, cancelJob = {}, dismissJob = {},
+            starter = starter, scope = this, io = EmptyCoroutineContext, onOsDrag = { heard += it },
+        )
+        var during: List<Boolean>? = null
+        starter.during = { during = heard.toList() }
+        c.begin(listOf("a.jpg"), Offset.Zero)
+        c.onJobs(listOf(job(nextId - 1, "a.jpg", JobState.Done, 100)))
+        runCurrent()
+        assertEquals(listOf(true), during, "set while the drop can still land on this window")
+        assertEquals(listOf(true, false), heard)
+    }
+
+    @Test
     fun `nothing to pull starts nothing and leaves no folder`() = runTest {
         val c = DragOutController(
             "S", cache, pull = { names, dir -> pulls += names to dir; emptyList() }, cancelJob = {}, dismissJob = {},

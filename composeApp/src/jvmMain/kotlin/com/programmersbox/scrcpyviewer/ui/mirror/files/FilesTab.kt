@@ -231,6 +231,8 @@ internal fun FilesTab(
             // Deletes outlive the tab: switching tabs or closing the sheet must not keep a drag folder forever.
             cleanupScope = browser.backgroundScope,
             currentJobs = browser.queueJobsNow,
+            // While the OS drag runs, letting go over this window (mirror or tab) pushes nothing back.
+            onOsDrag = browser::setDraggingOut,
         ).also { it.onFinished = drop::cancelMove }
     }
     LaunchedEffect(dragOut) { snapshotFlow { browser.transferJobs }.collect(dragOut::onJobs) }
