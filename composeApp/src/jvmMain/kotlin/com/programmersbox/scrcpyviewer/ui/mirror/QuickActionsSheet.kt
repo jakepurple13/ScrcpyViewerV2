@@ -56,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -351,8 +352,8 @@ private fun SheetTabs(
     val previous = remember { arrayOf(tab) } // the tab before this one: picks the glide's timing
     val position by animateFloatAsState(tab.ordinal.toFloat(), growSpec(tab.ordinal > previous[0].ordinal))
     SideEffect { previous[0] = tab }
-    val lastCount = remember { IntArray(1) } // stays readable while the badge scales out
-    if (filesRunning > 0) lastCount[0] = filesRunning
+    var lastCount by remember { mutableIntStateOf(filesRunning) } // stays readable while the badge scales out
+    if (filesRunning > 0 && filesRunning != lastCount) lastCount = filesRunning
     Box(modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest).padding(3.dp)) {
         Box(
             Modifier.fillMaxHeight()
@@ -393,7 +394,7 @@ private fun SheetTabs(
                             enter = scaleIn(growSpec(true)),
                             exit = scaleOut(growSpec(false)),
                         ) {
-                            val count = lastCount[0]
+                            val count = lastCount
                             Box(
                                 Modifier.padding(start = 6.dp).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
                                     .background(colors.primary, CircleShape).padding(horizontal = 4.dp)

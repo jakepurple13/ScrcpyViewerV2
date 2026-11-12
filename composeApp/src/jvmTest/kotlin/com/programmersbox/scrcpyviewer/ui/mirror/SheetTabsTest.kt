@@ -2,6 +2,8 @@ package com.programmersbox.scrcpyviewer.ui.mirror
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -10,10 +12,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -28,6 +30,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.jetbrains.skia.Bitmap
 
 /** The sheet's four-segment tab control, its slide between tabs and the Files badge. */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -147,17 +150,28 @@ class SheetTabsTest {
     }
 
     @Test
-    fun `the highlight sits under the selected segment`() = onEdt {
+    fun `the highlight sits under the selected segment only`() = onEdt {
         var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true))
-        val driver = panel({ state }, mutableListOf())
-        state = state.copy(tab = SheetTab.Files)
-        driver.frames(60)
-        val files = checkNotNull(driver.texts()["Files"]).boundsInRoot
-        val image = driver.scene.render(10_000_000_000L)
-        // The surface-colored highlight (white in the light theme) is under Files' label, not under Actions'.
-        val bitmap = org.jetbrains.skia.Bitmap.makeFromImage(image)
-        fun px(at: Offset) = bitmap.getColor(at.x.toInt(), (files.center.y).toInt())
-        val actions = checkNotNull(driver.texts()["Actions"]).boundsInRoot
-        assertTrue(px(Offset(files.left - 4f, 0f)) != px(Offset(actions.left - 4f, 0f)))
+        var scheme: ColorScheme? = null
+        val driver = SceneDriver(ImageComposeScene(600, 800, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                scheme = MaterialTheme.colorScheme
+                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null) }
+            }
+        })
+        driver.frames(5)
+        val colors = checkNotNull(scheme)
+        for (selected in SheetTab.entries) {
+            state = state.copy(tab = selected)
+            driver.frames(80)
+            val bitmap = Bitmap.makeFromImage(driver.scene.render(100_000_000_000L + selected.ordinal * 1_000_000_000L))
+            // A point inside each segment, left of its label, at the label's height.
+            for (segment in SheetTab.entries) {
+                val label = checkNotNull(driver.texts()[segment.name]).boundsInRoot
+                val pixel = bitmap.getColor((label.left - 6f).toInt(), label.center.y.toInt())
+                val expected = if (segment == selected) colors.surface else colors.surfaceContainerHighest
+                assertEquals(expected.toArgb(), pixel, "$segment segment while $selected is selected")
+            }
+        }
     }
 }
