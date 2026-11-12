@@ -222,6 +222,8 @@ data class QuickActionsUiState(
     val prompt: PendingRun? = null,
     /** A console command is running (the Shell tab shows a red dot). */
     val consoleRunning: Boolean = false,
+    /** Files transfers in progress (the Files tab shows a count badge). */
+    val filesTransfersRunning: Int = 0,
     /** Installed apps for the prompt's "Installed app" variables; null until loaded. */
     val packages: List<String>? = null,
     /** Each tab's sheet width, as the user dragged it. */
@@ -317,8 +319,8 @@ class QuickActions internal constructor(
 
     val uiState: QuickActionsUiState
         get() = QuickActionsUiState(
-            open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages,
-            widths, apps?.uiState ?: AppsUiState(),
+            open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages = packages,
+            widths = widths, apps = apps?.uiState ?: AppsUiState(),
         )
 
     fun toggleSheet() {
