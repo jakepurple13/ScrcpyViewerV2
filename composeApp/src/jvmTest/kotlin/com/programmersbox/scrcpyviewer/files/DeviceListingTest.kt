@@ -135,9 +135,12 @@ class DeviceListingTest {
     @Test
     fun freeSpace() {
         assertEquals("df -k /sdcard", freeSpaceCommand())
-        assertEquals(12_500_000L * 1024, parseFreeSpace(res("df-android8.txt")))
-        assertEquals(72_091_392L * 1024, parseFreeSpace(res("df-android15.txt")))
-        assertEquals(93_083_004L * 1024, parseFreeSpace(res("df-android14-samsung.txt")))
+        assertEquals(DeviceSpace(12_500_000L * 1024, 25_000_000L * 1024), parseFreeSpace(res("df-android8.txt")))
+        assertEquals(DeviceSpace(72_091_392L * 1024, 113_091_392L * 1024), parseFreeSpace(res("df-android15.txt")))
+        val samsung = DeviceSpace(93_083_004L * 1024, 110_534_640L * 1024)
+        assertEquals(samsung, parseFreeSpace(res("df-android14-samsung.txt")))
+        assertEquals(0.158f, samsung.usedFraction, 0.001f)
+        assertEquals(0f, DeviceSpace(0, 0).usedFraction)
         assertNull(parseFreeSpace("df: /sdcard: No such file"))
         assertNull(parseFreeSpace(""))
     }

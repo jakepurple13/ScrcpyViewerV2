@@ -77,7 +77,7 @@ private const val HIDDEN_ALPHA = 0.6f
 
 /**
  * One 40 dp entry row. [arriving] rows grow in and then hold a primary-container highlight that fades over
- * [ARRIVING_MILLIS]; a row with a [leavingIndex] collapses out, [LEAVING_STAGGER_MILLIS] after the one before it.
+ * [ARRIVING_FADE_MILLIS]; a row with a [leavingIndex] collapses out, [LEAVING_STAGGER_MILLIS] after the one before it.
  * [enter] (0 to 1) is the row's share of the folder's stagger-in, read at draw time. [onPress] gets every primary
  * press with whether it completes a double-click.
  */
@@ -105,7 +105,7 @@ internal fun FileRow(
         if (!arriving || !motion) return@LaunchedEffect
         grow.animateTo(1f, tween(OPEN_MILLIS, easing = EmphasizedDecelerate))
         highlight.snapTo(1f)
-        highlight.animateTo(0f, tween((ARRIVING_MILLIS - OPEN_MILLIS).toInt(), easing = LinearEasing))
+        highlight.animateTo(0f, tween(ARRIVING_FADE_MILLIS.toInt(), easing = LinearEasing))
     }
     val leaving = leavingIndex >= 0
     val stay by animateFloatAsState(

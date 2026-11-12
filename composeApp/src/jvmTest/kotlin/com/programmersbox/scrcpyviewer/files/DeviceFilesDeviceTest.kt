@@ -43,7 +43,7 @@ class DeviceFilesDeviceTest {
             val inside = (files.list(devicePath(base, target)) as Listing.Entries).entries
             assertEquals(listOf(renamed), inside.map { it.name })
             assertEquals(mapOf(target to 1), files.counts(base, listOf(target)).filterKeys { it == target })
-            assertTrue((files.freeSpace() ?: 0L) > 0L)
+            assertTrue((files.freeSpace()?.free ?: 0L) > 0L)
 
             // Clashes: rename and move onto an existing name fail; replace overwrites.
             files.mkdir(base, tricky)

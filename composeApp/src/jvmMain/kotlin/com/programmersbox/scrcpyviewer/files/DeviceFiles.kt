@@ -21,7 +21,7 @@ open class DeviceFiles(
         return parseCounts(runner.run(countsCommand(dir, folders)).output)
     }
 
-    open suspend fun freeSpace(): Long? {
+    open suspend fun freeSpace(): DeviceSpace? {
         val r = runner.run(freeSpaceCommand())
         return if (r.exitCode == 0) parseFreeSpace(r.output) else null
     }

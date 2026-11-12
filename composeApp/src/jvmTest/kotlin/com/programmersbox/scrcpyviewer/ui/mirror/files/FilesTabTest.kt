@@ -5,6 +5,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
@@ -18,6 +21,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.files.DeviceEntry
 import com.programmersbox.scrcpyviewer.files.DeviceFiles
+import com.programmersbox.scrcpyviewer.files.DeviceSpace
 import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
@@ -47,7 +51,7 @@ private class ScriptedFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath
 
     override suspend fun list(dir: String): Listing = dirs[dir] ?: Listing.Failed("ls: $dir: No such file or directory")
     override suspend fun counts(dir: String, folders: List<String>): Map<String, Int> = folders.associateWith { 3 }
-    override suspend fun freeSpace(): Long = 44_236_955_648
+    override suspend fun freeSpace() = DeviceSpace(44_236_955_648, 122_880_000_000)
 }
 
 /** The Files tab over a scripted device: layout, states, navigation and sorting. */
@@ -149,6 +153,7 @@ class FilesTabTest {
         assertEquals(listOf("Telegram", "a.jpg", "app.apk", "notes.txt"), driver.rows(listOf("Telegram", "a.jpg", "app.apk", "notes.txt", ".nomedia")))
         assertTrue("Filter in Download" in driver.texts())
         assertTrue("41.2 GB free" in driver.texts())
+        driver.described("64% used")
         assertTrue("3 items" in driver.texts(), "the folder's item count")
         assertTrue("Nov 7, 5:20 PM" in driver.texts(), "modified date and time: ${driver.texts()}")
         assertTrue(listOf("Name", "Size", "Modified").all { it in driver.texts() })
@@ -269,6 +274,24 @@ class FilesTabTest {
         driver.click(driver.described("Refresh"))
         assertEquals(setOf("new.txt"), b.arriving)
         assertTrue("new.txt" in driver.texts())
+    }
+
+    @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
+    @Test
+    fun `Esc drops a pending new folder`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.click(driver.described("New folder"))
+        driver.click(driver.described("Filter this folder"))
+        assertEquals("New folder", b.pendingNewFolder)
+        assertTrue("New folder" in driver.texts())
+        for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
+            driver.scene.sendKeyEvent(KeyEvent(key = Key.Escape, type = type))
+            driver.frame()
+        }
+        driver.frames(40)
+        assertNull(b.pendingNewFolder)
+        assertNull(driver.texts().firstOrNull { it == "New folder" })
     }
 
     @Test

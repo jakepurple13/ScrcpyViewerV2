@@ -122,7 +122,7 @@ class DeviceFilesTest {
         runner.result = ShellResult("3|a|__svend__\n", 0, 0)
         assertEquals(mapOf("a" to 3), files.counts("/sdcard", listOf("a")))
         runner.result = ShellResult("Filesystem 1K-blocks Used Available Use% Mounted on\n/x 10 5 4 50% /sdcard", 0, 0)
-        assertEquals(4096L, files.freeSpace())
+        assertEquals(DeviceSpace(4096L, 10_240L), files.freeSpace())
         runner.result = ShellResult("boom", 1, 0)
         assertEquals(null, files.freeSpace())
     }

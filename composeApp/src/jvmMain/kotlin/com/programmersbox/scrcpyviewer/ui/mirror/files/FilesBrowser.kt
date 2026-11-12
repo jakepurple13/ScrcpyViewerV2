@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.remember
@@ -10,7 +11,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
-import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
+import com.programmersbox.scrcpyviewer.ui.mirror.isConnected
 import org.koin.compose.koinInject
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -19,6 +20,7 @@ import androidx.compose.runtime.setValue
 import com.programmersbox.scrcpyviewer.files.DEVICE_ROOT
 import com.programmersbox.scrcpyviewer.files.DeviceEntry
 import com.programmersbox.scrcpyviewer.files.DeviceFiles
+import com.programmersbox.scrcpyviewer.files.DeviceSpace
 import com.programmersbox.scrcpyviewer.files.FileKind
 import com.programmersbox.scrcpyviewer.files.JobState
 import com.programmersbox.scrcpyviewer.files.Listing
@@ -34,6 +36,7 @@ import com.programmersbox.scrcpyviewer.files.parentOf
 import com.programmersbox.scrcpyviewer.files.uniqueName
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.mirror.FileTransfers
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
 import kotlinx.coroutines.CancellationException
@@ -43,11 +46,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.SupervisorJob
 import java.nio.file.Path
 import java.nio.file.Paths
 
-/** How long a row added since the last listing keeps its highlight. */
-const val ARRIVING_MILLIS = 1_400L
+/** How long an added row's highlight fades, after the row has grown in ([OPEN_MILLIS]). */
+const val ARRIVING_FADE_MILLIS = 1_400L
+
+/** How long a row added since the last listing counts as arriving: its grow, then its highlight's fade. */
+const val ARRIVING_MILLIS = OPEN_MILLIS + ARRIVING_FADE_MILLIS
 
 /** Extra delay per removed row, so rows collapse one after another. */
 const val LEAVING_STAGGER_MILLIS = 30L
@@ -131,7 +139,7 @@ class FilesBrowser(
 
     var loading by mutableStateOf(false)
         private set
-    var free by mutableStateOf<Long?>(null)
+    var free by mutableStateOf<DeviceSpace?>(null)
         private set
     var connected by mutableStateOf(transfers.connected)
         private set
@@ -685,8 +693,11 @@ fun rememberFilesBrowser(
     settings: AppSettings = koinInject(),
 ): FilesBrowser? {
     val currentNotify by rememberUpdatedState(notify)
-    val scope = rememberCoroutineScope()
-    val browser = remember(serial, session, adb, transfers) {
+    val parent = rememberCoroutineScope()
+    // One scope per browser: a Reconnect (new session, new transfers) cancels the old browser's loads and collectors.
+    val scope = remember(serial, session, adb, transfers) { childScope(parent) }
+    DisposableEffect(scope) { onDispose { scope.cancel() } }
+    val browser = remember(scope) {
         adb?.let {
             FilesBrowser(
                 serial,
@@ -698,7 +709,11 @@ fun rememberFilesBrowser(
         }
     } ?: return null
     LaunchedEffect(browser, session) {
-        session.status.collect { browser.onConnectionChanged(it != SessionStatus.Disconnected && it != SessionStatus.Failed) }
+        session.status.collect { browser.onConnectionChanged(it.isConnected()) }
     }
     return browser
 }
+
+/** A scope under [parent] that can be cancelled on its own; [parent]'s cancellation still reaches it. */
+internal fun childScope(parent: CoroutineScope): CoroutineScope =
+    CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))

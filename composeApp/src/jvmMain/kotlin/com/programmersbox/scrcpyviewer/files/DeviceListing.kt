@@ -81,10 +81,18 @@ fun parseCounts(output: String): Map<String, Int> {
 
 fun freeSpaceCommand(): String = "df -k $DEVICE_ROOT"
 
-/** Bytes available, from the 4th column of the last `df -k` line. */
-fun parseFreeSpace(output: String): Long? {
+/** Storage [free] (available to apps) and its [total] size, in bytes. */
+data class DeviceSpace(val free: Long, val total: Long) {
+    /** Share of [total] not available, 0 to 1. */
+    val usedFraction: Float get() = if (total <= 0) 0f else (1f - free.toFloat() / total).coerceIn(0f, 1f)
+}
+
+/** Bytes available (4th column) and the size (2nd column) from the last `df -k` line. */
+fun parseFreeSpace(output: String): DeviceSpace? {
     val last = output.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() } ?: return null
     val cols = last.split(Regex("\\s+"))
     if (cols.size < 5) return null
-    return cols[3].toLongOrNull()?.times(1024)
+    val free = cols[3].toLongOrNull()?.times(1024) ?: return null
+    val total = cols[1].toLongOrNull()?.times(1024) ?: return null
+    return DeviceSpace(free, total)
 }

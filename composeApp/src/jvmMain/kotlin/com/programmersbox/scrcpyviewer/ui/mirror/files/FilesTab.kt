@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -85,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.files.DeviceEntry
+import com.programmersbox.scrcpyviewer.files.DeviceSpace
 import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.files.crumbs
 import com.programmersbox.scrcpyviewer.files.formatFree
@@ -100,6 +102,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import kotlinx.coroutines.launch
 import java.time.ZoneId
+import kotlin.math.roundToInt
 import java.util.Locale
 
 /** Test tag of the breadcrumb bar. */
@@ -135,9 +138,19 @@ fun FilesTab(
     locale: Locale = Locale.getDefault(),
     motion: Boolean = remember { !systemReducesMotion() },
 ) {
-    Column(modifier.fillMaxSize()) {
+    Column(
+        modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            // Until the rename field arrives, Esc drops a pending new folder so its row never sticks.
+            if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && browser.pendingNewFolder != null) {
+                browser.cancelRename()
+                true
+            } else {
+                false
+            }
+        },
+    ) {
         Toolbar(browser, motion, onPushFiles)
-        FilterRow(browser)
+        FilterRow(browser, motion)
         ColumnHeader(browser, motion)
         HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
         // Fully qualified: the Column's ColumnScope.AnimatedVisibility would otherwise win.
@@ -260,7 +273,7 @@ private fun Crumbs(browser: FilesBrowser, motion: Boolean, modifier: Modifier = 
 
 /** The filter pill ("Filter in Download"; Esc clears it) and the device's free space. */
 @Composable
-private fun FilterRow(browser: FilesBrowser) {
+private fun FilterRow(browser: FilesBrowser, motion: Boolean) {
     val colors = MaterialTheme.colorScheme
     val filter = browser.filter
     Row(
@@ -297,10 +310,33 @@ private fun FilterRow(browser: FilesBrowser) {
                 )
             }
         }
-        val free = browser.free
-        AnimatedVisibility(free != null, enter = fadeIn(tween(OPEN_MILLIS)), exit = fadeOut(tween(150))) {
-            Text(free?.let(::formatFree).orEmpty(), fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1)
+        val space = browser.free
+        // The last space shown, so the meter keeps its content while it fades out. A plain holder.
+        val shown = remember { arrayOfNulls<DeviceSpace>(1) }
+        if (space != null) shown[0] = space
+        AnimatedVisibility(
+            space != null,
+            enter = fadeIn(if (motion) tween(OPEN_MILLIS) else snap()),
+            exit = fadeOut(if (motion) tween(150) else snap()),
+        ) {
+            shown[0]?.let { FreeSpace(it) }
         }
+    }
+}
+
+/** A thin used-space meter and "41.2 GB free". */
+@Composable
+private fun FreeSpace(space: DeviceSpace) {
+    val colors = MaterialTheme.colorScheme
+    val used = space.usedFraction
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(
+            Modifier.width(54.dp).height(4.dp).clip(styledCorner(2.dp)).background(colors.surfaceContainerHighest)
+                .semantics { contentDescription = "${(used * 100).roundToInt()}% used" },
+        ) {
+            Box(Modifier.fillMaxWidth(used).fillMaxHeight().background(colors.primary))
+        }
+        Text(formatFree(space.free), fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1)
     }
 }
 

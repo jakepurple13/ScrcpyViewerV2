@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.files.DeviceEntry
 import com.programmersbox.scrcpyviewer.files.DeviceFiles
+import com.programmersbox.scrcpyviewer.files.DeviceSpace
 import com.programmersbox.scrcpyviewer.files.JobState
 import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.files.TransferJob
@@ -61,7 +62,7 @@ private class FakeFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath = {
         return folders.associateWith { 3 }
     }
 
-    override suspend fun freeSpace(): Long = 5_000
+    override suspend fun freeSpace() = DeviceSpace(5_000, 20_000)
 
     override suspend fun mkdir(dir: String, name: String) {
         calls += "mkdir $dir $name"
@@ -135,7 +136,7 @@ class FilesBrowserTest {
         assertEquals("/sdcard/Download", b.path)
         assertEquals(listOf("Telegram", "a.jpg", "app.apk", "notes.txt"), b.names, "hidden files are left out")
         assertEquals(3, b.visible.first().itemCount, "counts arrive in a second step")
-        assertEquals(5_000L, b.free)
+        assertEquals(DeviceSpace(5_000, 20_000), b.free)
         assertFalse(b.loading)
         assertFalse(b.canGoBack)
         assertTrue(b.canGoUp)
@@ -229,13 +230,13 @@ class FilesBrowserTest {
     }
 
     @Test
-    fun arrivingHoldsNewNamesFor1400Ms() = runTest {
+    fun arrivingHoldsNewNamesForTheGrowAndFade() = runTest {
         val b = browser()
         files.dirs["/sdcard/Download"] = Listing.Entries((files.dirs["/sdcard/Download"] as Listing.Entries).entries + file("new.pdf"))
         b.refresh()
         runCurrent()
         assertEquals(setOf("new.pdf"), b.arriving)
-        advanceTimeBy(1_399)
+        advanceTimeBy(ARRIVING_MILLIS - 1)
         assertEquals(setOf("new.pdf"), b.arriving)
         advanceTimeBy(2)
         assertEquals(emptySet(), b.arriving)

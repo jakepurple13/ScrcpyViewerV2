@@ -180,7 +180,8 @@ fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient
     return transfers
 }
 
-private fun SessionStatus.isConnected() = this != SessionStatus.Disconnected && this != SessionStatus.Failed
+/** The session is neither Disconnected nor Failed. */
+internal fun SessionStatus.isConnected() = this != SessionStatus.Disconnected && this != SessionStatus.Failed
 
 /**
  * The drop action for a drag offering [sourceActions] (`DnDConstants` bits): always [DnDConstants.ACTION_COPY], so
