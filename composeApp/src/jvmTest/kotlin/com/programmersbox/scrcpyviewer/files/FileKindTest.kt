@@ -30,6 +30,9 @@ class FileKindTest {
         assertEquals("12.4 MB", formatSize(12_998_656))
         assertEquals("812 KB", formatSize(812 * 1024L))
         assertEquals("2.05 GB", formatSize((2.05 * 1024 * 1024 * 1024).toLong()))
+        assertEquals("1.0 MB", formatSize(1_048_575))
+        assertEquals("10 KB", formatSize(10_239))
+        assertEquals("1.0 KB", formatSize(1_024))
         assertEquals("0 B", formatSize(0))
         assertEquals("999 B", formatSize(999))
     }

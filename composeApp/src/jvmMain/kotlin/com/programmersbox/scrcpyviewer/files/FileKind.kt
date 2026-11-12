@@ -30,12 +30,15 @@ private const val GB = MB * 1024
 /** "812 B", "2.1 KB" (one decimal below 10), "209 KB", "4.1 MB", "2.05 GB". */
 fun formatSize(bytes: Long): String {
     val b = bytes.toDouble()
-    return when {
-        b < KB -> "$bytes B"
-        b < MB -> if (b / KB < 10) "%.1f KB".format(Locale.US, b / KB) else "%.0f KB".format(Locale.US, b / KB)
-        b < GB -> "%.1f MB".format(Locale.US, b / MB)
-        else -> "%.2f GB".format(Locale.US, b / GB)
-    }
+    if (b < KB) return "$bytes B"
+    // Pick the unit from the rounded value so 1_048_575 B reads "1.0 MB", not "1024 KB".
+    val kb = Math.round(b / KB * 10) / 10.0
+    if (kb < 10) return "%.1f KB".format(Locale.US, kb)
+    val kbWhole = Math.round(b / KB)
+    if (kbWhole < 1024) return "$kbWhole KB"
+    val mb = Math.round(b / MB * 10) / 10.0
+    if (mb < 1024) return "%.1f MB".format(Locale.US, mb)
+    return "%.2f GB".format(Locale.US, b / GB)
 }
 
 fun formatModified(millis: Long, zone: ZoneId, locale: Locale): String =

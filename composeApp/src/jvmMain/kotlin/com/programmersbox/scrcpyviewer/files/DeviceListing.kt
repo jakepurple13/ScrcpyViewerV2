@@ -23,7 +23,7 @@ private const val BLOCKED_EXIT = 13
 fun listCommand(dir: String): String =
     "d=${shellQuote(dir)}; ls -A \"\$d\" >/dev/null || exit $BLOCKED_EXIT; " +
         "for f in \"\$d\"/.[!.]* \"\$d\"/..?* \"\$d\"/*; do [ -e \"\$f\" ] || [ -L \"\$f\" ] || continue; " +
-        "stat -L -c '%F|%s|%Y|%n$MARKER' \"\$f\" 2>/dev/null || echo \"broken|0|0|\$f$MARKER\"; done"
+        "stat -L -c '%F|%s|%Y|%n$MARKER' \"\$f\" 2>/dev/null || printf 'broken|0|0|%s$MARKER\\n' \"\$f\"; done"
 
 /** Splits [output] into records ending in the marker, tolerating a missing final newline. */
 private fun records(output: String): List<String> {
@@ -62,9 +62,11 @@ fun parseListing(output: String, exitCode: Int?): Listing {
 }
 
 /** Prints "<count>|<name>|__svend__" for each of [folders] under [dir]. */
-fun countsCommand(dir: String, folders: List<String>): String =
-    "d=${shellQuote(dir)}; for f in ${folders.joinToString(" ") { shellQuote(it) }}; do " +
-        "echo \"\$(ls -A \"\$d/\$f\" 2>/dev/null | wc -l)|\$f$MARKER\"; done"
+fun countsCommand(dir: String, folders: List<String>): String {
+    if (folders.isEmpty()) return ":"
+    return "d=${shellQuote(dir)}; for f in ${folders.joinToString(" ") { shellQuote(it) }}; do " +
+        "printf '%s|%s$MARKER\\n' \"\$(ls -A \"\$d/\$f\" 2>/dev/null | wc -l)\" \"\$f\"; done"
+}
 
 fun parseCounts(output: String): Map<String, Int> {
     val result = LinkedHashMap<String, Int>()

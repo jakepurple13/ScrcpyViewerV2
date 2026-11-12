@@ -107,6 +107,32 @@ class DeviceListingTest {
     }
 
     @Test
+    fun commandsAvoidEchoOfNames() {
+        for (cmd in listOf(listCommand("/sdcard"), countsCommand("/sdcard", listOf("a")))) {
+            assertTrue(!Regex("echo[^;]*\\\$f").containsMatchIn(cmd), cmd)
+            assertTrue("printf" in cmd, cmd)
+        }
+    }
+
+    @Test
+    fun countsCommandRoundTripsBackslashNamesOnHostShell() {
+        if (System.getProperty("os.name").startsWith("Windows")) return
+        val dir = java.nio.file.Files.createTempDirectory("svw-counts")
+        val name = "back\\nslash\\tdir"
+        java.nio.file.Files.createDirectory(dir.resolve(name))
+        java.nio.file.Files.createFile(dir.resolve(name).resolve("x"))
+        val p = ProcessBuilder("/bin/sh", "-c", countsCommand(dir.toString(), listOf(name))).start()
+        val out = String(p.inputStream.readBytes(), Charsets.UTF_8)
+        p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
+        assertEquals(mapOf(name to 1), parseCounts(out))
+    }
+
+    @Test
+    fun countsCommandEmptyIsNoOp() {
+        assertEquals(":", countsCommand("/sdcard", emptyList()))
+    }
+
+    @Test
     fun freeSpace() {
         assertEquals("df -k /sdcard", freeSpaceCommand())
         assertEquals(12_500_000L * 1024, parseFreeSpace(res("df-android8.txt")))
