@@ -46,6 +46,11 @@ import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 
+/** The bar's full height: its 44 dp row and 10 dp margins above and below. The snackbar sits this far up over it. */
+internal val SELECTION_BAR_HEIGHT = 64.dp
+private val BAR_ROW_HEIGHT = 44.dp
+private val BAR_MARGIN = 10.dp
+
 /** How far the selection bar rises as it slides in. */
 private val BAR_RISE = 70.dp
 
@@ -93,14 +98,14 @@ private fun Bar(browser: FilesBrowser, count: Int, onPull: () -> Unit, onMore: (
     val enabled = browser.connected
     val more = remember { arrayOfNulls<LayoutCoordinates>(1) }
     Surface(
-        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().padding(horizontal = BAR_MARGIN, vertical = BAR_MARGIN),
         shape = styledCorner(14.dp),
         color = colors.inverseSurface,
         contentColor = colors.inverseOnSurface,
         shadowElevation = 6.dp,
     ) {
         Row(
-            Modifier.height(44.dp).padding(horizontal = 4.dp),
+            Modifier.height(BAR_ROW_HEIGHT).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {

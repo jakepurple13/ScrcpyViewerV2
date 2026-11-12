@@ -254,7 +254,8 @@ internal fun stemEnd(name: String, isDir: Boolean): Int {
 
 /**
  * The name as a text field, focused with its stem selected. Enter, or focus leaving, commits through [onCommit],
- * which answers true when the name was refused: then the field shakes and stays. Esc is the tab's (it cancels).
+ * which answers true when the name was refused: then the field shakes, stays, and takes focus back. Esc is the tab's
+ * (it cancels).
  */
 @Composable
 private fun RenameField(name: String, isDir: Boolean, error: Boolean, motion: Boolean, onCommit: (String) -> Boolean, modifier: Modifier) {
@@ -266,8 +267,11 @@ private fun RenameField(name: String, isDir: Boolean, error: Boolean, motion: Bo
     // Whether the field has had focus, so its first unfocused state is not taken for clicking away. A plain holder.
     val hadFocus = remember { BooleanArray(1) }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-    fun commit() {
-        if (onCommit(value.text) && motion) {
+    fun commit(fromBlur: Boolean) {
+        val refused = onCommit(value.text)
+        // Refused as focus left: take it back, so the field stays usable (keys reach it again).
+        if (refused && fromBlur) scope.launch { runCatching { focus.requestFocus() } }
+        if (refused && motion) {
             scope.launch {
                 shake.snapTo(0f)
                 shake.animateTo(0f, keyframes {
@@ -292,11 +296,11 @@ private fun RenameField(name: String, isDir: Boolean, error: Boolean, motion: Bo
             .testTag(RENAME_FIELD_TAG)
             .focusRequester(focus)
             .onFocusChanged {
-                if (it.isFocused) hadFocus[0] = true else if (hadFocus[0]) commit()
+                if (it.isFocused) hadFocus[0] = true else if (hadFocus[0]) commit(fromBlur = true)
             }
             .onPreviewKeyEvent { event ->
                 if (event.key != Key.Enter && event.key != Key.NumPadEnter) return@onPreviewKeyEvent false
-                if (event.type == KeyEventType.KeyDown) commit()
+                if (event.type == KeyEventType.KeyDown) commit(fromBlur = false)
                 true
             },
         decorationBox = { inner ->

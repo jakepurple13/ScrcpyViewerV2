@@ -144,6 +144,28 @@ class FilesInteractionTest {
         frames(30)
     }
 
+    /** A primary click on the list well below its rows. */
+    private fun SceneDriver.clickEmptySpace() {
+        val list = checkNotNull(nodes().firstOrNull { SemanticsActions.ScrollToIndex in it.config })
+        val at = androidx.compose.ui.geometry.Offset(list.boundsInRoot.center.x, list.boundsInRoot.top + 400f)
+        scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
+        scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, button = PointerButton.Primary)
+        scene.sendPointerEvent(PointerEventType.Release, at, type = PointerType.Mouse, button = PointerButton.Primary)
+        frames(30)
+        scheduler.advanceUntilIdle()
+        frames(30)
+    }
+
+    private fun SceneDriver.described(description: String): SemanticsNode = checkNotNull(
+        nodes().firstOrNull { it.config.getOrNull(SemanticsProperties.ContentDescription)?.contains(description) == true },
+    ) { "nothing described \"$description\"" }
+
+    private fun SceneDriver.typeInRename(text: String) {
+        val field = checkNotNull(renameField()) { "no rename field" }
+        field.config[SemanticsActions.SetText].action?.invoke(AnnotatedString(text))
+        frames(5)
+    }
+
     private fun SceneDriver.rightClick(name: String) = press(text(name), PointerButton.Secondary)
 
     private fun SceneDriver.key(key: Key, cmd: Boolean = false, shift: Boolean = false) {
@@ -327,5 +349,103 @@ class FilesInteractionTest {
         driver.frames(40)
         assertNull(b.dialog)
         assertFalse("Delete “notes.txt”?" in driver.texts())
+    }
+
+    @Test
+    fun `clicking empty space commits a rename`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.press(driver.text("notes.txt"))
+        driver.key(Key.F2)
+        driver.typeInRename("memo.txt")
+        driver.clickEmptySpace()
+        assertEquals(listOf("rename notes.txt memo.txt"), files.mutations)
+        assertNull(b.renaming)
+    }
+
+    @Test
+    fun `clicking empty space creates a new folder`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.press(driver.text("notes.txt"))
+        driver.key(Key.N, cmd = true, shift = true)
+        driver.typeInRename("Stuff")
+        driver.clickEmptySpace()
+        assertEquals(listOf("mkdir Stuff"), files.mutations)
+    }
+
+    @Test
+    fun `clicking a toolbar button commits a rename first`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.press(driver.text("notes.txt"))
+        driver.key(Key.F2)
+        driver.typeInRename("memo.txt")
+        driver.press(driver.described("Refresh"))
+        scheduler.advanceUntilIdle()
+        driver.frames(30)
+        assertEquals(listOf("rename notes.txt memo.txt"), files.mutations)
+    }
+
+    @Test
+    fun `a name refused as focus leaves keeps the field focused`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.press(driver.text("notes.txt"))
+        driver.key(Key.F2)
+        driver.typeInRename("a.jpg")
+        driver.clickEmptySpace()
+        assertTrue("Name already used" in driver.texts(), "${driver.texts()}")
+        assertEquals(true, driver.renameField()?.config?.getOrNull(SemanticsProperties.Focused), "focus came back")
+        driver.typeInRename("memo.txt")
+        driver.key(Key.Enter)
+        assertEquals(listOf("rename notes.txt memo.txt"), files.mutations)
+    }
+
+    @Test
+    fun `the snackbar sits above the selection bar`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        b.move(listOf("notes.txt"), "/sdcard/Documents")
+        scheduler.advanceUntilIdle()
+        driver.frames(30)
+        driver.press(driver.text("a.jpg"))
+        val snack = driver.text("Moved notes.txt to Documents").boundsInRoot
+        val bar = driver.text("1 selected").boundsInRoot
+        assertTrue(snack.bottom <= bar.top, "snackbar $snack over the bar $bar")
+    }
+
+    @Test
+    fun `Backspace in the rename field edits it, no delete dialog`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.press(driver.text("notes.txt"))
+        driver.key(Key.F2)
+        driver.key(Key.Backspace)
+        assertNull(b.dialog)
+        assertEquals("notes.txt", b.renaming)
+    }
+
+    @Test
+    fun `Backspace in the filter edits it, no delete dialog`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.press(driver.text("notes.txt"))
+        driver.press(driver.described("Filter this folder"))
+        driver.key(Key.Backspace)
+        assertNull(b.dialog)
+        assertEquals(setOf("notes.txt"), b.selection.names)
+    }
+
+    @Test
+    fun `the delete dialog marks folders`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.press(driver.text("notes.txt"))
+        b.toggle("Telegram")
+        driver.key(Key.Delete)
+        val texts = driver.texts()
+        assertTrue("Telegram/" in texts, "$texts")
+        assertTrue("Folders are deleted with everything inside." in texts)
     }
 }

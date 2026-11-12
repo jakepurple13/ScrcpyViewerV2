@@ -101,7 +101,8 @@ fun folderLabel(dir: String): String {
 /**
  * State of one mirror window's Files tab: the open folder, its listing, selection, sort and filter, and the
  * operations on it. Device commands go through [files]; pulls, pushes and installs through [enqueue] (the window's
- * transfer queue). Every operation is a no-op while [connected] is false.
+ * transfer queue). Every operation is a no-op while [connected] is false. Results go to [snack] for the tab's
+ * snackbar; [notify] also hears each one (tests record them there; the app passes nothing).
  */
 @Stable
 class FilesBrowser(
@@ -112,7 +113,7 @@ class FilesBrowser(
     private val settings: AppSettings,
     startDir: String,
     private val scope: CoroutineScope,
-    private val notify: (Snack) -> Unit,
+    private val notify: (Snack) -> Unit = {},
     private val enqueue: (List<TransferRequest>) -> List<Long> = { transfers.queue?.enqueue(it) ?: emptyList() },
     jobs: Flow<List<TransferJob>> = transfers.queue?.jobs ?: emptyFlow(),
     private val now: () -> Long = System::currentTimeMillis,
@@ -726,8 +727,6 @@ fun rememberFilesBrowser(
                 serial,
                 DeviceFiles(ShellRunner(it, serial)) { path -> session.send(ControlMessage.ScanFile(path)) },
                 transfers, memory, settings, transfers.pushTarget, scope,
-                // Results show in the tab's own snackbar (FilesBrowser.snack), with their action.
-                notify = {},
             )
         }
     } ?: return null

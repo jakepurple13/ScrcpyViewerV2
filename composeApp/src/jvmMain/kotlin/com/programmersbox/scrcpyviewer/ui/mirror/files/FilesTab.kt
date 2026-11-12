@@ -16,13 +16,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
@@ -39,10 +34,6 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
-import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
-import com.programmersbox.scrcpyviewer.ui.theme.TextButton
-import kotlinx.coroutines.delay
 import java.awt.datatransfer.StringSelection
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -153,11 +144,6 @@ private val CRUMB_SHIFT = 10.dp
 private const val SPIN_MILLIS = 500
 private const val SORT_MILLIS = 300
 
-/** The snackbar rises this far as it shows, and stays this long (longer with an action). */
-private val SNACK_RISE = 16.dp
-private const val SNACK_MILLIS = 4_000L
-private const val SNACK_ACTION_MILLIS = 8_000L
-
 /** The list while the session is down. */
 private const val DISCONNECTED_ALPHA = 0.38f
 
@@ -253,17 +239,31 @@ fun FilesTab(
                 }
             },
     ) {
+        // A press above the list (toolbar, filter, header) during a rename moves focus off the field first, so its
+        // blur commits the name before the button acts.
+        val commitOnPress = Modifier.pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    if (event.type == PointerEventType.Press && event.buttons.isPrimaryPressed && browser.renaming != null) {
+                        runCatching { listFocus.requestFocus() }
+                    }
+                }
+            }
+        }
         Column(Modifier.fillMaxSize()) {
-            Toolbar(browser, motion, onPushFiles, onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) })
-            FilterRow(
-                browser, motion,
-                onFocus = { filterFocused = it },
-                onDown = {
-                    if (browser.selection.names.isEmpty()) browser.moveSelection(1, extend = false)
-                    runCatching { listFocus.requestFocus() }
-                },
-            )
-            ColumnHeader(browser, motion)
+            Column(commitOnPress) {
+                Toolbar(browser, motion, onPushFiles, onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) })
+                FilterRow(
+                    browser, motion,
+                    onFocus = { filterFocused = it },
+                    onDown = {
+                        if (browser.selection.names.isEmpty()) browser.moveSelection(1, extend = false)
+                        runCatching { listFocus.requestFocus() }
+                    },
+                )
+                ColumnHeader(browser, motion)
+            }
             HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
             // Fully qualified: the Column's ColumnScope.AnimatedVisibility would otherwise win.
             androidx.compose.animation.AnimatedVisibility(
@@ -287,8 +287,9 @@ fun FilesTab(
                                 if (event.type != PointerEventType.Press || event.changes.any { it.isConsumed }) continue
                                 if (event.buttons.isSecondaryPressed) {
                                     menu = FilesMenu.Space(pointer[0])
-                                } else if (event.buttons.isPrimaryPressed && browser.renaming == null) {
-                                    browser.clearSelection()
+                                } else if (event.buttons.isPrimaryPressed) {
+                                    // During a rename the click only takes focus: the field's blur commits it.
+                                    if (browser.renaming == null) browser.clearSelection()
                                     runCatching { listFocus.requestFocus() }
                                 }
                             }
@@ -323,60 +324,6 @@ fun FilesTab(
         FilesSnackbar(browser, motion, Modifier.align(Alignment.BottomCenter))
         FilesDialogHost(browser, motion)
         FilesMenuHost(menu, browser, actions, isMac, motion, onDismiss = { menu = null })
-    }
-}
-
-/** The browser's latest result, rising 16 dp and fading in; its action (such as Open) runs from the button. */
-@Composable
-private fun FilesSnackbar(browser: FilesBrowser, motion: Boolean, modifier: Modifier) {
-    val colors = MaterialTheme.colorScheme
-    val snack = browser.snack
-    // The last snack, so it keeps its text while it leaves. A plain holder.
-    val kept = remember { arrayOfNulls<Snack>(1) }
-    if (snack != null) kept[0] = snack
-    LaunchedEffect(snack) {
-        if (snack == null) return@LaunchedEffect
-        delay(if (snack.actionLabel != null) SNACK_ACTION_MILLIS else SNACK_MILLIS)
-        browser.dismissSnack(snack)
-    }
-    val rise = with(LocalDensity.current) { SNACK_RISE.roundToPx() }
-    androidx.compose.animation.AnimatedVisibility(
-        snack != null,
-        modifier = modifier,
-        enter = if (motion) {
-            slideInVertically(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) { rise } + fadeIn(tween(OPEN_MILLIS))
-        } else {
-            EnterTransition.None
-        },
-        exit = if (motion) {
-            slideOutVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { rise } + fadeOut(tween(CLOSE_MILLIS))
-        } else {
-            ExitTransition.None
-        },
-    ) {
-        val shown = kept[0] ?: return@AnimatedVisibility
-        Surface(
-            Modifier.fillMaxWidth().padding(10.dp),
-            shape = styledCorner(10.dp),
-            color = colors.inverseSurface,
-            contentColor = colors.inverseOnSurface,
-            shadowElevation = 6.dp,
-        ) {
-            Row(Modifier.heightIn(min = 44.dp).padding(start = 14.dp, end = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(shown.message, Modifier.weight(1f).padding(vertical = 8.dp), fontSize = 13.sp)
-                val label = shown.actionLabel
-                val action = shown.action
-                if (label != null && action != null) {
-                    TextButton(
-                        onClick = {
-                            browser.dismissSnack(shown)
-                            action()
-                        },
-                        colors = ButtonDefaults.textButtonColors(contentColor = colors.inversePrimary),
-                    ) { Text(label) }
-                }
-            }
-        }
     }
 }
 

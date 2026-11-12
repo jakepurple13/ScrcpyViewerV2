@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.theme.Button
@@ -119,7 +120,10 @@ internal fun FilesDialogHost(browser: FilesBrowser, motion: Boolean) {
 private fun DeleteDialog(browser: FilesBrowser, dialog: FilesDialog.Delete) {
     val colors = MaterialTheme.colorScheme
     val names = dialog.names
-    val dirs = remember(dialog) { browser.visible.filter { it.isDir }.mapTo(HashSet()) { it.name } }
+    // From the whole listing, not the visible rows: a selected folder the filter now hides keeps its "/".
+    val dirs = remember(dialog) {
+        (browser.listing as? Listing.Entries)?.entries.orEmpty().filter { it.isDir }.mapTo(HashSet()) { it.name }
+    }
     val title = if (names.size == 1) "Delete “${names.single()}”?" else "Delete ${names.size} items?"
     DialogCard(
         title,
