@@ -1,12 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -17,7 +11,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.itemSwitchTransform
 import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
+import com.programmersbox.scrcpyviewer.ui.common.switchDirection
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
@@ -104,15 +101,14 @@ fun SettingsContent(
         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         val bindings = SettingsBindings(state, updates, actions)
         // Keyed by category, so filtering rows while typing updates in place instead of re-animating.
+        val reduceMotion = LocalReduceMotion.current
         AnimatedContent(
             targetState = match,
             contentKey = { it?.category?.id },
             transitionSpec = {
                 val from = categories.indexOfFirst { it.id == initialState?.category?.id }
                 val to = categories.indexOfFirst { it.id == targetState?.category?.id }
-                val direction = if (to >= from) 1 else -1
-                (fadeIn(tween(220, delayMillis = 60)) + slideInVertically(tween(220)) { direction * it / 12 })
-                    .togetherWith(fadeOut(tween(120)) + slideOutVertically(tween(120)) { -direction * it / 24 })
+                itemSwitchTransform(switchDirection(from, to), reduceMotion)
             },
             modifier = Modifier.weight(1f),
             label = "settingsCategory",

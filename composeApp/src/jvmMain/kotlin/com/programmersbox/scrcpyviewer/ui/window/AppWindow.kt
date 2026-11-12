@@ -35,6 +35,8 @@ import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.AppIcon
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.common.ProvideAppClipboard
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.LocalStyleTokens
 import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
@@ -121,7 +123,10 @@ fun NucleusApplicationScope.AppWindow(
         ) {
             // Tao windows run their own Compose scene: the theme, the reveal origin and the clipboard are provided
             // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).
-            CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
+            CompositionLocalProvider(
+                LocalThemeRevealOrigin provides reveal.origin,
+                LocalReduceMotion provides remember { systemReducesMotion() },
+            ) {
                 ProvideAppClipboard {
                     ScrcpyViewerTheme(shown) {
                         // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).

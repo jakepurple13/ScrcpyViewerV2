@@ -31,12 +31,8 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import com.programmersbox.scrcpyviewer.Os
-import com.programmersbox.scrcpyviewer.ui.window.ObjC
 import com.programmersbox.scrcpyviewer.ui.window.animateMacFrame
 import kotlinx.coroutines.delay
-import com.sun.jna.Function
-import com.sun.jna.ptr.IntByReference
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
@@ -269,24 +265,4 @@ private fun StandbyLine() {
             strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round,
         )
     }
-}
-
-/** Whether the OS asks for less motion: Reduce motion on macOS, animations off on Windows. False when unknown. */
-fun systemReducesMotion(): Boolean = try {
-    when {
-        Os.isMac -> {
-            val workspace = ObjC.msgPtr(ObjC.cls("NSWorkspace"), "sharedWorkspace")
-            workspace != null && ObjC.msgBool(workspace, "accessibilityDisplayShouldReduceMotion")
-        }
-        Os.isWindows -> {
-            val on = IntByReference(1)
-            val spiGetClientAreaAnimation = 0x1042
-            val ok = Function.getFunction("user32", "SystemParametersInfoW")
-                .invokeInt(arrayOf(spiGetClientAreaAnimation, 0, on.pointer, 0)) != 0
-            ok && on.value == 0
-        }
-        else -> false
-    }
-} catch (_: Throwable) {
-    false
 }
