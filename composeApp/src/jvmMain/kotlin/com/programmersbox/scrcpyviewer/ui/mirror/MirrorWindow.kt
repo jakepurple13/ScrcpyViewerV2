@@ -660,9 +660,6 @@ fun MirrorWindow(
             onDispose { sheetFocus.onGained = {} }
         }
 
-        // Drops anywhere on the window install / push (COPY only, see FileDropTarget).
-        FileDropTarget(awtWindow, transfers)
-
         val density = LocalDensity.current
 
         var stage by remember { mutableStateOf(IntSize.Zero) }
@@ -852,7 +849,8 @@ fun MirrorWindow(
         val frame = session.frames.collectAsStateWithLifecycle()
 
         ScrcpyViewerTheme {
-            Box(Modifier.fillMaxSize()) {
+            // Drops anywhere on the window install / push (COPY only, see fileDropTarget).
+            Box(Modifier.fillMaxSize().fileDropTarget(transfers)) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     CompositionLocalProvider(
                         LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus, LocalMirrorWindowHandle provides handle,

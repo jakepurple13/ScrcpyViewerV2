@@ -1,5 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTransferAction
+import androidx.compose.ui.draganddrop.DragData
+import androidx.compose.ui.geometry.Offset
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.files.FileTransferQueue
 import com.programmersbox.scrcpyviewer.files.TransferKind
@@ -19,8 +24,18 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlin.io.path.createTempDirectory
 
+@OptIn(ExperimentalComposeUiApi::class)
 class FileDropTest {
+    /** A drag event with no native (AWT) event behind it, as a fake. */
+    private fun fakeEvent(action: DragAndDropTransferAction? = DragAndDropTransferAction.Copy) =
+        DragAndDropEvent(action, null, Offset.Zero)
+
+    private fun filesOf(vararg paths: Path): DragData = object : DragData.FilesList {
+        override fun readFiles() = paths.map { it.toUri().toString() }
+    }
+
     private val noDirs: (Path) -> Boolean = { false }
     private fun hint(vararg names: String, connected: Boolean = true, target: String = "/sdcard/Download/") =
         dropHint(names.map { Paths.get("/x", it) }, target, connected, noDirs)
@@ -102,5 +117,93 @@ class FileDropTest {
     fun `transfer actions send no control messages`() {
         assertEquals(emptyList(), MirrorAction.InstallApk.messages())
         assertEquals(emptyList(), MirrorAction.PushFile.messages())
+    }
+
+    @Test
+    fun paths_fromDropEvent_extracted() {
+        val a = Paths.get("/x/a.apk")
+        val b = Paths.get("/x/b c.jpg") // URI-escaped by the platform
+        assertEquals(listOf(a, b), dropPaths(fakeEvent()) { filesOf(a, b) })
+        assertEquals(emptyList(), dropPaths(fakeEvent()) { filesOf() })
+        val text = object : DragData.Text {
+            override val bestMimeType = "text/plain"
+            override fun readText() = "hello"
+        }
+        assertNull(dropPaths(fakeEvent()) { text }, "not files")
+        assertNull(dropPaths(fakeEvent()) { error("cannot read yet") }, "unreadable")
+        assertNull(dropPaths(fakeEvent()), "no AWT event behind it")
+    }
+
+    @Test
+    fun noFiles_or_dirsOnly_disconnected_hintOnly_noTransfer() {
+        val dir = createTempDirectory("drop")
+        val messages = mutableListOf<String>()
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        try {
+            var asked = 0 // the queue asks on every enqueue: a transfer was started
+            val queue = FileTransferQueue("SER", AdbClient({ Paths.get("adb") }), "/sdcard/Download/", { asked++; true }, {}, scope)
+            val transfers = FileTransfers(queue, "/sdcard/Download/") { messages += it }
+            transfers.connected = false
+            for (data in listOf(filesOf(), filesOf(dir), filesOf(dir, dir.resolve("..")))) {
+                val target = CopyOnlyFileDropTarget(transfers) { data }
+                val event = fakeEvent()
+                assertTrue(target.accepts(event), "a file list is a drop target")
+                target.onStarted(event)
+                target.onEntered(event)
+                assertEquals("Device not connected", transfers.hint?.label)
+                assertFalse(transfers.hint!!.allowed)
+                assertFalse(target.onDrop(event), "no transfer while disconnected")
+                assertNull(transfers.hint, "the overlay goes once dropped")
+                target.onEnded(event)
+            }
+            assertEquals(0, asked)
+            assertEquals(emptyList(), messages)
+
+            // Connected, zero files: still nothing to queue.
+            transfers.connected = true
+            val target = CopyOnlyFileDropTarget(transfers) { filesOf() }
+            target.onEntered(fakeEvent())
+            assertEquals("Drop to install APKs or push files to /sdcard/Download/", transfers.hint?.label)
+            assertFalse(target.onDrop(fakeEvent()))
+            assertEquals(0, asked)
+        } finally {
+            scope.cancel()
+            dir.toFile().delete()
+        }
+    }
+
+    @Test
+    fun `drag without files is not a drop target, and exit clears the overlay`() {
+        val transfers = FileTransfers(queue = null, pushTarget = "/sdcard/Download/") {}
+        val text = object : DragData.Text {
+            override val bestMimeType = "text/plain"
+            override fun readText() = "hello"
+        }
+        assertFalse(CopyOnlyFileDropTarget(transfers) { text }.accepts(fakeEvent()))
+        val target = CopyOnlyFileDropTarget(transfers) { filesOf(Paths.get("/x/a.apk")) }
+        target.onEntered(fakeEvent())
+        assertEquals(listOf(Paths.get("/x/a.apk")), transfers.dragPaths)
+        target.onExited(fakeEvent())
+        assertNull(transfers.hint)
+        assertNull(transfers.dragPaths)
+    }
+
+    @Test
+    fun `a move-only source is refused at the drop`() {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        try {
+            var asked = 0
+            val queue = FileTransferQueue("SER", AdbClient({ Paths.get("adb") }), "/sdcard/Download/", { asked++; false }, {}, scope)
+            val transfers = FileTransfers(queue, "/sdcard/Download/") {}
+            val target = CopyOnlyFileDropTarget(transfers) { filesOf(Paths.get("/x/a.apk")) }
+            // No AWT event: the source's actions are unknown, and only a Copy action counts as copyable.
+            assertFalse(target.onDrop(fakeEvent(DragAndDropTransferAction.Move)))
+            assertEquals(0, asked)
+            // Copy reaches the queue (which refuses: the fake device is gone).
+            assertFalse(target.onDrop(fakeEvent(DragAndDropTransferAction.Copy)))
+            assertEquals(1, asked)
+        } finally {
+            scope.cancel()
+        }
     }
 }
