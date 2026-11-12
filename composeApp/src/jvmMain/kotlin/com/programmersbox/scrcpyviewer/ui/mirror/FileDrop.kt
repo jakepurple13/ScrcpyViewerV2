@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.files.FileTransferQueue
+import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import com.programmersbox.scrcpyviewer.files.pushTarget
 import com.programmersbox.scrcpyviewer.files.requestsFor
@@ -128,8 +129,15 @@ class FileTransfers internal constructor(
             notify("adb is not available")
             return false
         }
-        return q.enqueuePaths(paths)
+        return q.enqueuePaths(paths).isNotEmpty()
     }
+
+    /** Mirror of the queue's jobs (newest last), for the transfer tray. */
+    var jobs by mutableStateOf<List<TransferJob>>(emptyList())
+        internal set
+
+    /** Jobs queued or running. */
+    val runningCount: Int get() = jobs.count { it.active }
 }
 
 /**
@@ -166,6 +174,7 @@ fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient
     LaunchedEffect(transfers) { session.status.collect { transfers.connected = it.isConnected() } }
     transfers.queue?.let { queue ->
         LaunchedEffect(queue) { queue.progress.collect { transfers.progressLabel = it?.label } }
+        LaunchedEffect(queue) { queue.jobs.collect { transfers.jobs = it } }
         LaunchedEffect(queue) { queue.results.collect { currentNotify(it.message) } }
     }
     return transfers

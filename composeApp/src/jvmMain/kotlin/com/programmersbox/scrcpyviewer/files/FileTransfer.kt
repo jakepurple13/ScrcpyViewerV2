@@ -4,17 +4,28 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
 /** `DEFAULT_PUSH_TARGET` in v5.0 `app/src/file_pusher.c`. */
 const val DEFAULT_PUSH_TARGET = "/sdcard/Download/"
@@ -22,11 +33,82 @@ const val DEFAULT_PUSH_TARGET = "/sdcard/Download/"
 /** Long enough for a multi-GB push over Wi-Fi; a hung adb still ends eventually. */
 const val TRANSFER_TIMEOUT_MS = 30 * 60 * 1000L
 
-enum class TransferKind { Install, Push }
+/** How often a pull samples the growing host file, and a push the device file (`stat`). */
+private const val PULL_POLL_MS = 250L
+private const val PUSH_POLL_MS = 500L
 
-data class TransferRequest(val path: Path, val kind: TransferKind) {
-    val name: String get() = path.fileName?.toString() ?: path.toString()
+/** How long to wait for adb's output once it exited (a daemon it forked may hold the pipe open). */
+private const val OUTPUT_GRACE_MS = 2_000L
+
+/**
+ * [Install] and [Push] take a host file; [Pull] copies a device file or folder to the host; [InstallFromDevice]
+ * pulls a device APK to a temp folder and installs it.
+ */
+enum class TransferKind { Install, Push, Pull, InstallFromDevice }
+
+/**
+ * One transfer. [path] is the host file (the source of a Push or Install) or, for a Pull, the host destination
+ * folder. [deviceDir] is the push target folder (null: the session's push target) or the folder a Pull /
+ * InstallFromDevice reads [deviceName] from; a Push names the device file [deviceName], else after the host file.
+ * [opensAfter] pulls into the temp "open" folder instead of [path] (Open on computer) and sets
+ * [TransferJob.hostResult]. [size] is the device file's size from the listing (a Pull's progress total; null when
+ * unknown) and [isDirectory] says the pulled device entry is a folder.
+ */
+data class TransferRequest(
+    val path: Path,
+    val kind: TransferKind,
+    val deviceDir: String? = null,
+    val deviceName: String? = null,
+    val opensAfter: Boolean = false,
+    val size: Long? = null,
+    val isDirectory: Boolean = false,
+) {
+    val name: String get() = deviceName ?: path.fileName?.toString() ?: path.toString()
 }
+
+sealed interface JobState {
+    data object Queued : JobState
+    data object Running : JobState
+    data object Done : JobState
+    data class Failed(val reason: String) : JobState
+    data object Cancelled : JobState
+}
+
+/**
+ * A request in the queue and how far it got: [bytes] of [total] (null: indeterminate, as for folders and installs)
+ * at [bytesPerSecond]. [hostResult] is the host file a Pull wrote.
+ */
+data class TransferJob(
+    val id: Long,
+    val request: TransferRequest,
+    val state: JobState,
+    val bytes: Long,
+    val total: Long?,
+    val bytesPerSecond: Long?,
+    val hostResult: Path? = null,
+) {
+    /** Queued or Running. */
+    val active: Boolean get() = state == JobState.Queued || state == JobState.Running
+}
+
+/**
+ * [dir]/[name], or the first free "name (n).ext" (n >= 1) when it exists: a pull never overwrites. A folder
+ * ([isDirectory]) gets " (n)" after its whole name.
+ */
+fun hostUniquePath(dir: Path, name: String, isDirectory: Boolean = false): Path {
+    fun free(n: String) = !Files.exists(dir.resolve(n), LinkOption.NOFOLLOW_LINKS)
+    if (free(name)) return dir.resolve(name)
+    val dot = if (isDirectory) -1 else name.lastIndexOf('.')
+    val base = if (dot > 0) name.substring(0, dot) else name
+    val ext = if (dot > 0) name.substring(dot) else ""
+    var n = 1
+    while (!free("$base ($n)$ext")) n++
+    return dir.resolve("$base ($n)$ext")
+}
+
+/** `<java.io.tmpdir>/scrcpy-vwr`: per serial, `install/` holds device APKs being installed, `open/` opened files. */
+fun defaultTransferTempRoot(): Path = Paths.get(System.getProperty("java.io.tmpdir"), "scrcpy-vwr")
+
 
 /**
  * `.apk` files are installed, everything else is pushed (`is_apk()` in v5.0 `input_manager.c`, which compares the
@@ -66,12 +148,19 @@ fun adbErrorLine(result: ProcessResult): String {
         ?: "adb exited with code ${result.exitCode}"
 }
 
+
+fun pullArgs(serial: String, source: String, target: Path): List<String> = listOf("-s", serial, "pull", source, target.toString())
+
 /** The item being transferred: [index] of [total] in the current batch (1-based). */
 data class TransferProgress(val request: TransferRequest, val index: Int, val total: Int) {
-    /** "Installing app.apk…" / "Pushing 2 of 3: photo.jpg…". */
+    /** "Installing app.apk…" / "Pushing 2 of 3: photo.jpg…" / "Pulling a.txt…". */
     val label: String
         get() {
-            val verb = if (request.kind == TransferKind.Install) "Installing" else "Pushing"
+            val verb = when (request.kind) {
+                TransferKind.Install, TransferKind.InstallFromDevice -> "Installing"
+                TransferKind.Push -> "Pushing"
+                TransferKind.Pull -> "Pulling"
+            }
             return if (total > 1) "$verb $index of $total: ${request.name}…" else "$verb ${request.name}…"
         }
 }
@@ -87,9 +176,18 @@ sealed interface TransferResult {
         override val message get() = "Pushed $name to $target"
     }
 
+    /** [name] (as written, after [hostUniquePath]) was pulled into the host folder [dir]. */
+    data class Pulled(val name: String, val dir: Path) : TransferResult {
+        override val message get() = "Pulled $name to ${dir.fileName}"
+    }
+
     data class Failed(val request: TransferRequest, val reason: String) : TransferResult {
         override val message
-            get() = (if (request.kind == TransferKind.Install) "Could not install " else "Could not push ") + "${request.name}: $reason"
+            get() = when (request.kind) {
+                TransferKind.Install, TransferKind.InstallFromDevice -> "Could not install "
+                TransferKind.Push -> "Could not push "
+                TransferKind.Pull -> "Could not pull "
+            } + "${request.name}: $reason"
     }
 
     /** Nothing was run: the device is not connected. */
@@ -102,9 +200,13 @@ sealed interface TransferResult {
 }
 
 /**
- * One device's install / push queue, as v5.0 `file_pusher.c`: requests run one at a time, in order, on [scope]
- * (the window's scope; cancelling it kills the running adb and drops the rest, like `sc_file_pusher_stop`).
- * After a successful push the device is asked to scan [pushTarget] for media ([scanFile], v5.0 `request_scan_file`).
+ * One device's transfer queue, as v5.0 `file_pusher.c`: requests run one at a time, in order, on [scope] (the
+ * window's scope; cancelling it kills the running adb and drops the rest, like `sc_file_pusher_stop`). After a
+ * successful push the device is asked to scan the target folder for media ([scanFile], v5.0 `request_scan_file`).
+ *
+ * Each request is a [TransferJob] in [jobs], kept after it ends until [dismiss]. [cancel] kills a running job's adb
+ * (and removes what it wrote) or drops a queued one. Pulls and device installs use temp folders under
+ * [tempRoot]/<serial>.
  *
  * [canTransfer] is false while the session is disconnected: requests are then refused instead of running adb
  * against a missing device (v5.0 ignores drops once `im->disconnected`).
@@ -115,13 +217,23 @@ class FileTransferQueue(
     private val pushTarget: String,
     private val canTransfer: () -> Boolean,
     private val scanFile: (String) -> Unit,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val timeoutMs: Long = TRANSFER_TIMEOUT_MS,
+    private val tempRoot: Path = defaultTransferTempRoot(),
 ) {
-    private val queue = Channel<TransferRequest>(Channel.UNLIMITED)
+    private val queue = Channel<Long>(Channel.UNLIMITED)
+
+    /** Guards every field below and every write of [_jobs]. */
     private val lock = Any()
+    private var nextId = 1L
     private var pending = 0
     private var doneInBatch = 0
+    private var runningId: Long? = null
+    private var runningProcess: Process? = null
+    private var cancelRequested = false
+
+    private val _jobs = MutableStateFlow<List<TransferJob>>(emptyList())
+    val jobs: StateFlow<List<TransferJob>> = _jobs.asStateFlow()
 
     private val _progress = MutableStateFlow<TransferProgress?>(null)
     val progress: StateFlow<TransferProgress?> = _progress.asStateFlow()
@@ -132,82 +244,368 @@ class FileTransferQueue(
     init {
         scope.launch {
             try {
-                for (request in queue) run(request)
+                for (id in queue) run(id)
             } finally {
                 _progress.value = null
+                // The window went away: nothing left will run.
+                synchronized(lock) {
+                    _jobs.value = _jobs.value.map { if (it.active) it.copy(state = JobState.Cancelled) else it }
+                }
             }
         }.invokeOnCompletion { queue.cancel() }
     }
 
-    /** Queues [requests]; false (and a [TransferResult.Refused]) when the device is not connected. */
-    fun enqueue(requests: List<TransferRequest>): Boolean {
-        if (requests.isEmpty()) return true
+    /** Queues [requests] and returns their job ids; empty (and a [TransferResult.Refused]) when the device is not connected. */
+    fun enqueue(requests: List<TransferRequest>): List<Long> {
+        if (requests.isEmpty()) return emptyList()
         if (!canTransfer()) {
+            val verbs = requests.map {
+                when (it.kind) {
+                    TransferKind.Install, TransferKind.InstallFromDevice -> "install"
+                    TransferKind.Push -> "push files"
+                    TransferKind.Pull -> "pull files"
+                }
+            }.distinct()
             val what = when {
-                requests.all { it.kind == TransferKind.Install } -> "install"
-                requests.all { it.kind == TransferKind.Push } -> "push files"
-                else -> "install or push files"
+                verbs.size == 1 -> verbs.single()
+                verbs.toSet() == setOf("install", "push files") -> "install or push files"
+                else -> "transfer files"
             }
             _results.tryEmit(TransferResult.Refused("Device not connected: cannot $what"))
-            return false
+            return emptyList()
         }
-        synchronized(lock) {
-            for (r in requests) {
-                if (queue.trySend(r).isSuccess) pending++
+        return synchronized(lock) {
+            requests.mapNotNull { r ->
+                val id = nextId++
+                if (!queue.trySend(id).isSuccess) return@mapNotNull null
+                pending++
+                _jobs.value += TransferJob(id, r, JobState.Queued, 0, r.size.takeIf { r.kind == TransferKind.Pull && !r.isDirectory }, null)
+                id
             }
         }
-        return true
     }
 
-    fun enqueuePaths(paths: List<Path>): Boolean = enqueue(requestsFor(paths))
+    fun enqueuePaths(paths: List<Path>): List<Long> = enqueue(requestsFor(paths))
 
-    private suspend fun run(request: TransferRequest) {
-        if (!canTransfer()) {
-            // The device went away: drop this one and everything queued behind it, reported once.
-            val dropped = synchronized(lock) {
-                var n = 1
-                while (queue.tryReceive().isSuccess) n++
+    /**
+     * Stops job [id]: a queued job is removed without running adb; a running one has its adb killed and what it wrote
+     * removed (the partial host file of a pull, `rm -f` of the partial device file of a push), then turns
+     * [JobState.Cancelled]. No-op once the job ended.
+     */
+    fun cancel(id: Long) {
+        val process = synchronized(lock) {
+            val job = _jobs.value.find { it.id == id } ?: return
+            when (job.state) {
+                JobState.Queued -> {
+                    _jobs.value = _jobs.value.filterNot { it.id == id }
+                    pending--
+                    null
+                }
+                JobState.Running -> if (runningId == id) {
+                    cancelRequested = true
+                    runningProcess
+                } else {
+                    null
+                }
+                else -> null
+            }
+        }
+        process?.destroyForcibly()
+    }
+
+    /** Forgets the ended job [id]; queued and running jobs stay. */
+    fun dismiss(id: Long) {
+        synchronized(lock) { _jobs.value = _jobs.value.filterNot { it.id == id && !it.active } }
+    }
+
+    /** Callers hold [lock]. */
+    private fun updateJob(id: Long, change: (TransferJob) -> TransferJob) {
+        _jobs.value = _jobs.value.map { if (it.id == id) change(it) else it }
+    }
+
+    private suspend fun run(id: Long) {
+        val connected = canTransfer()
+        val dropped: Int
+        val request: TransferRequest
+        val index: Int
+        val total: Int
+        synchronized(lock) {
+            // Gone when cancelled while queued.
+            val job = _jobs.value.find { it.id == id }?.takeIf { it.state == JobState.Queued } ?: return
+            if (!connected) {
+                // The device went away: drop this one and everything queued behind it, reported once.
+                val ids = mutableSetOf(id)
+                while (true) ids += queue.tryReceive().getOrNull() ?: break
+                var n = 0
+                _jobs.value = _jobs.value.map {
+                    if (it.id in ids && it.state == JobState.Queued) {
+                        n++
+                        it.copy(state = JobState.Cancelled)
+                    } else {
+                        it
+                    }
+                }
                 pending = 0
                 doneInBatch = 0
                 _progress.value = null
-                n
+                dropped = n
+                request = job.request
+                index = 0
+                total = 0
+            } else {
+                dropped = 0
+                pending--
+                doneInBatch++
+                runningId = id
+                runningProcess = null
+                cancelRequested = false
+                updateJob(id) { it.copy(state = JobState.Running) }
+                request = job.request
+                index = doneInBatch
+                total = doneInBatch + pending
             }
+        }
+        if (!connected) {
             _results.tryEmit(TransferResult.Cancelled(dropped))
             return
         }
-        val (index, total) = synchronized(lock) {
-            pending--
-            doneInBatch++
-            doneInBatch to doneInBatch + pending
-        }
         _progress.value = TransferProgress(request, index, total)
-        val result = try {
-            val args = when (request.kind) {
-                TransferKind.Install -> installArgs(serial, request.path)
-                TransferKind.Push -> pushArgs(serial, request.path, pushTarget)
-            }
-            val r = adb.execWithTimeout(timeoutMs, *args.toTypedArray())
-            when {
-                r == null -> TransferResult.Failed(request, "timed out after ${timeoutMs / 60_000} min")
-                // Old adb versions print "Failure [...]" and still exit 0.
-                r.exitCode != 0 || FAILURE.containsMatchIn(r.stdout) -> TransferResult.Failed(request, adbErrorLine(r))
-                request.kind == TransferKind.Install -> TransferResult.Installed(request.name)
-                else -> {
-                    runCatching { scanFile(pushTarget) }
-                    TransferResult.Pushed(request.name, pushTarget)
-                }
-            }
+        val outcome = try {
+            execute(id, request)
         } catch (e: CancellationException) {
+            synchronized(lock) { finish(id) { it.copy(state = JobState.Cancelled) } }
             throw e
+        } catch (e: UserCancelled) {
+            Outcome(null, state = JobState.Cancelled)
         } catch (e: Exception) {
-            TransferResult.Failed(request, e.message ?: e.toString())
+            TransferResult.Failed(request, e.message ?: e.toString()).let { Outcome(it, JobState.Failed(it.reason)) }
         }
-        _results.tryEmit(result)
+        synchronized(lock) {
+            finish(id) { job ->
+                job.copy(
+                    state = outcome.state,
+                    bytes = outcome.bytes ?: job.bytes,
+                    hostResult = outcome.hostResult ?: job.hostResult,
+                    bytesPerSecond = if (outcome.state == JobState.Done) null else job.bytesPerSecond,
+                )
+            }
+        }
+        outcome.result?.let { _results.tryEmit(it) }
         synchronized(lock) {
             if (pending == 0) {
                 doneInBatch = 0
                 _progress.value = null
             }
+        }
+    }
+
+    /** Ends the running job [id] with [change]. Callers hold [lock]. */
+    private fun finish(id: Long, change: (TransferJob) -> TransferJob) {
+        updateJob(id, change)
+        if (runningId == id) {
+            runningId = null
+            runningProcess = null
+            cancelRequested = false
+        }
+    }
+
+    /** How a job ended: its new [state], the [result] to report (none for a cancel or an open), the final [bytes]. */
+    private data class Outcome(
+        val result: TransferResult?,
+        val state: JobState,
+        val bytes: Long? = null,
+        val hostResult: Path? = null,
+    )
+
+    /** Thrown when [cancel] stopped the running job. */
+    private class UserCancelled : Exception()
+
+    private fun failed(request: TransferRequest, reason: String) =
+        TransferResult.Failed(request, reason).let { Outcome(it, JobState.Failed(reason)) }
+
+    private fun timedOut() = "timed out after ${timeoutMs / 60_000} min"
+
+    /** adb's error line, or null when [r] succeeded. Old adb versions print "Failure [...]" and still exit 0. */
+    private fun failureOf(r: ProcessResult): String? =
+        if (r.exitCode != 0 || FAILURE.containsMatchIn(r.stdout)) adbErrorLine(r) else null
+
+    private suspend fun execute(id: Long, request: TransferRequest): Outcome = when (request.kind) {
+        TransferKind.Install -> install(request, request.path)
+        TransferKind.Push -> push(id, request)
+        TransferKind.Pull -> {
+            val dir = if (request.opensAfter) tempRoot.resolve(serial).resolve("open") else request.path
+            when (val pulled = pull(id, request, dir)) {
+                is Pulled.Failed -> failed(request, pulled.reason)
+                // Open on computer reports nothing: the caller opens [hostResult].
+                is Pulled.Ok -> Outcome(
+                    if (request.opensAfter) null else TransferResult.Pulled(pulled.target.fileName.toString(), dir),
+                    JobState.Done, pulled.bytes, pulled.target,
+                )
+            }
+        }
+        TransferKind.InstallFromDevice -> {
+            val dir = tempRoot.resolve(serial).resolve("install")
+            when (val pulled = pull(id, request.copy(isDirectory = false), dir)) {
+                is Pulled.Failed -> failed(request, pulled.reason)
+                is Pulled.Ok -> try {
+                    checkCancelled()
+                    install(request, pulled.target)
+                } finally {
+                    Files.deleteIfExists(pulled.target)
+                }
+            }
+        }
+    }
+
+    private suspend fun install(request: TransferRequest, apk: Path): Outcome {
+        val r = runAdb(installArgs(serial, apk)) ?: return failed(request, timedOut())
+        failureOf(r)?.let { return failed(request, it) }
+        return Outcome(TransferResult.Installed(request.name), JobState.Done)
+    }
+
+    private suspend fun push(id: Long, request: TransferRequest): Outcome {
+        val dir = request.deviceDir ?: pushTarget
+        val name = request.deviceName ?: request.path.fileName?.toString() ?: request.path.toString()
+        // Without a folder the target stays the session's push target, as v5.0 passes it to `adb push`.
+        val target = request.deviceDir?.let { devicePath(it, name) } ?: pushTarget
+        val deviceFile = devicePath(dir, name)
+        val size = if (Files.isRegularFile(request.path)) runCatching { Files.size(request.path) }.getOrNull() else null
+        synchronized(lock) { updateJob(id) { it.copy(total = size) } }
+        // A folder push merges into what is there: nothing of it is removed on a cancel.
+        val removePartial: suspend () -> Unit = {
+            if (size != null) runCatching { adb.shell(serial, "rm -f ${shellQuote(deviceFile)}") }
+        }
+        val sample: (suspend () -> Long?)? = size?.let {
+            { adb.shell(serial, "stat -c %s ${shellQuote(deviceFile)}").trim().toLongOrNull() }
+        }
+        val r = try {
+            withProgress(id, PUSH_POLL_MS, sample) { runAdb(pushArgs(serial, request.path, target)) }
+        } catch (e: UserCancelled) {
+            removePartial()
+            throw e
+        }
+        if (r == null) {
+            removePartial()
+            return failed(request, timedOut())
+        }
+        failureOf(r)?.let { return failed(request, it) }
+        runCatching { scanFile(dir) }
+        return Outcome(TransferResult.Pushed(request.name, dir), JobState.Done, bytes = size)
+    }
+
+    private sealed interface Pulled {
+        data class Ok(val target: Path, val bytes: Long) : Pulled
+        data class Failed(val reason: String) : Pulled
+    }
+
+    /**
+     * Pulls the device entry of [request] into [hostDir] under a [hostUniquePath] name. Whatever this pull wrote is
+     * deleted unless it succeeded (failure, timeout, cancel, or the window closing); nothing that existed before is.
+     */
+    private suspend fun pull(id: Long, request: TransferRequest, hostDir: Path): Pulled {
+        val deviceDir = request.deviceDir ?: return Pulled.Failed("no device folder")
+        val name = request.deviceName ?: return Pulled.Failed("no device file")
+        Files.createDirectories(hostDir)
+        val target = hostUniquePath(hostDir, name, request.isDirectory)
+        synchronized(lock) { updateJob(id) { it.copy(total = if (request.isDirectory) null else request.size) } }
+        var keep = false
+        try {
+            val r = withProgress(id, PULL_POLL_MS, { hostSize(target) }) {
+                runAdb(pullArgs(serial, devicePath(deviceDir, name), target))
+            } ?: return Pulled.Failed(timedOut())
+            failureOf(r)?.let { return Pulled.Failed(it) }
+            keep = true
+            return Pulled.Ok(target, hostSize(target))
+        } finally {
+            if (!keep) runCatching { deleteRecursively(target) }
+        }
+    }
+
+    /** Bytes under [path]: a file's size, or a folder's files summed. */
+    private fun hostSize(path: Path): Long = runCatching {
+        if (!Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) return@runCatching Files.size(path)
+        Files.walk(path).use { s ->
+            s.filter { Files.isRegularFile(it, LinkOption.NOFOLLOW_LINKS) }
+                .mapToLong { runCatching { Files.size(it) }.getOrDefault(0L) }
+                .sum()
+        }
+    }.getOrDefault(0L)
+
+    private fun deleteRecursively(path: Path) {
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return
+        if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            Files.walk(path).use { s -> s.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }
+        } else {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    private fun checkCancelled() {
+        if (synchronized(lock) { cancelRequested }) throw UserCancelled()
+    }
+
+    /**
+     * Runs [block] while a poller on [scope] samples the job's bytes every [intervalMs] ([sample] null: no progress).
+     * The poller is cancelled when [block] ends and never writes after that.
+     */
+    private suspend fun <T> withProgress(id: Long, intervalMs: Long, sample: (suspend () -> Long?)?, block: suspend () -> T): T {
+        val started = System.nanoTime()
+        val poller = sample?.let {
+            scope.launch {
+                while (true) {
+                    delay(intervalMs)
+                    val bytes = try {
+                        it()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        null
+                    } ?: continue
+                    ensureActive()
+                    val elapsedMs = ((System.nanoTime() - started) / 1_000_000).coerceAtLeast(1)
+                    synchronized(lock) {
+                        if (!isActive || runningId != id) return@synchronized
+                        updateJob(id) {
+                            if (it.state == JobState.Running) it.copy(bytes = bytes, bytesPerSecond = bytes * 1000 / elapsedMs) else it
+                        }
+                    }
+                }
+            }
+        }
+        try {
+            return block()
+        } finally {
+            poller?.cancel()
+        }
+    }
+
+    /**
+     * Runs adb with [args] as a process [cancel] can kill. Null when it timed out (the process is then destroyed);
+     * throws [UserCancelled] when [cancel] stopped it. stderr comes merged into [ProcessResult.stdout].
+     */
+    private suspend fun runAdb(args: List<String>): ProcessResult? {
+        val process = synchronized(lock) {
+            if (cancelRequested) throw UserCancelled()
+            adb.startProcess(*args.toTypedArray()).also { runningProcess = it }
+        }
+        try {
+            // A plain thread: a blocking read ignores coroutine cancellation, and destroying the process ends it.
+            val output = CompletableDeferred<ByteArray>()
+            thread(isDaemon = true, name = "adb-transfer-output") {
+                output.complete(runCatching { process.inputStream.readBytes() }.getOrDefault(ByteArray(0)))
+            }
+            val exit = withTimeoutOrNull(timeoutMs) { runInterruptible(Dispatchers.IO) { process.waitFor() } }
+            checkCancelled()
+            if (exit == null) return null
+            val out = withTimeoutOrNull(OUTPUT_GRACE_MS) { output.await() } ?: ByteArray(0)
+            return ProcessResult(exit, String(out, Charsets.UTF_8), "")
+        } finally {
+            if (process.isAlive) {
+                process.destroyForcibly()
+                // Let it die before the caller removes what it wrote.
+                runCatching { process.waitFor(1, TimeUnit.SECONDS) }
+            }
+            synchronized(lock) { if (runningProcess === process) runningProcess = null }
         }
     }
 }

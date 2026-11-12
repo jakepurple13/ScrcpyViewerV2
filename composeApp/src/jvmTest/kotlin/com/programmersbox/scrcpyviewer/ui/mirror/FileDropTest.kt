@@ -98,6 +98,23 @@ class FileDropTest {
     }
 
     @Test
+    fun `running count covers queued and running jobs`() {
+        val transfers = FileTransfers(queue = null, pushTarget = "/sdcard/Download/") {}
+        assertEquals(0, transfers.runningCount)
+        val request = com.programmersbox.scrcpyviewer.files.TransferRequest(Paths.get("/x/a.jpg"), TransferKind.Push)
+        fun job(id: Long, state: com.programmersbox.scrcpyviewer.files.JobState) =
+            com.programmersbox.scrcpyviewer.files.TransferJob(id, request, state, 0, null, null)
+        transfers.jobs = listOf(
+            job(1, com.programmersbox.scrcpyviewer.files.JobState.Running),
+            job(2, com.programmersbox.scrcpyviewer.files.JobState.Queued),
+            job(3, com.programmersbox.scrcpyviewer.files.JobState.Done),
+            job(4, com.programmersbox.scrcpyviewer.files.JobState.Failed("x")),
+            job(5, com.programmersbox.scrcpyviewer.files.JobState.Cancelled),
+        )
+        assertEquals(2, transfers.runningCount)
+    }
+
+    @Test
     fun `transfer actions send no control messages`() {
         assertEquals(emptyList(), MirrorAction.InstallApk.messages())
         assertEquals(emptyList(), MirrorAction.PushFile.messages())

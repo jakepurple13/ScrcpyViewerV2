@@ -16,6 +16,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.launch
 import java.nio.file.Paths
 import java.util.Collections
 import kotlin.test.AfterTest
@@ -27,15 +28,94 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FileTransferTest {
-    /** Records every adb call; [handler] answers it (it may suspend). */
+    /**
+     * A [Process] whose run is [block] on a coroutine: it exits with the block's exit code once the block returns, and
+     * [destroy] exits it with 137 and cancels the block (its `finally` runs). Output is the block's stdout + stderr,
+     * readable once it exits. No real process is started.
+     */
+    class FakeProcess(scope: CoroutineScope, block: suspend () -> ProcessResult) : Process() {
+        private val exited = java.util.concurrent.CountDownLatch(1)
+        @Volatile private var exit = 0
+        @Volatile private var output = ByteArray(0)
+        @Volatile var destroyed = false
+            private set
+        private val job = scope.launch {
+            val r = try {
+                block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                ProcessResult(137, "", "")
+            }
+            finish(r.exitCode, (r.stdout + r.stderr).toByteArray())
+        }
+
+        @Synchronized
+        private fun finish(code: Int, out: ByteArray) {
+            if (exited.count == 0L) return
+            exit = code
+            output = out
+            exited.countDown()
+        }
+
+        override fun getOutputStream(): java.io.OutputStream = java.io.OutputStream.nullOutputStream()
+        override fun getErrorStream(): java.io.InputStream = java.io.InputStream.nullInputStream()
+        override fun getInputStream(): java.io.InputStream = object : java.io.InputStream() {
+            private var bytes: java.io.InputStream? = null
+            private fun open(): java.io.InputStream {
+                bytes?.let { return it }
+                exited.await()
+                return java.io.ByteArrayInputStream(output).also { bytes = it }
+            }
+            override fun read(): Int = open().read()
+            override fun read(b: ByteArray, off: Int, len: Int): Int = open().read(b, off, len)
+        }
+
+        override fun waitFor(): Int {
+            exited.await()
+            return exit
+        }
+
+        override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean = exited.await(timeout, unit)
+
+        override fun exitValue(): Int {
+            if (exited.count != 0L) throw IllegalThreadStateException("running")
+            return exit
+        }
+
+        override fun isAlive(): Boolean = exited.count != 0L
+
+        override fun destroy() {
+            destroyed = true
+            finish(137, ByteArray(0))
+            job.cancel()
+        }
+    }
+
+    /**
+     * Records every adb call; [handler] answers it (it may suspend). [startProcess] runs [handler] in a [FakeProcess];
+     * [shell] answers through [shellHandler] and is recorded in [shellCalls].
+     */
     private class FakeAdb(
+        val shellHandler: suspend (String) -> String = { "" },
         val handler: suspend (List<String>) -> ProcessResult = { ProcessResult(0, "", "") },
     ) : AdbClient({ Paths.get("adb") }) {
         val calls: MutableList<List<String>> = Collections.synchronizedList(mutableListOf())
+        val shellCalls: MutableList<String> = Collections.synchronizedList(mutableListOf())
+        val processes: MutableList<FakeProcess> = Collections.synchronizedList(mutableListOf())
+        private val processScope = CoroutineScope(Job() + Dispatchers.Default)
 
         override suspend fun exec(vararg args: String): ProcessResult {
             calls += args.toList()
             return handler(args.toList())
+        }
+
+        override fun startProcess(vararg args: String): Process {
+            calls += args.toList()
+            return FakeProcess(processScope) { handler(args.toList()) }.also { processes += it }
+        }
+
+        override suspend fun shell(serial: String, cmd: String): String {
+            shellCalls += cmd
+            return shellHandler(cmd)
         }
     }
 
@@ -45,8 +125,15 @@ class FileTransferTest {
     @AfterTest
     fun tearDown() = scope.cancel()
 
+    private val tmp = kotlin.io.path.createTempDirectory("transfers")
+
+    @AfterTest
+    fun deleteTemp() {
+        tmp.toFile().deleteRecursively()
+    }
+
     private fun queue(adb: AdbClient, connected: () -> Boolean = { true }, target: String = DEFAULT_PUSH_TARGET, timeoutMs: Long = 5_000) =
-        FileTransferQueue("SER", adb, target, connected, { scans += it }, scope, timeoutMs)
+        FileTransferQueue("SER", adb, target, connected, { scans += it }, scope, timeoutMs, tempRoot = tmp.resolve("scrcpy-vwr"))
 
     private val noDirs: (java.nio.file.Path) -> Boolean = { false }
 
@@ -121,7 +208,7 @@ class FileTransferTest {
         }
         val q = queue(adb, target = "/sdcard/Pictures/")
         val results = async(start = CoroutineStart.UNDISPATCHED) { q.results.take(3).toList() }
-        assertTrue(q.enqueue(requestsFor(listOf(Paths.get("/x/a.apk"), Paths.get("/x/b.jpg"), Paths.get("/x/c.txt")), noDirs)))
+        assertEquals(3, q.enqueue(requestsFor(listOf(Paths.get("/x/a.apk"), Paths.get("/x/b.jpg"), Paths.get("/x/c.txt")), noDirs)).size)
         val got = withTimeout(5_000) { results.await() }
         assertEquals(
             listOf(
@@ -189,7 +276,7 @@ class FileTransferTest {
         val adb = FakeAdb()
         val q = queue(adb, connected = { false })
         val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
-        assertFalse(q.enqueue(requestsFor(listOf(Paths.get("/x/a.apk")), noDirs)))
+        assertTrue(q.enqueue(requestsFor(listOf(Paths.get("/x/a.apk")), noDirs)).isEmpty())
         val r = withTimeout(5_000) { result.await() }
         assertIs<TransferResult.Refused>(r)
         assertEquals("Device not connected: cannot install", r.message)
@@ -252,5 +339,253 @@ class FileTransferTest {
         assertEquals(1, adb.calls.size)
         assertNull(q.progress.value)
         assertTrue(scans.isEmpty())
+    }
+
+    // ---- Jobs: per-folder push, pull, device install, progress, cancel ----
+
+    private suspend fun FileTransferQueue.awaitJob(id: Long, predicate: (TransferJob) -> Boolean): TransferJob =
+        withTimeout(5_000) { jobs.first { list -> list.any { it.id == id && predicate(it) } } }.first { it.id == id }
+
+    private fun pull(dir: java.nio.file.Path, name: String, size: Long? = null) =
+        TransferRequest(dir, TransferKind.Pull, deviceDir = "/sdcard/Download", deviceName = name, size = size)
+
+    @Test
+    fun `push into a device folder targets that folder, and dismiss drops the finished job`() = runBlocking<Unit> {
+        val adb = FakeAdb()
+        val q = queue(adb)
+        val host = Paths.get("/x/photo.jpg")
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        val id = q.enqueue(listOf(TransferRequest(host, TransferKind.Push, deviceDir = "/sdcard/DCIM/Camera"))).single()
+        assertEquals(TransferResult.Pushed("photo.jpg", "/sdcard/DCIM/Camera"), withTimeout(5_000) { result.await() })
+        assertEquals(listOf(listOf("-s", "SER", "push", host.toString(), "/sdcard/DCIM/Camera/photo.jpg")), adb.calls.toList())
+        assertEquals(JobState.Done, q.awaitJob(id) { it.state == JobState.Done }.state)
+        q.dismiss(id)
+        assertTrue(q.jobs.value.isEmpty())
+    }
+
+    @Test
+    fun `pull never overwrites a host file`() = runBlocking<Unit> {
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("Downloads"))
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "data"); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        val results = async(start = CoroutineStart.UNDISPATCHED) { q.results.take(2).toList() }
+        val first = q.enqueue(listOf(pull(dir, "a.txt"))).single()
+        val done = q.awaitJob(first) { it.state == JobState.Done }
+        q.enqueue(listOf(pull(dir, "a.txt")))
+        val got = withTimeout(5_000) { results.await() }
+        assertEquals(
+            listOf(
+                listOf("-s", "SER", "pull", "/sdcard/Download/a.txt", dir.resolve("a.txt").toString()),
+                listOf("-s", "SER", "pull", "/sdcard/Download/a.txt", dir.resolve("a (1).txt").toString()),
+            ),
+            adb.calls.toList(),
+        )
+        assertEquals(listOf("Pulled a.txt to Downloads", "Pulled a (1).txt to Downloads"), got.map { it.message })
+        assertEquals(dir.resolve("a.txt"), done.hostResult)
+    }
+
+    @Test
+    fun `a failed pull says so and removes its partial file`() = runBlocking<Unit> {
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args ->
+            java.nio.file.Files.writeString(Paths.get(args.last()), "part")
+            ProcessResult(1, "adb: error: failed to copy: Permission denied\n", "")
+        }
+        val q = queue(adb)
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        val id = q.enqueue(listOf(pull(dir, "a.txt"))).single()
+        assertEquals("Could not pull a.txt: failed to copy: Permission denied", withTimeout(5_000) { result.await() }.message)
+        assertEquals(JobState.Failed("failed to copy: Permission denied"), q.awaitJob(id) { it.state is JobState.Failed }.state)
+        assertFalse(java.nio.file.Files.exists(dir.resolve("a.txt")))
+    }
+
+    @Test
+    fun `cancel kills the running job, removes its partial file and starts the next`() = runBlocking<Unit> {
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args ->
+            if (args[2] == "pull") {
+                java.nio.file.Files.write(Paths.get(args.last()), ByteArray(10))
+                awaitCancellation()
+            }
+            ProcessResult(0, "", "")
+        }
+        val q = queue(adb)
+        val results = Collections.synchronizedList(mutableListOf<TransferResult>())
+        scope.launch { q.results.collect { results += it } }
+        val ids = q.enqueue(listOf(pull(dir, "big.bin", size = 100), TransferRequest(Paths.get("/x/b.jpg"), TransferKind.Push)))
+        q.awaitJob(ids[0]) { it.state == JobState.Running }
+        withTimeout(5_000) { while (!java.nio.file.Files.exists(dir.resolve("big.bin"))) kotlinx.coroutines.delay(10) }
+        q.cancel(ids[0])
+        q.awaitJob(ids[0]) { it.state == JobState.Cancelled }
+        assertTrue(adb.processes[0].destroyed)
+        assertFalse(java.nio.file.Files.exists(dir.resolve("big.bin")))
+        q.awaitJob(ids[1]) { it.state == JobState.Done }
+        assertEquals("push", adb.calls[1][2])
+        kotlinx.coroutines.delay(100)
+        // A cancel is the user's own doing: no snackbar for it.
+        assertEquals(listOf<TransferResult>(TransferResult.Pushed("b.jpg", DEFAULT_PUSH_TARGET)), results.toList())
+    }
+
+    @Test
+    fun `cancel on a queued job removes it without running adb`() = runBlocking<Unit> {
+        val gate = CompletableDeferred<Unit>()
+        val adb = FakeAdb { gate.await(); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        val ids = q.enqueue(requestsFor(listOf(Paths.get("/x/a.jpg"), Paths.get("/x/b.jpg"), Paths.get("/x/c.jpg")), noDirs))
+        q.awaitJob(ids[0]) { it.state == JobState.Running }
+        q.cancel(ids[1])
+        assertTrue(q.jobs.value.none { it.id == ids[1] })
+        gate.complete(Unit)
+        q.awaitJob(ids[2]) { it.state == JobState.Done }
+        assertEquals(listOf("a.jpg", "c.jpg"), adb.calls.map { Paths.get(it[3]).fileName.toString() })
+    }
+
+    @Test
+    fun `a disconnect fails the running job and cancels the queued ones`() = runBlocking<Unit> {
+        val gate = CompletableDeferred<Unit>()
+        val connected = java.util.concurrent.atomic.AtomicBoolean(true)
+        val adb = FakeAdb { gate.await(); ProcessResult(1, "adb: error: device 'SER' not found\n", "") }
+        val q = queue(adb, connected = { connected.get() })
+        val results = async(start = CoroutineStart.UNDISPATCHED) { q.results.take(2).toList() }
+        val ids = q.enqueue(requestsFor(listOf(Paths.get("/x/a.jpg"), Paths.get("/x/b.jpg"), Paths.get("/x/c.apk")), noDirs))
+        q.awaitJob(ids[0]) { it.state == JobState.Running }
+        connected.set(false)
+        gate.complete(Unit)
+        val got = withTimeout(5_000) { results.await() }
+        assertEquals("Could not push a.jpg: device 'SER' not found", got[0].message)
+        assertEquals(TransferResult.Cancelled(2), got[1])
+        q.awaitJob(ids[2]) { it.state == JobState.Cancelled }
+        assertEquals(
+            listOf(JobState.Failed("device 'SER' not found"), JobState.Cancelled, JobState.Cancelled),
+            q.jobs.value.map { it.state },
+        )
+        assertEquals(1, adb.calls.size)
+    }
+
+    @Test
+    fun `pull progress follows the growing host file`() = runBlocking<Unit> {
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args ->
+            java.nio.file.Files.write(Paths.get(args.last()), ByteArray(500))
+            awaitCancellation()
+        }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(pull(dir, "v.mp4", size = 1000))).single()
+        val job = q.awaitJob(id) { it.bytes == 500L }
+        assertEquals(1000L, job.total)
+        assertEquals(JobState.Running, job.state)
+        assertTrue((job.bytesPerSecond ?: 0) > 0)
+        q.cancel(id)
+        q.awaitJob(id) { it.state == JobState.Cancelled }
+    }
+
+    @Test
+    fun `push progress polls the device file and stops when the job ends`() = runBlocking<Unit> {
+        val src = tmp.resolve("p.bin")
+        java.nio.file.Files.write(src, ByteArray(800))
+        val gate = CompletableDeferred<Unit>()
+        val adb = FakeAdb(shellHandler = { "400\n" }) { gate.await(); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(TransferRequest(src, TransferKind.Push, deviceDir = "/sdcard/X"))).single()
+        val job = q.awaitJob(id) { it.bytes == 400L }
+        assertEquals(800L, job.total)
+        assertEquals("stat -c %s '/sdcard/X/p.bin'", adb.shellCalls.first())
+        gate.complete(Unit)
+        assertEquals(800L, q.awaitJob(id) { it.state == JobState.Done }.bytes)
+        val polls = adb.shellCalls.size
+        kotlinx.coroutines.delay(800)
+        assertEquals(polls, adb.shellCalls.size, "no polling after the job ended")
+    }
+
+    @Test
+    fun `cancelling a push removes the partial device file`() = runBlocking<Unit> {
+        val src = tmp.resolve("it's.bin")
+        java.nio.file.Files.write(src, ByteArray(8))
+        val adb = FakeAdb { awaitCancellation() }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(TransferRequest(src, TransferKind.Push, deviceDir = "/sdcard/X"))).single()
+        q.awaitJob(id) { it.state == JobState.Running }
+        q.cancel(id)
+        q.awaitJob(id) { it.state == JobState.Cancelled }
+        assertTrue("rm -f '/sdcard/X/it'\\''s.bin'" in adb.shellCalls, adb.shellCalls.toString())
+    }
+
+    @Test
+    fun `installs and folders have no known total`() = runBlocking<Unit> {
+        val gate = CompletableDeferred<Unit>()
+        val q = queue(FakeAdb { gate.await(); ProcessResult(0, "", "") })
+        val id = q.enqueue(requestsFor(listOf(Paths.get("/x/a.apk")), noDirs)).single()
+        assertNull(q.awaitJob(id) { it.state == JobState.Running }.total)
+        gate.complete(Unit)
+        q.awaitJob(id) { it.state == JobState.Done }
+    }
+
+    @Test
+    fun `install from device pulls to temp, installs it and deletes the temp file`() = runBlocking<Unit> {
+        val existed = Collections.synchronizedList(mutableListOf<Boolean>())
+        val adb = FakeAdb { args ->
+            if (args[2] == "pull") java.nio.file.Files.writeString(Paths.get(args.last()), "apk")
+            else existed += java.nio.file.Files.exists(Paths.get(args.last()))
+            ProcessResult(0, "Success\n", "")
+        }
+        val q = queue(adb)
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        val request = TransferRequest(tmp, TransferKind.InstallFromDevice, deviceDir = "/sdcard/Download", deviceName = "app.apk")
+        val id = q.enqueue(listOf(request)).single()
+        assertEquals(TransferResult.Installed("app.apk"), withTimeout(5_000) { result.await() })
+        val temp = tmp.resolve("scrcpy-vwr").resolve("SER").resolve("install").resolve("app.apk")
+        assertEquals(
+            listOf(
+                listOf("-s", "SER", "pull", "/sdcard/Download/app.apk", temp.toString()),
+                listOf("-s", "SER", "install", "-r", temp.toString()),
+            ),
+            adb.calls.toList(),
+        )
+        assertEquals(listOf(true), existed.toList())
+        q.awaitJob(id) { it.state == JobState.Done }
+        assertFalse(java.nio.file.Files.exists(temp))
+    }
+
+    @Test
+    fun `open-after pulls into the open temp folder and sets hostResult`() = runBlocking<Unit> {
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "pdf"); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        val request = TransferRequest(tmp.resolve("unused"), TransferKind.Pull, deviceDir = "/sdcard/Download", deviceName = "a.pdf", opensAfter = true)
+        val id = q.enqueue(listOf(request)).single()
+        val job = q.awaitJob(id) { it.state == JobState.Done }
+        val expected = tmp.resolve("scrcpy-vwr").resolve("SER").resolve("open").resolve("a.pdf")
+        assertEquals(expected, job.hostResult)
+        assertTrue(java.nio.file.Files.exists(expected))
+    }
+
+    @Test
+    fun `hostUniquePath never names an existing file`() {
+        val d = java.nio.file.Files.createDirectories(tmp.resolve("u"))
+        fun touch(name: String) = java.nio.file.Files.createFile(d.resolve(name))
+        assertEquals(d.resolve("a.txt"), hostUniquePath(d, "a.txt"))
+        touch("a.txt")
+        assertEquals(d.resolve("a (1).txt"), hostUniquePath(d, "a.txt"))
+        touch("a (1).txt")
+        assertEquals(d.resolve("a (2).txt"), hostUniquePath(d, "a.txt"))
+        touch("noext")
+        assertEquals(d.resolve("noext (1)"), hostUniquePath(d, "noext"))
+        touch(".bashrc")
+        assertEquals(d.resolve(".bashrc (1)"), hostUniquePath(d, ".bashrc"))
+        touch("archive.tar.gz")
+        assertEquals(d.resolve("archive.tar (1).gz"), hostUniquePath(d, "archive.tar.gz"))
+        java.nio.file.Files.createDirectories(d.resolve("Photos.2024"))
+        assertEquals(d.resolve("Photos.2024 (1)"), hostUniquePath(d, "Photos.2024", isDirectory = true))
+    }
+
+    @Test
+    fun `pull and device-install labels and messages`() {
+        val p = TransferRequest(Paths.get("/h/Downloads"), TransferKind.Pull, deviceDir = "/sdcard/Download", deviceName = "a.txt")
+        val i = TransferRequest(Paths.get("/h"), TransferKind.InstallFromDevice, deviceDir = "/sdcard/Download", deviceName = "app.apk")
+        assertEquals("a.txt", p.name)
+        assertEquals("Pulling a.txt…", TransferProgress(p, 1, 1).label)
+        assertEquals("Installing app.apk…", TransferProgress(i, 1, 1).label)
+        assertEquals("Pulled a.txt to Downloads", TransferResult.Pulled("a.txt", Paths.get("/h/Downloads")).message)
+        assertEquals("Could not pull a.txt: x", TransferResult.Failed(p, "x").message)
+        assertEquals("Could not install app.apk: x", TransferResult.Failed(i, "x").message)
     }
 }
