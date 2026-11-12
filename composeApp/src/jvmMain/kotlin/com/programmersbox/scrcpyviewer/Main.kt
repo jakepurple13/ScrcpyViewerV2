@@ -34,7 +34,11 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import androidx.compose.runtime.CompositionLocalProvider
+import com.programmersbox.scrcpyviewer.ui.mirror.AwtMirrorWindowHandle
+import com.programmersbox.scrcpyviewer.ui.mirror.LocalMirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
+import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindow
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.App
@@ -89,7 +93,9 @@ fun main() {
             LaunchedEffect(actionsNavigation) {
                 actionsNavigation.requests.collect { bringToFront(window) }
             }
-            App()
+            // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
+            val handle = remember(window) { AwtMirrorWindowHandle(window, koin.get<ScreenGeometry>()) }
+            CompositionLocalProvider(LocalMirrorWindowHandle provides handle) { App() }
         }
         for ((serial, session) in mirrors) {
             key(serial) {

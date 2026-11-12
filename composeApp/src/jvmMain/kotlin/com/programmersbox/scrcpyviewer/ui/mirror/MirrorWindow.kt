@@ -157,7 +157,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
-import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
@@ -173,14 +172,11 @@ import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
 import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
 import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
-import java.awt.Dimension
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.event.KeyEvent as AwtKeyEvent
-import java.awt.event.WindowAdapter
-import java.awt.event.WindowEvent
 import java.nio.file.Paths
 import javax.swing.SwingUtilities
 import kotlin.math.abs
@@ -515,13 +511,13 @@ fun MirrorWindow(
     }
     val applyZoom: (ZoomCommand) -> Unit = { zoom = Zoom.step(zoom, fittedScale(), it) }
     val currentApplyZoom by rememberUpdatedState(applyZoom)
-    // Set by the window's focus listener; the AWT window only exists inside AppWindow {} below.
+    // Set from the window's focus; the window (and its handle) only exists inside AppWindow {} below.
     var windowFocused by remember { mutableStateOf(false) }
-    var awtWindowRef by remember { mutableStateOf<java.awt.Window?>(null) }
+    var windowHandle by remember { mutableStateOf<MirrorWindowHandle?>(null) }
     val robot = remember(hidMouse != null) { if (hidMouse != null) WindowPointerCapture.robotOrNull() else null }
     val capture = remember(session) {
         hidMouse?.let {
-            WindowPointerCapture(MouseCapture(), mapper, hidKeyboard, send, isFocused = { awtWindowRef?.isFocused == true }, robot)
+            WindowPointerCapture(MouseCapture(), mapper, hidKeyboard, send, isFocused = { windowHandle?.focused?.value == true }, robot)
         }
     }
     val captured = capture?.active?.collectAsState()?.value == true
@@ -591,7 +587,7 @@ fun MirrorWindow(
     // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now
     // (or a little, in place, when the main window does not show it), then it closes.
     val requestClose: () -> Unit = close@{
-        val w = awtWindowRef
+        val w = windowHandle
         if (wake == null || w == null) return@close controller.close(serial)
         if (closing) return@close
         closing = true
@@ -601,7 +597,7 @@ fun MirrorWindow(
                 if (windowState.placement == WindowPlacement.Floating) {
                     zooming = true
                     val to = MirrorOrigins.buttonOnScreen(serial) ?: shrunkAroundCenter(w.bounds, MIRROR_SHRINK_IN_PLACE)
-                    animateWindowBounds(w, to, MIRROR_ZOOM_OUT_MILLIS, grow = false)
+                    animateWindowBounds(w, to, MIRROR_ZOOM_OUT_MILLIS, grow = false, screenGeometry)
                 }
             } finally {
                 controller.close(serial)
@@ -624,20 +620,39 @@ fun MirrorWindow(
             CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, applyZoom) }
         },
     ) {
+        // Every move, resize, focus and native call on the window goes through this (AWT now, Tao later).
+        val handle = remember(window) { AwtMirrorWindowHandle(window, screenGeometry) }
         LaunchedEffect(serial) {
-            controller.focusRequests.filter { it == serial }.collect {
-                window.toFront()
-                window.requestFocus()
-            }
+            controller.focusRequests.filter { it == serial }.collect { handle.toFront() }
         }
         if ("print-fps" in e) {
             LaunchedEffect(session) { session.fps.collect { if (it > 0) println("[$serial] %.1f fps".format(it)) } }
         }
+        // Still AWT, each behind its own seam later: the key dispatcher, pointer capture, file drop and file pickers.
         val awtWindow = window
+        val zoomKeys = remember(session) { ZoomKeyFilter(Os.isMac) }
+        LaunchedEffect(session, handle) {
+            windowHandle = handle
+            // The first value is where focus is now; each later one is a change.
+            var first = true
+            handle.focused.collect { focused ->
+                windowFocused = focused
+                if (first) {
+                    first = false
+                } else if (focused) {
+                    capture?.focusGained()
+                } else {
+                    zoomKeys.reset()
+                    capture?.focusLost()
+                    // Releases that happen in another window never arrive: release what the device holds.
+                    hidKeyboard?.let { send(it.releaseAll()) }
+                    send(mapper.releaseButtons())
+                }
+            }
+        }
         DisposableEffect(session) {
             val paste = if (Os.isMac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
             var pasteDown = false
-            val zoomKeys = ZoomKeyFilter(Os.isMac)
             // Keys held for the device when focus moves into the sheet would never see their release: let them go.
             sheetFocus.onGained = { hidKeyboard?.let { send(it.releaseAll()) } }
             val dispatcher = KeyEventDispatcher { ev ->
@@ -680,30 +695,9 @@ fun MirrorWindow(
                 send(msgs)
                 msgs.isNotEmpty()
             }
-            val focus = object : WindowAdapter() {
-                override fun windowGainedFocus(ev: WindowEvent) {
-                    windowFocused = true
-                    capture?.focusGained()
-                }
-
-                override fun windowLostFocus(ev: WindowEvent) {
-                    windowFocused = false
-                    zoomKeys.reset()
-                    capture?.focusLost()
-                    // Releases that happen in another window never arrive: release what the device holds.
-                    hidKeyboard?.let { send(it.releaseAll()) }
-                    send(mapper.releaseButtons())
-                }
-            }
-            awtWindowRef = awtWindow
-            windowFocused = awtWindow.isFocused
             val kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager()
             kfm.addKeyEventDispatcher(dispatcher)
-            awtWindow.addWindowFocusListener(focus)
-            onDispose {
-                kfm.removeKeyEventDispatcher(dispatcher)
-                awtWindow.removeWindowFocusListener(focus)
-            }
+            onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
         }
 
         // Drops anywhere on the window install / push (COPY only, see FileDropTarget).
@@ -716,7 +710,7 @@ fun MirrorWindow(
         var lastStage by remember { mutableStateOf(IntSize.Zero) }
         var lastFrame by remember { mutableStateOf<IntSize?>(null) }
         // The native window's size when the lock last looked (a plain holder, read only in the effect below).
-        val lastWindowSize = remember { arrayOf(Dimension()) }
+        val lastWindowSize = remember { arrayOf(IntSize.Zero) }
         val lastFit = remember { BooleanArray(1) { fit } } // the same, for Fit
         // The stage's width (px) while the window grows or shrinks for the quick actions sheet (see the sheet effect).
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
@@ -732,7 +726,7 @@ fun MirrorWindow(
                 // from the stage before the sheet changed it (and counted as the user's). The sheet only changes the
                 // stage's width: while it is pinned, the base keeps its height, so a height the user dragged meanwhile
                 // is still the user's change once the pin clears.
-                val windowResized = awtWindow.size != lastWindowSize[0]
+                val windowResized = handle.size != lastWindowSize[0]
                 val pinned = pinnedStage != null
                 if (stageChangeIsSheets(pinned, windowResized, lastFrame, fs, lastFit[0], fit)) {
                     lastStage = if (pinned && lastStage != IntSize.Zero) IntSize(stage.width, lastStage.height) else stage
@@ -742,7 +736,7 @@ fun MirrorWindow(
                 // new stage size, this only goes on once the size has held still.
                 delay(ASPECT_SETTLE_MS)
             }
-            val windowSize = awtWindow.size
+            val windowSize = handle.size
             val refit = fit && !lastFit[0]
             val lockNeeded = aspectLockNeeded(windowSize != lastWindowSize[0], lastFrame, fs, lastFit[0], fit)
             lastWindowSize[0] = windowSize
@@ -750,8 +744,7 @@ fun MirrorWindow(
             val target: IntSize? = when {
                 !autoSized -> {
                     autoSized = true
-                    val bounds = screenFor(awtWindow.bounds, screenGeometry.screens())?.workArea
-                        ?: java.awt.Rectangle(0, 0, 1280, 800)
+                    val bounds = handle.screen()?.workArea ?: java.awt.Rectangle(0, 0, 1280, 800)
                     val chromeW = windowState.size.width.value * density.density - stage.width
                     val chromeH = windowState.size.height.value * density.density - stage.height
                     val maxW = bounds.width * density.density * 0.9f - chromeW
@@ -761,10 +754,10 @@ fun MirrorWindow(
                 }
                 fit && aspectLock && lockNeeded -> {
                     // Never taller than the screen has room for below the window's top, less its chrome (title bar).
-                    val chromeH = awtWindow.height * density.density - stage.height
-                    val area = screenFor(awtWindow.bounds, screenGeometry.screens())
+                    val chromeH = handle.size.height * density.density - stage.height
+                    val area = handle.screen()
                         ?: ScreenArea(java.awt.Rectangle(0, 0, 1280, 800), java.awt.Rectangle(0, 0, 1280, 800))
-                    val (usable, below) = screenRoom(awtWindow.bounds, area)
+                    val (usable, below) = screenRoom(handle.bounds, area)
                     val maxH = aspectMaxHeight(
                         roomBelow = (below * density.density - chromeH).roundToInt(),
                         usable = (usable * density.density - chromeH).roundToInt(),
@@ -799,21 +792,21 @@ fun MirrorWindow(
             LaunchedEffect(Unit) {
                 if (zoomFrom != null && zoomTo != null) {
                     // macOS would play its own zoom as the window appears, on top of this one.
-                    awtWindow.disableMacAppearAnimation()
+                    handle.nsWindow?.let(::disableMacAppearAnimation)
                     // A hidden window is held to the screen it was made on: macOS moves one meant for another screen
                     // to that screen's edge (and narrows it) until it is shown. So it shows see-through, is put at
                     // the button once on screen, and only then becomes visible.
-                    val masked = awtWindow.setMacAlpha(0.0)
+                    val masked = handle.nsWindow?.let { setMacAlpha(it, 0.0) } == true
                     shown = true
                     // Compose shows the window from a job of its own: wait until it is really on screen.
-                    withTimeoutOrNull(1_000) { while (!awtWindow.isShowing) delay(8) }
-                    if (awtWindow.bounds != zoomFrom) {
-                        awtWindow.bounds = zoomFrom
-                        withTimeoutOrNull(300) { while (awtWindow.bounds != zoomFrom) delay(8) }
+                    withTimeoutOrNull(1_000) { while (!handle.isShowing) delay(8) }
+                    if (handle.bounds != zoomFrom) {
+                        handle.bounds = zoomFrom
+                        withTimeoutOrNull(300) { while (handle.bounds != zoomFrom) delay(8) }
                     }
                     repeat(2) { withFrameNanos { } }
-                    if (masked) awtWindow.setMacAlpha(1.0)
-                    animateWindowBounds(awtWindow, zoomTo, MIRROR_ZOOM_IN_MILLIS, grow = true)
+                    if (masked) handle.nsWindow?.let { setMacAlpha(it, 1.0) }
+                    animateWindowBounds(handle, zoomTo, MIRROR_ZOOM_IN_MILLIS, grow = true, screenGeometry)
                     zooming = false
                 }
                 snapshotFlow { sizedForWake || downForWake }.first { it }
@@ -861,13 +854,14 @@ fun MirrorWindow(
                 // The bar moved: the window keeps its size, the sheet's new width comes out of the stage. If this cut
                 // an open or tab switch short, the window keeps what it has grown so far.
                 sheetFromStage[0] = draggedSplit(sheetGrowth.value.dp, sheetTarget).fromStage.value
-                lastWindowSize[0] = awtWindow.size // whatever the cut-short animation grew, the user did not
+                lastWindowSize[0] = handle.size // whatever the cut-short animation grew, the user did not
                 pinnedStage = null
                 return@LaunchedEffect
             }
             // From the window as it is now: the user may have moved or resized it while the sheet was open.
-            val base = sheetBaseBounds(awtWindow.bounds, sheetGrowth.value.roundToInt(), sheetShift[0])
-            val screen = awtWindow.graphicsConfiguration.bounds
+            val base = sheetBaseBounds(handle.bounds, sheetGrowth.value.roundToInt(), sheetShift[0])
+            // An unknown screen sets no limit: the window grows in place.
+            val screen = handle.screen()?.bounds ?: java.awt.Rectangle(base.x, base.y, Int.MAX_VALUE / 4, base.height)
             val screenRight = screen.x + screen.width
             val split = sheetSplit(
                 sheetTarget, sheetTab, (stage.width / density.density).dp,
@@ -877,23 +871,19 @@ fun MirrorWindow(
             // The stage's pin moves with the window by what it gets back (or gives up), so the image resizes along.
             val pinFrom = stage.width
             val pinTo = pinFrom + ((sheetFromStage[0] - split.fromStage.value) * density.density).roundToInt()
-            val growthFrom = sheetGrowth.value
             sheetFromStage[0] = split.fromStage.value
             pinnedStage = pinFrom
-            sheetGrowth.animateTo(target, sheetWidthSpec(sheetGrowth.value.dp, target.dp)) {
-                val grown = sheetFrameBounds(base, value.roundToInt(), screenRight, awtWindow.height)
-                sheetShift[0] = base.x - grown.x
-                awtWindow.bounds = grown
-                val progress = if (target == growthFrom) 1f else (value - growthFrom) / (target - growthFrom)
+            growForSheet(handle, sheetGrowth, base, target, sheetWidthSpec(sheetGrowth.value.dp, target.dp), screenRight) { shift, progress ->
+                sheetShift[0] = shift
                 pinnedStage = pinFrom + ((pinTo - pinFrom) * progress).roundToInt()
             }
             pinnedStage = pinTo
             // Keep the pin until the native window has shrunk, or the stage widens for a frame.
             var frames = 0
-            while (awtWindow.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
+            while (handle.size.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
             // Grown for the sheet, not by the user: nothing for the aspect lock. The height from before the animation,
             // so a height the user dragged meanwhile is still seen as a resize.
-            lastWindowSize[0] = Dimension(awtWindow.width, base.height)
+            lastWindowSize[0] = IntSize(handle.size.width, base.height)
             pinnedStage = null // not when cancelled: a reversed toggle keeps the pin through its own animation
         }
 
@@ -904,7 +894,9 @@ fun MirrorWindow(
         ScrcpyViewerTheme {
             Box(Modifier.fillMaxSize()) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    CompositionLocalProvider(LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus) {
+                    CompositionLocalProvider(
+                        LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus, LocalMirrorWindowHandle provides handle,
+                    ) {
                     MirrorContent(
                         state = state,
                         frame = frame,
