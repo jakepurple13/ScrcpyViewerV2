@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.files
 
+import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.options.OptionValues
@@ -105,6 +106,22 @@ fun hostUniquePath(dir: Path, name: String, isDirectory: Boolean = false): Path 
     var n = 1
     while (!free("$base ($n)$ext")) n++
     return dir.resolve("$base ($n)$ext")
+}
+
+private val WINDOWS_BAD_CHARS = Regex("[<>:\"/\\\\|?*\\x00-\\x1F]")
+private val WINDOWS_RESERVED = Regex("(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\..*)?", RegexOption.IGNORE_CASE)
+
+/**
+ * The name a device entry [name] gets on the computer. Android allows names Windows does not ([windows]): `:` `?` `*`
+ * `"` `<` `>` `|` `\` and control characters become `_`, as do trailing dots and spaces, and a reserved device name
+ * (`CON`, `nul.txt`) gets a leading `_`. Elsewhere the name stays as it is.
+ */
+fun hostFileName(name: String, windows: Boolean = Os.isWindows): String {
+    if (!windows) return name
+    var n = WINDOWS_BAD_CHARS.replace(name, "_")
+    n = n.replace(Regex("[. ]+$")) { "_".repeat(it.value.length) }
+    if (WINDOWS_RESERVED.matches(n)) n = "_$n"
+    return n.ifEmpty { "_" }
 }
 
 /**
@@ -573,7 +590,7 @@ class FileTransferQueue(
             }
         }
         Files.createDirectories(hostDir)
-        val target = hostUniquePath(hostDir, name, request.isDirectory)
+        val target = hostUniquePath(hostDir, hostFileName(name), request.isDirectory)
         synchronized(lock) { updateJob(id) { it.copy(total = if (request.isDirectory) null else request.size) } }
         var keep = false
         var started = false

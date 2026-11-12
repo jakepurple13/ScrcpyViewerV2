@@ -97,4 +97,21 @@ class DevicePathTest {
         assertFalse(isInside("/sdcard/AB", "/sdcard/A"))
         assertFalse(isInside("/sdcard", "/sdcard/A"))
     }
+
+    @Test
+    fun uniqueNameForFoldersAndIgnoringCase() {
+        assertEquals("v1 (1).2", uniqueName(setOf("v1.2"), "v1.2"), "a file's extension stays last")
+        assertEquals("v1.2 (1)", uniqueName(setOf("v1.2"), "v1.2", isDir = true), "a folder has no extension")
+        assertEquals("Photos.backup (2)", uniqueName(setOf("Photos.backup", "Photos.backup (1)"), "Photos.backup", isDir = true))
+        assertEquals("a.txt", uniqueName(setOf("A.TXT"), "a.txt"))
+        assertEquals("a (2).txt", uniqueName(setOf("A.TXT", "A (1).txt"), "a.txt", ignoreCase = true))
+    }
+
+    @Test
+    fun isInsideIgnoringCaseAndTheEmulatedSpelling() {
+        assertTrue(isInsideIgnoreCase("/sdcard/docs/Docs", "/sdcard/Docs"))
+        assertTrue(isInsideIgnoreCase("/storage/emulated/0/Docs/x", "/sdcard/DOCS"))
+        assertTrue(isInsideIgnoreCase("/sdcard/Docs", "/sdcard/docs/"))
+        assertFalse(isInsideIgnoreCase("/sdcard/Docs2", "/sdcard/docs"))
+    }
 }

@@ -708,6 +708,21 @@ class FileTransferTest {
         q2.awaitJob(q2.enqueue(listOf(pull(picked, "c.txt"))).single()) { it.state == JobState.Done }
     }
 
+    @Test
+    fun `device names Windows refuses become valid host names, elsewhere they stay`() {
+        assertEquals("a_b_c_d_e_f_g_h_.txt", hostFileName("a:b?c*d\"e<f>g|h\\.txt", windows = true))
+        assertEquals("tab_name", hostFileName("tab\tname", windows = true))
+        assertEquals("notes_", hostFileName("notes.", windows = true))
+        assertEquals("notes__", hostFileName("notes .", windows = true))
+        assertEquals("_CON", hostFileName("CON", windows = true))
+        assertEquals("_nul.txt", hostFileName("nul.txt", windows = true))
+        assertEquals("console.txt", hostFileName("console.txt", windows = true))
+        assertEquals("photo.jpg", hostFileName("photo.jpg", windows = true))
+        assertEquals("a:b?.txt", hostFileName("a:b?.txt", windows = false))
+        // The sanitized name resolves (Paths.get would throw on Windows for the raw one).
+        assertEquals("12_30_00.jpg", hostUniquePath(tmp, hostFileName("12:30:00.jpg", windows = true)).fileName.toString())
+    }
+
     // ---- Replace pushes ----
 
     private val swapOf = { dir: String, name: String, temp: String ->
