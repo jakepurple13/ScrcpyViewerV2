@@ -202,6 +202,41 @@ class FilesBrowserTest {
     }
 
     @Test
+    fun rowsOfTheFolderBeforeTakeNoActionWhileTheNewOneLoads() = runTest {
+        val b = browser()
+        b.click("notes.txt")
+        val gate = CompletableDeferred<Unit>().also { files.gates["/sdcard/Download/Telegram"] = it }
+        b.open("/sdcard/Download/Telegram")
+        runCurrent()
+        assertEquals(emptySet(), b.selection.names, "navigating clears the selection")
+        assertTrue("notes.txt" in b.names, "the rows before still show while Telegram loads")
+        // A click on a stale row, then Delete: no dialog, nothing removed from Telegram.
+        b.click("notes.txt")
+        b.toggle("a.jpg")
+        b.shiftClick("app.apk")
+        b.selectAll()
+        b.moveSelection(1, extend = false)
+        assertEquals(emptySet(), b.selection.names)
+        b.askDelete()
+        assertNull(b.dialog)
+        b.confirmDelete()
+        b.startRename("notes.txt")
+        assertNull(b.renaming)
+        b.move(listOf("notes.txt"), "/sdcard/Documents")
+        b.pull(listOf("notes.txt"), Paths.get("/host"))
+        b.openEntry("notes.txt")
+        settle()
+        assertTrue(files.mutations.isEmpty(), files.mutations.toString())
+        assertTrue(requests.isEmpty(), requests.toString())
+        gate.complete(Unit)
+        runCurrent()
+        // Once Telegram's rows are in, they act again.
+        b.click("voice.ogg")
+        b.askDelete()
+        assertEquals(FilesDialog.Delete(listOf("voice.ogg"), hasFolder = false), b.dialog)
+    }
+
+    @Test
     fun aStaleListingNeverOverwritesANewerFolder() = runTest {
         val b = browser()
         val slow = CompletableDeferred<Unit>().also { files.gates["/sdcard/Download/Telegram"] = it }

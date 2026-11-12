@@ -440,17 +440,17 @@ class FilesBrowser(
 
     // Selection
 
-    fun click(name: String) { selection = selection.click(order, name) }
-    fun shiftClick(name: String) { selection = selection.shiftClick(order, name) }
-    fun toggle(name: String) { selection = selection.toggle(name) }
-    fun selectAll() { selection = selection.all(order) }
-    fun moveSelection(delta: Int, extend: Boolean) { selection = selection.move(order, delta, extend) }
+    fun click(name: String) { if (listed) selection = selection.click(order, name) }
+    fun shiftClick(name: String) { if (listed) selection = selection.shiftClick(order, name) }
+    fun toggle(name: String) { if (listed) selection = selection.toggle(name) }
+    fun selectAll() { if (listed) selection = selection.all(order) }
+    fun moveSelection(delta: Int, extend: Boolean) { if (listed) selection = selection.move(order, delta, extend) }
     fun clearSelection() { selection = selection.clear() }
 
     // Rename and new folder
 
     fun startRename(name: String) {
-        if (!connected) return
+        if (!connected || !listed) return
         renaming = name
         renameError = null
     }
@@ -468,6 +468,7 @@ class FilesBrowser(
     fun commitRename(text: String) {
         val from = renaming ?: return
         if (!connected) return
+        if (!listed) return cancelRename()
         val dir = path
         val taken = (currentNames ?: emptySet()) - from
         if (text == from && from != pendingNewFolder) {
@@ -533,7 +534,7 @@ class FilesBrowser(
     fun newFolder() {
         if (!connected || pendingNewFolder != null) return
         val taken = currentNames ?: return
-        val name = uniqueName(taken, NEW_FOLDER)
+        val name = uniqueName(taken, NEW_FOLDER, isDir = true, ignoreCase = true)
         pendingMtime = now()
         pendingNewFolder = name
         selection = Selection(setOf(name), name, name)
@@ -543,7 +544,7 @@ class FilesBrowser(
     // Delete
 
     fun askDelete() {
-        if (!connected) return
+        if (!connected || !listed) return
         val names = order.filter { it in selection.names && it != pendingNewFolder }
         if (names.isEmpty()) return
         showDialog(FilesDialog.Delete(names, names.any { entry(it)?.isDir == true }))
@@ -552,7 +553,7 @@ class FilesBrowser(
     fun confirmDelete() {
         val d = dialog as? FilesDialog.Delete ?: return
         dialog = null
-        if (!connected) return
+        if (!connected || !listed) return
         val dir = path
         scope.launch {
             try {

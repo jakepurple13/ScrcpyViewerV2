@@ -237,7 +237,8 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
 
     /** Starts a move of [names] ([entries]: their rows); false (nothing starts, no ghost) while the device is disconnected. */
     internal fun startMove(names: List<String>, label: String, root: Offset, entries: List<DeviceEntry> = emptyList()): Boolean {
-        if (!browser.connected) return false
+        // Rows of the folder before, while the open one loads, never start a move.
+        if (!browser.connected || browser.listingPath != browser.path) return false
         moving = names
         movingEntries = entries
         movingFrom = browser.path
@@ -257,8 +258,10 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
         val names = moving ?: return
         val from = movingFrom ?: return
         val target = hover?.target
+        // Which of them are folders (Keep both names those without an extension split); null: unknown, ask the listing.
+        val folders = movingEntries.takeIf { it.isNotEmpty() }?.filter { it.isDir }?.mapTo(HashSet()) { it.name }
         cancelMove()
-        if (target != null) browser.move(names, target.dir, from)
+        if (target != null) browser.move(names, target.dir, from, folders)
     }
 
     /** Drops the move without moving anything (Esc, or the gesture went away). */

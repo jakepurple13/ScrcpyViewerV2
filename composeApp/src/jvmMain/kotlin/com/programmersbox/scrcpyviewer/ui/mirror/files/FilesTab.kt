@@ -421,6 +421,8 @@ internal fun FilesTab(
                     browser, drop, motion, onPushFiles, zone, locale, listFocused,
                     onRowPress = { runCatching { listFocus.requestFocus() } },
                     onRowMenu = { name ->
+                        // Rows of the folder before, while the open one loads, take no action.
+                        if (browser.listingPath != browser.path) return@ListHost
                         if (name !in browser.selection.names) browser.click(name)
                         runCatching { listFocus.requestFocus() }
                         menu = FilesMenu.Item(pointer[0], browser.selection.names)
@@ -808,8 +810,12 @@ private fun Rows(
                 leavingIndex = leavingOrder.indexOf(entry.name),
                 motion = motion,
                 onPress = { event, double ->
-                    // Presses inside the rename field are the field's.
-                    if (browser.renaming != entry.name) {
+                    // A row of the folder before, still shown while the open one loads (or on its way out), takes
+                    // no press: its name is not the open folder's.
+                    if (dir != browser.path || browser.listingPath != dir) {
+                        drop.deferClick(null)
+                    } else if (browser.renaming != entry.name) {
+                        // Presses inside the rename field are the field's.
                         // A plain press on one of several selected rows may start dragging them all: it selects just
                         // this row on release, if no drag started.
                         val several = browser.selection.names.size > 1 && entry.name in browser.selection.names
@@ -825,7 +831,7 @@ private fun Rows(
                 dropTarget = target,
                 spring = { if (target) drop.spring.value else 0f },
                 moving = entry.name in moving,
-                onSecondaryPress = { if (browser.renaming != entry.name) onRowMenu(entry.name) },
+                onSecondaryPress = { if (dir == browser.path && browser.renaming != entry.name) onRowMenu(entry.name) },
                 focused = listFocused && entry.name == cursor,
                 renaming = entry.name == renaming,
                 renameError = if (entry.name == renaming) browser.renameError else null,
