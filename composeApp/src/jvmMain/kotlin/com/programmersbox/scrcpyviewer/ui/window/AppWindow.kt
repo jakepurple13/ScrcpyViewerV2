@@ -137,6 +137,8 @@ fun NucleusApplicationScope.AppWindow(
                         }
                         nucleusWindow.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L && Os.isMac }?.let { ns ->
                             MacVibrancyEffect(Pointer(ns), desktopBlur, dark)
+                            // What a live resize uncovers before Compose draws: the theme's surface, not the system's.
+                            MacWindowBackgroundEffect(Pointer(ns), MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
                         }
                         Box(
                             Modifier

@@ -5,6 +5,8 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 
 class NativeFileDialogsTest {
     @Test
@@ -100,5 +102,39 @@ class NativeFileDialogsTest {
         assertEquals(1, messages.size)
         assertNull(safe.save("t", "x", "json"))
         assertEquals(2, messages.size)
+    }
+
+    /** Records the thread each picker call runs on. */
+    private class ThreadRecordingDialogs : NativeFileDialogs {
+        val threads = mutableListOf<Thread>()
+        override fun open(title: String, extensions: List<String>, multiple: Boolean, directories: Boolean, initial: Path?): List<Path> {
+            threads += Thread.currentThread()
+            return listOf(Path.of("/x/a.apk"))
+        }
+
+        override fun save(title: String, suggestedName: String, extension: String): Path? {
+            threads += Thread.currentThread()
+            return null
+        }
+    }
+
+    @Test
+    fun onPickerThread_windowsAndLinuxPickersLeaveTheCallingThread() = runBlocking {
+        val dialogs = ThreadRecordingDialogs()
+        val caller = Thread.currentThread()
+        val picked = onPickerThread(mac = false) { dialogs.open("t", listOf("apk"), multiple = true) }
+        onPickerThread(mac = false) { dialogs.save("t", "x", "json") }
+        assertEquals(listOf(Path.of("/x/a.apk")), picked)
+        assertEquals(2, dialogs.threads.size)
+        assertTrue(dialogs.threads.none { it === caller }, "the UI thread must stay free: ran on ${dialogs.threads}")
+        assertEquals(caller, Thread.currentThread(), "the result comes back to the caller's thread")
+    }
+
+    @Test
+    fun onPickerThread_macPickerRunsInPlace() = runBlocking {
+        val dialogs = ThreadRecordingDialogs()
+        val caller = Thread.currentThread()
+        onPickerThread(mac = true) { dialogs.open("t", emptyList(), multiple = false) }
+        assertEquals(listOf(caller), dialogs.threads, "NSOpenPanel runs on the AppKit main thread, the caller's")
     }
 }

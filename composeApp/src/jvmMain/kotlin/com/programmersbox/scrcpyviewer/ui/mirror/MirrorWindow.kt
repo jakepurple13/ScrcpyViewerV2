@@ -894,8 +894,9 @@ fun MirrorWindow(
                             when (action) {
                                 MirrorAction.Screenshot -> takeScreenshot()
                                 MirrorAction.Record -> toggleRecording()
-                                MirrorAction.InstallApk -> transfers.start(transferDialogs.chooseApks())
-                                MirrorAction.PushFile -> transfers.start(transferDialogs.chooseFiles(transfers.pushTarget))
+                                // Off the UI thread where the picker does not pump it (onPickerThread); back on it to start.
+                                MirrorAction.InstallApk -> uiScope.launch { transfers.start(transferDialogs.chooseApks()) }
+                                MirrorAction.PushFile -> uiScope.launch { transfers.start(transferDialogs.chooseFiles(transfers.pushTarget)) }
                                 MirrorAction.QuickActions -> quickActions.toggleSheet()
                                 else -> send(action.messages())
                             }

@@ -71,18 +71,16 @@ internal object MacFileDialogs : NativeFileDialogs {
             }
         }
         if (isMainThread()) return pooled()
-        return run {
-            val done = CountDownLatch(1)
-            var result: Result<T>? = null
-            ObjC.onMain {
-                try {
-                    result = runCatching(pooled)
-                } finally {
-                    done.countDown()
-                }
+        val done = CountDownLatch(1)
+        var result: Result<T>? = null
+        ObjC.onMain {
+            try {
+                result = runCatching(pooled)
+            } finally {
+                done.countDown()
             }
-            done.await()
-            result!!.getOrThrow()
         }
+        done.await()
+        return result!!.getOrThrow()
     }
 }

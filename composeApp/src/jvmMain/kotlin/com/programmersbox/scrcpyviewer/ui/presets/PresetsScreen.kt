@@ -101,8 +101,10 @@ fun PresetsScreen(
 
     val scope = rememberCoroutineScope()
     fun export(ids: List<String>, suggested: String) {
-        val path = files.chooseExportFile(suggested) ?: return
-        scope.launchIo { reportErrors { Files.writeString(path, viewModel.exportJson(ids)) } }
+        scope.launch {
+            val path = files.chooseExportFile(suggested) ?: return@launch
+            launchIo { reportErrors { Files.writeString(path, viewModel.exportJson(ids)) } }
+        }
     }
 
     PresetsContent(
@@ -117,8 +119,10 @@ fun PresetsScreen(
         onExport = { p -> export(listOf(p.id), exportFileName(p.name)) },
         onExportAll = { export(state.presets.map { it.id }, exportFileName(null)) },
         onImportFile = {
-            val path = files.chooseImportFile()
-            if (path != null) scope.launchIo { reportErrors { viewModel.beginImport(Files.readString(path)) } }
+            scope.launch {
+                val path = files.chooseImportFile()
+                if (path != null) launchIo { reportErrors { viewModel.beginImport(Files.readString(path)) } }
+            }
         },
         onImportPaste = { pasting = true },
         modifier = modifier,

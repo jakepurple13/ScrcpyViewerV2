@@ -1,13 +1,17 @@
 package com.programmersbox.scrcpyviewer.ui.common
 
 import com.programmersbox.scrcpyviewer.Os
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
 /**
  * The platform's own open and save dialogs, without `java.awt.FileDialog` or `JFileChooser`, so a picker never
- * initializes the AWT toolkit. Calls block until the dialog closes, like the AWT dialogs they replace.
+ * initializes the AWT toolkit. Calls block until the dialog closes: call them through [onPickerThread], which keeps the
+ * Tao event loop (the UI thread) free where the platform's dialog would not pump it.
  */
 interface NativeFileDialogs {
     /**
@@ -32,6 +36,18 @@ fun nativeFileDialogs(onUnavailable: (String) -> Unit = { System.err.println(it)
     },
     onUnavailable,
 )
+
+/**
+ * Runs [pick] (a blocking [NativeFileDialogs] call) where the platform's picker belongs. On macOS ([mac]) in place:
+ * NSOpenPanel must run on the AppKit main thread, the UI thread under Tao, and its modal loop keeps the windows
+ * drawing. Elsewhere on [background]: the Win32 dialog thread's join and zenity / kdialog's waitFor pump nothing, so
+ * on the UI thread every window (live video included) would freeze until the dialog closed.
+ */
+suspend fun <T> onPickerThread(
+    mac: Boolean = Os.isMac,
+    background: CoroutineDispatcher = Dispatchers.IO,
+    pick: () -> T,
+): T = if (mac) pick() else withContext(background) { pick() }
 
 /** [dialogs], with a failed native call reported to [onFailure] and treated as Cancel instead of thrown. */
 internal class SafeFileDialogs(private val dialogs: NativeFileDialogs, private val onFailure: (String) -> Unit) : NativeFileDialogs {
@@ -186,13 +202,11 @@ internal class LinuxFileDialogs(
             return emptyList()
         }
         return try {
-            run {
-                val process = ProcessBuilder(command.args).redirectError(ProcessBuilder.Redirect.DISCARD).start()
-                val output = process.inputStream.bufferedReader().readText()
-                process.waitFor(1, TimeUnit.MINUTES)
-                // Exit 1 is Cancel for both tools; anything else non-zero is an error with nothing picked.
-                if (process.exitValue() == 0) parsePickerOutput(output) else emptyList()
-            }
+            val process = ProcessBuilder(command.args).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor(1, TimeUnit.MINUTES)
+            // Exit 1 is Cancel for both tools; anything else non-zero is an error with nothing picked.
+            if (process.exitValue() == 0) parsePickerOutput(output) else emptyList()
         } catch (t: Throwable) {
             System.err.println("${command.tool} failed: $t")
             emptyList()

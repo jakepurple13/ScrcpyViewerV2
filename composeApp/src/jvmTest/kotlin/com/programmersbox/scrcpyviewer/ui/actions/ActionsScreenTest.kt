@@ -42,8 +42,8 @@ class ActionsScreenTest {
     }
 
     private object NoFiles : PresetFileDialogs {
-        override fun chooseExportFile(suggestedName: String): Path? = null
-        override fun chooseImportFile(): Path? = null
+        override suspend fun chooseExportFile(suggestedName: String): Path? = null
+        override suspend fun chooseImportFile(): Path? = null
     }
 
     private val trackerScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)

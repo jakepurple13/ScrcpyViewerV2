@@ -16,10 +16,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
 import com.programmersbox.scrcpyviewer.ui.update.UpdateViewModel
+import kotlinx.coroutines.launch
 import java.nio.file.Paths
 
 @Composable
@@ -33,6 +35,8 @@ fun SettingsScreen(
     val nav by viewModel.nav.collectAsStateWithLifecycle()
     val updates by updateViewModel.state.collectAsStateWithLifecycle()
     var showAiSkillDialog by remember { mutableStateOf(false) }
+    // Pickers run through onPickerThread (off the UI thread on Windows / Linux), so they are suspending.
+    val pickerScope = rememberCoroutineScope()
     val actions = SettingsActions(
         onTheme = viewModel::setTheme,
         onPalette = viewModel::setPalette,
@@ -48,8 +52,11 @@ fun SettingsScreen(
         onAnimateMirrorWindows = viewModel::setAnimateMirrorWindows,
         onUseBundledAdb = viewModel::useBundledAdb,
         onUseCustomAdb = viewModel::useCustomAdb,
-        onBrowseAdb = { files.chooseAdbFile()?.let { viewModel.useCustomAdb(it.toString()) } },
-        onBrowseCaptureDir = { files.chooseFolder(Paths.get(state.settings.captureDir))?.let { viewModel.setCaptureDir(it.toString()) } },
+        onBrowseAdb = { pickerScope.launch { files.chooseAdbFile()?.let { viewModel.useCustomAdb(it.toString()) } } },
+        onBrowseCaptureDir = {
+            val current = Paths.get(state.settings.captureDir)
+            pickerScope.launch { files.chooseFolder(current)?.let { viewModel.setCaptureDir(it.toString()) } }
+        },
         onShowOnboarding = viewModel::showOnboarding,
         onCheckUpdates = updateViewModel::check,
         onUpdate = updateViewModel::update,
@@ -59,7 +66,7 @@ fun SettingsScreen(
             showAiSkillDialog = false
             viewModel.installAiSkill(targets)
         },
-        onChooseAiSkillFolder = { files.chooseFolder("Choose a skills folder")?.let(viewModel::addAiSkillFolder) },
+        onChooseAiSkillFolder = { pickerScope.launch { files.chooseFolder("Choose a skills folder")?.let(viewModel::addAiSkillFolder) } },
         onDismissAiInstall = viewModel::dismissAiInstallResult,
         onSelectCategory = viewModel::selectCategory,
         onQuery = viewModel::setQuery,

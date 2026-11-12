@@ -58,6 +58,7 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.NativeFileDialogs
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
+import com.programmersbox.scrcpyviewer.ui.common.onPickerThread
 import java.awt.dnd.DnDConstants
 import java.awt.dnd.DropTargetDragEvent
 import java.awt.dnd.DropTargetDropEvent
@@ -73,17 +74,18 @@ import kotlinx.coroutines.cancel
 /** Native file pickers for Install APK… and Push file…, behind an interface so tests never open a window. */
 interface TransferFileDialogs {
     /** APKs to install (multi-select); empty when cancelled. */
-    fun chooseApks(): List<Path>
+    suspend fun chooseApks(): List<Path>
 
     /** Files to push (multi-select); empty when cancelled. */
-    fun chooseFiles(pushTarget: String): List<Path>
+    suspend fun chooseFiles(pushTarget: String): List<Path>
 }
 
 /** The platform's own open dialog through [NativeFileDialogs]; never touches the AWT toolkit. */
 class NativeTransferFileDialogs(private val dialogs: NativeFileDialogs = nativeFileDialogs()) : TransferFileDialogs {
-    override fun chooseApks(): List<Path> = dialogs.open("Install APK", listOf("apk"), multiple = true)
+    override suspend fun chooseApks(): List<Path> = onPickerThread { dialogs.open("Install APK", listOf("apk"), multiple = true) }
 
-    override fun chooseFiles(pushTarget: String): List<Path> = dialogs.open("Push to $pushTarget", emptyList(), multiple = true)
+    override suspend fun chooseFiles(pushTarget: String): List<Path> =
+        onPickerThread { dialogs.open("Push to $pushTarget", emptyList(), multiple = true) }
 }
 
 /**

@@ -169,9 +169,11 @@ fun ActionsScreen(
                 is ActionsEvent.Select -> viewModel.handle(ActionsRequest(event.id, new = false))
                 ActionsEvent.New -> viewModel.handle(ActionsRequest(null, new = true))
                 is ActionsEvent.NewFromTemplate -> viewModel.newFromTemplate(event.template)
-                ActionsEvent.Import -> files.chooseImportFile()?.let { path -> io { viewModel.beginImport(Files.readString(path)) } }
+                ActionsEvent.Import -> scope.launch {
+                    files.chooseImportFile()?.let { path -> io { viewModel.beginImport(Files.readString(path)) } }
+                }
                 ActionsEvent.Export -> viewModel.startExport()
-                ActionsEvent.ExportSelected -> {
+                ActionsEvent.ExportSelected -> scope.launch {
                     // Cancelling the file picker keeps the selection, so the user can pick again.
                     files.chooseExportFile(ACTIONS_EXPORT_FILE)?.let { path ->
                         val json = viewModel.exportJson(state.exportSelection.orEmpty())

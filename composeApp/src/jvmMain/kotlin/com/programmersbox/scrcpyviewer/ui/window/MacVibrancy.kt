@@ -191,6 +191,42 @@ fun MacVibrancyEffect(nsWindow: Pointer, enabled: Boolean, dark: Boolean) {
 }
 
 /**
+ * Paints [nsWindow]'s own background (NSWindow backgroundColor) in [color], made opaque, so the strip a live resize
+ * uncovers before Compose has drawn the new size shows the theme's color instead of the system window background.
+ * Returns false (nothing done) when not on macOS; never throws.
+ */
+fun setMacWindowBackground(nsWindow: Pointer, color: androidx.compose.ui.graphics.Color): Boolean {
+    if (!Os.isMac) return false
+    return try {
+        val r = color.red.toDouble()
+        val g = color.green.toDouble()
+        val b = color.blue.toDouble()
+        ObjC.onMain {
+            val window = resolveNsWindow(nsWindow) ?: return@onMain
+            val ns = ObjC.msgPtr(ObjC.cls("NSColor"), "colorWithSRGBRed:green:blue:alpha:", r, g, b, 1.0) ?: return@onMain
+            ObjC.msgVoid(window, "setBackgroundColor:", ns)
+        }
+        true
+    } catch (t: Throwable) {
+        System.err.println("setMacWindowBackground failed: $t")
+        false
+    }
+}
+
+/**
+ * Keeps [nsWindow]'s background at [color] while [enabled] (off for the see-through Glass window). After
+ * [MacVibrancyEffect] in composition order, so turning the blur off ends with this color, not the system's.
+ */
+@androidx.compose.runtime.Composable
+fun MacWindowBackgroundEffect(nsWindow: Pointer, color: androidx.compose.ui.graphics.Color, enabled: Boolean) {
+    // The color in sRGB, so a theme in another color space still gives AppKit the right components.
+    val srgb = color.convert(androidx.compose.ui.graphics.colorspace.ColorSpaces.Srgb)
+    androidx.compose.runtime.LaunchedEffect(nsWindow, srgb, enabled) {
+        if (enabled) setMacWindowBackground(nsWindow, srgb)
+    }
+}
+
+/**
  * [handle] as an NSWindow: itself, or the window of the view it is. Runs on the AppKit main thread; null when it is
  * neither.
  */
