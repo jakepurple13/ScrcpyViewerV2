@@ -77,6 +77,8 @@ import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import kotlin.math.roundToInt
 
@@ -155,7 +157,10 @@ internal fun FileRow(
         if (leaving) 0f else 1f,
         if (motion) tween(CLOSE_MILLIS, delayMillis = if (leaving) leavingIndex * LEAVING_STAGGER_MILLIS.toInt() else 0, easing = EmphasizedAccelerate) else snap(),
     )
+    val style = currentStyle
     val container = when {
+        // Glass's secondary container is nearly clear in light mode: a primary wash reads as selected there.
+        selected && style == ThemeStyle.Glass -> colors.primary.copy(alpha = 0.22f)
         selected -> colors.secondaryContainer
         else -> Color.Transparent
     }
@@ -224,6 +229,7 @@ internal fun FileRow(
         val dim = Modifier.graphicsLayer { alpha = if (hidden) HIDDEN_ALPHA else 1f }
         KindTile(
             kind,
+            selected,
             dim.graphicsLayer {
                 scaleX = 1f + (DROP_ICON_SCALE - 1f) * lit
                 scaleY = scaleX
@@ -348,10 +354,12 @@ private fun RenameField(name: String, isDir: Boolean, error: Boolean, motion: Bo
 
 /** The kind's icon: a folder in the accent color, any other kind on its tinted tile. */
 @Composable
-internal fun KindTile(kind: FileKind, modifier: Modifier = Modifier) {
+internal fun KindTile(kind: FileKind, selected: Boolean = false, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val dark = colors.surface.luminance() < 0.5f
-    val tint = kindTint(kind, dark, colors.primary, colors.tertiary)
+    // Retro fills a selected row with a solid color the palette's own accents can vanish into.
+    val onRetroSelection = selected && currentStyle == ThemeStyle.Retro && (kind == FileKind.Folder || kind == FileKind.Document)
+    val tint = if (onRetroSelection) colors.onSecondaryContainer else kindTint(kind, dark, colors.primary, colors.tertiary)
     Box(
         modifier.size(ICON_COLUMN).clip(styledCorner(7.dp))
             .background(if (kind == FileKind.Folder) Color.Transparent else tint.copy(alpha = 0.18f)),
