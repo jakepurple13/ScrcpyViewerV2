@@ -84,7 +84,7 @@ class DeviceAppsTest {
         assertEquals(listOf("24 Game", "A very long app name", "Camera", "Gabb Messenger"), apps.map { it.label })
         assertEquals(DeviceApp("com.gabb.camera", "Camera", true, "2.1.0", 31), apps[2])
         assertEquals(DeviceApp("com.example.long", "A very long app name", false, null, null), apps[1])
-        assertEquals(listOf("-s", "SER", "push", "/jar", DeviceApps.JAR_PATH), adb.execs.single())
+        assertEquals(listOf("-s", "SER", "push", Path.of("/jar").toString(), DeviceApps.JAR_PATH), adb.execs.single())
     }
 
     @Test
