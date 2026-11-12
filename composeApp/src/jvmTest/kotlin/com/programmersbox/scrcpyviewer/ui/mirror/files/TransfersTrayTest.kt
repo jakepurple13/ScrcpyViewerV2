@@ -15,6 +15,7 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.Density
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
@@ -278,5 +279,62 @@ class TransfersTrayTest {
         val snack = checkNotNull(d.nodes().lastOrNull { it.text() == "Opened c.pdf on your computer" }).boundsInRoot
         val header = checkNotNull(d.nodes().lastOrNull { it.text() == "Transfers · done" }).boundsInRoot
         assertTrue(snack.bottom <= header.top, "snackbar $snack above the tray $header")
+    }
+
+    @Test
+    fun `header says N failed when only failures remain`() = onEdt {
+        jobs = listOf(job(1, state = JobState.Failed("x")))
+        assertTrue("Transfers · 1 failed" in tray().texts())
+        jobs = listOf(job(1, state = JobState.Failed("x")), job(2, state = JobState.Failed("y")), job(3, state = JobState.Done))
+        val d = tray()
+        assertTrue("Transfers · 2 failed" in d.texts(), "${d.texts()}")
+        jobs = listOf(job(3, state = JobState.Done))
+        d.frames(30)
+        assertTrue("Transfers · done" in d.texts())
+    }
+
+    @Test
+    fun `a collapsed tray still dismisses a done row after 2_5 s`() = onEdt {
+        jobs = listOf(job(1, bytes = 5, total = 10))
+        val d = tray()
+        d.click(checkNotNull(d.described("Collapse transfers")))
+        jobs = listOf(job(1, state = JobState.Done, bytes = 10, total = 10))
+        d.frames(100)
+        assertTrue(dismissed.isEmpty())
+        d.frames(100)
+        assertEquals(listOf(1L), dismissed)
+    }
+
+    @Test
+    fun `done green reads at 4_5 to 1 on the tray surface in both themes`() {
+        fun lum(c: androidx.compose.ui.graphics.Color) = c.luminance()
+        fun ratio(a: androidx.compose.ui.graphics.Color, b: androidx.compose.ui.graphics.Color) =
+            (maxOf(lum(a), lum(b)) + 0.05f) / (minOf(lum(a), lum(b)) + 0.05f)
+        val light = androidx.compose.ui.graphics.Color(0xFFEEEEEE)
+        val dark = androidx.compose.ui.graphics.Color(0xFF211F26)
+        assertTrue(ratio(doneGreen(false), light) >= 4.5f)
+        assertTrue(ratio(doneGreen(true), dark) >= 4.5f)
+    }
+
+    @Test
+    fun `opening encodes a space and non-ASCII names`() {
+        var uri = ""
+        val handler = object : androidx.compose.ui.platform.UriHandler {
+            override fun openUri(uri2: String) { uri = uri2 }
+        }
+        assertTrue(handler.openFileSafely(Paths.get("/tmp/my 写真.jpg")))
+        assertTrue(uri.startsWith("file:///tmp/my%20"), uri)
+        assertTrue(uri.all { it.code < 128 }, uri)
+    }
+
+    @Test
+    fun `a pull already done when the browser starts is not opened`() {
+        val done = job(1, TransferKind.Pull, JobState.Done, name = "c.pdf", opensAfter = true, hostResult = Paths.get("/tmp/c.pdf"))
+        val flow = MutableStateFlow(listOf(done))
+        val opened = mutableListOf<Path>()
+        val browser = browser(flow) { opened.add(it); true }
+        flow.value = listOf(done, job(2))
+        assertTrue(opened.isEmpty())
+        assertEquals(null, browser.snack)
     }
 }

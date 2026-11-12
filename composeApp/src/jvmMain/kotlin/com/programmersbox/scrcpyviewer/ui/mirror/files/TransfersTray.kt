@@ -50,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -72,7 +73,9 @@ internal const val DONE_ROW_MILLIS = 2_500L
 
 private val ROW_RISE = 8.dp
 private val TRAY_ROWS_MAX_HEIGHT = 168.dp
-private val DONE_GREEN = Color(0xFF34A853)
+
+/** Green text and bar for a finished row: 4.5:1 or better on the tray's surface in both themes. */
+internal fun doneGreen(dark: Boolean) = if (dark) Color(0xFF81C995) else Color(0xFF1B6E34)
 
 /**
  * The transfers docked under the Files list: a header line ("Transfers · 2 running", "Transfers · done", or the idle
@@ -94,6 +97,10 @@ internal fun TransfersTray(
     val colors = MaterialTheme.colorScheme
     var expanded by remember { mutableStateOf(true) }
     val running = jobs.count { it.active }
+    val failed = jobs.count { it.state is JobState.Failed }
+    val green = doneGreen(colors.surface.luminance() < 0.5f)
+    var leaving by remember { mutableStateOf(emptySet<Long>()) }
+    val currentDismiss by rememberUpdatedState(onDismiss)
     val chevron by animateFloatAsState(if (expanded) 0f else -90f, if (motion) tween(OPEN_MILLIS, easing = EmphasizedDecelerate) else snap())
     Surface(modifier.fillMaxWidth(), color = colors.surfaceContainer) {
         Column {
@@ -108,6 +115,7 @@ internal fun TransfersTray(
                     when {
                         jobs.isEmpty() -> "Nothing transferring. Pulls, pushes and installs show here."
                         running > 0 -> "Transfers · $running running"
+                        failed > 0 -> "Transfers · $failed failed"
                         else -> "Transfers · done"
                     },
                     Modifier.weight(1f),
@@ -123,6 +131,19 @@ internal fun TransfersTray(
                     )
                 }
             }
+            // Timers live here, not in the rows, so a collapsed tray still clears its finished rows.
+            for (job in jobs) {
+                key(job.id) {
+                    val finished = job.state == JobState.Done || job.state == JobState.Cancelled
+                    LaunchedEffect(finished) {
+                        if (!finished) return@LaunchedEffect
+                        awaitFrames(doneMillis)
+                        leaving = leaving + job.id
+                        if (motion && expanded) awaitFrames(CLOSE_MILLIS.toLong())
+                        currentDismiss(job.id)
+                    }
+                }
+            }
             AnimatedVisibility(
                 expanded && jobs.isNotEmpty(),
                 enter = if (motion) expandVertically(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) + fadeIn(tween(OPEN_MILLIS)) else EnterTransition.None,
@@ -130,7 +151,7 @@ internal fun TransfersTray(
             ) {
                 Column(Modifier.heightIn(max = TRAY_ROWS_MAX_HEIGHT).verticalScroll(rememberScrollState())) {
                     for (job in jobs) {
-                        key(job.id) { TransferRow(job, pushTarget, downloads, motion, doneMillis, onCancel, onDismiss) }
+                        key(job.id) { TransferRow(job, pushTarget, downloads, motion, job.id in leaving, green, onCancel, onDismiss) }
                     }
                 }
             }
@@ -144,7 +165,8 @@ private fun TransferRow(
     pushTarget: String,
     downloads: Path,
     motion: Boolean,
-    doneMillis: Long,
+    leaving: Boolean,
+    green: Color,
     onCancel: (Long) -> Unit,
     onDismiss: (Long) -> Unit,
 ) {
@@ -152,16 +174,6 @@ private fun TransferRow(
     val rise = with(LocalDensity.current) { ROW_RISE.roundToPx() }
     // Rises in on its first frame; leaves (height to 0 with the close timing) once its time is up.
     val visible = remember { MutableTransitionState(!motion) }.apply { targetState = true }
-    var leaving by remember { mutableStateOf(false) }
-    val currentDismiss by rememberUpdatedState(onDismiss)
-    val finished = job.state == JobState.Done || job.state == JobState.Cancelled
-    LaunchedEffect(finished) {
-        if (!finished) return@LaunchedEffect
-        awaitFrames(doneMillis)
-        leaving = true
-        if (motion) awaitFrames(CLOSE_MILLIS.toLong())
-        currentDismiss(job.id)
-    }
     AnimatedVisibility(
         visibleState = visible,
         enter = if (motion) slideInVertically(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) { rise } + fadeIn(tween(OPEN_MILLIS)) else EnterTransition.None,
@@ -189,7 +201,7 @@ private fun TransferRow(
                     }
                     val done = job.state == JobState.Done
                     val total = job.total
-                    val barColor = if (done) DONE_GREEN else colors.primary
+                    val barColor = if (done) green else colors.primary
                     when {
                         done -> LinearProgressIndicator({ 1f }, Modifier.fillMaxWidth(), color = barColor, trackColor = colors.surfaceVariant)
                         job.state is JobState.Failed || job.state == JobState.Cancelled ->
@@ -201,13 +213,13 @@ private fun TransferRow(
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (done) Icon(Icons.Filled.Check, null, Modifier.size(14.dp), tint = DONE_GREEN)
+                        if (done) Icon(Icons.Filled.Check, null, Modifier.size(14.dp), tint = green)
                         val status = statusText(job)
                         if (status.isNotEmpty()) {
                             Text(
                                 status, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                                 color = when {
-                                    done -> DONE_GREEN
+                                    done -> green
                                     job.state is JobState.Failed -> colors.error
                                     else -> colors.onSurfaceVariant
                                 },

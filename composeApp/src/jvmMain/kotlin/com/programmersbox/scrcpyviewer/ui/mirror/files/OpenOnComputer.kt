@@ -11,6 +11,6 @@ private val log = System.getLogger("scrcpyviewer.Files")
  * logged, never thrown; false then.
  */
 fun UriHandler.openFileSafely(path: Path): Boolean =
-    runCatching { openUri(path.toUri().toString()) }
+    runCatching { openUri(path.toUri().toASCIIString()) }
         .onFailure { log.log(System.Logger.Level.WARNING, "Could not open $path", it) }
         .isSuccess

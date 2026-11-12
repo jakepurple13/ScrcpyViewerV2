@@ -216,6 +216,10 @@ class FilesBrowser(
             val opened = HashSet<Long>()
             var first = true
             jobs.collect { list ->
+                // Pulls that finished before this browser started are not opened now.
+                if (first) {
+                    for (job in list) if (job.request.opensAfter && job.state == JobState.Done) opened.add(job.id)
+                }
                 var refresh = false
                 for (job in list) {
                     openWhenDone(job, opened)
