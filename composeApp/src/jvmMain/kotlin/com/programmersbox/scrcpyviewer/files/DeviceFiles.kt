@@ -44,7 +44,8 @@ open class DeviceFiles(
     /**
      * Moves [names] into [toDir] (as [renames] says). An existing target fails the item with "<name>: already
      * exists" unless its source name is in [replace], where it is removed first. Both folders are rescanned even
-     * when a later item fails, since earlier ones may already have moved.
+     * when a later item fails, since earlier ones may already have moved. An item whose target is its own path is
+     * skipped: removing the "existing" target would delete the item itself.
      */
     open suspend fun move(
         dir: String,
@@ -53,8 +54,11 @@ open class DeviceFiles(
         renames: Map<String, String> = emptyMap(),
         replace: Set<String> = emptySet(),
     ) {
-        if (names.isEmpty()) return
-        val cmd = names.joinToString(" && ") {
+        val moving = names.filter {
+            devicePath(normalizeDir(dir), it) != devicePath(normalizeDir(toDir), renames[it] ?: it)
+        }
+        if (moving.isEmpty()) return
+        val cmd = moving.joinToString(" && ") {
             val targetName = renames[it] ?: it
             val target = shellQuote(devicePath(toDir, targetName))
             val mv = "mv ${shellQuote(devicePath(dir, it))} $target"

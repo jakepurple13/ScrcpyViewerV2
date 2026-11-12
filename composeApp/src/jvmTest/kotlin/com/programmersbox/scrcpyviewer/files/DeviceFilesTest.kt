@@ -65,6 +65,16 @@ class DeviceFilesTest {
     }
 
     @Test
+    fun moveNeverTouchesAnItemWhoseTargetIsItself() = runBlocking<Unit> {
+        // Same folder (spelled differently), replace asked: an `rm -rf` of the target would delete the source.
+        files.move("/sdcard/A/", listOf("x", "y"), "/sdcard/A", replace = setOf("x", "y"))
+        assertTrue(runner.commands.isEmpty(), "nothing runs when every item is already in place")
+
+        files.move("/sdcard/A", listOf("x", "y"), "/sdcard/A", mapOf("y" to "z"), replace = setOf("x"))
+        assertEquals(listOf("if [ -e '/sdcard/A/z' ] || [ -L '/sdcard/A/z' ]; then printf '%s: already exists\\n' 'z'; false; else mv '/sdcard/A/y' '/sdcard/A/z'; fi"), runner.commands)
+    }
+
+    @Test
     fun moveScansEvenWhenItFails() = runBlocking<Unit> {
         runner.result = ShellResult("x: already exists", 1, 0)
         assertFailsWith<IOException> { files.move("/sdcard/A", listOf("x"), "/sdcard/B") }
