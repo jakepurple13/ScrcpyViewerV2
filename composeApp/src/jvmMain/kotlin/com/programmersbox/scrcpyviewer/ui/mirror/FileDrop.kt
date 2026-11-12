@@ -133,6 +133,16 @@ class FileTransfers internal constructor(
 }
 
 /**
+ * Runs [pick] (Install APK... / Push file...) and queues what it returns on [transfers] as they are once the picker
+ * closes, not at the click: a Reconnect while the picker is open replaces the transfers and cancels the old queue,
+ * which would drop the files without a word.
+ */
+internal suspend fun pickAndStart(transfers: () -> FileTransfers, pick: suspend (pushTarget: String) -> List<Path>): Boolean {
+    val paths = pick(transfers().pushTarget)
+    return transfers().start(paths)
+}
+
+/**
  * The install / push queue of [session] (v5.0 `file_pusher.c`): one per session, cancelled (the running adb killed,
  * the rest dropped) when the window closes or a Reconnect replaces the session. Results go to [notify].
  */

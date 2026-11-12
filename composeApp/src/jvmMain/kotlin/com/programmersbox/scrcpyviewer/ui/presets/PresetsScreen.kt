@@ -65,6 +65,7 @@ import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.OptionRow
 import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
+import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
 import androidx.compose.runtime.key
 import com.programmersbox.scrcpyviewer.ui.devices.initialValue
 import kotlinx.coroutines.CoroutineScope
@@ -100,8 +101,10 @@ fun PresetsScreen(
     }
 
     val scope = rememberCoroutineScope()
+    // One picker at a time: off macOS the UI stays live while it is open.
+    val picker = rememberPickerGuard()
     fun export(ids: List<String>, suggested: String) {
-        scope.launch {
+        picker.launch(scope) {
             val path = files.chooseExportFile(suggested) ?: return@launch
             launchIo { reportErrors { Files.writeString(path, viewModel.exportJson(ids)) } }
         }
@@ -119,7 +122,7 @@ fun PresetsScreen(
         onExport = { p -> export(listOf(p.id), exportFileName(p.name)) },
         onExportAll = { export(state.presets.map { it.id }, exportFileName(null)) },
         onImportFile = {
-            scope.launch {
+            picker.launch(scope) {
                 val path = files.chooseImportFile()
                 if (path != null) launchIo { reportErrors { viewModel.beginImport(Files.readString(path)) } }
             }

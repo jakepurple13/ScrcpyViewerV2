@@ -148,6 +148,7 @@ import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.scrcpy.StreamProtocol
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
+import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
@@ -431,6 +432,9 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
+    // Read when a picker closes: a Reconnect meanwhile replaces the transfers (pickAndStart).
+    val currentTransfers by rememberUpdatedState(transfers)
+    val picker = rememberPickerGuard()
     val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
     val sheetFocus = remember { SheetFocus() }
 
@@ -895,8 +899,9 @@ fun MirrorWindow(
                                 MirrorAction.Screenshot -> takeScreenshot()
                                 MirrorAction.Record -> toggleRecording()
                                 // Off the UI thread where the picker does not pump it (onPickerThread); back on it to start.
-                                MirrorAction.InstallApk -> uiScope.launch { transfers.start(transferDialogs.chooseApks()) }
-                                MirrorAction.PushFile -> uiScope.launch { transfers.start(transferDialogs.chooseFiles(transfers.pushTarget)) }
+                                // One picker at a time (PickerGuard), queued on the transfers current when it closes.
+                                MirrorAction.InstallApk -> picker.launch(uiScope) { pickAndStart({ currentTransfers }) { transferDialogs.chooseApks() } }
+                                MirrorAction.PushFile -> picker.launch(uiScope) { pickAndStart({ currentTransfers }, transferDialogs::chooseFiles) }
                                 MirrorAction.QuickActions -> quickActions.toggleSheet()
                                 else -> send(action.messages())
                             }

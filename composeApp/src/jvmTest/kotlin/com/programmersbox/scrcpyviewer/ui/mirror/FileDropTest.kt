@@ -190,4 +190,20 @@ class FileDropTest {
             scope.cancel()
         }
     }
+
+    @Test
+    fun `a pick queues on the transfers current when the picker closes, not at the click`() = kotlinx.coroutines.runBlocking<Unit> {
+        val messages = ArrayList<String>()
+        val beforeReconnect = FileTransfers(queue = null, pushTarget = "/old/") { messages += "old: $it" }
+        val afterReconnect = FileTransfers(queue = null, pushTarget = "/new/") { messages += "new: $it" }
+        var current = beforeReconnect
+        var target: String? = null
+        pickAndStart({ current }) { pushTarget ->
+            target = pushTarget
+            current = afterReconnect // Reconnect while the picker is open
+            listOf(Paths.get("/x/app.apk"))
+        }
+        assertEquals("/old/", target)
+        assertEquals(listOf("new: adb is not available"), messages)
+    }
 }

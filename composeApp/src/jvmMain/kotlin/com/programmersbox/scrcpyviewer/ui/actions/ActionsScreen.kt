@@ -84,6 +84,7 @@ import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.ResizableListDetail
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
+import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
 import com.programmersbox.scrcpyviewer.ui.presets.ErrorBanner
 import com.programmersbox.scrcpyviewer.ui.presets.PresetFileDialogs
 import kotlinx.coroutines.Dispatchers
@@ -146,6 +147,8 @@ fun ActionsScreen(
     val snackbar = LocalSnackbarHostState.current
     LaunchedEffect(viewModel) { viewModel.messages.collect { snackbar?.showSnackbar(it) } }
     val scope = rememberCoroutineScope()
+    // One picker at a time: off macOS the UI stays live while it is open.
+    val picker = rememberPickerGuard()
     var introRequested by remember { mutableStateOf(false) }
     // Selection mode ends with the screen: coming back shows the list as usual.
     DisposableEffect(viewModel) { onDispose { viewModel.cancelExport() } }
@@ -169,11 +172,11 @@ fun ActionsScreen(
                 is ActionsEvent.Select -> viewModel.handle(ActionsRequest(event.id, new = false))
                 ActionsEvent.New -> viewModel.handle(ActionsRequest(null, new = true))
                 is ActionsEvent.NewFromTemplate -> viewModel.newFromTemplate(event.template)
-                ActionsEvent.Import -> scope.launch {
+                ActionsEvent.Import -> picker.launch(scope) {
                     files.chooseImportFile()?.let { path -> io { viewModel.beginImport(Files.readString(path)) } }
                 }
                 ActionsEvent.Export -> viewModel.startExport()
-                ActionsEvent.ExportSelected -> scope.launch {
+                ActionsEvent.ExportSelected -> picker.launch(scope) {
                     // Cancelling the file picker keeps the selection, so the user can pick again.
                     files.chooseExportFile(ACTIONS_EXPORT_FILE)?.let { path ->
                         val json = viewModel.exportJson(state.exportSelection.orEmpty())
