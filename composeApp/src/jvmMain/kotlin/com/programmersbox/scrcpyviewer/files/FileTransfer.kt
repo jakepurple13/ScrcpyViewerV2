@@ -4,7 +4,6 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -25,7 +24,6 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
-import kotlin.concurrent.thread
 
 /** `DEFAULT_PUSH_TARGET` in v5.0 `app/src/file_pusher.c`. */
 const val DEFAULT_PUSH_TARGET = "/sdcard/Download/"
@@ -36,9 +34,6 @@ const val TRANSFER_TIMEOUT_MS = 30 * 60 * 1000L
 /** How often a pull samples the growing host file, and a push the device file (`stat`). */
 private const val PULL_POLL_MS = 250L
 private const val PUSH_POLL_MS = 500L
-
-/** How long to wait for adb's output once it exited (a daemon it forked may hold the pipe open). */
-private const val OUTPUT_GRACE_MS = 2_000L
 
 /**
  * [Install] and [Push] take a host file; [Pull] copies a device file or folder to the host; [InstallFromDevice]
@@ -106,7 +101,14 @@ fun hostUniquePath(dir: Path, name: String, isDirectory: Boolean = false): Path 
     return dir.resolve("$base ($n)$ext")
 }
 
-/** `<java.io.tmpdir>/scrcpy-vwr`: per serial, `install/` holds device APKs being installed, `open/` opened files. */
+/**
+ * [serial] as one file name: anything but letters, digits, `.`, `_` and `-` becomes `_`, so a Wi-Fi serial
+ * (`192.168.1.5:5555`) is a valid path segment on Windows too.
+ */
+fun serialPathSegment(serial: String): String =
+    serial.replace(Regex("[^A-Za-z0-9._-]"), "_").takeUnless { it.isEmpty() || it == "." || it == ".." } ?: "_"
+
+/** `<java.io.tmpdir>/scrcpy-vwr`: per serial ([serialPathSegment]), `install/` holds device APKs being installed, `open/` opened files. */
 fun defaultTransferTempRoot(): Path = Paths.get(System.getProperty("java.io.tmpdir"), "scrcpy-vwr")
 
 
@@ -290,7 +292,8 @@ class FileTransferQueue(
     /**
      * Stops job [id]: a queued job is removed without running adb; a running one has its adb killed and what it wrote
      * removed (the partial host file of a pull, `rm -f` of the partial device file of a push), then turns
-     * [JobState.Cancelled]. No-op once the job ended.
+     * [JobState.Cancelled]; nothing is removed when adb had not started yet. No-op once the job ended, and an adb
+     * run that already exited successfully still completes the job (a late cancel does not undo it).
      */
     fun cancel(id: Long) {
         val process = synchronized(lock) {
@@ -433,7 +436,7 @@ class FileTransferQueue(
         TransferKind.Install -> install(request, request.path)
         TransferKind.Push -> push(id, request)
         TransferKind.Pull -> {
-            val dir = if (request.opensAfter) tempRoot.resolve(serial).resolve("open") else request.path
+            val dir = if (request.opensAfter) tempRoot.resolve(serialPathSegment(serial)).resolve("open") else request.path
             when (val pulled = pull(id, request, dir)) {
                 is Pulled.Failed -> failed(request, pulled.reason)
                 // Open on computer reports nothing: the caller opens [hostResult].
@@ -444,7 +447,7 @@ class FileTransferQueue(
             }
         }
         TransferKind.InstallFromDevice -> {
-            val dir = tempRoot.resolve(serial).resolve("install")
+            val dir = tempRoot.resolve(serialPathSegment(serial)).resolve("install")
             when (val pulled = pull(id, request.copy(isDirectory = false), dir)) {
                 is Pulled.Failed -> failed(request, pulled.reason)
                 is Pulled.Ok -> try {
@@ -472,14 +475,16 @@ class FileTransferQueue(
         val size = if (Files.isRegularFile(request.path)) runCatching { Files.size(request.path) }.getOrNull() else null
         synchronized(lock) { updateJob(id) { it.copy(total = size) } }
         // A folder push merges into what is there: nothing of it is removed on a cancel.
+        // Only once adb ran: a cancel before it started must not delete a device file adb never touched.
+        var started = false
         val removePartial: suspend () -> Unit = {
-            if (size != null) runCatching { adb.shell(serial, "rm -f ${shellQuote(deviceFile)}") }
+            if (size != null && started) runCatching { adb.shell(serial, "rm -f ${shellQuote(deviceFile)}") }
         }
         val sample: (suspend () -> Long?)? = size?.let {
             { adb.shell(serial, "stat -c %s ${shellQuote(deviceFile)}").trim().toLongOrNull() }
         }
         val r = try {
-            withProgress(id, PUSH_POLL_MS, sample) { runAdb(pushArgs(serial, request.path, target)) }
+            withProgress(id, PUSH_POLL_MS, sample) { runAdb(pushArgs(serial, request.path, target)) { started = true } }
         } catch (e: UserCancelled) {
             removePartial()
             throw e
@@ -509,15 +514,17 @@ class FileTransferQueue(
         val target = hostUniquePath(hostDir, name, request.isDirectory)
         synchronized(lock) { updateJob(id) { it.copy(total = if (request.isDirectory) null else request.size) } }
         var keep = false
+        var started = false
         try {
             val r = withProgress(id, PULL_POLL_MS, { hostSize(target) }) {
-                runAdb(pullArgs(serial, devicePath(deviceDir, name), target))
+                runAdb(pullArgs(serial, devicePath(deviceDir, name), target)) { started = true }
             } ?: return Pulled.Failed(timedOut())
             failureOf(r)?.let { return Pulled.Failed(it) }
             keep = true
             return Pulled.Ok(target, hostSize(target))
         } finally {
-            if (!keep) runCatching { deleteRecursively(target) }
+            // Only what this pull's adb may have written.
+            if (!keep && started) runCatching { deleteRecursively(target) }
         }
     }
 
@@ -579,33 +586,42 @@ class FileTransferQueue(
         }
     }
 
+    /** Test seam: runs as a job is about to start adb, before the last cancel check. */
+    internal var beforeStart: (id: Long) -> Unit = {}
+
     /**
-     * Runs adb with [args] as a process [cancel] can kill. Null when it timed out (the process is then destroyed);
-     * throws [UserCancelled] when [cancel] stopped it. stderr comes merged into [ProcessResult.stdout].
+     * Runs adb with [args] as a process [cancel] can kill; [onStarted] runs once it started. Null when it timed out
+     * (the process is then destroyed). A successful exit (0) wins over a cancel that came too late; otherwise a
+     * [cancel] makes this throw [UserCancelled]. adb's output goes to a temp file, not a pipe: an adb server it forks
+     * would hold a pipe open (see [AdbClient]). stderr comes merged into [ProcessResult.stdout].
      */
-    private suspend fun runAdb(args: List<String>): ProcessResult? {
-        val process = synchronized(lock) {
-            if (cancelRequested) throw UserCancelled()
-            adb.startProcess(*args.toTypedArray()).also { runningProcess = it }
-        }
+    private suspend fun runAdb(args: List<String>, onStarted: () -> Unit = {}): ProcessResult? {
+        synchronized(lock) { runningId }?.let(beforeStart)
+        val outFile = Files.createTempFile("adb-transfer", ".txt")
+        var process: Process? = null
         try {
-            // A plain thread: a blocking read ignores coroutine cancellation, and destroying the process ends it.
-            val output = CompletableDeferred<ByteArray>()
-            thread(isDaemon = true, name = "adb-transfer-output") {
-                output.complete(runCatching { process.inputStream.readBytes() }.getOrDefault(ByteArray(0)))
+            val started = synchronized(lock) {
+                if (cancelRequested) throw UserCancelled()
+                adb.startProcess(outFile, *args.toTypedArray()).also {
+                    runningProcess = it
+                    process = it
+                    onStarted()
+                }
             }
-            val exit = withTimeoutOrNull(timeoutMs) { runInterruptible(Dispatchers.IO) { process.waitFor() } }
-            checkCancelled()
+            val exit = withTimeoutOrNull(timeoutMs) { runInterruptible(Dispatchers.IO) { started.waitFor() } }
             if (exit == null) return null
-            val out = withTimeoutOrNull(OUTPUT_GRACE_MS) { output.await() } ?: ByteArray(0)
-            return ProcessResult(exit, String(out, Charsets.UTF_8), "")
+            if (exit != 0) checkCancelled()
+            return ProcessResult(exit, runCatching { Files.readString(outFile) }.getOrDefault(""), "")
         } finally {
-            if (process.isAlive) {
-                process.destroyForcibly()
-                // Let it die before the caller removes what it wrote.
-                runCatching { process.waitFor(1, TimeUnit.SECONDS) }
+            process?.let { p ->
+                if (p.isAlive) {
+                    p.destroyForcibly()
+                    // Let it die before the caller removes what it wrote.
+                    runCatching { p.waitFor(1, TimeUnit.SECONDS) }
+                }
+                synchronized(lock) { if (runningProcess === p) runningProcess = null }
             }
-            synchronized(lock) { if (runningProcess === process) runningProcess = null }
+            runCatching { Files.deleteIfExists(outFile) }
         }
     }
 }

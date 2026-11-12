@@ -31,9 +31,15 @@ class FileTransferTest {
     /**
      * A [Process] whose run is [block] on a coroutine: it exits with the block's exit code once the block returns, and
      * [destroy] exits it with 137 and cancels the block (its `finally` runs). Output is the block's stdout + stderr,
-     * readable once it exits. No real process is started.
+     * readable once it exits and also written to [outputFile]. [afterExit] runs in [waitFor] once it exited, on the
+     * waiting thread. No real process is started.
      */
-    class FakeProcess(scope: CoroutineScope, block: suspend () -> ProcessResult) : Process() {
+    class FakeProcess(
+        scope: CoroutineScope,
+        private val outputFile: java.nio.file.Path? = null,
+        private val afterExit: () -> Unit = {},
+        block: suspend () -> ProcessResult,
+    ) : Process() {
         private val exited = java.util.concurrent.CountDownLatch(1)
         @Volatile private var exit = 0
         @Volatile private var output = ByteArray(0)
@@ -53,6 +59,7 @@ class FileTransferTest {
             if (exited.count == 0L) return
             exit = code
             output = out
+            outputFile?.let { java.nio.file.Files.write(it, out) }
             exited.countDown()
         }
 
@@ -71,6 +78,7 @@ class FileTransferTest {
 
         override fun waitFor(): Int {
             exited.await()
+            afterExit()
             return exit
         }
 
@@ -108,9 +116,14 @@ class FileTransferTest {
             return handler(args.toList())
         }
 
-        override fun startProcess(vararg args: String): Process {
+        /** Runs between a process's exit and its waiter seeing it. */
+        @Volatile var afterExit: () -> Unit = {}
+
+        override fun startProcess(vararg args: String): Process = error("transfers write adb's output to a file")
+
+        override fun startProcess(output: java.nio.file.Path, vararg args: String): Process {
             calls += args.toList()
-            return FakeProcess(processScope) { handler(args.toList()) }.also { processes += it }
+            return FakeProcess(processScope, output, { afterExit() }) { handler(args.toList()) }.also { processes += it }
         }
 
         override suspend fun shell(serial: String, cmd: String): String {
@@ -501,10 +514,12 @@ class FileTransferTest {
     fun `cancelling a push removes the partial device file`() = runBlocking<Unit> {
         val src = tmp.resolve("it's.bin")
         java.nio.file.Files.write(src, ByteArray(8))
-        val adb = FakeAdb { awaitCancellation() }
+        val started = CompletableDeferred<Unit>()
+        val adb = FakeAdb { started.complete(Unit); awaitCancellation() }
         val q = queue(adb)
         val id = q.enqueue(listOf(TransferRequest(src, TransferKind.Push, deviceDir = "/sdcard/X"))).single()
-        q.awaitJob(id) { it.state == JobState.Running }
+        // Once adb runs: a cancel before that removes nothing.
+        withTimeout(5_000) { started.await() }
         q.cancel(id)
         q.awaitJob(id) { it.state == JobState.Cancelled }
         assertTrue("rm -f '/sdcard/X/it'\\''s.bin'" in adb.shellCalls, adb.shellCalls.toString())
@@ -587,5 +602,62 @@ class FileTransferTest {
         assertEquals("Pulled a.txt to Downloads", TransferResult.Pulled("a.txt", Paths.get("/h/Downloads")).message)
         assertEquals("Could not pull a.txt: x", TransferResult.Failed(p, "x").message)
         assertEquals("Could not install app.apk: x", TransferResult.Failed(i, "x").message)
+    }
+
+    // ---- Review fixes ----
+
+    @Test
+    fun `a Wi-Fi serial becomes a valid path segment`() = runBlocking<Unit> {
+        assertEquals("192.168.1.5_5555", serialPathSegment("192.168.1.5:5555"))
+        assertEquals("emulator-5554", serialPathSegment("emulator-5554"))
+        assertEquals("adb-R5C._adb-tls-connect._tcp", serialPathSegment("adb-R5C._adb-tls-connect._tcp"))
+        assertEquals("a_b", serialPathSegment("a/b"))
+        assertEquals("_", serialPathSegment(".."))
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "pdf"); ProcessResult(0, "", "") }
+        val q = FileTransferQueue("192.168.1.5:5555", adb, DEFAULT_PUSH_TARGET, { true }, {}, scope, tempRoot = tmp.resolve("scrcpy-vwr"))
+        val request = TransferRequest(tmp, TransferKind.Pull, deviceDir = "/sdcard/Download", deviceName = "a.pdf", opensAfter = true)
+        val job = q.awaitJob(q.enqueue(listOf(request)).single()) { it.state == JobState.Done }
+        assertEquals(tmp.resolve("scrcpy-vwr").resolve("192.168.1.5_5555").resolve("open").resolve("a.pdf"), job.hostResult)
+    }
+
+    @Test
+    fun `a cancel before adb starts removes nothing on the device or host`() = runBlocking<Unit> {
+        val src = tmp.resolve("keep.bin")
+        java.nio.file.Files.write(src, ByteArray(8))
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        java.nio.file.Files.writeString(dir.resolve("a.txt"), "mine")
+        val adb = FakeAdb { ProcessResult(0, "", "") }
+        val q = queue(adb)
+        q.beforeStart = { q.cancel(it) }
+        val ids = q.enqueue(listOf(TransferRequest(src, TransferKind.Push, deviceDir = "/sdcard/X"), pull(dir, "a.txt")))
+        q.awaitJob(ids[0]) { it.state == JobState.Cancelled }
+        q.awaitJob(ids[1]) { it.state == JobState.Cancelled }
+        assertTrue(adb.calls.isEmpty(), adb.calls.toString())
+        assertTrue(adb.shellCalls.none { it.startsWith("rm") }, adb.shellCalls.toString())
+        assertEquals("mine", java.nio.file.Files.readString(dir.resolve("a.txt")))
+        assertEquals(listOf("a.txt"), java.nio.file.Files.list(dir).use { s -> s.map { it.fileName.toString() }.toList() })
+    }
+
+    @Test
+    fun `a cancel after adb exited successfully does not undo the transfer`() = runBlocking<Unit> {
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "data"); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        val running = java.util.concurrent.atomic.AtomicLong()
+        q.beforeStart = { running.set(it) }
+        adb.afterExit = { q.cancel(running.get()) }
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        val id = q.enqueue(listOf(pull(dir, "a.txt"))).single()
+        assertEquals(TransferResult.Pulled("a.txt", dir), withTimeout(5_000) { result.await() })
+        assertEquals(JobState.Done, q.awaitJob(id) { !it.active }.state)
+        assertEquals("data", java.nio.file.Files.readString(dir.resolve("a.txt")))
+    }
+
+    @Test
+    fun `adb output reaches the error line through the output file`() = runBlocking<Unit> {
+        val q = queue(FakeAdb { ProcessResult(1, "", "adb: error: remote secure_mkdirs failed: Operation not permitted\n") })
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        q.enqueue(listOf(TransferRequest(Paths.get("/x/b.jpg"), TransferKind.Push, deviceDir = "/system")))
+        assertEquals("Could not push b.jpg: remote secure_mkdirs failed: Operation not permitted", withTimeout(5_000) { result.await() }.message)
     }
 }

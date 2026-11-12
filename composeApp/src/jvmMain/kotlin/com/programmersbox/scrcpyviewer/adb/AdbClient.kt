@@ -158,6 +158,17 @@ open class AdbClient(
             .start()
 
     /**
+     * Starts the adb binary with [args] as a process the caller can kill, its stdout and stderr both written to
+     * [output] (a file, not a pipe: see [runAdb]). stdin is empty; the caller waits for it and destroys it.
+     */
+    open fun startProcess(output: Path, vararg args: String): Process =
+        ProcessBuilder(listOf(adbPath().toString()) + args)
+            .redirectInput(ProcessBuilder.Redirect.from(nullFile()))
+            .redirectErrorStream(true)
+            .redirectOutput(output.toFile())
+            .start()
+
+    /**
      * Output goes to temp files rather than pipes: `adb start-server` forks a daemon that inherits and holds
      * pipe ends open, so reading a pipe to EOF could block forever. The wait is interruptible, and the process
      * is destroyed on timeout or cancellation.
