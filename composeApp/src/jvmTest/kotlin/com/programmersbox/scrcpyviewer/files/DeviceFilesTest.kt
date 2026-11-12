@@ -51,12 +51,15 @@ class DeviceFilesTest {
     @Test
     fun moveWithRenamesAndReplace() = runBlocking<Unit> {
         files.move("/sdcard/A", listOf(tricky, "x"), "/sdcard/B", mapOf("x" to "x (1)"), setOf("x"))
+        val s1 = "'/sdcard/A/it'\\''s a'"
         val t1 = "'/sdcard/B/it'\\''s a'"
+        val s2 = "'/sdcard/A/x'"
         val t2 = "'/sdcard/B/x (1)'"
         assertEquals(
             listOf(
-                "if [ -e $t1 ] || [ -L $t1 ]; then printf '%s: already exists\\n' 'it'\\''s a'; false; else " +
-                    "mv '/sdcard/A/it'\\''s a' $t1; fi && rm -rf -- $t2 && mv '/sdcard/A/x' $t2",
+                // An item that is already its own target (another spelling of the same folder) is left alone first.
+                "if [ $s1 -ef $t1 ]; then :; elif [ -e $t1 ] || [ -L $t1 ]; then printf '%s: already exists\\n' 'it'\\''s a'; false; else " +
+                    "mv $s1 $t1; fi && if [ $s2 -ef $t2 ]; then :; else rm -rf -- $t2 && mv $s2 $t2; fi",
             ),
             runner.commands,
         )
@@ -71,7 +74,7 @@ class DeviceFilesTest {
         assertTrue(runner.commands.isEmpty(), "nothing runs when every item is already in place")
 
         files.move("/sdcard/A", listOf("x", "y"), "/sdcard/A", mapOf("y" to "z"), replace = setOf("x"))
-        assertEquals(listOf("if [ -e '/sdcard/A/z' ] || [ -L '/sdcard/A/z' ]; then printf '%s: already exists\\n' 'z'; false; else mv '/sdcard/A/y' '/sdcard/A/z'; fi"), runner.commands)
+        assertEquals(listOf("if [ '/sdcard/A/y' -ef '/sdcard/A/z' ]; then :; elif [ -e '/sdcard/A/z' ] || [ -L '/sdcard/A/z' ]; then printf '%s: already exists\\n' 'z'; false; else mv '/sdcard/A/y' '/sdcard/A/z'; fi"), runner.commands)
     }
 
     @Test

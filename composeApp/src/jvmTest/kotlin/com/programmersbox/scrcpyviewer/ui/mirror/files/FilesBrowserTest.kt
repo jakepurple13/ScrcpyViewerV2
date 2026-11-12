@@ -40,6 +40,9 @@ private class FakeFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath = {
     val calls = mutableListOf<String>()
     var fail: String? = null
 
+    /** When set, every mutation waits for it. */
+    var mutationGate: CompletableDeferred<Unit>? = null
+
     /** Calls that change the device. */
     val mutations get() = calls.filter { it.split(' ').first() in setOf("mkdir", "rename", "move", "delete") }
     val lists get() = calls.filter { it.startsWith("list ") }
@@ -62,6 +65,7 @@ private class FakeFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath = {
 
     override suspend fun mkdir(dir: String, name: String) {
         calls += "mkdir $dir $name"
+        mutationGate?.await()
         fail?.let { throw IOException(it) }
         put(dir, entries(dir) + dir(name))
     }
@@ -83,6 +87,7 @@ private class FakeFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath = {
 
     override suspend fun delete(dir: String, names: List<String>) {
         calls += "delete $dir $names"
+        mutationGate?.await()
         fail?.let { throw IOException(it) }
         put(dir, entries(dir).filter { it.name !in names })
     }
@@ -498,7 +503,7 @@ class FilesBrowserTest {
         b.push(listOf(Paths.get("/x/z.txt")), "/sdcard/Android/data")
         runCurrent()
         assertEquals(1, requests.size, "a blocked folder gets nothing")
-        assertEquals("Android blocks this folder", snacks.single().message)
+        assertEquals(listOf("Skipped notes.txt, already in Documents", "Android blocks this folder"), snacks.map { it.message })
     }
 
     @Test
@@ -607,8 +612,8 @@ class FilesBrowserTest {
         b.openEntry("notes.txt")
         assertEquals(
             listOf(
-                TransferRequest(Paths.get("app.apk"), TransferKind.InstallFromDevice, "/sdcard/Download", "app.apk", size = 900),
-                TransferRequest(Paths.get("notes.txt"), TransferKind.Pull, "/sdcard/Download", "notes.txt", opensAfter = true, size = 50),
+                TransferRequest(Paths.get(""), TransferKind.InstallFromDevice, "/sdcard/Download", "app.apk", size = 900),
+                TransferRequest(Paths.get(""), TransferKind.Pull, "/sdcard/Download", "notes.txt", opensAfter = true, size = 50),
             ),
             requests,
         )
@@ -626,5 +631,88 @@ class FilesBrowserTest {
             ),
             requests,
         )
+    }
+
+    @Test
+    fun aNewFolderRowNeverVanishesWhileTheRefreshRuns() = runTest {
+        val b = browser()
+        b.newFolder()
+        b.commitRename("Photos")
+        val gate = CompletableDeferred<Unit>().also { files.gates["/sdcard/Download"] = it }
+        runCurrent()
+        assertEquals(listOf("mkdir /sdcard/Download Photos"), files.mutations)
+        assertTrue(b.loading)
+        assertNull(b.pendingNewFolder)
+        assertEquals(1, b.names.count { it == "Photos" }, "the row stays while the listing runs")
+        assertEquals(setOf("Photos"), b.arriving)
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(1, b.names.count { it == "Photos" })
+    }
+
+    @Test
+    fun aPendingNameThatAppearsOnTheDeviceIsShownOnce() = runTest {
+        val b = browser()
+        b.newFolder()
+        files.dirs["/sdcard/Download"] = Listing.Entries((files.dirs["/sdcard/Download"] as Listing.Entries).entries + dir("New folder"))
+        b.refresh()
+        runCurrent()
+        assertEquals("New folder", b.pendingNewFolder)
+        assertEquals(1, b.names.count { it == "New folder" })
+    }
+
+    @Test
+    fun moveIntoTheSameFolderInAnotherCaseDoesNothing() = runTest {
+        val b = browser()
+        b.move(listOf("notes.txt"), "/sdcard/download/")
+        settle()
+        assertTrue(files.mutations.isEmpty())
+        assertNull(b.dialog)
+    }
+
+    @Test
+    fun anUnansweredClashSaysWhatWasSkipped() = runTest {
+        clashSetup()
+        val b = browser()
+        b.move(listOf("notes.txt", "a.jpg"), "/sdcard/Documents")
+        runCurrent()
+        assertIs<FilesDialog.Clash>(b.dialog)
+        b.push(listOf(Paths.get("/x/a.jpg")), "/sdcard/Download")
+        assertEquals(listOf("Skipped 2 items already in Documents"), snacks.map { it.message }, "replaced by a newer clash")
+        b.open("/sdcard")
+        assertEquals("Skipped a.jpg, already in Download", snacks.last().message, "closed by navigating")
+        runCurrent()
+        b.push(listOf(Paths.get("/x/Download")), "/sdcard")
+        b.onConnectionChanged(false)
+        assertEquals("Skipped Download, already in Internal storage", snacks.last().message, "closed by a disconnect")
+        val count = snacks.size
+        b.onConnectionChanged(true)
+        runCurrent()
+        b.push(listOf(Paths.get("/x/Download")), "/sdcard")
+        assertIs<FilesDialog.Clash>(b.dialog).onChoice(ClashChoice.Skip)
+        assertEquals(count, snacks.size, "an answered clash says nothing")
+    }
+
+    @Test
+    fun leavingAndArrivingStayWithTheirFolder() = runTest {
+        val b = browser()
+        files.mutationGate = CompletableDeferred()
+        b.click("notes.txt")
+        b.askDelete()
+        b.confirmDelete()
+        runCurrent()
+        b.open("/sdcard/Download/Telegram")
+        runCurrent()
+        files.mutationGate!!.complete(Unit)
+        runCurrent()
+        assertEquals(emptySet(), b.leaving, "rows of a folder no longer shown do not collapse")
+        assertEquals(listOf("voice.ogg"), b.names)
+
+        files.dirs["/sdcard/Download/Telegram"] = Listing.Entries(listOf(file("voice.ogg"), file("new.ogg")))
+        b.refresh()
+        runCurrent()
+        assertEquals(setOf("new.ogg"), b.arriving)
+        b.up()
+        assertEquals(emptySet(), b.arriving)
     }
 }

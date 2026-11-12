@@ -45,7 +45,9 @@ open class DeviceFiles(
      * Moves [names] into [toDir] (as [renames] says). An existing target fails the item with "<name>: already
      * exists" unless its source name is in [replace], where it is removed first. Both folders are rescanned even
      * when a later item fails, since earlier ones may already have moved. An item whose target is its own path is
-     * skipped: removing the "existing" target would delete the item itself.
+     * skipped: removing the "existing" target would delete the item itself. Each item also checks on the device that
+     * source and target are not the same file (`-ef`) before anything else, since `/sdcard` ignores case and other
+     * spellings reach the same folder.
      */
     open suspend fun move(
         dir: String,
@@ -60,10 +62,12 @@ open class DeviceFiles(
         if (moving.isEmpty()) return
         val cmd = moving.joinToString(" && ") {
             val targetName = renames[it] ?: it
+            val source = shellQuote(devicePath(dir, it))
             val target = shellQuote(devicePath(toDir, targetName))
-            val mv = "mv ${shellQuote(devicePath(dir, it))} $target"
-            if (it in replace) "rm -rf -- $target && $mv"
-            else "if ${exists(target)}; then ${clash(targetName)}; else $mv; fi"
+            val mv = "mv $source $target"
+            val same = "if [ $source -ef $target ]; then :;"
+            if (it in replace) "$same else rm -rf -- $target && $mv; fi"
+            else "$same elif ${exists(target)}; then ${clash(targetName)}; else $mv; fi"
         }
         try {
             mutate(cmd, LONG_TIMEOUT_MS)

@@ -167,7 +167,9 @@ class FilesBrowser(
         val shown = entries.filter {
             (showHidden || !it.hidden) && (query.isEmpty() || it.name.contains(query, ignoreCase = true))
         }
-        val pending = pendingNewFolder?.let { DeviceEntry(it, isDir = true, size = 0, mtimeMillis = pendingMtime) }
+        // Once the device has the name (mkdir done, or made elsewhere), its own row stands in for the pending one.
+        val pending = pendingNewFolder?.takeIf { p -> entries.none { it.name == p } }
+            ?.let { DeviceEntry(it, isDir = true, size = 0, mtimeMillis = pendingMtime) }
         sortEntries(if (pending != null) shown + pending else shown, sort, descending)
     }
 
@@ -232,7 +234,8 @@ class FilesBrowser(
         renaming = null
         renameError = null
         pendingNewFolder = null
-        dialog = null
+        arriving = emptySet()
+        showDialog(null)
         saveLocation()
         load()
     }
@@ -301,9 +304,9 @@ class FilesBrowser(
         when {
             entry.isDir -> open(devicePath(path, name))
             kindOf(entry) == FileKind.Apk ->
-                enqueue(listOf(TransferRequest(Paths.get(name), TransferKind.InstallFromDevice, path, name, size = entry.size)))
+                enqueue(listOf(TransferRequest(Paths.get(""), TransferKind.InstallFromDevice, path, name, size = entry.size)))
             else ->
-                enqueue(listOf(TransferRequest(Paths.get(name), TransferKind.Pull, path, name, opensAfter = true, size = entry.size)))
+                enqueue(listOf(TransferRequest(Paths.get(""), TransferKind.Pull, path, name, opensAfter = true, size = entry.size)))
         }
     }
 
@@ -385,6 +388,12 @@ class FilesBrowser(
             scope.launch {
                 try {
                     files.mkdir(dir, text)
+                    // In place before the pending row goes, so the row never disappears while the refresh runs.
+                    val current = listing
+                    if (path == dir && listingPath == dir && current is Listing.Entries && current.entries.none { it.name == text }) {
+                        listing = Listing.Entries(current.entries + DeviceEntry(text, isDir = true, size = 0, mtimeMillis = pendingMtime))
+                        markArriving(setOf(text))
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -439,7 +448,7 @@ class FilesBrowser(
         if (!connected) return
         val names = order.filter { it in selection.names && it != pendingNewFolder }
         if (names.isEmpty()) return
-        dialog = FilesDialog.Delete(names, names.any { entry(it)?.isDir == true })
+        showDialog(FilesDialog.Delete(names, names.any { entry(it)?.isDir == true }))
     }
 
     fun confirmDelete() {
@@ -464,11 +473,23 @@ class FilesBrowser(
 
     /** Closes the dialog; a clash dialog closed without an answer skips the clashing items. */
     fun dismissDialog() {
-        dialog = null
+        showDialog(null)
+    }
+
+    /** Shows [next] (or nothing); a clash dialog it replaces unanswered reports what it skipped. */
+    private fun showDialog(next: FilesDialog?) {
+        val old = dialog
+        dialog = next
+        if (old is FilesDialog.Clash && old !== next) {
+            val n = old.clashing.size
+            val where = folderLabel(old.toDir)
+            notify(Snack(if (n == 1) "Skipped ${old.clashing.single()}, already in $where" else "Skipped $n items already in $where"))
+        }
     }
 
     /** Collapses [names] out of [dir]'s rows: [leaving] for the close motion, then gone. */
     private suspend fun collapse(dir: String, names: List<String>) {
+        if (path != dir) return
         leaving = leaving + names
         try {
             delay(CLOSE_MILLIS + LEAVING_STAGGER_MILLIS * (names.size - 1))
@@ -492,7 +513,8 @@ class FilesBrowser(
         if (!connected) return
         val dir = path
         val target = normalizeDir(toDir)
-        if (target == dir) return
+        // /sdcard ignores case: another spelling of the open folder is the open folder.
+        if (target.equals(dir, ignoreCase = true)) return
         val items = names.distinct().filter { !isInside(target, devicePath(dir, it)) }
         if (items.isEmpty()) return
         scope.launch {
@@ -500,7 +522,7 @@ class FilesBrowser(
             val clashing = items.filter { it in taken }
             val ok = items - clashing.toSet()
             if (clashing.isNotEmpty()) {
-                dialog = FilesDialog.Clash(target, clashing) { choice ->
+                showDialog(FilesDialog.Clash(target, clashing) { choice ->
                     dialog = null
                     if (!connected) return@Clash
                     when (choice) {
@@ -513,7 +535,7 @@ class FilesBrowser(
                             scope.launch { runMove(dir, clashing, target, renames = renames) }
                         }
                     }
-                }
+                })
             }
             if (ok.isNotEmpty()) runMove(dir, ok, target)
         }
@@ -590,7 +612,7 @@ class FilesBrowser(
         var queued = false
         if (ok.isNotEmpty()) queued = enqueue(ok.map { request(it.first, it.second) }).isNotEmpty()
         if (clashing.isEmpty()) return queued
-        dialog = FilesDialog.Clash(target, clashing.map { it.second }) { choice ->
+        showDialog(FilesDialog.Clash(target, clashing.map { it.second }) { choice ->
             dialog = null
             if (!connected) return@Clash
             when (choice) {
@@ -601,7 +623,7 @@ class FilesBrowser(
                     enqueue(clashing.map { (p, n) -> request(p, uniqueName(used, n).also { used += it }) })
                 }
             }
-        }
+        })
         return true
     }
 
@@ -627,7 +649,7 @@ class FilesBrowser(
             loadJob?.cancel()
             generation++
             loading = false
-            dialog = null
+            showDialog(null)
             cancelRename()
         }
     }

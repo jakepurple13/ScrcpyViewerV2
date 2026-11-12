@@ -60,4 +60,20 @@ class DeviceFilesDeviceTest {
         assertTrue((files.list(base) as Listing.Entries).entries.none { it.name == target || it.name == tricky })
         assertTrue(scans.isNotEmpty())
     }
+
+    @Test
+    fun `replace never deletes an item moved onto itself through another spelling`() = runBlocking<Unit> {
+        val files = DeviceFiles(ShellRunner(adb, serial)) {}
+        val runner = ShellRunner(adb, serial)
+        val name = "svw-self-${System.currentTimeMillis()}.txt"
+        val file = shellQuote(devicePath("/sdcard/Download", name))
+        try {
+            runner.run("echo keep > $file")
+            // /sdcard ignores case: /sdcard/download is the same folder as /sdcard/Download.
+            files.move("/sdcard/download", listOf(name), "/sdcard/Download", replace = setOf(name))
+            assertEquals("keep", runner.run("cat $file").output.trim())
+        } finally {
+            runCatching { files.delete("/sdcard/Download", listOf(name)) }
+        }
+    }
 }
