@@ -112,4 +112,31 @@ class AppShutdownTest {
         withTimeout(5_000) { shutdown.run() }
         assertEquals(listOf("release", "exit"), events)
     }
+
+    @Test
+    fun run_installsTheUpdateOffTheCallingThreadAfterSessionsCloseThenExits() = runBlocking<Unit> {
+        controller.open("A")
+        val session = controller.open.value.getValue("A")
+        withTimeout(5_000) { session.status.first { it == SessionStatus.Running } }
+        val caller = Thread.currentThread()
+        val events = java.util.Collections.synchronizedList(ArrayList<String>())
+        var installThread: Thread? = null
+        var exitThread: Thread? = null
+        val shutdown = AppShutdown(
+            controller,
+            exit = {
+                exitThread = Thread.currentThread()
+                events += "exit"
+            },
+            install = {
+                installThread = Thread.currentThread()
+                events += "install sessions=${controller.open.value.size} status=${session.status.value}"
+            },
+        )
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(listOf("install sessions=0 status=${SessionStatus.Disconnected}", "exit"), events)
+        assertTrue(installThread != null && installThread !== caller, "install ran on the calling thread")
+        assertEquals(caller, exitThread)
+    }
 }

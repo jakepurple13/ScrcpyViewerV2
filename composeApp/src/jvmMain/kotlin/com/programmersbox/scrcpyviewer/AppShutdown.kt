@@ -1,9 +1,12 @@
 package com.programmersbox.scrcpyviewer
 
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.programmersbox.scrcpyviewer.ui.window.ObjC
 import com.sun.jna.Callback
@@ -13,14 +16,20 @@ import com.sun.jna.Pointer
 /**
  * The one way the app quits: the main window's close button and the macOS Quit command (Cmd+Q, Dock, menu) both
  * call [request]. [run] then closes every mirror session, which waits for their recorders to write the trailer
- * (bounded by [timeoutMs]), and only then calls [exit]. While it waits, [state] says whether a recording is being
- * finished, so the UI can say so instead of freezing silently.
+ * (bounded by [timeoutMs]), then runs [install] on [installDispatcher] and only then calls [exit]. While it waits,
+ * [state] says whether a recording is being finished, so the UI can say so instead of freezing silently.
+ *
+ * [install] starts a downloaded update's installer, which blocks on `adb kill-server` and ends the process with
+ * `System.exit`. [run] is called on the UI thread (the Tao main thread), so [install] must not run there: blocking the
+ * event loop, or exiting from inside one of its callbacks, can hang shutdown hooks that need that thread.
  */
 class AppShutdown(
     private val controller: MirrorController,
     private val exit: () -> Unit,
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     private val quitHook: QuitHook = MacQuitHook,
+    private val install: () -> Unit = {},
+    private val installDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     sealed interface State {
         data object Running : State
@@ -36,13 +45,15 @@ class AppShutdown(
         _state.compareAndSet(State.Running, State.ShuttingDown(recording))
     }
 
-    /** Once [request] was called: closes the sessions (at most [timeoutMs]) and exits. */
+    /** Once [request] was called: closes the sessions (at most [timeoutMs]), installs a pending update and exits. */
     suspend fun run() {
         state.value as? State.ShuttingDown ?: return
         if (withTimeoutOrNull(timeoutMs) { controller.closeAll() } == null) {
             log.log(System.Logger.Level.WARNING, "Sessions still closing after $timeoutMs ms, exiting anyway")
         }
         quitHook.release()
+        // Ends the process when an update is pending; otherwise returns and the app exits normally.
+        withContext(installDispatcher) { install() }
         exit()
     }
 

@@ -52,7 +52,6 @@ import com.programmersbox.scrcpyviewer.di.startAppKoin
 import com.programmersbox.scrcpyviewer.update.UpdateManager
 import com.programmersbox.scrcpyviewer.update.UpdateState
 import kotlinx.coroutines.flow.first
-import kotlin.system.exitProcess
 
 fun main() {
     val koin = startAppKoin()
@@ -66,12 +65,9 @@ fun main() {
     nucleusApplication(enableSingleInstance = false) {
         val settings by appSettings.settings.collectAsState()
         val mirrors by mirrorController.open.collectAsState()
-        // nucleusApplication exits the process once the windows are gone, so a downloaded update installs first.
+        // A downloaded update installs after the sessions close, off the UI thread, before the app exits.
         val shutdown = remember {
-            AppShutdown(mirrorController, exit = {
-                updateManager.installPending()
-                exitApplication()
-            })
+            AppShutdown(mirrorController, exit = ::exitApplication, install = updateManager::installPending)
         }
         val shutdownState by shutdown.state.collectAsState()
         // Cmd+Q, the app menu's Quit and the Dock's go through the shutdown too (MacQuitHook).
@@ -115,8 +111,8 @@ fun main() {
         }
         if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.appTheme)
     }
-    // nucleusApplication returns once the Tao event loop has ended.
-    exitProcess(0)
+    // nucleusApplication never returns: the Tao backend calls System.exit once its event loop ends. Shutdown work
+    // belongs in AppShutdown, not here.
 }
 
 /** The main window's custom title bar: app icon on Windows (macOS and Linux show none), then the name. */
