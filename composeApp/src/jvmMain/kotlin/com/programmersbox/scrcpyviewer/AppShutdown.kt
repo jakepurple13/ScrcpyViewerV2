@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import java.awt.Desktop
+import javax.swing.SwingUtilities
 
 /**
  * The one way the app quits: the main window's close button and the macOS Quit command (Cmd+Q, Dock, menu) both
@@ -17,6 +18,7 @@ class AppShutdown(
     private val controller: MirrorController,
     private val exit: () -> Unit,
     private val timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    private val quitHook: QuitHook = AwtQuitHook,
 ) {
     sealed interface State {
         data object Running : State
@@ -45,19 +47,29 @@ class AppShutdown(
      * Routes the macOS Quit command to [onQuit] instead of AWT's default, which calls System.exit and skips the
      * session teardown. No-op where the platform has no quit handler.
      */
-    fun installQuitHandler(onQuit: () -> Unit) {
-        if (!Desktop.isDesktopSupported()) return
-        val desktop = Desktop.getDesktop()
-        if (!desktop.isSupported(Desktop.Action.APP_QUIT_HANDLER)) return
-        desktop.setQuitHandler { _, response ->
-            response.cancelQuit()
-            onQuit()
-        }
-    }
+    fun installQuitHandler(onQuit: () -> Unit) = quitHook.install(onQuit)
 
     companion object {
         /** Generous: each session's teardown may wait up to 10 s for its recorder. */
         const val DEFAULT_TIMEOUT_MS = 15_000L
         private val log = System.getLogger("scrcpyviewer.AppShutdown")
+    }
+}
+
+/** Platform seam for the OS Quit command. [install] routes it to [onQuit]; [onQuit] may be called from any thread. */
+fun interface QuitHook {
+    fun install(onQuit: () -> Unit)
+}
+
+/** AWT's macOS quit handler, with the hop onto the EDT. No-op where the platform has none. */
+object AwtQuitHook : QuitHook {
+    override fun install(onQuit: () -> Unit) {
+        if (!Desktop.isDesktopSupported()) return
+        val desktop = Desktop.getDesktop()
+        if (!desktop.isSupported(Desktop.Action.APP_QUIT_HANDLER)) return
+        desktop.setQuitHandler { _, response ->
+            response.cancelQuit()
+            SwingUtilities.invokeLater { onQuit() }
+        }
     }
 }

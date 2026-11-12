@@ -30,7 +30,6 @@ import com.programmersbox.scrcpyviewer.ui.theme.neonText
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import com.programmersbox.scrcpyviewer.ui.window.windowChrome
-import javax.swing.SwingUtilities
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -70,7 +69,7 @@ fun main() {
         val shutdown = remember { AppShutdown(mirrorController, exit = ::exitApplication) }
         val shutdownState by shutdown.state.collectAsState()
         DisposableEffect(Unit) {
-            shutdown.installQuitHandler { SwingUtilities.invokeLater(shutdown::request) }
+            shutdown.installQuitHandler(shutdown::request)
             onDispose { }
         }
         LaunchedEffect(shutdownState) { shutdown.run() }

@@ -79,4 +79,22 @@ class AppShutdownTest {
         assertFalse(session.hasUnfinishedRecording)
         Files.deleteIfExists(file)
     }
+
+    @Test
+    fun fontAvailable_unknownFamily_false() {
+        assertFalse(com.programmersbox.scrcpyviewer.ui.theme.fontAvailable("No Such Family 9f3a"))
+    }
+
+    @Test
+    fun quitHook_invokesRequestOnce() = runBlocking<Unit> {
+        var installed: (() -> Unit)? = null
+        val exits = AtomicInteger()
+        val shutdown = AppShutdown(controller, exit = { exits.incrementAndGet() }, quitHook = { installed = it })
+        shutdown.installQuitHandler(shutdown::request)
+        installed!!.invoke()
+        installed!!.invoke() // double quit
+        assertEquals(AppShutdown.State.ShuttingDown(finishingRecording = false), shutdown.state.value)
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(1, exits.get())
+    }
 }

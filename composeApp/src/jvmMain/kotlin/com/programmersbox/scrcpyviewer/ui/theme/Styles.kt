@@ -250,10 +250,7 @@ internal fun shapesFor(style: ThemeStyle): Shapes = when (style) {
 /** Tahoma where it exists (macOS and Windows), the default sans elsewhere. */
 @OptIn(ExperimentalTextApi::class)
 private val RetroFont: FontFamily by lazy {
-    val installed = runCatching {
-        "Tahoma" in java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().availableFontFamilyNames
-    }.getOrDefault(false)
-    if (installed) FontFamily(SystemFont("Tahoma")) else FontFamily.SansSerif
+    if (fontAvailable("Tahoma")) FontFamily(SystemFont("Tahoma")) else FontFamily.SansSerif
 }
 
 /** Retro sets every text style in [RetroFont]; the other styles keep Material's type. */
@@ -286,3 +283,7 @@ fun styledCorner(percent: Int): Shape = if (currentStyle == ThemeStyle.Retro) Re
 fun styledSegmentShape(index: Int, count: Int): Shape =
     if (currentStyle == ThemeStyle.Retro) RectangleShape
     else androidx.compose.material3.SegmentedButtonDefaults.itemShape(index, count)
+
+/** Whether the system has a font family called [family], asked of Skia so no AWT toolkit starts. */
+fun fontAvailable(family: String): Boolean =
+    runCatching { org.jetbrains.skia.FontMgr.default.matchFamily(family).count() > 0 }.getOrDefault(false)
