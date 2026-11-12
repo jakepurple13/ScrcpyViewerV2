@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
+import com.programmersbox.scrcpyviewer.ui.mirror.files.AdbUnavailableState
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
@@ -321,7 +322,8 @@ private fun RowScope.SheetContent(
             when (tab) {
                 SheetTab.Actions -> ActionsTabContent(state, onEvent, columns)
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
-                SheetTab.Files -> filesTab?.invoke()
+                // No Files tab content means no adb: say so rather than show nothing.
+                SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,

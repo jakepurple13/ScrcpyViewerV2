@@ -89,6 +89,16 @@ internal fun ListingFailedState(reason: String, enabled: Boolean, onRetry: () ->
     }
 }
 
+/** The Files tab without adb (none found, or it failed to start): nothing can be listed. */
+@Composable
+internal fun AdbUnavailableState() {
+    StateMessage(
+        Icons.Filled.LinkOff,
+        "adb isn’t available",
+        "The Files tab browses the device over adb. Check the adb path in Settings, then reopen this window.",
+    )
+}
+
 /** Over the dimmed list while the session is down. */
 @Composable
 internal fun DisconnectedBanner(modifier: Modifier = Modifier) {

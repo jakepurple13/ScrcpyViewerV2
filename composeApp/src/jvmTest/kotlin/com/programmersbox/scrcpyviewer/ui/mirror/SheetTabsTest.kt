@@ -121,6 +121,8 @@ class SheetTabsTest {
         driver.frames(5)
         assertTrue("Browse and move files on this device" in driver.texts())
         assertNull(driver.texts()["Runs adb shell on this device"])
+        // No Files tab content: there is no adb, and the tab says so instead of showing nothing.
+        assertTrue("adb isn’t available" in driver.texts(), driver.texts().keys.toString())
     }
 
     @Test
