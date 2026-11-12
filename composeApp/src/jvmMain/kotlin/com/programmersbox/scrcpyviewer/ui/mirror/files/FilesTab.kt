@@ -32,6 +32,7 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import java.awt.datatransfer.StringSelection
@@ -174,6 +175,8 @@ fun FilesTab(
     val listFocus = remember { FocusRequester() }
     var filterFocused by remember { mutableStateOf(false) }
     var listFocused by remember { mutableStateOf(false) }
+    // The transfers tray's height in px: the snackbar sits above it.
+    var trayHeight by remember { mutableStateOf(0) }
     // The tab's own coordinates and the last pointer position in them, for menus opened at the pointer. Plain holders.
     val tabCoords = remember { arrayOfNulls<LayoutCoordinates>(1) }
     val pointer = remember { arrayOf(Offset.Zero) }
@@ -241,7 +244,7 @@ fun FilesTab(
     ) {
         // A press above the list (toolbar, filter, header) during a rename moves focus off the field first, so its
         // blur commits the name before the button acts.
-        val commitOnPress = Modifier.pointerInput(Unit) {
+        val commitOnPress = Modifier.pointerInput(browser) {
             awaitPointerEventScope {
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
@@ -280,7 +283,7 @@ fun FilesTab(
                     .focusable()
                     // A press no row took landed on empty space: a click clears the selection, a right-click opens
                     // the empty-space menu.
-                    .pointerInput(Unit) {
+                    .pointerInput(browser) {
                         awaitPointerEventScope {
                             while (true) {
                                 val event = awaitPointerEvent()
@@ -320,8 +323,14 @@ fun FilesTab(
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
             }
+            TransfersTray(
+                browser.transferJobs, browser.pushTarget, downloads,
+                onCancel = browser::cancelTransfer, onDismiss = browser::dismissTransfer,
+                modifier = Modifier.onSizeChanged { trayHeight = it.height },
+                motion = motion,
+            )
         }
-        FilesSnackbar(browser, motion, Modifier.align(Alignment.BottomCenter))
+        FilesSnackbar(browser, motion, Modifier.align(Alignment.BottomCenter).padding(bottom = with(LocalDensity.current) { trayHeight.toDp() }))
         FilesDialogHost(browser, motion)
         FilesMenuHost(menu, browser, actions, isMac, motion, onDismiss = { menu = null })
     }

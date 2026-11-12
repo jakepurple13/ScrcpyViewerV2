@@ -616,7 +616,7 @@ fun MirrorWindow(
         transferEnabled = transfers.enabled,
         transferLabel = transfers.progressLabel,
         dropHint = transfers.hint,
-        quickActions = quickActions.uiState,
+        quickActions = quickActions.uiState.copy(filesTransfersRunning = transfers.runningCount),
     )
 
     // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now

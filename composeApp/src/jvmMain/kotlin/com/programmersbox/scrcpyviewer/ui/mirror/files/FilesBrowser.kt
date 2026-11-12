@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -117,6 +118,8 @@ class FilesBrowser(
     private val enqueue: (List<TransferRequest>) -> List<Long> = { transfers.queue?.enqueue(it) ?: emptyList() },
     jobs: Flow<List<TransferJob>> = transfers.queue?.jobs ?: emptyFlow(),
     private val now: () -> Long = System::currentTimeMillis,
+    /** Opens a pulled file with the computer's default app; false when that failed. */
+    private val openOnComputer: (Path) -> Boolean = { false },
 ) {
     private val saved = memory.filesLocation(serial)
 
@@ -210,10 +213,12 @@ class FilesBrowser(
         if (connected) load()
         scope.launch {
             val seen = HashSet<Long>()
+            val opened = HashSet<Long>()
             var first = true
             jobs.collect { list ->
                 var refresh = false
                 for (job in list) {
+                    openWhenDone(job, opened)
                     if (job.state != JobState.Done || !seen.add(job.id) || first) continue
                     val r = job.request
                     if (r.kind == TransferKind.Push && normalizeDir(r.deviceDir ?: transfers.pushTarget) == path) refresh = true
@@ -222,6 +227,28 @@ class FilesBrowser(
                 if (refresh && connected) refresh()
             }
         }
+    }
+
+    /** An Open on computer pull that finished: opens its temp file, once. */
+    private fun openWhenDone(job: TransferJob, opened: MutableSet<Long>) {
+        val file = job.hostResult
+        if (!job.request.opensAfter || job.state != JobState.Done || file == null || !opened.add(job.id)) return
+        val name = job.request.name
+        post(Snack(if (openOnComputer(file)) "Opened $name on your computer" else "Could not open $name"))
+    }
+
+    /** The window's transfers, for the tray: newest last. */
+    val transferJobs: List<TransferJob> get() = transfers.jobs
+
+    /** The push target a push without a folder goes to. */
+    val pushTarget: String get() = transfers.pushTarget
+
+    fun cancelTransfer(id: Long) {
+        transfers.queue?.cancel(id)
+    }
+
+    fun dismissTransfer(id: Long) {
+        transfers.queue?.dismiss(id)
     }
 
     private fun post(s: Snack) {
@@ -717,6 +744,7 @@ fun rememberFilesBrowser(
     memory: QuickActionsMemory = koinInject(),
     settings: AppSettings = koinInject(),
 ): FilesBrowser? {
+    val uriHandler = LocalUriHandler.current
     val parent = rememberCoroutineScope()
     // One scope per browser: a Reconnect (new session, new transfers) cancels the old browser's loads and collectors.
     val scope = remember(serial, session, adb, transfers) { childScope(parent) }
@@ -727,6 +755,7 @@ fun rememberFilesBrowser(
                 serial,
                 DeviceFiles(ShellRunner(it, serial)) { path -> session.send(ControlMessage.ScanFile(path)) },
                 transfers, memory, settings, transfers.pushTarget, scope,
+                openOnComputer = { path -> uriHandler.openFileSafely(path) },
             )
         }
     } ?: return null

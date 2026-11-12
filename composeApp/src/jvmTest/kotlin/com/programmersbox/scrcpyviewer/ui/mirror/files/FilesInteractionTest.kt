@@ -3,6 +3,9 @@ package com.programmersbox.scrcpyviewer.ui.mirror.files
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.InternalComposeUiApi
@@ -191,6 +194,30 @@ class FilesInteractionTest {
         assertTrue((itemMenu + "Open on computer").all { it in texts }, "item menu: $texts")
         assertFalse("Install on this device" in texts)
         assertFalse("Open" in texts, "Open is for one folder")
+    }
+
+    @Test
+    fun `after the browser is swapped a click reaches the new browser only`() = onEdt {
+        val a = browser()
+        val b = browser()
+        var shown by mutableStateOf(a)
+        val driver = SceneDriver(ImageComposeScene(440, 800, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize()) { FilesTab(shown, zone = ZoneOffset.UTC, locale = Locale.US, motion = false) }
+            }
+        }).also { it.frames(30) }
+        a.click("notes.txt")
+        driver.frames(5)
+        shown = b
+        driver.frames(30)
+        scheduler.advanceUntilIdle()
+        driver.frames(30)
+        driver.press(driver.text("a.jpg"))
+        assertEquals(setOf("a.jpg"), b.selection.names, "the click selects in the new browser")
+        assertEquals(setOf("notes.txt"), a.selection.names, "the old browser is left alone")
+        driver.clickEmptySpace()
+        assertTrue(b.selection.names.isEmpty(), "empty space clears the new browser's selection")
+        assertEquals(setOf("notes.txt"), a.selection.names, "and still not the old one's")
     }
 
     @Test
