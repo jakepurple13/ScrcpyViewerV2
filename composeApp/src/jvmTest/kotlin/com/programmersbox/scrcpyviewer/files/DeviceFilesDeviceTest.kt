@@ -3,11 +3,13 @@ package com.programmersbox.scrcpyviewer.files
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import kotlinx.coroutines.runBlocking
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -42,8 +44,18 @@ class DeviceFilesDeviceTest {
             assertEquals(listOf(renamed), inside.map { it.name })
             assertEquals(mapOf(target to 1), files.counts(base, listOf(target)).filterKeys { it == target })
             assertTrue((files.freeSpace() ?: 0L) > 0L)
+
+            // Clashes: rename and move onto an existing name fail; replace overwrites.
+            files.mkdir(base, tricky)
+            files.mkdir(base, renamed)
+            val e1 = assertFailsWith<IOException> { files.rename(base, tricky, renamed) }
+            assertEquals("$renamed: already exists", e1.message)
+            val e2 = assertFailsWith<IOException> { files.move(base, listOf(renamed), devicePath(base, target)) }
+            assertEquals("$renamed: already exists", e2.message)
+            files.move(base, listOf(renamed), devicePath(base, target), replace = setOf(renamed))
+            assertEquals(listOf(renamed), (files.list(devicePath(base, target)) as Listing.Entries).entries.map { it.name })
         } finally {
-            files.delete(base, listOf(tricky, renamed, target))
+            runCatching { files.delete(base, listOf(tricky, renamed, target)) }
         }
         assertTrue((files.list(base) as Listing.Entries).entries.none { it.name == target || it.name == tricky })
         assertTrue(scans.isNotEmpty())

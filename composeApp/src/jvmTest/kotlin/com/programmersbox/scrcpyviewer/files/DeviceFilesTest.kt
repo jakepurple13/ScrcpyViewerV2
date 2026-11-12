@@ -37,21 +37,37 @@ class DeviceFilesTest {
     @Test
     fun rename() = runBlocking<Unit> {
         files.rename("/sdcard/Download", tricky, "b c")
+        val t = "'/sdcard/Download/b c'"
         assertEquals(
-            listOf("mv -n '/sdcard/Download/it'\\''s a' '/sdcard/Download/b c'"),
+            listOf(
+                "if [ -e $t ] || [ -L $t ]; then printf '%s: already exists\\n' 'b c'; false; else " +
+                    "mv -n '/sdcard/Download/it'\\''s a' $t; fi",
+            ),
             runner.commands,
         )
         assertEquals(listOf("/sdcard/Download"), scans)
     }
 
     @Test
-    fun moveWithRenames() = runBlocking<Unit> {
-        files.move("/sdcard/A", listOf(tricky, "x"), "/sdcard/B", mapOf("x" to "x (1)"))
+    fun moveWithRenamesAndReplace() = runBlocking<Unit> {
+        files.move("/sdcard/A", listOf(tricky, "x"), "/sdcard/B", mapOf("x" to "x (1)"), setOf("x"))
+        val t1 = "'/sdcard/B/it'\\''s a'"
+        val t2 = "'/sdcard/B/x (1)'"
         assertEquals(
-            listOf("mv '/sdcard/A/it'\\''s a' '/sdcard/B/it'\\''s a' && mv '/sdcard/A/x' '/sdcard/B/x (1)'"),
+            listOf(
+                "if [ -e $t1 ] || [ -L $t1 ]; then printf '%s: already exists\\n' 'it'\\''s a'; false; else " +
+                    "mv '/sdcard/A/it'\\''s a' $t1; fi && rm -rf -- $t2 && mv '/sdcard/A/x' $t2",
+            ),
             runner.commands,
         )
         assertEquals(listOf(120_000L), runner.timeouts)
+        assertEquals(listOf("/sdcard/A", "/sdcard/B"), scans)
+    }
+
+    @Test
+    fun moveScansEvenWhenItFails() = runBlocking<Unit> {
+        runner.result = ShellResult("x: already exists", 1, 0)
+        assertFailsWith<IOException> { files.move("/sdcard/A", listOf("x"), "/sdcard/B") }
         assertEquals(listOf("/sdcard/A", "/sdcard/B"), scans)
     }
 
@@ -69,7 +85,7 @@ class DeviceFilesTest {
     @Test
     fun failureThrowsLastLineAndDoesNotScan() = runBlocking<Unit> {
         runner.result = ShellResult("noise\nmv: bad: Permission denied\n\n", 1, 0)
-        val e = assertFailsWith<IOException> { files.move("/sdcard/A", listOf("bad"), "/sdcard/B") }
+        val e = assertFailsWith<IOException> { files.rename("/sdcard/A", "bad", "worse") }
         assertEquals("mv: bad: Permission denied", e.message)
         assertTrue(scans.isEmpty())
         runner.result = ShellResult("", null, 0)

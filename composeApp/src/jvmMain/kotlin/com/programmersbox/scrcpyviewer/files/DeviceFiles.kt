@@ -31,26 +31,47 @@ open class DeviceFiles(
         scanFile(dir)
     }
 
-    /** `mv -n` never overwrites, so an existing target fails instead of being replaced. */
+    /** Fails with "<to>: already exists" when the target exists; toybox `mv -n` would skip it and exit 0. */
     open suspend fun rename(dir: String, from: String, to: String) {
-        mutate("mv -n ${shellQuote(devicePath(dir, from))} ${shellQuote(devicePath(dir, to))}")
+        val target = shellQuote(devicePath(dir, to))
+        mutate(
+            "if ${exists(target)}; then ${clash(to)}; else " +
+                "mv -n ${shellQuote(devicePath(dir, from))} $target; fi",
+        )
         scanFile(dir)
     }
 
+    /**
+     * Moves [names] into [toDir] (as [renames] says). An existing target fails the item with "<name>: already
+     * exists" unless its source name is in [replace], where it is removed first. Both folders are rescanned even
+     * when a later item fails, since earlier ones may already have moved.
+     */
     open suspend fun move(
         dir: String,
         names: List<String>,
         toDir: String,
         renames: Map<String, String> = emptyMap(),
+        replace: Set<String> = emptySet(),
     ) {
         if (names.isEmpty()) return
         val cmd = names.joinToString(" && ") {
-            "mv ${shellQuote(devicePath(dir, it))} ${shellQuote(devicePath(toDir, renames[it] ?: it))}"
+            val targetName = renames[it] ?: it
+            val target = shellQuote(devicePath(toDir, targetName))
+            val mv = "mv ${shellQuote(devicePath(dir, it))} $target"
+            if (it in replace) "rm -rf -- $target && $mv"
+            else "if ${exists(target)}; then ${clash(targetName)}; else $mv; fi"
         }
-        mutate(cmd, LONG_TIMEOUT_MS)
-        scanFile(dir)
-        if (toDir != dir) scanFile(toDir)
+        try {
+            mutate(cmd, LONG_TIMEOUT_MS)
+        } finally {
+            scanFile(dir)
+            if (toDir != dir) scanFile(toDir)
+        }
     }
+
+    private fun exists(quoted: String) = "[ -e $quoted ] || [ -L $quoted ]"
+
+    private fun clash(name: String) = "printf '%s: already exists\\n' ${shellQuote(name)}; false"
 
     open suspend fun delete(dir: String, names: List<String>) {
         if (names.isEmpty()) return
