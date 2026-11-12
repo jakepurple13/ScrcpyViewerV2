@@ -18,9 +18,12 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.awt.IllegalComponentStateException
+import java.awt.Point
 import java.awt.Rectangle
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
 
 /**
@@ -55,6 +58,9 @@ interface MirrorWindowHandle {
 
     /** The screen the window mostly lies on, or null when the platform cannot say. */
     fun screen(): ScreenArea?
+
+    /** Where the window's content area (Compose's root) starts on screen, below any native title bar. */
+    fun contentOrigin(): Point
 }
 
 /** The window's handle, provided by [com.programmersbox.scrcpyviewer.ui.window.AppWindow]; null outside a window. */
@@ -105,6 +111,12 @@ class AwtMirrorWindowHandle(private val window: java.awt.Window, private val geo
     }
 
     override fun screen(): ScreenArea? = screenFor(window.bounds, geometry.screens())
+
+    override fun contentOrigin(): Point = try {
+        ((window as? RootPaneContainer)?.contentPane ?: window).locationOnScreen
+    } catch (_: IllegalComponentStateException) {
+        window.bounds.location // not showing
+    }
 }
 
 /**

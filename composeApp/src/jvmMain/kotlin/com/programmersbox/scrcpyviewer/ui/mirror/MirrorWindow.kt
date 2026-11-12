@@ -110,11 +110,11 @@ import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isShiftPressed
-import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -310,8 +310,9 @@ fun parseHexColor(value: String?): Color? {
  *
  * `keyboard=uhid` and `mouse=uhid` create the HID devices on the session ([HidKeyboard], [HidMouse]) and send HID
  * reports instead of key/text/touch injections. The UHID mouse is relative, so the window captures the pointer
- * (see [MouseCapture]): the cursor is hidden over the video and moved back to its centre with `java.awt.Robot`,
- * and motion is sent as deltas. Without a working Robot the deltas still flow, until the pointer leaves the video.
+ * (see [MouseCapture]): the cursor is hidden and moved back to the video's centre ([NativeCursorControl]), and motion
+ * is sent as deltas. Where the cursor cannot be moved (Wayland) there is no capture: a snackbar says so, and the
+ * deltas still flow while the pointer is over the video.
  *
  * The top strip ([TopStrip]) is the window's title bar ([AppWindow]): window controls at its edge, empty
  * space drags the window. With the system title bar it sits at the top of the content instead.
@@ -510,12 +511,17 @@ fun MirrorWindow(
     // Set from the window's focus; the window (and its handle) only exists inside AppWindow {} below.
     var windowFocused by remember { mutableStateOf(false) }
     var windowHandle by remember { mutableStateOf<MirrorWindowHandle?>(null) }
-    val robot = remember(hidMouse != null) { if (hidMouse != null) WindowPointerCapture.robotOrNull() else null }
+    // The video view's top-left in window pixels (it moves as a zoomed stage scrolls); read by the capture only.
+    val viewOrigin = remember { arrayOf(Offset.Zero) }
     val capture = remember(session) {
         hidMouse?.let {
-            WindowPointerCapture(MouseCapture(), mapper, hidKeyboard, send, isFocused = { windowHandle?.focused?.value == true }, robot)
+            WindowPointerCapture(
+                MouseCapture(), mapper, hidKeyboard, send, isFocused = { windowHandle?.focused?.value == true },
+                onUnavailable = { notify("Mouse capture is not available: the pointer cannot be moved on this system") },
+            )
         }
     }
+    capture?.let { DisposableEffect(it) { onDispose(it::dispose) } }
     val captured = capture?.active?.collectAsState()?.value == true
     // show-touches only shows physical touches on the device; mark the injected clicks in the window (not for the
     // captured UHID mouse, whose pointer is hidden and has no position on the frame).
@@ -875,7 +881,7 @@ fun MirrorWindow(
                         onPointer = {
                             when {
                                 "no-control" in e -> Unit
-                                capture != null -> capture.pointer(it, awtWindow, viewSize, density.density, stageBounds)
+                                capture != null -> capture.pointer(it, handle, viewSize, density.density, stageBounds, viewOrigin[0])
                                 else -> {
                                     clickIndicator?.onPointer(it, monotonicMillis())
                                     send(mapper.pointer(it))
@@ -889,6 +895,7 @@ fun MirrorWindow(
                         wake = readWake,
                         shellConsole = quickActions.console,
                         onStageBounds = { stageBounds = it },
+                        onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
                     )
                     }
@@ -1012,6 +1019,8 @@ fun MirrorContent(
     clickIndicator: ClickIndicator? = null,
     /** The stage's bounds in window pixels. */
     onStageBounds: (Rect) -> Unit = {},
+    /** The video view's top-left in window pixels, whenever it moves (a zoomed stage scrolls it). */
+    onViewOrigin: (Offset) -> Unit = {},
     /** False when the window draws [TopStrip] as its title bar; the divider below it stays. */
     showTopStrip: Boolean = true,
     onQuickAction: (QuickActionEvent) -> Unit = {},
@@ -1066,10 +1075,10 @@ fun MirrorContent(
             ) {
                 val disconnected = state.disconnected
                 if (wake == null) {
-                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
+                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin)
                 } else {
                     WakeStage(wake, standby = !disconnected) {
-                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
+                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin)
                     }
                 }
                 // While the screen is still asleep its standby line stands in for the skeleton.
@@ -1301,6 +1310,7 @@ private fun Stage(
     onPointer: (PointerEvent) -> Unit,
     onViewSize: (IntSize) -> Unit,
     clickIndicator: ClickIndicator?,
+    onViewOrigin: (Offset) -> Unit = {},
 ) {
     val pointer by rememberUpdatedState(onPointer)
     // Redraws every frame while a click dot fades out.
@@ -1332,7 +1342,7 @@ private fun Stage(
     }
     // Set by the zoomed stage: pans it by a wheel delta and tells whether it could.
     val pan = remember { arrayOfNulls<(Offset) -> Boolean>(1) }
-    val input = Modifier.pointerInput(Unit) {
+    val input = Modifier.onGloballyPositioned { onViewOrigin(it.positionInWindow()) }.pointerInput(Unit) {
         awaitPointerEventScope {
             while (true) {
                 val event = awaitPointerEvent()
@@ -1348,7 +1358,7 @@ private fun Stage(
                 event.changes.forEach { it.consume() }
             }
         }
-    }.then(if (state.captureHint != null) Modifier.pointerHoverIcon(blankPointerIcon) else Modifier)
+    }
     val orientation = state.orientation
     val fs = state.frameSize?.let(orientation::orientedSize)
     val zoom = state.zoom

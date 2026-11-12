@@ -28,7 +28,6 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.findRootCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -41,7 +40,6 @@ import com.sun.jna.ptr.IntByReference
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
-import java.awt.Point
 import java.awt.Rectangle
 import kotlin.math.roundToInt
 
@@ -133,17 +131,6 @@ internal fun shrunkAroundCenter(r: Rectangle, scale: Float): Rectangle {
 /** With no Mirror button to land on, a closing window shrinks to this share of its size before it goes. */
 const val MIRROR_SHRINK_IN_PLACE = 0.9f
 
-/**
- * Where the window's content (Compose's root, [contentWidth] by [contentHeight]) starts on screen, for a window at
- * [bounds] (all in window units): the frame's side borders split evenly, the bottom one as thick as a side, and the
- * rest of the height above the content (the native title bar, if any). A full-size content window gives its corner.
- */
-internal fun contentOrigin(bounds: Rectangle, contentWidth: Float, contentHeight: Float): Point {
-    val side = ((bounds.width - contentWidth) / 2).roundToInt().coerceAtLeast(0)
-    val top = (bounds.height - contentHeight - side).roundToInt().coerceAtLeast(0)
-    return Point(bounds.x + side, bounds.y + top)
-}
-
 /** Holds a composable's layout so its screen bounds can be read on press. A plain holder: never read in composition. */
 private class OriginTracker(val window: MirrorWindowHandle?, val density: Float) {
     var coordinates: LayoutCoordinates? = null
@@ -151,9 +138,8 @@ private class OriginTracker(val window: MirrorWindowHandle?, val density: Float)
     fun screenBounds(): Rectangle? = try {
         val c = coordinates?.takeIf { it.isAttached } ?: return null
         val w = window?.takeIf { it.isShowing } ?: return null
-        // Compose lays out in pixels from its root's corner; the window works in window units (points).
-        val rootSize = c.findRootCoordinates().size
-        val at = contentOrigin(w.bounds, rootSize.width / density, rootSize.height / density)
+        // Compose lays out in pixels from its root's corner, the content's; the window works in window units (points).
+        val at = w.contentOrigin()
         val r = c.boundsInWindow()
         Rectangle(
             at.x + (r.left / density).roundToInt(),

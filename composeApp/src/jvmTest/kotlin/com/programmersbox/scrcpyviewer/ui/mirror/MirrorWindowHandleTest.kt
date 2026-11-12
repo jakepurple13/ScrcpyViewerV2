@@ -36,6 +36,7 @@ private class FakeMirrorWindowHandle(initial: Rectangle) : MirrorWindowHandle {
     override val nsWindow: Pointer? = null
     override fun toFront() = Unit
     override fun screen(): ScreenArea? = null
+    override fun contentOrigin(): Point = current.location
 }
 
 /** A virtual clock: 16 ms a frame. */
@@ -71,18 +72,5 @@ class MirrorWindowHandleTest {
         assertEquals(Rectangle(1040, 40, 880, 830), handle.sets.last())
         assertEquals(1f, progress.last())
         assertEquals(280f, growth.value)
-    }
-
-    @Test
-    fun contentOrigin_fullSizeContent_isTheWindowCorner() {
-        assertEquals(Point(100, 50), contentOrigin(Rectangle(100, 50, 600, 800), 600f, 800f))
-    }
-
-    @Test
-    fun contentOrigin_systemTitleBar_isBelowIt() {
-        // macOS: a 28 pt title bar, no side or bottom border.
-        assertEquals(Point(100, 78), contentOrigin(Rectangle(100, 50, 600, 800), 600f, 772f))
-        // Windows: 8 px side and bottom borders, a 31 px top.
-        assertEquals(Point(108, 81), contentOrigin(Rectangle(100, 50, 616, 839), 600f, 800f))
     }
 }

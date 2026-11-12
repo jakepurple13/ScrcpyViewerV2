@@ -1,7 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
 import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.compose.ui.awt.awtEventOrNull
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.KeyEvent
@@ -61,6 +60,7 @@ class InputMapper(
     private var lastPosition: Position? = null
     private var lastKeyDown = -1
     private var repeat = 0
+    private val clickCounter = ClickCounter()
 
     /** Maps a Compose pointer event (press, release, move, scroll). Other event types give nothing. */
     @OptIn(ExperimentalComposeUiApi::class)
@@ -69,7 +69,7 @@ class InputMapper(
         val pos = change.position
         val shift = event.keyboardModifiers.isShiftPressed
         return when (event.type) {
-            PointerEventType.Press -> event.button?.let { press(pos, it, shift, event.awtEventOrNull?.clickCount ?: 1) } ?: emptyList()
+            PointerEventType.Press -> event.button?.let { press(pos, it, shift, clickCounter.press(pos, change.uptimeMillis)) } ?: emptyList()
             PointerEventType.Release -> event.button?.let { release(pos, it, shift) } ?: emptyList()
             PointerEventType.Move -> move(pos)
             PointerEventType.Scroll -> scroll(pos, change.scrollDelta)
