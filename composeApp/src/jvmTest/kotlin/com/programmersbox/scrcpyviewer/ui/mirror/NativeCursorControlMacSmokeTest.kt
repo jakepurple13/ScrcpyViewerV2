@@ -10,7 +10,11 @@ import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
-/** Runs the macOS cursor calls for real: warp, read back through CoreGraphics, hide and show. Skipped elsewhere. */
+/**
+ * Runs the macOS cursor calls for real: warp, read back through CoreGraphics, hide and show. It moves the real
+ * pointer, so the build excludes it unless asked (and it is skipped off macOS):
+ * `./gradlew :composeApp:jvmTest -PmacCursorSmoke --tests '*NativeCursorControlMacSmokeTest'`
+ */
 class NativeCursorControlMacSmokeTest {
     @Structure.FieldOrder("x", "y")
     class CGPoint(@JvmField var x: Double = 0.0, @JvmField var y: Double = 0.0) : Structure(), Structure.ByValue

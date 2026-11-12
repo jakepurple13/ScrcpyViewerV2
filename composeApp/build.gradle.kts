@@ -279,14 +279,18 @@ tasks.withType<JavaExec>().configureEach {
 
 // Offscreen screenshot tests are slow; run them only with -Pscreenshots.
 // Real-device tests (*DeviceTest) need attached devices; run them only with -PdeviceTests.
+// The macOS cursor smoke (*MacSmokeTest) moves the real pointer; run it only with -PmacCursorSmoke.
 tasks.matching { it.name == "jvmTest" }.configureEach {
     val screenshots = project.hasProperty("screenshots")
     val deviceTests = project.hasProperty("deviceTests")
+    val macCursorSmoke = project.hasProperty("macCursorSmoke")
     (this as Test).filter {
         if (screenshots) includeTestsMatching("*ScreenshotTest")
         if (deviceTests) includeTestsMatching("*DeviceTest")
+        if (macCursorSmoke) includeTestsMatching("*MacSmokeTest")
         if (!screenshots) excludeTestsMatching("*ScreenshotTest")
         if (!deviceTests) excludeTestsMatching("*DeviceTest")
+        if (!macCursorSmoke) excludeTestsMatching("*MacSmokeTest")
     }
     // On CI, log each test as it starts: when a job hangs and times out, the last STARTED line names the test.
     if (System.getenv("CI") == "true") {
