@@ -1,6 +1,5 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -823,7 +822,6 @@ fun rememberFilesBrowser(
     memory: QuickActionsMemory = koinInject(),
     settings: AppSettings = koinInject(),
 ): FilesBrowser? {
-    val uriHandler = LocalUriHandler.current
     val parent = rememberCoroutineScope()
     // One scope per browser: a Reconnect (new session, new transfers) cancels the old browser's loads and collectors.
     val scope = remember(serial, session, adb, transfers) { childScope(parent) }
@@ -834,7 +832,7 @@ fun rememberFilesBrowser(
                 serial,
                 DeviceFiles(ShellRunner(it, serial)) { path -> session.send(ControlMessage.ScanFile(path)) },
                 transfers, memory, settings, transfers.pushTarget, scope,
-                openOnComputer = { path -> uriHandler.openFileSafely(path) },
+                openOnComputer = { path -> openOnComputer(path) },
             )
         }
     } ?: return null

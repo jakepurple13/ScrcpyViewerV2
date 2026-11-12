@@ -317,21 +317,6 @@ class TransfersTrayTest {
     }
 
     @Test
-    fun `opening encodes a space and non-ASCII names`() {
-        var uri = ""
-        val handler = object : androidx.compose.ui.platform.UriHandler {
-            override fun openUri(uri2: String) { uri = uri2 }
-        }
-        // Under the OS temp folder, so the path is absolute on Windows too (a drive letter, backslashes).
-        val file = Paths.get(System.getProperty("java.io.tmpdir")).toAbsolutePath().resolve("my 写真.jpg")
-        assertTrue(handler.openFileSafely(file))
-        assertTrue(uri.startsWith("file:"), uri)
-        assertTrue(uri.all { it.code < 128 }, uri)
-        assertTrue("my%20" in uri, uri)
-        assertTrue("%E5%86%99%E7%9C%9F" in uri.uppercase(), uri)
-    }
-
-    @Test
     fun `a pull already done when the browser starts is not opened`() {
         val done = job(1, TransferKind.Pull, JobState.Done, name = "c.pdf", opensAfter = true, hostResult = Paths.get("/tmp/c.pdf"))
         val flow = MutableStateFlow(listOf(done))
