@@ -1,16 +1,11 @@
 package com.programmersbox.scrcpyviewer.ui.window
 
-import androidx.compose.ui.awt.ComposeWindow
 import com.programmersbox.scrcpyviewer.Os
 import com.sun.jna.Callback
 import com.sun.jna.Function
 import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
-import org.jetbrains.skiko.SkiaLayer
-import androidx.compose.ui.graphics.toArgb
-import java.awt.Color
-import java.awt.Container
 import java.util.Collections
 
 /** NSVisualEffectMaterial values (AppKit). */
@@ -20,48 +15,27 @@ enum class MacVibrancyMaterial(val value: Long) {
 }
 
 /**
- * Puts a macOS NSVisualEffectView (blending mode behind-window) under this window's content, so whatever Compose
- * leaves transparent shows the blurred desktop. Returns false when unsupported (not macOS, native call failed);
- * never throws. Call after the window is displayable (e.g. from a LaunchedEffect inside the window content).
- *
- * Works on decorated windows (system title bar and the JBR custom title bar) without Compose's `transparent = true`:
- * the Skia layer is switched to transparent through skiko's public [SkiaLayer.transparency], and the NSWindow, its
- * Java2D content layer and the effect view are configured natively on the AppKit thread.
+ * Puts a macOS NSVisualEffectView (blending mode behind-window) under [nsWindow]'s content, so whatever Compose leaves
+ * transparent shows the blurred desktop. The window must have been created transparent (Nucleus' `transparent`):
+ * otherwise its Compose layer stays opaque over the effect view. Returns false when unsupported (not macOS, native call
+ * failed); never throws.
  *
  * [dark] picks the darkAqua or aqua appearance for the effect view; call again when the theme mode changes.
  */
-fun ComposeWindow.setMacVibrancy(
+fun setMacVibrancy(
+    nsWindow: Pointer,
     enabled: Boolean,
     dark: Boolean,
     material: MacVibrancyMaterial = MacVibrancyMaterial.UnderWindowBackground,
 ): Boolean {
     if (!Os.isMac) return false
     return try {
-        val skia = findSkiaLayer(this) ?: return false
-        val handle = windowHandle
-        if (handle == 0L) return false
-        skia.transparency = enabled
-        skia.background = if (enabled) Color(0, 0, 0, 0) else null
-        rootPane.isOpaque = !enabled
-        (contentPane as? javax.swing.JComponent)?.isOpaque = !enabled
-        // AWT sizes are in points, like AppKit's; the effect view follows later resizes by itself.
-        val w = width.toDouble()
-        val h = height.toDouble()
-        ObjC.onMain { MacVibrancyNative.apply(Pointer(handle), enabled, dark, material.value, w, h) }
-        skia.needRender()
+        ObjC.onMain { MacVibrancyNative.apply(nsWindow, enabled, dark, material.value) }
         true
     } catch (t: Throwable) {
         System.err.println("setMacVibrancy failed: $t")
         false
     }
-}
-
-internal fun findSkiaLayer(container: Container): SkiaLayer? {
-    for (c in container.components) {
-        if (c is SkiaLayer) return c
-        if (c is Container) findSkiaLayer(c)?.let { return it }
-    }
-    return null
 }
 
 private object MacVibrancyNative {
@@ -71,13 +45,9 @@ private object MacVibrancyNative {
     private const val STATE_FOLLOWS_WINDOW = 0L
     private const val IDENTIFIER = "scrcpyviewer.vibrancy"
 
-    /** Runs on the AppKit main thread. [handle] is skiko's window handle (an NSView or NSWindow). */
-    fun apply(handle: Pointer, enabled: Boolean, dark: Boolean, material: Long, width: Double, height: Double) {
-        val nsWindow = when {
-            ObjC.isKindOf(handle, "NSWindow") -> handle
-            ObjC.isKindOf(handle, "NSView") -> ObjC.msgPtr(handle, "window")
-            else -> null
-        } ?: return
+    /** Runs on the AppKit main thread. */
+    fun apply(handle: Pointer, enabled: Boolean, dark: Boolean, material: Long) {
+        val nsWindow = resolveNsWindow(handle) ?: return
         val contentView = ObjC.msgPtr(nsWindow, "contentView") ?: return
         val frameView = ObjC.msgPtr(contentView, "superview") ?: return
 
@@ -92,9 +62,8 @@ private object MacVibrancyNative {
         }
 
         if (effect == null) {
-            // Built from the window size rather than read back with [frameView]'s bounds: returning a struct needs
-            // objc_msgSend_stret on Intel Macs, which plain objc_msgSend would get wrong.
-            val bounds = ObjC.CGRect().apply { this.width = width; this.height = height }
+            val frame = ObjC.msgRect(frameView, "bounds")
+            val bounds = ObjC.CGRect().apply { width = frame[2]; height = frame[3] }
             effect = ObjC.msgPtr(ObjC.msgPtr(ObjC.cls("NSVisualEffectView"), "alloc")!!, "initWithFrame:", bounds)!!
             ObjC.msgVoid(effect, "setAutoresizingMask:", NS_VIEW_WIDTH_SIZABLE_HEIGHT_SIZABLE)
             ObjC.msgVoid(effect, "setBlendingMode:", BLENDING_BEHIND_WINDOW)
@@ -111,7 +80,7 @@ private object MacVibrancyNative {
 
         ObjC.msgVoid(nsWindow, "setOpaque:", false)
         ObjC.msgVoid(nsWindow, "setBackgroundColor:", ObjC.msgPtr(ObjC.cls("NSColor"), "clearColor")!!)
-        // The AWT content view's layer holds the Java2D window surface; make it non-opaque so it does not cover us.
+        // The content view's layer holds Compose's surface; make it non-opaque so it does not cover us.
         ObjC.msgPtr(contentView, "layer")?.let { ObjC.msgVoid(it, "setOpaque:", false) }
     }
 
@@ -146,6 +115,9 @@ internal object ObjC {
         @JvmField var height = 0.0
     }
 
+    @Structure.FieldOrder("width", "height")
+    class NSSize(@JvmField var width: Double = 0.0, @JvmField var height: Double = 0.0) : Structure(), Structure.ByValue
+
     fun interface DispatchFunction : Callback {
         fun invoke(context: Pointer?)
     }
@@ -165,6 +137,21 @@ internal object ObjC {
 
     fun msgBool(receiver: Pointer, selector: String, vararg args: Any?): Boolean =
         msgSend.invokeInt(arrayOf(receiver, sel(selector), *args)) and 0xFF != 0
+
+    private val msgSendStret: Function? by lazy { runCatching { objc.getFunction("objc_msgSend_stret") }.getOrNull() }
+
+    /** A CGRect-returning getter as [x, y, width, height]. Intel returns structs this big through objc_msgSend_stret. */
+    fun msgRect(receiver: Pointer, selector: String): DoubleArray {
+        val arm = System.getProperty("os.arch").let { it == "aarch64" || it == "arm64" }
+        val r = if (arm) {
+            msgSend.invoke(CGRect::class.java, arrayOf(receiver, sel(selector))) as CGRect
+        } else {
+            val buffer = com.sun.jna.Memory(32)
+            (msgSendStret ?: error("no objc_msgSend_stret")).invokeVoid(arrayOf(buffer, receiver, sel(selector)))
+            CGRect().apply { x = buffer.getDouble(0); y = buffer.getDouble(8); width = buffer.getDouble(16); height = buffer.getDouble(24) }
+        }
+        return doubleArrayOf(r.x, r.y, r.width, r.height)
+    }
 
     fun nsString(value: String): Pointer = msgPtr(cls("NSString"), "stringWithUTF8String:", value)!!
 
@@ -189,79 +176,77 @@ internal object ObjC {
 }
 
 /**
- * Keeps [window]'s desktop blur in step with [enabled] and [dark]. Never touches a window that has not had the blur,
- * so the other styles keep AWT's untouched, opaque window.
+ * Keeps [nsWindow]'s desktop blur in step with [enabled] and [dark]. Never touches a window that has not had the blur,
+ * so the other styles keep the untouched, opaque window.
  */
 @androidx.compose.runtime.Composable
-fun MacVibrancyEffect(window: ComposeWindow, enabled: Boolean, dark: Boolean) {
-    val applied = androidx.compose.runtime.remember(window) { booleanArrayOf(false) }
-    androidx.compose.runtime.LaunchedEffect(window, enabled, dark) {
+fun MacVibrancyEffect(nsWindow: Pointer, enabled: Boolean, dark: Boolean) {
+    val applied = androidx.compose.runtime.remember(nsWindow) { booleanArrayOf(false) }
+    androidx.compose.runtime.LaunchedEffect(nsWindow, enabled, dark) {
         if (enabled || applied[0]) {
-            window.setMacVibrancy(enabled, dark)
+            setMacVibrancy(nsWindow, enabled, dark)
             applied[0] = enabled
         }
     }
 }
 
 /**
- * Paints the window's own background in [color] (opaque), so a resize shows the theme's color in the strip Skia has
- * not drawn yet instead of the default light gray or white: the AWT window, its panes and Skia layer, and on macOS
- * the NSWindow. Never throws.
+ * Paints [nsWindow]'s own background (NSWindow backgroundColor) in [color], made opaque, so the strip a live resize
+ * uncovers before Compose has drawn the new size shows the theme's color instead of the system window background.
+ * Returns false (nothing done) when not on macOS; never throws.
  */
-fun ComposeWindow.setWindowBackground(color: Color) {
-    try {
-        background = color
-        rootPane.background = color
-        contentPane.background = color
-        findSkiaLayer(this)?.background = color
-        if (Os.isMac) {
-            val handle = windowHandle
-            if (handle != 0L) {
-                val r = color.red / 255.0
-                val g = color.green / 255.0
-                val b = color.blue / 255.0
-                ObjC.onMain {
-                    val h = Pointer(handle)
-                    val nsWindow = when {
-                        ObjC.isKindOf(h, "NSWindow") -> h
-                        ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
-                        else -> null
-                    } ?: return@onMain
-                    val ns = ObjC.msgPtr(ObjC.cls("NSColor"), "colorWithSRGBRed:green:blue:alpha:", r, g, b, 1.0)
-                        ?: return@onMain
-                    ObjC.msgVoid(nsWindow, "setBackgroundColor:", ns)
-                }
-            }
+fun setMacWindowBackground(nsWindow: Pointer, color: androidx.compose.ui.graphics.Color): Boolean {
+    if (!Os.isMac) return false
+    return try {
+        val r = color.red.toDouble()
+        val g = color.green.toDouble()
+        val b = color.blue.toDouble()
+        ObjC.onMain {
+            val window = resolveNsWindow(nsWindow) ?: return@onMain
+            val ns = ObjC.msgPtr(ObjC.cls("NSColor"), "colorWithSRGBRed:green:blue:alpha:", r, g, b, 1.0) ?: return@onMain
+            ObjC.msgVoid(window, "setBackgroundColor:", ns)
         }
+        true
     } catch (t: Throwable) {
-        System.err.println("setWindowBackground failed: $t")
-    }
-}
-
-/** Keeps the window's background at [color] while [enabled] (off for the see-through Glass window). */
-@androidx.compose.runtime.Composable
-fun WindowBackgroundEffect(window: ComposeWindow, color: androidx.compose.ui.graphics.Color, enabled: Boolean) {
-    val argb = color.toArgb()
-    // After MacVibrancyEffect in composition order, so turning the blur off ends with this color, not the system's.
-    androidx.compose.runtime.LaunchedEffect(window, argb, enabled) {
-        if (enabled) window.setWindowBackground(Color(argb, false))
+        System.err.println("setMacWindowBackground failed: $t")
+        false
     }
 }
 
 /**
- * Animates this window to [to] (AWT screen units) natively on macOS, over [millis] along the cubic-bezier [curve]
- * (x1, y1, x2, y2). AppKit moves the frame itself, so it stays smooth while the content catches up. Returns false
- * (nothing started) when not on macOS or the window has no native handle; never throws.
+ * Keeps [nsWindow]'s background at [color] while [enabled] (off for the see-through Glass window). After
+ * [MacVibrancyEffect] in composition order, so turning the blur off ends with this color, not the system's.
  */
-fun java.awt.Window.animateMacFrame(to: java.awt.Rectangle, millis: Int, curve: FloatArray): Boolean {
-    if (!Os.isMac || this !is ComposeWindow) return false
+@androidx.compose.runtime.Composable
+fun MacWindowBackgroundEffect(nsWindow: Pointer, color: androidx.compose.ui.graphics.Color, enabled: Boolean) {
+    // The color in sRGB, so a theme in another color space still gives AppKit the right components.
+    val srgb = color.convert(androidx.compose.ui.graphics.colorspace.ColorSpaces.Srgb)
+    androidx.compose.runtime.LaunchedEffect(nsWindow, srgb, enabled) {
+        if (enabled) setMacWindowBackground(nsWindow, srgb)
+    }
+}
+
+/**
+ * [handle] as an NSWindow: itself, or the window of the view it is. Runs on the AppKit main thread; null when it is
+ * neither.
+ */
+internal fun resolveNsWindow(handle: Pointer): Pointer? = when {
+    ObjC.isKindOf(handle, "NSWindow") -> handle
+    ObjC.isKindOf(handle, "NSView") -> ObjC.msgPtr(handle, "window")
+    else -> null
+}
+
+/**
+ * Animates [nsWindow] (an NSWindow) to [to] (window units, top-left origin) natively on macOS, over
+ * [millis] along the cubic-bezier [curve] (x1, y1, x2, y2). AppKit moves the frame itself, so it stays smooth while
+ * the content catches up. The main screen's height, for the flip to AppKit's bottom-left origin, comes from
+ * [geometry]. Returns false (nothing started) when not on macOS or the main screen is unknown; never throws.
+ */
+fun animateMacFrame(nsWindow: Pointer, to: java.awt.Rectangle, millis: Int, curve: FloatArray, geometry: ScreenGeometry): Boolean {
+    if (!Os.isMac) return false
     return try {
-        val handle = windowHandle
-        if (handle == 0L) return false
-        // AppKit's origin is the bottom-left of the main screen (the one AWT puts at 0,0); AWT's is its top-left.
-        val main = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices
-            .map { it.defaultConfiguration.bounds }
-            .firstOrNull { it.x == 0 && it.y == 0 } ?: return false
+        // AppKit's origin is the bottom-left of the main screen (the one at 0,0 in window units); ours is its top-left.
+        val main = geometry.screens().map { it.bounds }.firstOrNull { it.x == 0 && it.y == 0 } ?: return false
         val frame = ObjC.CGRect().apply {
             x = to.x.toDouble()
             y = (main.height - to.y - to.height).toDouble()
@@ -269,12 +254,7 @@ fun java.awt.Window.animateMacFrame(to: java.awt.Rectangle, millis: Int, curve: 
             height = to.height.toDouble()
         }
         ObjC.onMain {
-            val h = Pointer(handle)
-            val nsWindow = when {
-                ObjC.isKindOf(h, "NSWindow") -> h
-                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
-                else -> null
-            } ?: return@onMain
+            val window = resolveNsWindow(nsWindow) ?: return@onMain
             val contexts = ObjC.cls("NSAnimationContext")
             ObjC.msgVoid(contexts, "beginGrouping")
             val context = ObjC.msgPtr(contexts, "currentContext")!!
@@ -283,7 +263,7 @@ fun java.awt.Window.animateMacFrame(to: java.awt.Rectangle, millis: Int, curve: 
                 ObjC.cls("CAMediaTimingFunction"), "functionWithControlPoints::::",
                 curve[0], curve[1], curve[2], curve[3],
             )?.let { ObjC.msgVoid(context, "setTimingFunction:", it) }
-            ObjC.msgVoid(ObjC.msgPtr(nsWindow, "animator")!!, "setFrame:display:", frame, true)
+            ObjC.msgVoid(ObjC.msgPtr(window, "animator")!!, "setFrame:display:", frame, true)
             ObjC.msgVoid(contexts, "endGrouping")
         }
         true
@@ -294,22 +274,15 @@ fun java.awt.Window.animateMacFrame(to: java.awt.Rectangle, millis: Int, curve: 
 }
 
 /**
- * Sets the window's native opacity on macOS (NSWindow alphaValue, 0..1), which, unlike AWT's opacity, works with a
- * title bar. Returns false (nothing done) when not on macOS or the window has no native handle; never throws.
+ * Sets [nsWindow]'s native opacity on macOS (NSWindow alphaValue, 0..1). Returns false (nothing done) when not on
+ * macOS; never throws.
  */
-fun java.awt.Window.setMacAlpha(alpha: Double): Boolean {
-    if (!Os.isMac || this !is ComposeWindow) return false
+fun setMacAlpha(nsWindow: Pointer, alpha: Double): Boolean {
+    if (!Os.isMac) return false
     return try {
-        val handle = windowHandle
-        if (handle == 0L) return false
         ObjC.onMain {
-            val h = Pointer(handle)
-            val nsWindow = when {
-                ObjC.isKindOf(h, "NSWindow") -> h
-                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
-                else -> null
-            } ?: return@onMain
-            ObjC.msgVoid(nsWindow, "setAlphaValue:", alpha)
+            val window = resolveNsWindow(nsWindow) ?: return@onMain
+            ObjC.msgVoid(window, "setAlphaValue:", alpha)
         }
         true
     } catch (t: Throwable) {
@@ -322,22 +295,15 @@ fun java.awt.Window.setMacAlpha(alpha: Double): Boolean {
 private const val NS_WINDOW_ANIMATION_NONE = 2L
 
 /**
- * Turns off the zoom macOS plays as this window appears, for windows that animate their own opening. Call while the
- * window is displayable but not yet shown. No-op elsewhere; never throws.
+ * Turns off the zoom macOS plays as [nsWindow] (an NSWindow or a view in it) appears, for windows that animate their
+ * own opening. Call while the window is displayable but not yet shown. No-op elsewhere; never throws.
  */
-fun java.awt.Window.disableMacAppearAnimation() {
-    if (!Os.isMac || this !is ComposeWindow) return
+fun disableMacAppearAnimation(nsWindow: Pointer) {
+    if (!Os.isMac) return
     try {
-        val handle = windowHandle
-        if (handle == 0L) return
         ObjC.onMain {
-            val h = Pointer(handle)
-            val nsWindow = when {
-                ObjC.isKindOf(h, "NSWindow") -> h
-                ObjC.isKindOf(h, "NSView") -> ObjC.msgPtr(h, "window")
-                else -> null
-            } ?: return@onMain
-            ObjC.msgVoid(nsWindow, "setAnimationBehavior:", NS_WINDOW_ANIMATION_NONE)
+            val window = resolveNsWindow(nsWindow) ?: return@onMain
+            ObjC.msgVoid(window, "setAnimationBehavior:", NS_WINDOW_ANIMATION_NONE)
         }
     } catch (t: Throwable) {
         System.err.println("disableMacAppearAnimation failed: $t")

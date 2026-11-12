@@ -79,4 +79,64 @@ class AppShutdownTest {
         assertFalse(session.hasUnfinishedRecording)
         Files.deleteIfExists(file)
     }
+
+    @Test
+    fun fontAvailable_unknownFamily_false() {
+        assertFalse(com.programmersbox.scrcpyviewer.ui.theme.fontAvailable("No Such Family 9f3a"))
+    }
+
+    @Test
+    fun quitHook_invokesRequestOnce() = runBlocking<Unit> {
+        var installed: (() -> Unit)? = null
+        val exits = AtomicInteger()
+        val shutdown = AppShutdown(controller, exit = { exits.incrementAndGet() }, quitHook = { installed = it })
+        shutdown.installQuitHandler(shutdown::request)
+        installed!!.invoke()
+        installed!!.invoke() // double quit
+        assertEquals(AppShutdown.State.ShuttingDown(finishingRecording = false), shutdown.state.value)
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(1, exits.get())
+    }
+
+    @Test
+    fun run_releasesTheQuitHookBeforeExit() = runBlocking<Unit> {
+        val events = mutableListOf<String>()
+        val hook = object : QuitHook {
+            override fun install(onQuit: () -> Unit) = Unit
+            override fun release() {
+                events += "release"
+            }
+        }
+        val shutdown = AppShutdown(controller, exit = { events += "exit" }, quitHook = hook)
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(listOf("release", "exit"), events)
+    }
+
+    @Test
+    fun run_installsTheUpdateOffTheCallingThreadAfterSessionsCloseThenExits() = runBlocking<Unit> {
+        controller.open("A")
+        val session = controller.open.value.getValue("A")
+        withTimeout(5_000) { session.status.first { it == SessionStatus.Running } }
+        val caller = Thread.currentThread()
+        val events = java.util.Collections.synchronizedList(ArrayList<String>())
+        var installThread: Thread? = null
+        var exitThread: Thread? = null
+        val shutdown = AppShutdown(
+            controller,
+            exit = {
+                exitThread = Thread.currentThread()
+                events += "exit"
+            },
+            install = {
+                installThread = Thread.currentThread()
+                events += "install sessions=${controller.open.value.size} status=${session.status.value}"
+            },
+        )
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(listOf("install sessions=0 status=${SessionStatus.Disconnected}", "exit"), events)
+        assertTrue(installThread != null && installThread !== caller, "install ran on the calling thread")
+        assertEquals(caller, exitThread)
+    }
 }

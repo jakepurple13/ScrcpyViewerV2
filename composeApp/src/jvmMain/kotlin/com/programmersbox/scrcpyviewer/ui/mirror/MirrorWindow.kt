@@ -110,11 +110,11 @@ import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isShiftPressed
-import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -147,6 +147,8 @@ import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.scrcpy.StreamProtocol
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
+import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
+import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
@@ -155,6 +157,9 @@ import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.mapState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
+import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
+import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
+import com.programmersbox.scrcpyviewer.ui.common.PcClipboard
 import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
@@ -167,19 +172,10 @@ import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
-import com.programmersbox.scrcpyviewer.ui.window.windowChrome
+import dev.nucleusframework.application.LocalNucleusApplicationScope
 import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
 import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
-import java.awt.Dimension
-import java.awt.KeyEventDispatcher
-import java.awt.KeyboardFocusManager
-import java.awt.Toolkit
-import java.awt.datatransfer.DataFlavor
-import java.awt.event.KeyEvent as AwtKeyEvent
-import java.awt.event.WindowAdapter
-import java.awt.event.WindowEvent
 import java.nio.file.Paths
-import javax.swing.SwingUtilities
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -316,11 +312,12 @@ fun parseHexColor(value: String?): Color? {
  *
  * `keyboard=uhid` and `mouse=uhid` create the HID devices on the session ([HidKeyboard], [HidMouse]) and send HID
  * reports instead of key/text/touch injections. The UHID mouse is relative, so the window captures the pointer
- * (see [MouseCapture]): the cursor is hidden over the video and moved back to its centre with `java.awt.Robot`,
- * and motion is sent as deltas. Without a working Robot the deltas still flow, until the pointer leaves the video.
+ * (see [MouseCapture]): the cursor is hidden and moved back to the video's centre ([NativeCursorControl]), and motion
+ * is sent as deltas. Where the cursor cannot be moved (Wayland) there is no capture: a snackbar says so, and the
+ * deltas still flow while the pointer is over the video.
  *
  * The top strip ([TopStrip]) is the window's title bar ([AppWindow]): window controls at its edge, empty
- * space drags the window. With the system title bar it sits at the top of the content instead.
+ * space drags the window.
  */
 @Composable
 fun MirrorWindow(
@@ -328,17 +325,18 @@ fun MirrorWindow(
     session: ScrcpySession,
     controller: MirrorController,
     theme: AppTheme,
-    /** `Settings.useSystemTitleBar`, read when the window opens. */
-    useSystemTitleBar: Boolean?,
     /** `Settings.captureDir`: where screenshots and recordings started from the toolbar go. */
     captureDir: String,
     /** `Settings.animateMirrorWindows`, read when the window opens: grow from the Mirror button, wake the screen. */
     animate: Boolean = false,
     /** Runs `adb install` / `adb push` for dropped files and the Install APK… / Push file… buttons; null disables them. */
     adb: AdbClient? = null,
-    fileDialogs: TransferFileDialogs = AwtTransferFileDialogs,
+    /** Null: the OS pickers, with failures shown in this window's snackbar. */
+    fileDialogs: TransferFileDialogs? = null,
     /** "+ New action", "Edit…" and "Manage actions…" ask the main window to open the Actions screen through this. */
     actionsNavigation: ActionsNavigation = koinInject(),
+    screenGeometry: ScreenGeometry = koinInject(),
+    pcClipboard: PcClipboard = koinInject(),
     /** Messages about action files AI tools dropped in the inbox show in every mirror window. */
     inbox: ActionInbox = koinInject(),
 ) {
@@ -371,6 +369,7 @@ fun MirrorWindow(
     fun notify(message: String) {
         uiScope.launch { snackbar.showSnackbar(message) }
     }
+    val transferDialogs = fileDialogs ?: remember { NativeTransferFileDialogs(nativeFileDialogs(::notify)) }
     // Results of this device's sessions (a previous one too, after Reconnect); the main window shows the others.
     LaunchedEffect(serial) {
         controller.recordingResults.filter { it.serial == serial }.collect { notify(recordResultMessage(it.result)) }
@@ -433,6 +432,9 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
+    // Read when a picker closes: a Reconnect meanwhile replaces the transfers (pickAndStart).
+    val currentTransfers by rememberUpdatedState(transfers)
+    val picker = rememberPickerGuard()
     val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
     val sheetFocus = remember { SheetFocus() }
 
@@ -463,7 +465,7 @@ fun MirrorWindow(
         zoomFrom?.let {
             zoomTarget(
                 if (positioned) requestedX ?: 100 else null, if (positioned) requestedY ?: 100 else null,
-                requestedWidth, requestedHeight, usableScreenBounds(it),
+                requestedWidth, requestedHeight, usableScreenBounds(it, screenGeometry.screens()),
             )
         }
     }
@@ -511,15 +513,20 @@ fun MirrorWindow(
     }
     val applyZoom: (ZoomCommand) -> Unit = { zoom = Zoom.step(zoom, fittedScale(), it) }
     val currentApplyZoom by rememberUpdatedState(applyZoom)
-    // Set by the window's focus listener; the AWT window only exists inside AppWindow {} below.
+    // Set from the window's focus; the window (and its handle) only exists inside AppWindow {} below.
     var windowFocused by remember { mutableStateOf(false) }
-    var awtWindowRef by remember { mutableStateOf<java.awt.Window?>(null) }
-    val robot = remember(hidMouse != null) { if (hidMouse != null) WindowPointerCapture.robotOrNull() else null }
+    var windowHandle by remember { mutableStateOf<MirrorWindowHandle?>(null) }
+    // The video view's top-left in window pixels (it moves as a zoomed stage scrolls); read by the capture only.
+    val viewOrigin = remember { arrayOf(Offset.Zero) }
     val capture = remember(session) {
         hidMouse?.let {
-            WindowPointerCapture(MouseCapture(), mapper, hidKeyboard, send, isFocused = { awtWindowRef?.isFocused == true }, robot)
+            WindowPointerCapture(
+                MouseCapture(), mapper, hidKeyboard, send, isFocused = { windowHandle?.focused?.value == true },
+                onUnavailable = { notify("Mouse capture is not available: the pointer cannot be moved on this system") },
+            )
         }
     }
+    capture?.let { DisposableEffect(it) { onDispose(it::dispose) } }
     val captured = capture?.active?.collectAsState()?.value == true
     // show-touches only shows physical touches on the device; mark the injected clicks in the window (not for the
     // captured UHID mouse, whose pointer is hidden and has no position on the frame).
@@ -587,7 +594,7 @@ fun MirrorWindow(
     // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now
     // (or a little, in place, when the main window does not show it), then it closes.
     val requestClose: () -> Unit = close@{
-        val w = awtWindowRef
+        val w = windowHandle
         if (wake == null || w == null) return@close controller.close(serial)
         if (closing) return@close
         closing = true
@@ -597,7 +604,7 @@ fun MirrorWindow(
                 if (windowState.placement == WindowPlacement.Floating) {
                     zooming = true
                     val to = MirrorOrigins.buttonOnScreen(serial) ?: shrunkAroundCenter(w.bounds, MIRROR_SHRINK_IN_PLACE)
-                    animateWindowBounds(w, to, MIRROR_ZOOM_OUT_MILLIS, grow = false)
+                    animateWindowBounds(w, to, MIRROR_ZOOM_OUT_MILLIS, grow = false, screenGeometry)
                 }
             } finally {
                 controller.close(serial)
@@ -605,105 +612,61 @@ fun MirrorWindow(
         }
     }
 
-    AppWindow(
+    val currentQuickActions by rememberUpdatedState(quickActions)
+    // The device's keys: this window's key events before its content sees them (the sheet's fields get theirs back).
+    val keys = remember(session) {
+        MirrorKeys(
+            mapper = mapper,
+            hidKeyboard = hidKeyboard,
+            send = send,
+            clipboardText = pcClipboard::text,
+            scope = uiScope,
+            sheetOpen = { currentQuickActions.open },
+            sheetFocused = { sheetFocus.focused },
+            closeSheet = { currentQuickActions.close() },
+            applyZoom = { currentApplyZoom(it) },
+            captureKey = { id, code, location -> capture?.key(id, code, location) == true },
+            captureFocus = { if (it) capture?.focusGained() else capture?.focusLost() },
+            noControl = "no-control" in e,
+            keyboardDisabled = e["keyboard"] == "disabled",
+            legacyPaste = "legacy-paste" in e,
+        )
+    }
+
+    LocalNucleusApplicationScope.current.AppWindow(
         onCloseRequest = requestClose,
         visible = shown,
         title = mirrorTitle(model, serial, values),
         theme = theme,
-        chrome = remember { windowChrome(useSystemTitleBar) },
         state = windowState,
         alwaysOnTop = "always-on-top" in e,
         icon = AppIcon.painter,
         titleBarHeight = 40.dp,
+        onPreviewKeyEvent = keys::onKey,
         titleBar = {
             // The overflow menu's Copy command shows its "Copied" message in the window's snackbar.
             CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, applyZoom) }
         },
     ) {
+        // Every move, resize, focus and native call on the window goes through this.
+        val handle = remember(nucleusWindow) { TaoMirrorWindowHandle(nucleusWindow, screenGeometry) }
         LaunchedEffect(serial) {
-            controller.focusRequests.filter { it == serial }.collect {
-                window.toFront()
-                window.requestFocus()
-            }
+            controller.focusRequests.filter { it == serial }.collect { handle.toFront() }
         }
         if ("print-fps" in e) {
             LaunchedEffect(session) { session.fps.collect { if (it > 0) println("[$serial] %.1f fps".format(it)) } }
         }
-        val awtWindow = window
-        DisposableEffect(session) {
-            val paste = if (Os.isMac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
-            var pasteDown = false
-            val zoomKeys = ZoomKeyFilter(Os.isMac)
-            // Keys held for the device when focus moves into the sheet would never see their release: let them go.
-            sheetFocus.onGained = { hidKeyboard?.let { send(it.releaseAll()) } }
-            val dispatcher = KeyEventDispatcher { ev ->
-                val inWindow = ev.component === awtWindow || SwingUtilities.getWindowAncestor(ev.component) === awtWindow
-                if (!inWindow) return@KeyEventDispatcher false
-                when (keyTarget(quickActions.open, sheetFocus.focused, ev.keyCode)) {
-                    // Typed into the quick actions sheet: Compose gets every key, the device none (keyTarget).
-                    KeyTarget.Sheet -> return@KeyEventDispatcher false
-                    KeyTarget.Window -> {
-                        if (ev.id == AwtKeyEvent.KEY_PRESSED) quickActions.close()
-                        return@KeyEventDispatcher true
-                    }
-                    KeyTarget.Device -> Unit
-                }
-                // Zoom shortcuts belong to the window: never forwarded to the device (any keyboard mode).
-                if (zoomKeys.handle(ev.id, ev.keyCode, ev.modifiersEx) { currentApplyZoom(it) }) return@KeyEventDispatcher true
-                if ("no-control" in e) return@KeyEventDispatcher false
-                if (capture != null && capture.key(ev.id, ev.keyCode, ev.keyLocation)) return@KeyEventDispatcher true
-                if (e["keyboard"] == "disabled") return@KeyEventDispatcher false
-                if (ev.keyCode == AwtKeyEvent.VK_V && ev.modifiersEx and paste != 0 && ev.id == AwtKeyEvent.KEY_PRESSED) {
-                    pasteDown = true
-                    val text = runCatching {
-                        Toolkit.getDefaultToolkit().systemClipboard.getData(DataFlavor.stringFlavor) as String
-                    }.getOrNull()
-                    if (!text.isNullOrEmpty()) {
-                        if ("legacy-paste" in e) text.chunked(100).forEach { session.send(ControlMessage.InjectText(it)) }
-                        else session.send(ControlMessage.SetClipboard(0, paste = true, text = text))
-                    }
-                    return@KeyEventDispatcher true
-                }
-                if (pasteDown && (ev.keyCode == AwtKeyEvent.VK_V || ev.id == AwtKeyEvent.KEY_TYPED)) {
-                    if (ev.id == AwtKeyEvent.KEY_RELEASED) pasteDown = false
-                    return@KeyEventDispatcher true
-                }
-                if (hidKeyboard != null) {
-                    send(hidKeyboard.awtKey(ev.id, ev.keyCode, ev.keyLocation))
-                    return@KeyEventDispatcher true // HID keys never become text
-                }
-                val msgs = mapper.awtKey(ev.id, ev.keyCode, ev.keyChar, ev.modifiersEx, ev.keyLocation)
-                send(msgs)
-                msgs.isNotEmpty()
-            }
-            val focus = object : WindowAdapter() {
-                override fun windowGainedFocus(ev: WindowEvent) {
-                    windowFocused = true
-                    capture?.focusGained()
-                }
-
-                override fun windowLostFocus(ev: WindowEvent) {
-                    windowFocused = false
-                    zoomKeys.reset()
-                    capture?.focusLost()
-                    // Releases that happen in another window never arrive: release what the device holds.
-                    hidKeyboard?.let { send(it.releaseAll()) }
-                    send(mapper.releaseButtons())
-                }
-            }
-            awtWindowRef = awtWindow
-            windowFocused = awtWindow.isFocused
-            val kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager()
-            kfm.addKeyEventDispatcher(dispatcher)
-            awtWindow.addWindowFocusListener(focus)
-            onDispose {
-                kfm.removeKeyEventDispatcher(dispatcher)
-                awtWindow.removeWindowFocusListener(focus)
-            }
+        LaunchedEffect(session, handle) {
+            windowHandle = handle
+            handle.focused.collect { windowFocused = it }
         }
-
-        // Drops anywhere on the window install / push (COPY only, see FileDropTarget).
-        FileDropTarget(awtWindow, transfers)
+        // Every gain and loss, not the merged state: each loss releases what the device holds.
+        LaunchedEffect(keys, handle) { handle.focusEvents.collect(keys::onFocusChanged) }
+        DisposableEffect(keys) {
+            // Keys held for the device when focus moves into the sheet would never see their release: let them go.
+            sheetFocus.onGained = keys::onSheetFocusGained
+            onDispose { sheetFocus.onGained = {} }
+        }
 
         val density = LocalDensity.current
 
@@ -712,7 +675,7 @@ fun MirrorWindow(
         var lastStage by remember { mutableStateOf(IntSize.Zero) }
         var lastFrame by remember { mutableStateOf<IntSize?>(null) }
         // The native window's size when the lock last looked (a plain holder, read only in the effect below).
-        val lastWindowSize = remember { arrayOf(Dimension()) }
+        val lastWindowSize = remember { arrayOf(IntSize.Zero) }
         val lastFit = remember { BooleanArray(1) { fit } } // the same, for Fit
         // The stage's width (px) while the window grows or shrinks for the quick actions sheet (see the sheet effect).
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
@@ -728,7 +691,7 @@ fun MirrorWindow(
                 // from the stage before the sheet changed it (and counted as the user's). The sheet only changes the
                 // stage's width: while it is pinned, the base keeps its height, so a height the user dragged meanwhile
                 // is still the user's change once the pin clears.
-                val windowResized = awtWindow.size != lastWindowSize[0]
+                val windowResized = handle.size != lastWindowSize[0]
                 val pinned = pinnedStage != null
                 if (stageChangeIsSheets(pinned, windowResized, lastFrame, fs, lastFit[0], fit)) {
                     lastStage = if (pinned && lastStage != IntSize.Zero) IntSize(stage.width, lastStage.height) else stage
@@ -738,7 +701,7 @@ fun MirrorWindow(
                 // new stage size, this only goes on once the size has held still.
                 delay(ASPECT_SETTLE_MS)
             }
-            val windowSize = awtWindow.size
+            val windowSize = handle.size
             val refit = fit && !lastFit[0]
             val lockNeeded = aspectLockNeeded(windowSize != lastWindowSize[0], lastFrame, fs, lastFit[0], fit)
             lastWindowSize[0] = windowSize
@@ -746,7 +709,7 @@ fun MirrorWindow(
             val target: IntSize? = when {
                 !autoSized -> {
                     autoSized = true
-                    val bounds = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
+                    val bounds = handle.screen()?.workArea ?: java.awt.Rectangle(0, 0, 1280, 800)
                     val chromeW = windowState.size.width.value * density.density - stage.width
                     val chromeH = windowState.size.height.value * density.density - stage.height
                     val maxW = bounds.width * density.density * 0.9f - chromeW
@@ -756,8 +719,10 @@ fun MirrorWindow(
                 }
                 fit && aspectLock && lockNeeded -> {
                     // Never taller than the screen has room for below the window's top, less its chrome (title bar).
-                    val chromeH = awtWindow.height * density.density - stage.height
-                    val (usable, below) = screenRoom(awtWindow)
+                    val chromeH = handle.size.height * density.density - stage.height
+                    val area = handle.screen()
+                        ?: ScreenArea(java.awt.Rectangle(0, 0, 1280, 800), java.awt.Rectangle(0, 0, 1280, 800))
+                    val (usable, below) = screenRoom(handle.bounds, area)
                     val maxH = aspectMaxHeight(
                         roomBelow = (below * density.density - chromeH).roundToInt(),
                         usable = (usable * density.density - chromeH).roundToInt(),
@@ -782,6 +747,31 @@ fun MirrorWindow(
             }
         }
 
+        // The live aspect lock (macOS: AppKit holds the ratio while the user drags, see TaoMirrorWindowHandle). Set from
+        // the stage once it has held still, so the chrome around it (title bar, toolbars, an open sheet) is measured
+        // against a window of the same moment; cleared at once while the sheet animates, with Fit off, without the
+        // lock option, or when not floating. The settle correction above still fits new frames and Fit coming back
+        // on, and is the whole lock where there is no live one (Windows, Linux: it corrects once a resize settles).
+        LaunchedEffect(handle, stage, displayedSize, fit, aspectLock, pinnedStage == null, zooming, windowState.placement) {
+            val fs = displayedSize
+            val wanted = fit && aspectLock && pinnedStage == null && !zooming && stage != IntSize.Zero &&
+                windowState.placement == WindowPlacement.Floating
+            if (fs == null || !wanted) {
+                handle.lockAspect(null)
+                return@LaunchedEffect
+            }
+            delay(ASPECT_SETTLE_MS)
+            val outer = handle.size
+            handle.lockAspect(
+                AspectLock(
+                    frameWidth = fs.width,
+                    frameHeight = fs.height,
+                    chromeWidth = outer.width - stage.width / density.density.toDouble(),
+                    chromeHeight = outer.height - stage.height / density.density.toDouble(),
+                ),
+            )
+        }
+
         // Opening: grow out of the Mirror button, then wake the screen once the first frame is in and the window
         // has taken its size from it (the size jump happens while the screen is still dark).
         val sizedForWake by rememberUpdatedState(
@@ -792,21 +782,21 @@ fun MirrorWindow(
             LaunchedEffect(Unit) {
                 if (zoomFrom != null && zoomTo != null) {
                     // macOS would play its own zoom as the window appears, on top of this one.
-                    awtWindow.disableMacAppearAnimation()
+                    handle.nsWindow?.let(::disableMacAppearAnimation)
                     // A hidden window is held to the screen it was made on: macOS moves one meant for another screen
                     // to that screen's edge (and narrows it) until it is shown. So it shows see-through, is put at
                     // the button once on screen, and only then becomes visible.
-                    val masked = awtWindow.setMacAlpha(0.0)
+                    val masked = handle.nsWindow?.let { setMacAlpha(it, 0.0) } == true
                     shown = true
                     // Compose shows the window from a job of its own: wait until it is really on screen.
-                    withTimeoutOrNull(1_000) { while (!awtWindow.isShowing) delay(8) }
-                    if (awtWindow.bounds != zoomFrom) {
-                        awtWindow.bounds = zoomFrom
-                        withTimeoutOrNull(300) { while (awtWindow.bounds != zoomFrom) delay(8) }
+                    withTimeoutOrNull(1_000) { while (!handle.isShowing) delay(8) }
+                    if (handle.bounds != zoomFrom) {
+                        handle.bounds = zoomFrom
+                        withTimeoutOrNull(300) { while (handle.bounds != zoomFrom) delay(8) }
                     }
                     repeat(2) { withFrameNanos { } }
-                    if (masked) awtWindow.setMacAlpha(1.0)
-                    animateWindowBounds(awtWindow, zoomTo, MIRROR_ZOOM_IN_MILLIS, grow = true)
+                    if (masked) handle.nsWindow?.let { setMacAlpha(it, 1.0) }
+                    animateWindowBounds(handle, zoomTo, MIRROR_ZOOM_IN_MILLIS, grow = true, screenGeometry)
                     zooming = false
                 }
                 snapshotFlow { sizedForWake || downForWake }.first { it }
@@ -854,13 +844,14 @@ fun MirrorWindow(
                 // The bar moved: the window keeps its size, the sheet's new width comes out of the stage. If this cut
                 // an open or tab switch short, the window keeps what it has grown so far.
                 sheetFromStage[0] = draggedSplit(sheetGrowth.value.dp, sheetTarget).fromStage.value
-                lastWindowSize[0] = awtWindow.size // whatever the cut-short animation grew, the user did not
+                lastWindowSize[0] = handle.size // whatever the cut-short animation grew, the user did not
                 pinnedStage = null
                 return@LaunchedEffect
             }
             // From the window as it is now: the user may have moved or resized it while the sheet was open.
-            val base = sheetBaseBounds(awtWindow.bounds, sheetGrowth.value.roundToInt(), sheetShift[0])
-            val screen = awtWindow.graphicsConfiguration.bounds
+            val base = sheetBaseBounds(handle.bounds, sheetGrowth.value.roundToInt(), sheetShift[0])
+            // An unknown screen sets no limit: the window grows in place.
+            val screen = handle.screen()?.bounds ?: java.awt.Rectangle(base.x, base.y, Int.MAX_VALUE / 4, base.height)
             val screenRight = screen.x + screen.width
             val split = sheetSplit(
                 sheetTarget, sheetTab, (stage.width / density.density).dp,
@@ -870,23 +861,19 @@ fun MirrorWindow(
             // The stage's pin moves with the window by what it gets back (or gives up), so the image resizes along.
             val pinFrom = stage.width
             val pinTo = pinFrom + ((sheetFromStage[0] - split.fromStage.value) * density.density).roundToInt()
-            val growthFrom = sheetGrowth.value
             sheetFromStage[0] = split.fromStage.value
             pinnedStage = pinFrom
-            sheetGrowth.animateTo(target, sheetWidthSpec(sheetGrowth.value.dp, target.dp)) {
-                val grown = sheetFrameBounds(base, value.roundToInt(), screenRight, awtWindow.height)
-                sheetShift[0] = base.x - grown.x
-                awtWindow.bounds = grown
-                val progress = if (target == growthFrom) 1f else (value - growthFrom) / (target - growthFrom)
+            growForSheet(handle, sheetGrowth, base, target, sheetWidthSpec(sheetGrowth.value.dp, target.dp), screenRight) { shift, progress ->
+                sheetShift[0] = shift
                 pinnedStage = pinFrom + ((pinTo - pinFrom) * progress).roundToInt()
             }
             pinnedStage = pinTo
             // Keep the pin until the native window has shrunk, or the stage widens for a frame.
             var frames = 0
-            while (awtWindow.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
+            while (handle.size.width > base.width + target.roundToInt() + 1 && frames++ < 30) withFrameNanos { }
             // Grown for the sheet, not by the user: nothing for the aspect lock. The height from before the animation,
             // so a height the user dragged meanwhile is still seen as a resize.
-            lastWindowSize[0] = Dimension(awtWindow.width, base.height)
+            lastWindowSize[0] = IntSize(handle.size.width, base.height)
             pinnedStage = null // not when cancelled: a reversed toggle keeps the pin through its own animation
         }
 
@@ -895,9 +882,12 @@ fun MirrorWindow(
         val frame = session.frames.collectAsStateWithLifecycle()
 
         ScrcpyViewerTheme {
-            Box(Modifier.fillMaxSize()) {
+            // Drops anywhere on the window install / push (COPY only, see fileDropTarget).
+            Box(Modifier.fillMaxSize().fileDropTarget(transfers)) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    CompositionLocalProvider(LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus) {
+                    CompositionLocalProvider(
+                        LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus, LocalMirrorWindowHandle provides handle,
+                    ) {
                     MirrorContent(
                         state = state,
                         frame = frame,
@@ -908,8 +898,10 @@ fun MirrorWindow(
                             when (action) {
                                 MirrorAction.Screenshot -> takeScreenshot()
                                 MirrorAction.Record -> toggleRecording()
-                                MirrorAction.InstallApk -> transfers.start(fileDialogs.chooseApks(awtWindow))
-                                MirrorAction.PushFile -> transfers.start(fileDialogs.chooseFiles(awtWindow, transfers.pushTarget))
+                                // Off the UI thread where the picker does not pump it (onPickerThread); back on it to start.
+                                // One picker at a time (PickerGuard), queued on the transfers current when it closes.
+                                MirrorAction.InstallApk -> picker.launch(uiScope) { pickAndStart({ currentTransfers }) { transferDialogs.chooseApks() } }
+                                MirrorAction.PushFile -> picker.launch(uiScope) { pickAndStart({ currentTransfers }, transferDialogs::chooseFiles) }
                                 MirrorAction.QuickActions -> quickActions.toggleSheet()
                                 else -> send(action.messages())
                             }
@@ -918,7 +910,7 @@ fun MirrorWindow(
                         onPointer = {
                             when {
                                 "no-control" in e -> Unit
-                                capture != null -> capture.pointer(it, awtWindow, viewSize, density.density, stageBounds)
+                                capture != null -> capture.pointer(it, handle, viewSize, density.density, stageBounds, viewOrigin[0])
                                 else -> {
                                     clickIndicator?.onPointer(it, monotonicMillis())
                                     send(mapper.pointer(it))
@@ -932,6 +924,7 @@ fun MirrorWindow(
                         wake = readWake,
                         shellConsole = quickActions.console,
                         onStageBounds = { stageBounds = it },
+                        onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
                     )
                     }
@@ -962,11 +955,9 @@ private const val ASPECT_SETTLE_MS = 150L
  * and the room from the window's top down to the screen's bottom (less the Dock or taskbar; negative when the window
  * hangs below it).
  */
-private fun screenRoom(window: java.awt.Window): Pair<Int, Int> {
-    val config = window.graphicsConfiguration
-    val insets = Toolkit.getDefaultToolkit().getScreenInsets(config)
-    val bottom = config.bounds.y + config.bounds.height - insets.bottom
-    return (config.bounds.height - insets.top - insets.bottom) to (bottom - window.y)
+internal fun screenRoom(window: java.awt.Rectangle, area: ScreenArea): Pair<Int, Int> {
+    val work = area.workArea
+    return work.height to (work.y + work.height - window.y)
 }
 
 /** The smallest height the aspect ratio lock lets the stage have (px), whatever room the screen has. */
@@ -1057,6 +1048,8 @@ fun MirrorContent(
     clickIndicator: ClickIndicator? = null,
     /** The stage's bounds in window pixels. */
     onStageBounds: (Rect) -> Unit = {},
+    /** The video view's top-left in window pixels, whenever it moves (a zoomed stage scrolls it). */
+    onViewOrigin: (Offset) -> Unit = {},
     /** False when the window draws [TopStrip] as its title bar; the divider below it stays. */
     showTopStrip: Boolean = true,
     onQuickAction: (QuickActionEvent) -> Unit = {},
@@ -1111,10 +1104,10 @@ fun MirrorContent(
             ) {
                 val disconnected = state.disconnected
                 if (wake == null) {
-                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
+                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin)
                 } else {
                     WakeStage(wake, standby = !disconnected) {
-                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator)
+                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin)
                     }
                 }
                 // While the screen is still asleep its standby line stands in for the skeleton.
@@ -1346,6 +1339,7 @@ private fun Stage(
     onPointer: (PointerEvent) -> Unit,
     onViewSize: (IntSize) -> Unit,
     clickIndicator: ClickIndicator?,
+    onViewOrigin: (Offset) -> Unit = {},
 ) {
     val pointer by rememberUpdatedState(onPointer)
     // Redraws every frame while a click dot fades out.
@@ -1377,7 +1371,7 @@ private fun Stage(
     }
     // Set by the zoomed stage: pans it by a wheel delta and tells whether it could.
     val pan = remember { arrayOfNulls<(Offset) -> Boolean>(1) }
-    val input = Modifier.pointerInput(Unit) {
+    val input = Modifier.onGloballyPositioned { onViewOrigin(it.positionInWindow()) }.pointerInput(Unit) {
         awaitPointerEventScope {
             while (true) {
                 val event = awaitPointerEvent()
@@ -1393,7 +1387,7 @@ private fun Stage(
                 event.changes.forEach { it.consume() }
             }
         }
-    }.then(if (state.captureHint != null) Modifier.pointerHoverIcon(blankPointerIcon) else Modifier)
+    }
     val orientation = state.orientation
     val fs = state.frameSize?.let(orientation::orientedSize)
     val zoom = state.zoom

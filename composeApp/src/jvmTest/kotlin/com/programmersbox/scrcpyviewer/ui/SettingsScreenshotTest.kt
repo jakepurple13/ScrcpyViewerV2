@@ -58,7 +58,6 @@ class SettingsScreenshotTest {
         mode: ThemeMode = ThemeMode.Light,
         state: SettingsUiState = this.state,
         updates: UpdateUiState = updatesUi(),
-        customTitleBarSupported: Boolean = true,
     ) {
         val out = outDir.resolve(name)
         renderToPng(1280, 800, out, settleMillis = 1_000) {
@@ -66,7 +65,6 @@ class SettingsScreenshotTest {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     SettingsContent(
                         state.copy(settings = state.settings.copy(themeMode = mode)), updates, nav, SettingsActions(),
-                        customTitleBarSupported = customTitleBarSupported,
                     )
                 }
             }
@@ -171,10 +169,6 @@ class SettingsScreenshotTest {
         "settings-adb-error.png", SettingsNav(selected = SettingsCategoryId.Adb),
         state = state.copy(settings = state.settings.copy(adbPathOverride = null), adbPathError = "File not found: /nope/adb", defaultPresetId = null),
     )
-
-    @Test
-    fun `settings without custom title bar support`() =
-        render("settings-no-custom-bar.png", SettingsNav(), customTitleBarSupported = false)
 
     @Test
     fun `app light with rail`() = withFakeAppKoin { koin ->

@@ -1,7 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.presets
 
-import java.awt.FileDialog
-import java.awt.Frame
+import com.programmersbox.scrcpyviewer.ui.common.NativeFileDialogs
+import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
+import com.programmersbox.scrcpyviewer.ui.common.onPickerThread
 import java.nio.file.Path
 
 const val PRESET_FILE_SUFFIX = ".scrcpypresets.json"
@@ -9,31 +10,22 @@ const val PRESET_FILE_SUFFIX = ".scrcpypresets.json"
 /** Native file pickers, behind an interface so tests never open a window. */
 interface PresetFileDialogs {
     /** Asks where to save; null when cancelled. */
-    fun chooseExportFile(suggestedName: String): Path?
+    suspend fun chooseExportFile(suggestedName: String): Path?
 
     /** Asks which `.json` file to import; null when cancelled. */
-    fun chooseImportFile(): Path?
+    suspend fun chooseImportFile(): Path?
 }
 
-/** `java.awt.FileDialog` (the native dialog on macOS). [what] names the content in the titles ("presets", "actions"). */
-class AwtPresetFileDialogs(private val parent: () -> Frame? = { null }, private val what: String = "presets") : PresetFileDialogs {
-    override fun chooseExportFile(suggestedName: String): Path? {
-        val dialog = FileDialog(parent(), "Export $what", FileDialog.SAVE)
-        dialog.file = suggestedName
-        return show(dialog)
-    }
+/** The platform's own save / open dialogs. [what] names the content in the titles ("presets", "actions"). */
+class NativePresetFileDialogs(
+    private val dialogs: NativeFileDialogs = nativeFileDialogs(),
+    private val what: String = "presets",
+) : PresetFileDialogs {
+    override suspend fun chooseExportFile(suggestedName: String): Path? =
+        onPickerThread { dialogs.save("Export $what", suggestedName, "json") }
 
-    override fun chooseImportFile(): Path? {
-        val dialog = FileDialog(parent(), "Import $what", FileDialog.LOAD)
-        dialog.setFilenameFilter { _, name -> name.endsWith(".json", ignoreCase = true) }
-        return show(dialog)
-    }
-
-    private fun show(dialog: FileDialog): Path? {
-        dialog.isVisible = true
-        val file = dialog.file ?: return null
-        return Path.of(dialog.directory ?: "", file)
-    }
+    override suspend fun chooseImportFile(): Path? =
+        onPickerThread { dialogs.open("Import $what", listOf("json"), multiple = false).firstOrNull() }
 }
 
 /** `<name>.scrcpypresets.json` with characters that are unsafe in file names replaced. */

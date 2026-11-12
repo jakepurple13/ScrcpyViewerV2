@@ -3,23 +3,15 @@ package com.programmersbox.scrcpyviewer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import java.awt.Taskbar
-import javax.imageio.ImageIO
+import org.jetbrains.skia.Image
 
-/** The app icon (composeApp/icons/app-icon.svg), used for every window and, in dev runs, the macOS Dock. */
+/**
+ * The app icon (composeApp/icons/app-icon.svg), used for every window. The Dock / taskbar icon comes from the
+ * packaging (.icns, .ico, .png); dev runs show the JVM's.
+ */
 object AppIcon {
-    private val image by lazy {
-        AppIcon::class.java.getResourceAsStream("/icon.png")!!.use { ImageIO.read(it) }
-    }
-
-    val painter: Painter by lazy { BitmapPainter(image.toComposeImageBitmap()) }
-
-    /** Packaged builds get the Dock icon from the .icns; this covers `run` and IDE launches. */
-    fun installTaskbarIcon() {
-        runCatching {
-            if (Taskbar.isTaskbarSupported() && Taskbar.getTaskbar().isSupported(Taskbar.Feature.ICON_IMAGE)) {
-                Taskbar.getTaskbar().iconImage = image
-            }
-        }
+    val painter: Painter by lazy {
+        val bytes = AppIcon::class.java.getResourceAsStream("/icon.png")!!.use { it.readBytes() }
+        BitmapPainter(Image.makeFromEncoded(bytes).toComposeImageBitmap())
     }
 }

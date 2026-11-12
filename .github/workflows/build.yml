@@ -81,7 +81,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # JDK for Gradle (the app's JBR 25 runtime comes from the Gradle toolchain), Node.js for electron-builder,
+      # JDK for Gradle (the app's JDK 25 runtime is the Gradle daemon JVM), Node.js for electron-builder,
       # Gradle, and on Linux the packaging tools (fakeroot and friends). Nucleus actions are pinned to the commit of
       # tag v2.5.18; keep it equal to `nucleus` in gradle/libs.versions.toml.
       - uses: NucleusFramework/Nucleus/.github/actions/setup-nucleus@765abe7e1bc7f4c422cfa094ec0f3905fce367be # v2.5.18

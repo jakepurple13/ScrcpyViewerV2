@@ -6,16 +6,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import dev.nucleusframework.darkmodedetector.getPlatformDarkModeDetector
+import dev.nucleusframework.darkmodedetector.isSystemInDarkMode
 
 enum class ThemeMode { System, Light, Dark }
 
 /** Whether this mode resolves to the dark scheme right now ([ThemeMode.System] follows the OS). */
 @Composable
 fun ThemeMode.isDark(): Boolean = when (this) {
-    ThemeMode.System -> isSystemInDarkTheme()
+    ThemeMode.System -> systemInDarkMode()
     ThemeMode.Light -> false
     ThemeMode.Dark -> true
 }
+
+/**
+ * The OS setting, from Nucleus' detector (the macOS user default, the Windows registry, the Linux portal), the same
+ * value inside every window and outside them. Compose's own [isSystemInDarkTheme] reads the app's effective
+ * appearance inside a window, which Nucleus' window changes to match its title bar, so it would follow the app's
+ * own theme back. Falls back to Compose's where the detector cannot load.
+ */
+@Composable
+private fun systemInDarkMode(): Boolean = if (nucleusDarkModeUsable) isSystemInDarkMode() else isSystemInDarkTheme()
+
+private val nucleusDarkModeUsable: Boolean by lazy { runCatching { getPlatformDarkModeDetector().isDark() }.isSuccess }
 
 /** The theme the nearest [ScrcpyViewerTheme] applies; null outside one. */
 val LocalAppTheme = staticCompositionLocalOf<AppTheme?> { null }

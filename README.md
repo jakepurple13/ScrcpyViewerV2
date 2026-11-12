@@ -53,7 +53,7 @@ so you do not need to install scrcpy, adb or FFmpeg.
 
 ### App
 - Material 3 theme, light and dark.
-- Custom title bar, with an option to use the system title bar instead.
+- Custom Material title bar on every window.
 - First-run welcome guide. You can reopen it from Settings.
 - Uses the bundled adb by default, or a custom adb path you choose.
 
@@ -86,13 +86,13 @@ The app checks for updates when it opens and can install them itself (Settings >
 | Language       | Kotlin 2.3 (JVM target only)                                                                    |
 | UI             | Compose Multiplatform 1.12 for Desktop, Material 3, Material Icons Extended                     |
 | Navigation     | Jetpack Navigation 3 and Material 3 Adaptive (list-detail panes)                                |
-| Window chrome  | [Jewel](https://github.com/JetBrains/jewel) decorated window                                    |
+| Windows        | [Nucleus](https://nucleusframework.dev) Tao window backend (no AWT) with the Nucleus Material title bar |
 | Video decoding | FFmpeg 8.1 through [JavaCPP presets](https://github.com/bytedeco/javacpp-presets) (`org.bytedeco:ffmpeg`) |
 | Device link    | Bundled adb (Android platform-tools) and scrcpy-server 5.0, using the adb wire protocol over sockets |
 | Concurrency    | kotlinx.coroutines                                                                              |
 | Serialization  | kotlinx.serialization (JSON settings and presets)                                               |
 | QR codes       | [QRose](https://github.com/alexzhirkevich/qrose) (Wi-Fi pairing)                                |
-| Runtime        | JetBrains Runtime 25 (compiled with JDK 21 toolchain)                                           |
+| Runtime        | JDK 25, the Gradle daemon JVM (compiled with JDK 21 toolchain); no JetBrains Runtime needed     |
 | Build          | Gradle (Kotlin DSL) with version catalog, [Nucleus](https://nucleusframework.dev) packaging (electron-builder) |
 | Updates        | Nucleus updater (`latest-*.yml` metadata on GitHub releases)                                     |
 | CI             | GitHub Actions: tests on macOS, Windows and Linux; installers built and released on `v*` tags |
@@ -114,7 +114,8 @@ Closing a mirror window closes its sockets. This stops the server on the device 
 
 ## Building from source
 
-Requirements: JDK 21 or newer. Gradle downloads JetBrains Runtime 25 automatically when you run or package the app.
+Requirements: JDK 21 or newer. Gradle downloads JDK 25 automatically for its daemon, and the app runs and is
+packaged on that JDK.
 Packaging also needs Node.js (24 in CI): the Nucleus plugin builds the installers with electron-builder.
 
 ```bash

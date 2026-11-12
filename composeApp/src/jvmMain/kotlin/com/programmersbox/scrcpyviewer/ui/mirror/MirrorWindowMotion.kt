@@ -17,9 +17,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.awt.LocalAwtWindow
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -39,11 +37,10 @@ import com.programmersbox.scrcpyviewer.ui.window.animateMacFrame
 import kotlinx.coroutines.delay
 import com.sun.jna.Function
 import com.sun.jna.ptr.IntByReference
-import java.awt.GraphicsEnvironment
+import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
+import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
+import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import java.awt.Rectangle
-import java.awt.Toolkit
-import java.awt.Window
-import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
 
 /** The mirror window grows out of the Mirror button over this long. */
@@ -61,10 +58,12 @@ private val ZOOM_OUT_CURVE = floatArrayOf(0.3f, 0f, 0.8f, 0.15f)
 /**
  * Moves and resizes [window] to [to] over [millis], growing ([grow]) or shrinking. On macOS AppKit animates the
  * frame (smooth even while the content redraws); elsewhere, or if that cannot start, one setBounds per frame.
+ * [geometry] gives AppKit's flip its main screen.
  */
-internal suspend fun animateWindowBounds(window: Window, to: Rectangle, millis: Int, grow: Boolean) {
+internal suspend fun animateWindowBounds(window: MirrorWindowHandle, to: Rectangle, millis: Int, grow: Boolean, geometry: ScreenGeometry) {
     val curve = if (grow) ZOOM_IN_CURVE else ZOOM_OUT_CURVE
-    if (window.animateMacFrame(to, millis, curve)) {
+    val nsWindow = window.nsWindow
+    if (nsWindow != null && animateMacFrame(nsWindow, to, millis, curve, geometry)) {
         delay(millis + 20L)
         window.bounds = to // in step with AppKit's last frame, should a resize event be still on its way
         return
@@ -133,15 +132,14 @@ internal fun shrunkAroundCenter(r: Rectangle, scale: Float): Rectangle {
 const val MIRROR_SHRINK_IN_PLACE = 0.9f
 
 /** Holds a composable's layout so its screen bounds can be read on press. A plain holder: never read in composition. */
-private class OriginTracker(val window: Window?, val density: Float) {
+private class OriginTracker(val window: MirrorWindowHandle?, val density: Float) {
     var coordinates: LayoutCoordinates? = null
 
     fun screenBounds(): Rectangle? = try {
         val c = coordinates?.takeIf { it.isAttached } ?: return null
         val w = window?.takeIf { it.isShowing } ?: return null
-        // Compose lays out in pixels from the content pane's corner; AWT works in points.
-        val root = (w as? RootPaneContainer)?.contentPane?.takeIf { it.isShowing } ?: w
-        val at = root.locationOnScreen
+        // Compose lays out in pixels from its root's corner, the content's; the window works in window units (points).
+        val at = w.contentOrigin()
         val r = c.boundsInWindow()
         Rectangle(
             at.x + (r.left / density).roundToInt(),
@@ -158,10 +156,9 @@ private class OriginTracker(val window: Window?, val density: Float) {
  * Marks [serial]'s Mirror button: a press records its screen bounds in [MirrorOrigins], so the window it opens grows
  * from it, and a closing window of [serial] shrinks back into it while it is on screen.
  */
-@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun Modifier.mirrorOrigin(serial: String?): Modifier {
-    val window = LocalAwtWindow.current
+    val window = LocalMirrorWindowHandle.current
     val density = LocalDensity.current.density
     val tracker = remember(window, density) { OriginTracker(window, density) }
     if (serial != null) {
@@ -204,16 +201,10 @@ internal fun zoomTarget(x: Int?, y: Int?, width: Int, height: Int, screen: Recta
     )
 }
 
-/** The usable bounds (less menu bar, Dock or taskbar) of the screen holding [origin]'s center; the default screen's if none. */
-internal fun usableScreenBounds(origin: Rectangle): Rectangle {
-    val env = GraphicsEnvironment.getLocalGraphicsEnvironment()
-    val cx = origin.centerX.roundToInt()
-    val cy = origin.centerY.roundToInt()
-    val config = env.screenDevices.map { it.defaultConfiguration }.firstOrNull { it.bounds.contains(cx, cy) }
-        ?: return env.maximumWindowBounds
-    val b = config.bounds
-    val i = Toolkit.getDefaultToolkit().getScreenInsets(config)
-    return Rectangle(b.x + i.left, b.y + i.top, b.width - i.left - i.right, b.height - i.top - i.bottom)
+/** The usable bounds (less menu bar, Dock or taskbar) of the screen holding [origin]'s center; the nearest screen's if none, else a default. */
+internal fun usableScreenBounds(origin: Rectangle, screens: List<ScreenArea>): Rectangle {
+    val center = Rectangle(origin.centerX.roundToInt(), origin.centerY.roundToInt(), 1, 1)
+    return screenFor(center, screens)?.workArea ?: Rectangle(0, 0, 1280, 800)
 }
 
 /** The device screen at a point of its wake: scales of the stage and how bright the white flash over it is. */

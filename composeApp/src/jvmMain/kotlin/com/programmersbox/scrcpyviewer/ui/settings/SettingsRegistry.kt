@@ -23,8 +23,6 @@ class SettingsBindings(
     val state: SettingsUiState,
     val updates: UpdateUiState,
     val actions: SettingsActions,
-    val isLinux: Boolean,
-    val customTitleBarSupported: Boolean,
 )
 
 /** All Settings callbacks; every one defaults to a no-op so tests and previews pass only what they need. */
@@ -39,7 +37,6 @@ class SettingsActions(
     val onRetroPalette: (Boolean) -> Unit = {},
     val onDesktopBlur: (Boolean) -> Unit = {},
     val onGlassOpacity: (Float) -> Unit = {},
-    val onUseSystemTitleBar: (Boolean) -> Unit = {},
     val onDefaultPreset: (String?) -> Unit = {},
     val onAnimateMirrorWindows: (Boolean) -> Unit = {},
     val onUseBundledAdb: () -> Unit = {},
@@ -109,14 +106,6 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 keywords = listOf("color", "colour", "accent", "palette", "custom", "hue"),
                 layout = EntryLayout.Block,
                 content = { PaletteControl(it) },
-            ),
-            SettingEntry(
-                "title-bar", "Use system title bar",
-                "Applies to windows opened after the change. Restart to apply it to this window.",
-                keywords = listOf("window", "frame", "decorations", "chrome"),
-                notes = { TitleBarNotes(it) },
-                rowModifier = { titleBarToggle(it) },
-                content = { TitleBarSwitch(it) },
             ),
         ),
     ),

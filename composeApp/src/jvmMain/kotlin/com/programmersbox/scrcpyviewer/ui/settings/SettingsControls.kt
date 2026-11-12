@@ -34,8 +34,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
-import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
-import com.programmersbox.scrcpyviewer.ui.window.windowChrome
 
 @Composable
 internal fun ThemeControl(b: SettingsBindings) {
@@ -55,31 +53,6 @@ internal fun ThemeControl(b: SettingsBindings) {
         }
     }
 }
-
-// Shows what windows will get: always the system bar when the runtime can't draw the custom one.
-private val SettingsBindings.systemTitleBar
-    get() = windowChrome(state.settings.useSystemTitleBar, isLinux, customTitleBarSupported) == WindowChrome.System
-
-/** The whole row toggles, so the label is clickable and screen readers read it as the switch's name. */
-internal fun titleBarToggle(b: SettingsBindings) = Modifier.toggleable(
-    value = b.systemTitleBar, enabled = b.customTitleBarSupported, role = Role.Switch,
-    onValueChange = b.actions.onUseSystemTitleBar,
-)
-
-@Composable
-internal fun TitleBarSwitch(b: SettingsBindings) {
-    Switch(checked = b.systemTitleBar, onCheckedChange = null, enabled = b.customTitleBarSupported)
-}
-
-@Composable
-internal fun TitleBarNotes(b: SettingsBindings) {
-    if (!b.customTitleBarSupported) Note("Custom title bar isn't available on this Java runtime.")
-    if (b.isLinux && !b.systemTitleBar) Note("Window can't be resized from its edges.")
-}
-
-@Composable
-private fun Note(text: String) =
-    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
 @Composable
 internal fun CaptureDirControl(b: SettingsBindings) {

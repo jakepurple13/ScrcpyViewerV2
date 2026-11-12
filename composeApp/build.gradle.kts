@@ -17,7 +17,7 @@ plugins {
 
 // Single source of truth: feeds packageVersion and the generated APP_VERSION constant shown in the window title.
 // Local update tests only: -PappVersion=1.6.1 builds a "newer" package.
-val appVersion = (findProperty("appVersion") as String?) ?: "1.15.0"
+val appVersion = (findProperty("appVersion") as String?) ?: "1.16.0"
 
 val generateAppVersion = tasks.register("generateAppVersion") {
     val version = appVersion
@@ -61,20 +61,21 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(compose.material3)
             implementation(compose.materialIconsExtended)
-            implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.androidx.navigation3.ui)
             implementation(libs.lifecycle.runtime.compose)
             implementation(libs.material3.adaptive)
             implementation(libs.material3.adaptive.layout)
             implementation(libs.qrose)
-            implementation(libs.jewel.decorated.window)
             implementation(project.dependencies.platform(libs.koin.bom))
             implementation(libs.koin.core)
             implementation(libs.koin.annotations)
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.nucleus.updater)
+            implementation(libs.nucleus.application)
+            implementation(libs.nucleus.window.tao)
+            implementation(libs.nucleus.window.material3)
             implementation(libs.jna)
             val ffmpeg = libs.versions.ffmpeg.get()
             val javacpp = libs.versions.javacpp.get()
@@ -86,25 +87,10 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+            // Tests run scenes on the Swing thread; see TestMainDispatcherFactory. The app itself has no Swing.
+            implementation(libs.kotlinx.coroutines.swing)
         }
     }
-}
-
-// Jewel's icon libraries pull in IntelliJ's coroutines fork, a different module with the same classes but missing newer
-// methods (Job.cancel$default). Both jars shipped and the fork won, crashing on cancel; use the one real coroutines.
-configurations.configureEach {
-    resolutionStrategy.dependencySubstitution {
-        substitute(module("org.jetbrains.intellij.deps.kotlinx:kotlinx-coroutines-core-jvm"))
-            .using(module("org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:${libs.versions.coroutines.get()}"))
-    }
-}
-
-// Run / packaging tasks (run, runDistributable, hot-reload runs, package*, create*Distributable, *RuntimeImage,
-// suggestRuntimeModules, prepareAppResources), matched on the requested names with any ":project:" prefix dropped.
-val needsAppRuntime: Boolean = gradle.startParameter.taskNames.any { requested ->
-    val name = requested.substringAfterLast(':')
-    listOf("run", "package", "Distributable", "RuntimeImage", "suggestRuntimeModules", "prepareAppResources")
-        .any { name.contains(it, ignoreCase = true) }
 }
 
 // Packaging is Nucleus' (a fork of Compose Desktop's that packages through electron-builder, so it needs Node.js).
@@ -112,16 +98,8 @@ val needsAppRuntime: Boolean = gradle.startParameter.taskNames.any { requested -
 // `application { }` block of its own.
 nucleus.application {
     mainClass = "com.programmersbox.scrcpyviewer.MainKt"
-    // The custom title bar (Jewel DecoratedWindow) needs JetBrains Runtime, and Jewel 0.41 is Java 25 bytecode,
-    // so the app runs on JBR 25; Gradle auto-provisions it via foojay. Compilation stays on jvmToolchain(21).
-    // javaHome is a plain String, so resolve JBR 25 only when a run or packaging task is requested; tests,
-    // CI test jobs and IDE sync then never download it.
-    if (needsAppRuntime) {
-        javaHome = javaToolchains.launcherFor {
-            languageVersion.set(JavaLanguageVersion.of(25))
-            vendor.set(JvmVendorSpec.JETBRAINS)
-        }.get().metadata.installationPath.asFile.absolutePath
-    }
+    // The app runs on the JDK that runs Gradle (Java 25, see gradle/gradle-daemon-jvm.properties): the Tao backend
+    // needs no JBR. Compilation stays on jvmToolchain(21).
     // JDK 25 warns when JNI libraries (skiko, javacpp / ffmpeg) load without this.
     jvmArgs += "--enable-native-access=ALL-UNNAMED"
     // It also warns when javacpp's indexers call the terminally deprecated sun.misc.Unsafe memory methods.
@@ -279,14 +257,18 @@ tasks.withType<JavaExec>().configureEach {
 
 // Offscreen screenshot tests are slow; run them only with -Pscreenshots.
 // Real-device tests (*DeviceTest) need attached devices; run them only with -PdeviceTests.
+// The macOS cursor smoke (*MacSmokeTest) moves the real pointer; run it only with -PmacCursorSmoke.
 tasks.matching { it.name == "jvmTest" }.configureEach {
     val screenshots = project.hasProperty("screenshots")
     val deviceTests = project.hasProperty("deviceTests")
+    val macCursorSmoke = project.hasProperty("macCursorSmoke")
     (this as Test).filter {
         if (screenshots) includeTestsMatching("*ScreenshotTest")
         if (deviceTests) includeTestsMatching("*DeviceTest")
+        if (macCursorSmoke) includeTestsMatching("*MacSmokeTest")
         if (!screenshots) excludeTestsMatching("*ScreenshotTest")
         if (!deviceTests) excludeTestsMatching("*DeviceTest")
+        if (!macCursorSmoke) excludeTestsMatching("*MacSmokeTest")
     }
     // On CI, log each test as it starts: when a job hangs and times out, the last STARTED line names the test.
     if (System.getenv("CI") == "true") {
