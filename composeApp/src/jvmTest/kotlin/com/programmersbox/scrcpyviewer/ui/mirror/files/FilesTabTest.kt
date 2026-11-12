@@ -296,6 +296,34 @@ class FilesTabTest {
     }
 
     @Test
+    fun `a deep path fades the crumbs out at the start edge instead of cutting them`() = onEdt {
+        val deep = "/sdcard/Download/Telegram Documents/Wallpapers and backgrounds/Holiday photos 2026"
+        val driver = scene(browser(deep))
+        driver.frames(30)
+        val up = driver.described("Up one folder").boundsInRoot
+        val refresh = driver.described("Refresh").boundsInRoot
+        val bitmap = org.jetbrains.skia.Bitmap.makeFromImage(driver.scene.render(10_000_000_000))
+        val y0 = up.top.toInt()
+        val y1 = up.bottom.toInt()
+        val background = bitmap.getColor(refresh.left.toInt() - 1, y0 + 1)
+        fun ink(x: Int): Int = (y0 until y1).maxOf { y ->
+            val c = bitmap.getColor(x, y)
+            val b = background
+            maxOf(
+                kotlin.math.abs(((c shr 16) and 0xFF) - ((b shr 16) and 0xFF)),
+                kotlin.math.abs(((c shr 8) and 0xFF) - ((b shr 8) and 0xFF)),
+                kotlin.math.abs((c and 0xFF) - (b and 0xFF)),
+            )
+        }
+        // The crumb bar starts after Up (a 30 dp button around its 18 dp icon, then 2 dp); scrolled to its end, the
+        // first visible crumb is cut there.
+        val start = up.right.toInt() + 6 + 2
+        val edge = (start until start + 3).map(::ink)
+        assertTrue(edge[0] < 24 && edge[1] < 60 && edge[2] < 90, "the cut crumb fades to nothing at the edge: $edge")
+        assertTrue((start + 12 until refresh.left.toInt() - 8).any { ink(it) > 80 }, "crumbs show past the fade")
+    }
+
+    @Test
     fun `a dropped session dims the list under a banner`() = onEdt {
         val b = browser()
         val driver = scene(b)

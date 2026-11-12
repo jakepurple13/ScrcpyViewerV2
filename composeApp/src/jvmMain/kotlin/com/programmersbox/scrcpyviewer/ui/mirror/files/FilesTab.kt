@@ -104,6 +104,10 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -124,6 +128,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.Os
@@ -541,6 +546,38 @@ private fun ToolButton(
 }
 
 /** "Internal storage" and each folder below it; kept scrolled to its end. A crumb added later slides in. */
+/** The crumb bar's start fade width (as the mockup), shown once scrolled. */
+internal val CRUMB_START_FADE = 10.dp
+
+/** The crumb bar's end fade width, shown while crumbs lie past the end. */
+internal val CRUMB_END_FADE = 4.dp
+
+/**
+ * Fades the content out over [CRUMB_START_FADE] at the start and [CRUMB_END_FADE] at the end, each by its strength
+ * (0 to 1, read at draw time). Composited offscreen so the mask cuts only this content.
+ */
+private fun Modifier.edgeFades(start: () -> Float, end: () -> Float): Modifier =
+    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
+        drawContent()
+        val s = start()
+        val e = end()
+        val rtl = layoutDirection == LayoutDirection.Rtl
+        // Keeps the content at full alpha inward and at 1 - strength right at the edge.
+        fun fade(strength: Float, width: Float, atLeft: Boolean) {
+            if (strength <= 0f || width <= 0f) return
+            val edge = Color.Black.copy(alpha = 1f - strength)
+            val x0 = if (atLeft) 0f else size.width - width
+            val colors = if (atLeft) listOf(edge, Color.Black) else listOf(Color.Black, edge)
+            drawRect(
+                Brush.horizontalGradient(colors, startX = x0, endX = x0 + width),
+                topLeft = Offset(x0, 0f), size = Size(width, size.height),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        fade(s, CRUMB_START_FADE.toPx(), atLeft = !rtl)
+        fade(e, CRUMB_END_FADE.toPx(), atLeft = rtl)
+    }
+
 @Composable
 private fun Crumbs(browser: FilesBrowser, drop: FilesDropState, motion: Boolean, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
@@ -553,8 +590,12 @@ private fun Crumbs(browser: FilesBrowser, drop: FilesDropState, motion: Boolean,
     // Crumbs composed with the bar itself just show; only later ones animate in. A plain holder.
     val settled = remember { BooleanArray(1) }
     SideEffect { settled[0] = true }
+    // Crumbs scrolled out of view fade at the edge instead of being cut mid-word: the start edge once scrolled, the
+    // end edge while more lies past it. Each fade eases in and out with the scroll.
+    val startFade by animateFloatAsState(if (scroll.value > 0) 1f else 0f, if (motion) tween(150) else snap())
+    val endFade by animateFloatAsState(if (scroll.value < scroll.maxValue) 1f else 0f, if (motion) tween(150) else snap())
     Row(
-        modifier.horizontalScroll(scroll).testTag(CRUMBS_TAG).padding(horizontal = 2.dp),
+        modifier.edgeFades({ startFade }, { endFade }).horizontalScroll(scroll).testTag(CRUMBS_TAG).padding(horizontal = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         items.forEachIndexed { index, (label, dir) ->
