@@ -3,7 +3,6 @@ package com.programmersbox.scrcpyviewer.ui.window
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,9 +18,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.layout.layout
@@ -30,10 +32,6 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.DefaultWindowExceptionHandlerFactory
-import androidx.compose.ui.window.LocalWindowExceptionHandlerFactory
-import androidx.compose.ui.window.WindowExceptionHandler
-import androidx.compose.ui.window.WindowExceptionHandlerFactory
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.AppIcon
@@ -112,41 +110,47 @@ fun NucleusApplicationScope.AppWindow(
     val reclaimQuit = LocalReclaimQuitHandler.current
     ScrcpyViewerTheme(shown) {
         val bar = animatedBarColors(barColors(MaterialTheme.colorScheme, LocalStyleTokens.current, desktopBlur))
-        @OptIn(ExperimentalComposeUiApi::class)
-        CompositionLocalProvider(LocalWindowExceptionHandlerFactory provides IgnoreDecoratedFrameBackground) {
-            MaterialDecoratedWindow(
-                onCloseRequest = onCloseRequest,
-                state = state,
-                visible = visible,
-                title = title,
-                icon = icon,
-                alwaysOnTop = alwaysOnTop,
-                onPreviewKeyEvent = onPreviewKeyEvent,
-                titleBarStyle = titleBarStyle(bar, titleBarHeight, transparent = desktopBlur),
-            ) {
-                DisposableEffect(Unit) {
-                    reclaimQuit()
-                    // Posted so it runs after the window's own teardown, which clears the handler.
-                    onDispose { java.awt.EventQueue.invokeLater(reclaimQuit) }
-                }
-                // Tao windows don't inherit composition locals: the theme and the reveal origin are provided again.
-                CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
-                    ScrcpyViewerTheme(shown) {
-                        // The bar's color is painted here, not by Nucleus (see titleBarStyle).
-                        val active = this.state.isActive
-                        MaterialTitleBar(Modifier.background(if (active) bar.background else bar.inactiveBackground)) {
-                            BoundedSlot {
-                                CompositionLocalProvider(LocalContentColor provides bar.content) {
-                                    CustomTitleBarScope.titleBar()
-                                }
+        MaterialDecoratedWindow(
+            onCloseRequest = onCloseRequest,
+            state = state,
+            visible = visible,
+            title = title,
+            icon = icon,
+            alwaysOnTop = alwaysOnTop,
+            onPreviewKeyEvent = onPreviewKeyEvent,
+            titleBarStyle = nucleusTitleBarStyle(bar, titleBarHeight),
+        ) {
+            DisposableEffect(Unit) {
+                reclaimQuit()
+                // Posted so it runs after the window's own teardown, which clears the handler.
+                onDispose { java.awt.EventQueue.invokeLater(reclaimQuit) }
+            }
+            // Tao windows don't inherit composition locals: the theme and the reveal origin are provided again.
+            CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
+                ScrcpyViewerTheme(shown) {
+                    // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).
+                    MaterialTitleBar(
+                        if (desktopBlur) ClearWindowRoot else Modifier,
+                        style = titleBarStyle(bar, titleBarHeight),
+                    ) {
+                        BoundedSlot {
+                            CompositionLocalProvider(LocalContentColor provides bar.content) {
+                                CustomTitleBarScope.titleBar()
                             }
                         }
-                        nucleusWindow.unsafe.awtWindow?.let { awt ->
-                            MacVibrancyEffect(awt, desktopBlur, dark)
-                            WindowBackgroundEffect(awt, MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
-                        }
-                        Box(Modifier.fillMaxSize().themeReveal(reveal).styleBackdrop(transparent = desktopBlur)) { content() }
                     }
+                    nucleusWindow.unsafe.awtWindow?.let { awt ->
+                        MacVibrancyEffect(awt, desktopBlur, dark, titleBarBackground = bar.background)
+                        WindowBackgroundEffect(awt, MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
+                    }
+                    Box(
+                        Modifier
+                            // First, so it draws on the window's own canvas, not in a layer of the reveal's.
+                            .then(if (desktopBlur) ClearWindowRoot else Modifier)
+                            .fillMaxSize()
+                            .themeReveal(reveal)
+                            .styleBackdrop(transparent = desktopBlur),
+                    ) { content() }
                 }
             }
         }
@@ -154,23 +158,10 @@ fun NucleusApplicationScope.AppWindow(
 }
 
 /**
- * Compose's default window exception handling (an error dialog, then the window closes), except for the one
- * exception the Glass window's transparent title-bar style causes: Nucleus' AWT window sets the frame's background
- * to the title bar's, and AWT refuses a see-through background on a decorated frame. Nothing is lost by skipping it:
- * the components it would have painted are the ones the Glass window keeps see-through.
+ * Clears what is under the content to fully transparent. Nucleus' AWT window fills its root with the title bar's
+ * (opaque) background before any content draws, which would hide the Glass window's blurred desktop.
  */
-@OptIn(ExperimentalComposeUiApi::class)
-private object IgnoreDecoratedFrameBackground : WindowExceptionHandlerFactory {
-    override fun exceptionHandler(window: java.awt.Window): WindowExceptionHandler {
-        val default = DefaultWindowExceptionHandlerFactory.exceptionHandler(window)
-        return WindowExceptionHandler { throwable ->
-            val decoratedFrameBackground = throwable is java.awt.IllegalComponentStateException &&
-                throwable.message == "The frame is decorated" &&
-                throwable.stackTrace.any { it.className.startsWith("dev.nucleusframework.") }
-            if (!decoratedFrameBackground) default.onException(throwable)
-        }
-    }
-}
+private val ClearWindowRoot: Modifier = Modifier.drawBehind { drawRect(Color.Black, blendMode = BlendMode.Clear) }
 
 /** Restores [window] when minimized, then raises and focuses it. */
 fun bringToFront(window: NucleusWindow) {
@@ -224,18 +215,34 @@ private fun TitleBarScope.BoundedSlot(content: @Composable () -> Unit) {
 }
 
 /**
- * The bar's style. [AppWindow] paints the bar itself through the title bar's modifier, so the style's background can
- * be [transparent] for the Glass window: Nucleus' AWT window also paints its whole root and every AWT component in
- * the style's background, which would cover the see-through content. (AWT then refuses the frame's see-through
- * background; see [IgnoreDecoratedFrameBackground].)
+ * The window's style, handed to Nucleus: [titleBarStyle] with opaque backgrounds. Nucleus' AWT window sets the frame's
+ * background to them, AWT throws for a see-through background on a decorated frame, and that failure stops the
+ * window's Recomposer. The Glass bar with blur is see-through, so it is laid over black (dark) or white (light) here;
+ * the bar itself is drawn with [titleBarStyle], and the window stays see-through through [ClearWindowRoot] and
+ * [MacVibrancyEffect].
  */
-private fun titleBarStyle(bar: BarColors, height: Dp, transparent: Boolean): TitleBarStyle {
+internal fun nucleusTitleBarStyle(bar: BarColors, height: Dp): TitleBarStyle {
+    val style = titleBarStyle(bar, height)
+    val under = if (bar.content.luminance() > 0.5f) Color.Black else Color.White
+    fun Color.opaque() = if (alpha >= 1f) this else compositeOver(under)
+    return style.copy(
+        colors = style.colors.copy(
+            background = style.colors.background.opaque(),
+            inactiveBackground = style.colors.inactiveBackground.opaque(),
+            border = style.colors.border.opaque(),
+            fullscreenControlButtonsBackground = style.colors.fullscreenControlButtonsBackground.opaque(),
+        ),
+    )
+}
+
+/** The bar's style in its own colors, for drawing it. */
+private fun titleBarStyle(bar: BarColors, height: Dp): TitleBarStyle {
     val hover = bar.content.copy(alpha = 0.08f)
     val pressed = bar.content.copy(alpha = 0.12f)
     return TitleBarStyle(
         colors = TitleBarColors(
-            background = if (transparent) Color.Transparent else bar.background,
-            inactiveBackground = if (transparent) Color.Transparent else bar.inactiveBackground,
+            background = bar.background,
+            inactiveBackground = bar.inactiveBackground,
             content = bar.content,
             border = bar.background,
             fullscreenControlButtonsBackground = bar.background,

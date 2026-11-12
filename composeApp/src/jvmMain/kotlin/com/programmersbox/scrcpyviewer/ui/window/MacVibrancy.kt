@@ -206,15 +206,22 @@ internal object ObjC {
 /**
  * Keeps [window]'s desktop blur in step with [enabled] and [dark]. Never touches a window that has not had the blur,
  * so the other styles keep AWT's untouched, opaque window.
+ *
+ * [titleBarBackground] is the color Nucleus' AWT window paints every AWT component (and the frame, which makes AppKit
+ * opaque again) with, from a posted task, each time it changes. While the blur is on, it is applied again after that
+ * pass so the window stays see-through.
  */
 @androidx.compose.runtime.Composable
-fun MacVibrancyEffect(window: ComposeWindow, enabled: Boolean, dark: Boolean) {
+fun MacVibrancyEffect(window: ComposeWindow, enabled: Boolean, dark: Boolean, titleBarBackground: Any? = null) {
     val applied = androidx.compose.runtime.remember(window) { booleanArrayOf(false) }
     androidx.compose.runtime.LaunchedEffect(window, enabled, dark) {
         if (enabled || applied[0]) {
             window.setMacVibrancy(enabled, dark)
             applied[0] = enabled
         }
+    }
+    androidx.compose.runtime.LaunchedEffect(window, enabled, dark, titleBarBackground) {
+        if (enabled) java.awt.EventQueue.invokeLater { window.setMacVibrancy(true, dark) }
     }
 }
 
