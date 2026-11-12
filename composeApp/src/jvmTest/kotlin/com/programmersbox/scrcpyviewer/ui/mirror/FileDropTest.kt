@@ -105,8 +105,8 @@ class FileDropTest {
 
     @Test
     fun paths_fromDropEvent_extracted() {
-        val a = Paths.get("/x/a.apk")
-        val b = Paths.get("/x/b c.jpg") // URI-escaped by the platform
+        val a = Paths.get("/x/a.apk").toAbsolutePath() // toUri() absolutises: drive letter on Windows
+        val b = Paths.get("/x/b c.jpg").toAbsolutePath() // URI-escaped by the platform
         assertEquals(listOf(a, b), dropPaths(fakeEvent()) { filesOf(a, b) })
         assertEquals(emptyList(), dropPaths(fakeEvent()) { filesOf() })
         val text = object : DragData.Text {
@@ -164,9 +164,10 @@ class FileDropTest {
             override fun readText() = "hello"
         }
         assertFalse(CopyOnlyFileDropTarget(transfers) { text }.accepts(fakeEvent()))
-        val target = CopyOnlyFileDropTarget(transfers) { filesOf(Paths.get("/x/a.apk")) }
+        val apk = Paths.get("/x/a.apk").toAbsolutePath()
+        val target = CopyOnlyFileDropTarget(transfers) { filesOf(apk) }
         target.onEntered(fakeEvent())
-        assertEquals(listOf(Paths.get("/x/a.apk")), transfers.dragPaths)
+        assertEquals(listOf(apk), transfers.dragPaths)
         target.onExited(fakeEvent())
         assertNull(transfers.hint)
         assertNull(transfers.dragPaths)

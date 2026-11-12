@@ -49,13 +49,14 @@ class NativeFileDialogsTest {
 
     @Test
     fun linuxPickerCommand_folderAndSave() {
-        val folder = PickerRequest.Open("Choose folder", emptyList(), multiple = false, directories = true, initial = Path.of("/tmp/caps"))
+        val caps = Path.of("/tmp/caps")
+        val folder = PickerRequest.Open("Choose folder", emptyList(), multiple = false, directories = true, initial = caps)
         assertEquals(
-            listOf("zenity", "--file-selection", "--title=Choose folder", "--directory", "--filename=/tmp/caps/"),
+            listOf("zenity", "--file-selection", "--title=Choose folder", "--directory", "--filename=$caps/"),
             linuxPickerCommand(folder) { true }!!.args,
         )
         assertEquals(
-            listOf("kdialog", "--title", "Choose folder", "--getexistingdirectory", "/tmp/caps"),
+            listOf("kdialog", "--title", "Choose folder", "--getexistingdirectory", "$caps"),
             linuxPickerCommand(folder) { it == "kdialog" }!!.args,
         )
 
