@@ -85,4 +85,20 @@ class NativeFileDialogsTest {
         )
         assertEquals(emptyList(), parseWindowsSelection(emptyList()))
     }
+
+    @Test
+    fun safeFileDialogs_failureReturnsCancelAndNotifiesOnce() {
+        val failing = object : NativeFileDialogs {
+            override fun open(title: String, extensions: List<String>, multiple: Boolean, directories: Boolean, initial: Path?): List<Path> =
+                error("boom")
+
+            override fun save(title: String, suggestedName: String, extension: String): Path? = error("boom")
+        }
+        val messages = mutableListOf<String>()
+        val safe = SafeFileDialogs(failing) { messages += it }
+        assertEquals(emptyList(), safe.open("t", listOf("apk"), multiple = true, directories = false, initial = null))
+        assertEquals(1, messages.size)
+        assertNull(safe.save("t", "x", "json"))
+        assertEquals(2, messages.size)
+    }
 }

@@ -147,6 +147,7 @@ import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.scrcpy.StreamProtocol
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
+import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
@@ -331,7 +332,8 @@ fun MirrorWindow(
     animate: Boolean = false,
     /** Runs `adb install` / `adb push` for dropped files and the Install APK… / Push file… buttons; null disables them. */
     adb: AdbClient? = null,
-    fileDialogs: TransferFileDialogs = NativeTransferFileDialogs(),
+    /** Null: the OS pickers, with failures shown in this window's snackbar. */
+    fileDialogs: TransferFileDialogs? = null,
     /** "+ New action", "Edit…" and "Manage actions…" ask the main window to open the Actions screen through this. */
     actionsNavigation: ActionsNavigation = koinInject(),
     screenGeometry: ScreenGeometry = koinInject(),
@@ -368,6 +370,7 @@ fun MirrorWindow(
     fun notify(message: String) {
         uiScope.launch { snackbar.showSnackbar(message) }
     }
+    val transferDialogs = fileDialogs ?: remember { NativeTransferFileDialogs(nativeFileDialogs(::notify)) }
     // Results of this device's sessions (a previous one too, after Reconnect); the main window shows the others.
     LaunchedEffect(serial) {
         controller.recordingResults.filter { it.serial == serial }.collect { notify(recordResultMessage(it.result)) }
@@ -871,8 +874,8 @@ fun MirrorWindow(
                             when (action) {
                                 MirrorAction.Screenshot -> takeScreenshot()
                                 MirrorAction.Record -> toggleRecording()
-                                MirrorAction.InstallApk -> transfers.start(fileDialogs.chooseApks())
-                                MirrorAction.PushFile -> transfers.start(fileDialogs.chooseFiles(transfers.pushTarget))
+                                MirrorAction.InstallApk -> transfers.start(transferDialogs.chooseApks())
+                                MirrorAction.PushFile -> transfers.start(transferDialogs.chooseFiles(transfers.pushTarget))
                                 MirrorAction.QuickActions -> quickActions.toggleSheet()
                                 else -> send(action.messages())
                             }
