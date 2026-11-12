@@ -667,6 +667,70 @@ class FileTransferTest {
         assertEquals("data", java.nio.file.Files.readString(dir.resolve("a.txt")))
     }
 
+    // ---- Replace pushes ----
+
+    private val swapOf = { dir: String, name: String, temp: String ->
+        "${keepOutsideGuard("$dir", "$dir/$name", name, "is the folder being pushed into")} && " +
+            "rm -rf -- ${shellQuote("$dir/$name")} && mv ${shellQuote(temp)} ${shellQuote("$dir/$name")} && echo __svw_replaced__"
+    }
+
+    @Test
+    fun `a Replace push goes to a temp name, then takes the item's place, so a folder never nests`() = runBlocking<Unit> {
+        val folder = java.nio.file.Files.createDirectories(tmp.resolve("Photos"))
+        val adb = FakeAdb(shellHandler = { if ("__svw_replaced__" in it) "__svw_replaced__\n" else "" })
+        val q = queue(adb)
+        q.replaceToken = { "T0K3N" }
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        q.enqueue(listOf(TransferRequest(folder, TransferKind.Push, "/sdcard/X", "Photos", replace = true)))
+        assertEquals(TransferResult.Pushed("Photos", "/sdcard/X"), withTimeout(5_000) { result.await() })
+        val temp = "/sdcard/X/.svw-replace-T0K3N-Photos"
+        assertEquals(listOf(listOf("-s", "SER", "push", folder.toString(), temp)), adb.calls.toList())
+        assertEquals(listOf(swapOf("/sdcard/X", "Photos", temp)), adb.shellCalls.toList())
+        assertEquals(listOf("/sdcard/X"), scans.toList())
+    }
+
+    @Test
+    fun `a Replace push cancelled before adb starts touches nothing, after only its own temp copy`() = runBlocking<Unit> {
+        val src = tmp.resolve("a.jpg")
+        java.nio.file.Files.write(src, ByteArray(8))
+        val request = TransferRequest(src, TransferKind.Push, "/sdcard/X", "a.jpg", replace = true)
+
+        val idle = FakeAdb { ProcessResult(0, "", "") }
+        val q1 = queue(idle)
+        q1.beforeStart = { q1.cancel(it) }
+        q1.awaitJob(q1.enqueue(listOf(request)).single()) { it.state == JobState.Cancelled }
+        assertTrue(idle.calls.isEmpty())
+        assertTrue(idle.shellCalls.isEmpty(), idle.shellCalls.toString())
+
+        val started = CompletableDeferred<Unit>()
+        val running = FakeAdb { started.complete(Unit); awaitCancellation() }
+        val q2 = queue(running)
+        q2.replaceToken = { "T0K3N" }
+        val id = q2.enqueue(listOf(request)).single()
+        withTimeout(5_000) { started.await() }
+        q2.cancel(id)
+        q2.awaitJob(id) { it.state == JobState.Cancelled }
+        val removes = running.shellCalls.filter { it.startsWith("rm") }
+        assertEquals(listOf("rm -rf -- '/sdcard/X/.svw-replace-T0K3N-a.jpg'"), removes, "never the original")
+    }
+
+    @Test
+    fun `a Replace push whose swap is refused fails and keeps the original`() = runBlocking<Unit> {
+        val src = tmp.resolve("a.jpg")
+        java.nio.file.Files.write(src, ByteArray(8))
+        val adb = FakeAdb(shellHandler = { if ("__svw_replaced__" in it) "a.jpg: is the folder being pushed into\n" else "" })
+        val q = queue(adb)
+        q.replaceToken = { "T0K3N" }
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        q.enqueue(listOf(TransferRequest(src, TransferKind.Push, "/sdcard/X", "a.jpg", replace = true)))
+        assertEquals("Could not push a.jpg: a.jpg: is the folder being pushed into", withTimeout(5_000) { result.await() }.message)
+        // The temp copy goes only while something still stands in the item's place.
+        assertEquals(
+            "if [ -e '/sdcard/X/a.jpg' ] || [ -L '/sdcard/X/a.jpg' ]; then rm -rf -- '/sdcard/X/.svw-replace-T0K3N-a.jpg'; fi",
+            adb.shellCalls.last(),
+        )
+    }
+
     @Test
     fun `adb output reaches the error line through the output file`() = runBlocking<Unit> {
         val q = queue(FakeAdb { ProcessResult(1, "", "adb: error: remote secure_mkdirs failed: Operation not permitted\n") })

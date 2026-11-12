@@ -23,6 +23,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /** `DEFAULT_PUSH_TARGET` in v5.0 `app/src/file_pusher.c`. */
@@ -49,6 +50,8 @@ enum class TransferKind { Install, Push, Pull, InstallFromDevice }
  * [TransferJob.hostResult]. [size] is the device file's size from the listing (a Pull's progress total; null when
  * unknown) and [isDirectory] says the pulled device entry is a folder. [dragOut] marks a pull into the drag cache for
  * a drag out of the window: it reports nothing when it succeeds (the drop is the result) and the tray does not list it.
+ * [replace] (a Push into [deviceDir]) replaces the item named [deviceName] there, file or folder: the push goes to a
+ * temp name, which takes the item's place only once it succeeded.
  */
 data class TransferRequest(
     val path: Path,
@@ -59,6 +62,7 @@ data class TransferRequest(
     val size: Long? = null,
     val isDirectory: Boolean = false,
     val dragOut: Boolean = false,
+    val replace: Boolean = false,
 ) {
     val name: String get() = deviceName ?: path.fileName?.toString() ?: path.toString()
 }
@@ -468,19 +472,31 @@ class FileTransferQueue(
         return Outcome(TransferResult.Installed(request.name), JobState.Done)
     }
 
+    /** Test seam: the random part of a Replace push's temp name. */
+    internal var replaceToken: () -> String = { UUID.randomUUID().toString().take(8) }
+
     private suspend fun push(id: Long, request: TransferRequest): Outcome {
         val dir = request.deviceDir ?: pushTarget
         val name = request.deviceName ?: request.path.fileName?.toString() ?: request.path.toString()
+        // A Replace goes to a temp name next to the item, which takes the item's place only once the push succeeded:
+        // the original stays untouched by a cancel or a failure, and a folder never lands inside the old one.
+        val replace = request.replace && request.deviceDir != null
+        val inPlace = devicePath(dir, name)
+        val deviceFile = if (replace) devicePath(dir, ".svw-replace-${replaceToken()}-$name") else inPlace
         // Without a folder the target stays the session's push target, as v5.0 passes it to `adb push`.
-        val target = request.deviceDir?.let { devicePath(it, name) } ?: pushTarget
-        val deviceFile = devicePath(dir, name)
+        val target = if (replace) deviceFile else request.deviceDir?.let { inPlace } ?: pushTarget
         val size = if (Files.isRegularFile(request.path)) runCatching { Files.size(request.path) }.getOrNull() else null
         synchronized(lock) { updateJob(id) { it.copy(total = size) } }
-        // A folder push merges into what is there: nothing of it is removed on a cancel.
+        // A folder push merges into what is there: nothing of it is removed on a cancel. A Replace's temp copy is
+        // this push's own, file or folder.
         // Only once adb ran: a cancel before it started must not delete a device file adb never touched.
         var started = false
         val removePartial: suspend () -> Unit = {
-            if (size != null && started) runCatching { adb.shell(serial, "rm -f ${shellQuote(deviceFile)}") }
+            when {
+                !started -> Unit
+                replace -> runCatching { adb.shell(serial, "rm -rf -- ${shellQuote(deviceFile)}") }
+                size != null -> runCatching { adb.shell(serial, "rm -f ${shellQuote(deviceFile)}") }
+            }
         }
         val sample: (suspend () -> Long?)? = size?.let {
             { adb.shell(serial, "stat -c %s ${shellQuote(deviceFile)}").trim().toLongOrNull() }
@@ -495,9 +511,39 @@ class FileTransferQueue(
             removePartial()
             return failed(request, timedOut())
         }
-        failureOf(r)?.let { return failed(request, it) }
+        failureOf(r)?.let {
+            // A Replace's half-written temp copy is junk; anything else adb failed on stays as it was.
+            if (replace) removePartial()
+            return failed(request, it)
+        }
+        if (replace) swapIn(deviceFile, dir, inPlace, name)?.let { return failed(request, it) }
         runCatching { scanFile(dir) }
         return Outcome(TransferResult.Pushed(request.name, dir), JobState.Done, bytes = size)
+    }
+
+    /**
+     * Puts the pushed [temp] in place of [target] (a file or folder in [dir]): removes [target], behind the same
+     * device-side check as a move's Replace (never [dir] or a folder above it), then renames [temp]. Null when done,
+     * else the reason; [temp] is then removed only while something still stands at [target].
+     */
+    private suspend fun swapIn(temp: String, dir: String, target: String, name: String): String? {
+        val t = shellQuote(temp)
+        val f = shellQuote(target)
+        val ok = "__svw_replaced__"
+        val out = try {
+            adb.shell(
+                serial,
+                "${keepOutsideGuard(dir, target, name, "is the folder being pushed into")} && " +
+                    "rm -rf -- $f && mv $t $f && echo $ok",
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return e.message ?: "could not replace $name"
+        }
+        if (ok in out) return null
+        runCatching { adb.shell(serial, "if [ -e $f ] || [ -L $f ]; then rm -rf -- $t; fi") }
+        return out.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() } ?: "could not replace $name"
     }
 
     private sealed interface Pulled {

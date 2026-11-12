@@ -112,11 +112,12 @@ class FilesBrowserTest {
     private val requests = mutableListOf<TransferRequest>()
     private val jobs = MutableStateFlow<List<TransferJob>>(emptyList())
 
-    private fun TestScope.browser(start: String = "/sdcard/Download"): FilesBrowser {
+    private fun TestScope.browser(start: String = "/sdcard/Download", hostDirs: Set<String> = emptySet()): FilesBrowser {
         val b = FilesBrowser(
             "SER", files, transfers, memory, settings, start, backgroundScope, { snacks += it },
             enqueue = { r -> requests += r; r.indices.map { it.toLong() + 1 } },
             jobs = jobs,
+            isHostDir = { it.fileName?.toString() in hostDirs },
         )
         runCurrent()
         return b
@@ -553,12 +554,58 @@ class FilesBrowserTest {
         assertTrue(b.push(listOf(a), "/sdcard/Download"))
         runCurrent()
         assertIs<FilesDialog.Clash>(b.dialog).onChoice(ClashChoice.Replace)
-        assertEquals(TransferRequest(a, TransferKind.Push, "/sdcard/Download", "a.jpg"), requests.last())
+        assertEquals(TransferRequest(a, TransferKind.Push, "/sdcard/Download", "a.jpg", replace = true), requests.last())
         val count = requests.size
         assertTrue(b.push(listOf(a), "/sdcard/Download"))
         runCurrent()
         assertIs<FilesDialog.Clash>(b.dialog).onChoice(ClashChoice.Skip)
         assertEquals(count, requests.size)
+    }
+
+    @Test
+    fun pushClashesIgnoreCaseAndKeepBothNamesFoldersWhole() = runTest {
+        files.dirs["/sdcard/Download"] = Listing.Entries(listOf(file("Photo.JPG"), dir("v1.2")))
+        val b = browser(hostDirs = setOf("V1.2"))
+        val photo = Paths.get("/x/photo.jpg")
+        val folder = Paths.get("/x/V1.2")
+        assertTrue(b.push(listOf(photo, folder), "/sdcard/Download"))
+        runCurrent()
+        assertTrue(requests.isEmpty(), "both are in the way on /sdcard, whatever the case: $requests")
+        val clash = assertIs<FilesDialog.Clash>(b.dialog)
+        assertEquals(listOf("photo.jpg", "V1.2"), clash.clashing)
+        clash.onChoice(ClashChoice.KeepBoth)
+        assertEquals(
+            listOf(
+                TransferRequest(photo, TransferKind.Push, "/sdcard/Download", "photo (1).jpg"),
+                TransferRequest(folder, TransferKind.Push, "/sdcard/Download", "V1.2 (1)"),
+            ),
+            requests,
+        )
+    }
+
+    @Test
+    fun aPushIntoAFolderThatCannotBeListedIsRefused() = runTest {
+        val b = browser()
+        // /sdcard/Nope fails to list: its clashes are unknown, and adb push would overwrite without asking.
+        assertTrue(b.push(listOf(Paths.get("/x/a.jpg")), "/sdcard/Nope"))
+        runCurrent()
+        assertTrue(requests.isEmpty(), requests.toString())
+        assertEquals("Nothing pushed: could not list Nope", snacks.single().message)
+    }
+
+    @Test
+    fun newFolderAndKeepBothForFoldersNeverSplitAnExtension() = runTest {
+        files.dirs["/sdcard/Download"] = Listing.Entries(listOf(dir("v1.2"), dir("new folder")))
+        files.dirs["/sdcard/Documents"] = Listing.Entries(listOf(dir("V1.2")))
+        val b = browser()
+        b.newFolder()
+        assertEquals("New folder (1)", b.pendingNewFolder, "“new folder” is in the way on /sdcard")
+        b.cancelRename()
+        b.move(listOf("v1.2"), "/sdcard/Documents")
+        runCurrent()
+        assertIs<FilesDialog.Clash>(b.dialog).onChoice(ClashChoice.KeepBoth)
+        settle()
+        assertEquals(listOf("move /sdcard/Download [v1.2] /sdcard/Documents {v1.2=v1.2 (1)} []"), files.mutations)
     }
 
     @Test

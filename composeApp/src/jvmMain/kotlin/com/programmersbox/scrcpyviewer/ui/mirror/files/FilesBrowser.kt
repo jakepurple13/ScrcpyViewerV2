@@ -50,6 +50,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.SupervisorJob
+import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 
@@ -130,6 +131,8 @@ class FilesBrowser(
     private val now: () -> Long = System::currentTimeMillis,
     /** Opens a pulled file with the computer's default app; false when that failed. */
     private val openOnComputer: (Path) -> Boolean = { false },
+    /** Whether a computer path is a folder (Keep both names a pushed folder without an extension split). */
+    private val isHostDir: (Path) -> Boolean = { Files.isDirectory(it) },
 ) {
     private val saved = memory.filesLocation(serial)
 
@@ -682,8 +685,9 @@ class FilesBrowser(
     /**
      * Every name in [dir]: the current listing when it is open, else a fresh listing. Null (with a snackbar) when
      * Android blocks the folder; empty when it cannot be listed, since the device-side commands refuse to overwrite.
+     * A push ([forPush]) overwrites without asking, so for one an unlistable folder is null too (with a snackbar).
      */
-    private suspend fun namesIn(dir: String): Set<String>? {
+    private suspend fun namesIn(dir: String, forPush: Boolean = false): Set<String>? {
         currentNames?.takeIf { dir == path }?.let { return it }
         val result = try {
             files.list(dir)
@@ -698,7 +702,12 @@ class FilesBrowser(
                 post(Snack("Android blocks this folder"))
                 null
             }
-            else -> emptySet()
+            else -> if (forPush) {
+                post(Snack("Nothing pushed: could not list ${folderLabel(dir)}"))
+                null
+            } else {
+                emptySet()
+            }
         }
     }
 
@@ -715,16 +724,19 @@ class FilesBrowser(
         val known = currentNames?.takeIf { target == path }
         if (known != null) return pushInto(paths, target, known)
         scope.launch {
-            val taken = namesIn(target) ?: return@launch
+            val taken = namesIn(target, forPush = true) ?: return@launch
             pushInto(paths, target, taken)
         }
         return true
     }
 
     private fun pushInto(paths: List<Path>, target: String, taken: Set<String>): Boolean {
-        fun request(p: Path, name: String) = TransferRequest(p, TransferKind.Push, target, name)
+        fun request(p: Path, name: String, replace: Boolean = false) =
+            TransferRequest(p, TransferKind.Push, target, name, replace = replace)
         val named = paths.map { it to (it.fileName?.toString() ?: it.toString()) }
-        val clashing = named.filter { it.second in taken }
+        // /sdcard ignores case: "Photo.JPG" there is in the way of "photo.jpg".
+        val takenLower = taken.mapTo(HashSet()) { it.lowercase() }
+        val clashing = named.filter { it.second.lowercase() in takenLower }
         val ok = named - clashing.toSet()
         var queued = false
         if (ok.isNotEmpty()) queued = enqueue(ok.map { request(it.first, it.second) }).isNotEmpty()
@@ -734,10 +746,15 @@ class FilesBrowser(
             if (!connected) return@Clash
             when (choice) {
                 ClashChoice.Skip -> Unit
-                ClashChoice.Replace -> enqueue(clashing.map { request(it.first, it.second) })
+                // adb push onto an existing folder would nest the new one inside it: a Replace takes its place.
+                ClashChoice.Replace -> enqueue(clashing.map { request(it.first, it.second, replace = true) })
                 ClashChoice.KeepBoth -> {
                     val used = HashSet(taken + ok.map { it.second })
-                    enqueue(clashing.map { (p, n) -> request(p, uniqueName(used, n).also { used += it }) })
+                    enqueue(
+                        clashing.map { (p, n) ->
+                            request(p, uniqueName(used, n, isDir = isHostDir(p), ignoreCase = true).also { used += it })
+                        },
+                    )
                 }
             }
         })
