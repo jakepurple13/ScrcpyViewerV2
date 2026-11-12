@@ -9,13 +9,13 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.Density
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
@@ -322,9 +322,13 @@ class TransfersTrayTest {
         val handler = object : androidx.compose.ui.platform.UriHandler {
             override fun openUri(uri2: String) { uri = uri2 }
         }
-        assertTrue(handler.openFileSafely(Paths.get("/tmp/my 写真.jpg")))
-        assertTrue(uri.startsWith("file:///tmp/my%20"), uri)
+        // Under the OS temp folder, so the path is absolute on Windows too (a drive letter, backslashes).
+        val file = Paths.get(System.getProperty("java.io.tmpdir")).toAbsolutePath().resolve("my 写真.jpg")
+        assertTrue(handler.openFileSafely(file))
+        assertTrue(uri.startsWith("file:"), uri)
         assertTrue(uri.all { it.code < 128 }, uri)
+        assertTrue("my%20" in uri, uri)
+        assertTrue("%E5%86%99%E7%9C%9F" in uri.uppercase(), uri)
     }
 
     @Test
