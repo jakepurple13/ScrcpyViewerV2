@@ -244,6 +244,12 @@ class FilesBrowser(
     /** The window's transfers, for the tray: newest last. */
     val transferJobs: List<TransferJob> get() = transfers.jobs
 
+    /** The browser's scope: lives as long as the window's session, longer than the tab. */
+    internal val backgroundScope: CoroutineScope get() = scope
+
+    /** Reads the queue's jobs as they are now (the tray's [transferJobs] is a snapshot that may lag); null without adb. */
+    internal val queueJobsNow: (() -> List<TransferJob>)? = transfers.queue?.let { q -> { q.jobs.value } }
+
     /** The push target a push without a folder goes to. */
     val pushTarget: String get() = transfers.pushTarget
 

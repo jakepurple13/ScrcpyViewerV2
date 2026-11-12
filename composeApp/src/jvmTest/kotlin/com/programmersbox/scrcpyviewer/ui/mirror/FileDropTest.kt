@@ -98,6 +98,14 @@ class FileDropTest {
     }
 
     @Test
+    fun `drag-out pulls get no window progress label`() {
+        val pull = com.programmersbox.scrcpyviewer.files.TransferRequest(Paths.get("/tmp/d"), TransferKind.Pull, "/sdcard", "a.jpg")
+        assertEquals("Pulling a.jpg…", progressLabelOf(com.programmersbox.scrcpyviewer.files.TransferProgress(pull, 1, 1)))
+        assertNull(progressLabelOf(com.programmersbox.scrcpyviewer.files.TransferProgress(pull.copy(dragOut = true), 1, 1)))
+        assertNull(progressLabelOf(null))
+    }
+
+    @Test
     fun `running count covers queued and running jobs`() {
         val transfers = FileTransfers(queue = null, pushTarget = "/sdcard/Download/") {}
         assertEquals(0, transfers.runningCount)

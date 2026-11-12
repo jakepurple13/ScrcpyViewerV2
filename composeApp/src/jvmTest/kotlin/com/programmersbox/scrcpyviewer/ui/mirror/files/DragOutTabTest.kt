@@ -87,7 +87,9 @@ class DragOutTabTest {
         "192.168.1.5:5555", files, transfers, QuickActionsMemory(),
         AppSettings(Files.createTempDirectory("drag-tab").resolve("settings.json")), "/sdcard/Download",
         CoroutineScope(UnconfinedTestDispatcher(scheduler)), {},
-        enqueue = { r -> queued += r; r.indices.map { 100L + queued.size - r.size + it } }, jobs = emptyFlow(),
+        // As the queue does once a pull runs: the drag folder exists.
+        enqueue = { r -> queued += r; r.forEach { Files.createDirectories(it.path) }; r.indices.map { 100L + queued.size - r.size + it } },
+        jobs = emptyFlow(),
     )
 
     /** A 400 px stage on the left, the sheet with the tab on the right. */

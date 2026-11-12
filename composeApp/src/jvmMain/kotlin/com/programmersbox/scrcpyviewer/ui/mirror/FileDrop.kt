@@ -51,6 +51,7 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.files.FileTransferQueue
 import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
+import com.programmersbox.scrcpyviewer.files.TransferProgress
 import com.programmersbox.scrcpyviewer.files.pushTarget
 import com.programmersbox.scrcpyviewer.files.requestsFor
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
@@ -180,12 +181,15 @@ fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient
     }
     LaunchedEffect(transfers) { session.status.collect { transfers.connected = it.isConnected() } }
     transfers.queue?.let { queue ->
-        LaunchedEffect(queue) { queue.progress.collect { transfers.progressLabel = it?.label } }
+        LaunchedEffect(queue) { queue.progress.collect { transfers.progressLabel = progressLabelOf(it) } }
         LaunchedEffect(queue) { queue.jobs.collect { transfers.jobs = it } }
         LaunchedEffect(queue) { queue.results.collect { currentNotify(it.message) } }
     }
     return transfers
 }
+
+/** The window's progress label for [progress]: none for a drag-out pull, which shows on the Files tab's drag ghost. */
+internal fun progressLabelOf(progress: TransferProgress?): String? = progress?.takeUnless { it.request.dragOut }?.label
 
 /** The session is neither Disconnected nor Failed. */
 internal fun SessionStatus.isConnected() = this != SessionStatus.Disconnected && this != SessionStatus.Failed

@@ -69,13 +69,15 @@ enum class DragOutPhase {
 
 /**
  * Rows dragged out of the Files tab, onto the computer. [begin] pulls them into a new drag folder ([DragCache]) through
- * [pull] (one transfer job per name). Once every pull is done and the button is still held, [starter] hands the files
+ * [pull] (one transfer job per name; the pull creates the folder, off the UI thread). Once every pull is done and the button is still held, [starter] hands the files
  * to the OS drag (see [DragOutStartRule]); the folder is deleted [keepMillis] after the drag ends. [released] or
  * [cancel] before that cancels the pulls ([cancelJob]) and deletes the folder once no pull can still write into it.
  *
  * The OS drag never starts after a release: the platform reuses the last mouse-down without checking the button. It
  * is synchronous, so the gesture never sees its pointer-up; [onFinished] tells the tab to drop its drag state when the
- * drag-out ends on its own (the OS drag returned, a pull failed). [onJobs] feeds the queue's jobs in. UI thread only.
+ * drag-out ends on its own (the OS drag returned, a pull failed). [onJobs] feeds the queue's jobs in (a snapshot that
+ * may lag); [currentJobs] reads the queue's jobs as they are now, to tell whether a pull can still write. Folders are
+ * deleted on [cleanupScope], which outlives the tab (the window's). UI thread only.
  */
 @Stable
 class DragOutController(
@@ -86,6 +88,8 @@ class DragOutController(
     private val dismissJob: (Long) -> Unit,
     private val starter: OutboundDragStarter,
     private val scope: CoroutineScope,
+    private val cleanupScope: CoroutineScope = scope,
+    private val currentJobs: (() -> List<TransferJob>)? = null,
     private val io: CoroutineContext = Dispatchers.IO,
     private val keepMillis: Long = DRAG_DIR_KEEP_MILLIS,
     private val rule: DragOutStartRule = DragOutStartRule.WhenReady,
@@ -124,12 +128,9 @@ class DragOutController(
     /** Pulls [names] into a new drag folder; false (nothing left behind) when nothing could be queued. */
     fun begin(names: List<String>, at: Offset): Boolean {
         if (active || names.isEmpty()) return false
-        val dir = runCatching { cache.newDragDir(serial) }.getOrNull() ?: return false
+        val dir = cache.newDragDir(serial)
         val ids = pull(names, dir)
-        if (ids.isEmpty()) {
-            deleteLater(Drag(dir, emptySet()), 0)
-            return false
-        }
+        if (ids.isEmpty()) return false
         current = Drag(dir, ids.toSet())
         pointer = at
         progress = 0f
@@ -229,15 +230,20 @@ class DragOutController(
 
     /** Cancels [drag]'s pulls that have not ended. */
     private fun cancelPulls(drag: Drag) {
-        drag.ids.filter { id -> lastJobs.none { it.id == id && !it.active } }.forEach(cancelJob)
+        val jobs = jobsNow()
+        drag.ids.filter { id -> jobs.none { it.id == id && !it.active } }.forEach(cancelJob)
     }
+
+    private fun jobsNow(): List<TransferJob> = currentJobs?.invoke() ?: lastJobs
 
     /** Deletes abandoned folders once none of their pulls can still write. */
     private fun sweepAbandoned() {
+        if (abandoned.isEmpty()) return
+        val jobs = jobsNow()
         val it = abandoned.iterator()
         while (it.hasNext()) {
             val drag = it.next()
-            if (lastJobs.any { j -> j.id in drag.ids && j.active }) continue
+            if (jobs.any { j -> j.id in drag.ids && j.active }) continue
             it.remove()
             deleteLater(drag, 0)
         }
@@ -246,10 +252,10 @@ class DragOutController(
     private fun deleteLater(drag: Drag, afterMillis: Long) {
         if (drag.deleteScheduled) return
         drag.deleteScheduled = true
-        scope.launch(io) {
+        cleanupScope.launch(io) {
             if (afterMillis > 0) delay(afterMillis)
             cache.delete(drag.dir)
-            scope.launch { drag.ids.forEach(dismissJob) }
+            drag.ids.forEach(dismissJob)
         }
     }
 }

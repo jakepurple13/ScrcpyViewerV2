@@ -7,6 +7,8 @@ import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import com.programmersbox.scrcpyviewer.files.TransferRequest
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -46,13 +48,20 @@ class DragOutTest {
     private var finished = 0
     private var nextId = 10L
 
-    private fun controller(scope: CoroutineScope, rule: DragOutStartRule = DragOutStartRule.WhenReady) = DragOutController(
+    private fun controller(
+        scope: CoroutineScope,
+        rule: DragOutStartRule = DragOutStartRule.WhenReady,
+        cleanupScope: CoroutineScope = scope,
+        currentJobs: (() -> List<TransferJob>)? = null,
+    ) = DragOutController(
         "192.168.1.5:5555", cache,
         pull = { names, dir -> pulls += names to dir; names.map { nextId++ } },
         cancelJob = { cancelled += it },
         dismissJob = { dismissed += it },
         starter = starter,
         scope = scope,
+        cleanupScope = cleanupScope,
+        currentJobs = currentJobs,
         io = EmptyCoroutineContext,
         rule = rule,
     ).also { it.onFinished = { finished++ } }
@@ -62,7 +71,8 @@ class DragOutTest {
     private fun job(id: Long, name: String, state: JobState, bytes: Long = 0, total: Long? = 100, wrote: Boolean = true): TransferJob {
         val dir = dragDir()
         val host = dir.resolve(name)
-        if (state == JobState.Done && wrote) Files.writeString(host, "data")
+        // The queue makes the folder when the pull runs.
+        if (state == JobState.Done && wrote) Files.writeString(Files.createDirectories(dir).resolve(name), "data")
         return TransferJob(
             id, TransferRequest(dir, TransferKind.Pull, "/sdcard/Download", name, size = total, dragOut = true),
             state, bytes, total, null, hostResult = if (state == JobState.Done) host else null,
@@ -79,7 +89,7 @@ class DragOutTest {
         val c = controller(this)
         assertTrue(c.begin(listOf("a.jpg", "Camera"), Offset(5f, 6f)))
         assertEquals(listOf(listOf("a.jpg", "Camera")), pulls.map { it.first })
-        assertTrue(Files.isDirectory(dragDir()))
+        assertFalse(Files.exists(dragDir()), "no file I/O in the pointer handler: the pull makes the folder")
         assertEquals(root.resolve("192.168.1.5_5555").resolve("drag"), dragDir().parent)
         assertEquals(DragOutPhase.Pulling, c.phase)
         assertNull(c.readyFiles)
@@ -247,6 +257,36 @@ class DragOutTest {
         advanceTimeBy(DRAG_DIR_KEEP_MILLIS + 1_000)
         runCurrent()
         assertFalse(Files.exists(dragDir()))
+    }
+
+    @Test
+    fun `the delete after a drop outlives the tab's scope`() = runTest {
+        val tab = CoroutineScope(coroutineContext + Job())
+        val c = controller(tab, cleanupScope = this)
+        c.begin(listOf("a.jpg"), Offset.Zero)
+        ready(c, "a.jpg")
+        assertEquals(1, starter.starts.size)
+        tab.cancel() // the sheet closed
+        advanceTimeBy(DRAG_DIR_KEEP_MILLIS + 1_000)
+        runCurrent()
+        assertFalse(Files.exists(dragDir()))
+    }
+
+    @Test
+    fun `a pull the jobs snapshot has not shown yet still counts as running`() = runTest {
+        var now = emptyList<TransferJob>()
+        val c = controller(this, currentJobs = { now })
+        c.begin(listOf("a.jpg"), Offset.Zero)
+        val dir = Files.createDirectories(dragDir()) // adb has started writing
+        now = listOf(job(10, "a.jpg", JobState.Running, 10))
+        c.released()
+        assertEquals(listOf(10L), cancelled)
+        runCurrent()
+        assertTrue(Files.exists(dir), "the cancelled adb may still be writing")
+        now = listOf(job(10, "a.jpg", JobState.Cancelled))
+        c.onJobs(now)
+        runCurrent()
+        assertFalse(Files.exists(dir))
     }
 
     @Test

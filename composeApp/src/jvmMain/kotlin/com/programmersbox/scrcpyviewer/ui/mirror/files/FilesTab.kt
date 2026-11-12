@@ -228,6 +228,9 @@ internal fun FilesTab(
             dismissJob = browser::dismissTransfer,
             starter = dragOutStarter,
             scope = dragScope,
+            // Deletes outlive the tab: switching tabs or closing the sheet must not keep a drag folder forever.
+            cleanupScope = browser.backgroundScope,
+            currentJobs = browser.queueJobsNow,
         ).also { it.onFinished = drop::cancelMove }
     }
     LaunchedEffect(dragOut) { snapshotFlow { browser.transferJobs }.collect(dragOut::onJobs) }
