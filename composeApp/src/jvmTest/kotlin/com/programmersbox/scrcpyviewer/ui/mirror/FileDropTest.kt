@@ -8,11 +8,7 @@ import androidx.compose.ui.geometry.Offset
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.files.FileTransferQueue
 import com.programmersbox.scrcpyviewer.files.TransferKind
-import java.awt.datatransfer.DataFlavor
-import java.awt.datatransfer.StringSelection
-import java.awt.datatransfer.Transferable
 import java.awt.dnd.DnDConstants
-import java.io.File
 import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.test.Test
@@ -56,18 +52,6 @@ class FileDropTest {
         val off = hint("a.apk", connected = false)
         assertEquals("Device not connected", off.label)
         assertFalse(off.allowed)
-    }
-
-    @Test
-    fun `file list flavor is read from a transferable`() {
-        val files = listOf(File("/x/a.apk"), File("/x/b.jpg"))
-        val t = object : Transferable {
-            override fun getTransferDataFlavors() = arrayOf(DataFlavor.javaFileListFlavor)
-            override fun isDataFlavorSupported(flavor: DataFlavor) = flavor == DataFlavor.javaFileListFlavor
-            override fun getTransferData(flavor: DataFlavor): Any = files
-        }
-        assertEquals(files.map { it.toPath() }, t.filePaths())
-        assertNull(StringSelection("text").filePaths())
     }
 
     @Test

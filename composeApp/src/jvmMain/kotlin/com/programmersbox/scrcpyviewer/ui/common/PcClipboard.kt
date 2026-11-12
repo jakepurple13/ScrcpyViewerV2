@@ -5,13 +5,12 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.Clipboard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.StringSelection
-import java.awt.datatransfer.Transferable
 
 /**
  * The computer's clipboard for code outside composition (device clipboard sync, mirror paste), through Compose's
- * [Clipboard] instead of the AWT toolkit. The main window calls [bind] with `LocalClipboard.current`.
+ * [Clipboard] instead of the AWT toolkit. The main window calls [bind] with `LocalClipboard.current` (on macOS
+ * [MacPasteboardClipboard], see [ProvideAppClipboard]).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 class PcClipboard {
@@ -39,11 +38,7 @@ class PcClipboard {
     /** The clipboard's text, or null when it holds none (empty, not text, or no window yet). */
     suspend fun text(): String? {
         val c = synchronized(this) { clipboard } ?: return null
-        return runCatching {
-            val entry = c.getClipEntry()?.nativeClipEntry as? Transferable ?: return null
-            if (!entry.isDataFlavorSupported(DataFlavor.stringFlavor)) return null
-            entry.getTransferData(DataFlavor.stringFlavor) as? String
-        }.getOrNull()
+        return runCatching { c.getClipEntry()?.plainText() }.getOrNull()
     }
 
     private fun write(clipboard: Clipboard, scope: CoroutineScope, text: String) {

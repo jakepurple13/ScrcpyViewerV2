@@ -5,30 +5,18 @@ import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.staticCompositionLocalOf
-import androidx.compose.ui.awt.ComposeWindow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
-import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
-import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
-import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import com.sun.jna.Pointer
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.asStateFlow
-import java.awt.IllegalComponentStateException
-import java.awt.Point
 import java.awt.Rectangle
-import java.awt.event.WindowAdapter
-import java.awt.event.WindowEvent
-import javax.swing.RootPaneContainer
 import kotlin.math.roundToInt
 
 /**
- * What a window's code needs from the native window, whatever backs it (AWT now, Tao later). All sizes and positions
- * are in window units (AWT user space: points on macOS).
+ * What a window's code needs from the native window (a Nucleus Tao window, see [TaoMirrorWindowHandle]). All sizes and
+ * positions are in window units (points on macOS).
  */
 interface MirrorWindowHandle {
     /** The window's outer bounds on screen; setting them moves and resizes the window in one step. */
@@ -47,10 +35,7 @@ interface MirrorWindowHandle {
      */
     val focusEvents: SharedFlow<Boolean>
 
-    /**
-     * The window's NSWindow on macOS (or, until it is resolved on the main thread, a view in it: the functions in
-     * MacVibrancy.kt take either). Null off macOS or before the window has a native peer.
-     */
+    /** The window's NSWindow on macOS. Null off macOS or before the window has a native peer. */
     val nsWindow: Pointer?
 
     /** Brings the window to the front and asks for the keyboard focus. */
@@ -60,68 +45,29 @@ interface MirrorWindowHandle {
     fun screen(): ScreenArea?
 
     /** Where the window's content area (Compose's root) starts on screen, below any native title bar. */
-    fun contentOrigin(): Point
+    fun contentOrigin(): IntOffset
+
+    /**
+     * Keeps the window's stage at [lock]'s aspect ratio while the user resizes it (live, natively), or stops doing so
+     * when null. Returns false when the platform has no live lock: the caller then corrects the size once the resize
+     * settles.
+     */
+    fun lockAspect(lock: AspectLock?): Boolean = false
 }
 
-/** The window's handle, provided by [com.programmersbox.scrcpyviewer.ui.window.AppWindow]; null outside a window. */
+/**
+ * The aspect ratio a window keeps while the user resizes it: its stage shows a [frameWidth] x [frameHeight] frame, and
+ * the rest of the window around the stage (title bar, toolbars, an open sheet) is [chromeWidth] x [chromeHeight]
+ * window units of its outer size, which do not scale with the window.
+ */
+data class AspectLock(val frameWidth: Int, val frameHeight: Int, val chromeWidth: Double, val chromeHeight: Double) {
+    /** The outer height (window units) that keeps the stage at the frame's aspect ratio for an outer [width]. */
+    fun outerHeight(width: Double): Double =
+        chromeHeight + (width - chromeWidth).coerceAtLeast(1.0) * frameHeight / frameWidth
+}
+
+/** The window's handle, provided by the window's content (Main.kt, MirrorWindow); null outside a window. */
 val LocalMirrorWindowHandle: ProvidableCompositionLocal<MirrorWindowHandle?> = staticCompositionLocalOf { null }
-
-/** The AWT window behind this Nucleus window, on Nucleus' AWT backend; kept until the windows move to Tao. */
-val dev.nucleusframework.application.NucleusWindow.awt: ComposeWindow
-    get() = unsafe.awtWindow ?: error("Not a window of Nucleus' AWT backend")
-
-/** A [MirrorWindowHandle] over an AWT window; kept until the windows move to Tao. */
-class AwtMirrorWindowHandle(private val window: java.awt.Window, private val geometry: ScreenGeometry) : MirrorWindowHandle {
-    private val focusState = MutableStateFlow(window.isFocused)
-    private val focusChanges = MutableSharedFlow<Boolean>(extraBufferCapacity = 16)
-
-    init {
-        // Lives as long as the window: the listener goes with it.
-        window.addWindowFocusListener(object : WindowAdapter() {
-            override fun windowGainedFocus(e: WindowEvent) {
-                focusState.value = true
-                focusChanges.tryEmit(true)
-            }
-
-            override fun windowLostFocus(e: WindowEvent) {
-                focusState.value = false
-                focusChanges.tryEmit(false)
-            }
-        })
-    }
-
-    override var bounds: Rectangle
-        get() = window.bounds
-        set(value) {
-            window.bounds = value
-        }
-
-    override val size: IntSize get() = IntSize(window.width, window.height)
-    override val isShowing: Boolean get() = window.isShowing
-    override val focused: StateFlow<Boolean> = focusState.asStateFlow()
-    override val focusEvents: SharedFlow<Boolean> = focusChanges.asSharedFlow()
-
-    override val nsWindow: Pointer?
-        get() {
-            if (!Os.isMac) return null
-            // skiko's handle: an NSView or NSWindow, resolved to the window on the main thread by the callee.
-            val handle = (window as? ComposeWindow)?.windowHandle ?: return null
-            return if (handle == 0L) null else Pointer(handle)
-        }
-
-    override fun toFront() {
-        window.toFront()
-        window.requestFocus()
-    }
-
-    override fun screen(): ScreenArea? = screenFor(window.bounds, geometry.screens())
-
-    override fun contentOrigin(): Point = try {
-        ((window as? RootPaneContainer)?.contentPane ?: window).locationOnScreen
-    } catch (_: IllegalComponentStateException) {
-        window.bounds.location // not showing
-    }
-}
 
 /**
  * Animates [growth] (window units the window has grown by for the quick actions sheet) to [to] along [spec], moving

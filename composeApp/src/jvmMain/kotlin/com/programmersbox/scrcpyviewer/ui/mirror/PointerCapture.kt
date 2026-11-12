@@ -102,7 +102,7 @@ class WindowPointerCapture(
             else -> null
         }
         val local = ev.changes.firstOrNull()?.position
-        val origin = window.contentOrigin().let { IntOffset(it.x, it.y) }
+        val origin = window.contentOrigin()
         val screen = local?.let { screenPoint(origin, viewOrigin + it, density) }
         if (kind == null) {
             if (ev.type == PointerEventType.Exit && capture.active.value && screen != null) {

@@ -644,8 +644,8 @@ fun MirrorWindow(
             CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, applyZoom) }
         },
     ) {
-        // Every move, resize, focus and native call on the window goes through this (AWT now, Tao later).
-        val handle = remember(nucleusWindow) { AwtMirrorWindowHandle(nucleusWindow.awt, screenGeometry) }
+        // Every move, resize, focus and native call on the window goes through this.
+        val handle = remember(nucleusWindow) { TaoMirrorWindowHandle(nucleusWindow, screenGeometry) }
         LaunchedEffect(serial) {
             controller.focusRequests.filter { it == serial }.collect { handle.toFront() }
         }
@@ -741,6 +741,31 @@ fun MirrorWindow(
                 val dh = (target.height - stage.height) / density.density
                 windowState.size = DpSize(windowState.size.width + dw.dp, windowState.size.height + dh.dp)
             }
+        }
+
+        // The live aspect lock (macOS: AppKit holds the ratio while the user drags, see TaoMirrorWindowHandle). Set from
+        // the stage once it has held still, so the chrome around it (title bar, toolbars, an open sheet) is measured
+        // against a window of the same moment; cleared at once while the sheet animates, with Fit off, without the
+        // lock option, or when not floating. The settle correction above still fits new frames and Fit coming back
+        // on, and is the whole lock where there is no live one (Windows, Linux: it corrects once a resize settles).
+        LaunchedEffect(handle, stage, displayedSize, fit, aspectLock, pinnedStage == null, zooming, windowState.placement) {
+            val fs = displayedSize
+            val wanted = fit && aspectLock && pinnedStage == null && !zooming && stage != IntSize.Zero &&
+                windowState.placement == WindowPlacement.Floating
+            if (fs == null || !wanted) {
+                handle.lockAspect(null)
+                return@LaunchedEffect
+            }
+            delay(ASPECT_SETTLE_MS)
+            val outer = handle.size
+            handle.lockAspect(
+                AspectLock(
+                    frameWidth = fs.width,
+                    frameHeight = fs.height,
+                    chromeWidth = outer.width - stage.width / density.density.toDouble(),
+                    chromeHeight = outer.height - stage.height / density.density.toDouble(),
+                ),
+            )
         }
 
         // Opening: grow out of the Mirror button, then wake the screen once the first frame is in and the window

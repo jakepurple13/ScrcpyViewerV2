@@ -171,4 +171,12 @@ class HidKeyboardTest {
         assertTrue(kb.releaseAll().isEmpty())
         assertEquals(listOf(report(0, 0x04)), press(AwtKeyEvent.VK_A).reports())
     }
+
+    @Test
+    fun `host lock state comes from the OS without throwing`() {
+        val state = HidKeyboard.hostLockState()
+        assertEquals(0, state and (HidKeyboard.MOD_CAPS or HidKeyboard.MOD_NUM).inv(), "only lock bits")
+        // No Num Lock on macOS (keypad types digits) nor a reader on Linux: reported on.
+        if (!com.programmersbox.scrcpyviewer.Os.isWindows) assertTrue(state and HidKeyboard.MOD_NUM != 0)
+    }
 }

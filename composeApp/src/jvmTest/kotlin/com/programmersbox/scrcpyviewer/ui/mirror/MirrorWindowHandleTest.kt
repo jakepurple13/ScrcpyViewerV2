@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import java.awt.Point
+import androidx.compose.ui.unit.IntOffset
 import java.awt.Rectangle
 import kotlin.math.roundToInt
 import kotlin.test.Test
@@ -36,7 +36,7 @@ private class FakeMirrorWindowHandle(initial: Rectangle) : MirrorWindowHandle {
     override val nsWindow: Pointer? = null
     override fun toFront() = Unit
     override fun screen(): ScreenArea? = null
-    override fun contentOrigin(): Point = current.location
+    override fun contentOrigin(): IntOffset = IntOffset(current.x, current.y)
 }
 
 /** A virtual clock: 16 ms a frame. */

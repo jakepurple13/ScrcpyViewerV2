@@ -61,7 +61,6 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(compose.material3)
             implementation(compose.materialIconsExtended)
-            implementation(libs.kotlinx.coroutines.swing)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.androidx.navigation3.ui)
             implementation(libs.lifecycle.runtime.compose)
@@ -75,7 +74,7 @@ kotlin {
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.nucleus.updater)
             implementation(libs.nucleus.application)
-            implementation(libs.nucleus.window.awt)
+            implementation(libs.nucleus.window.tao)
             implementation(libs.nucleus.window.material3)
             implementation(libs.jna)
             val ffmpeg = libs.versions.ffmpeg.get()
@@ -88,16 +87,10 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+            // Tests run scenes on the Swing thread; see TestMainDispatcherFactory. The app itself has no Swing.
+            implementation(libs.kotlinx.coroutines.swing)
         }
     }
-}
-
-// Run / packaging tasks (run, runDistributable, hot-reload runs, package*, create*Distributable, *RuntimeImage,
-// suggestRuntimeModules, prepareAppResources), matched on the requested names with any ":project:" prefix dropped.
-val needsAppRuntime: Boolean = gradle.startParameter.taskNames.any { requested ->
-    val name = requested.substringAfterLast(':')
-    listOf("run", "package", "Distributable", "RuntimeImage", "suggestRuntimeModules", "prepareAppResources")
-        .any { name.contains(it, ignoreCase = true) }
 }
 
 // Packaging is Nucleus' (a fork of Compose Desktop's that packages through electron-builder, so it needs Node.js).
@@ -105,16 +98,8 @@ val needsAppRuntime: Boolean = gradle.startParameter.taskNames.any { requested -
 // `application { }` block of its own.
 nucleus.application {
     mainClass = "com.programmersbox.scrcpyviewer.MainKt"
-    // The app runs on JBR 25 (kept from the Jewel title bar until the Tao backend decides the runtime); Gradle
-    // auto-provisions it via foojay. Compilation stays on jvmToolchain(21).
-    // javaHome is a plain String, so resolve JBR 25 only when a run or packaging task is requested; tests,
-    // CI test jobs and IDE sync then never download it.
-    if (needsAppRuntime) {
-        javaHome = javaToolchains.launcherFor {
-            languageVersion.set(JavaLanguageVersion.of(25))
-            vendor.set(JvmVendorSpec.JETBRAINS)
-        }.get().metadata.installationPath.asFile.absolutePath
-    }
+    // The app runs on the JDK that runs Gradle (Java 25, see gradle/gradle-daemon-jvm.properties): the Tao backend
+    // needs no JBR. Compilation stays on jvmToolchain(21).
     // JDK 25 warns when JNI libraries (skiko, javacpp / ffmpeg) load without this.
     jvmArgs += "--enable-native-access=ALL-UNNAMED"
     // It also warns when javacpp's indexers call the terminally deprecated sun.misc.Unsafe memory methods.

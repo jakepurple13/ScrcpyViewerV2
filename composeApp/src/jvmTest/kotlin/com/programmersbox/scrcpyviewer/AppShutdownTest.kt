@@ -97,4 +97,19 @@ class AppShutdownTest {
         withTimeout(5_000) { shutdown.run() }
         assertEquals(1, exits.get())
     }
+
+    @Test
+    fun run_releasesTheQuitHookBeforeExit() = runBlocking<Unit> {
+        val events = mutableListOf<String>()
+        val hook = object : QuitHook {
+            override fun install(onQuit: () -> Unit) = Unit
+            override fun release() {
+                events += "release"
+            }
+        }
+        val shutdown = AppShutdown(controller, exit = { events += "exit" }, quitHook = hook)
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(listOf("release", "exit"), events)
+    }
 }

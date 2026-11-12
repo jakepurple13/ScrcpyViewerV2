@@ -39,7 +39,7 @@ import org.koin.core.annotation.ComponentScan
 import org.koin.core.annotation.Configuration
 import org.koin.core.annotation.KoinApplication
 import com.programmersbox.scrcpyviewer.ui.common.PcClipboard
-import com.programmersbox.scrcpyviewer.ui.window.AwtScreenGeometry
+import com.programmersbox.scrcpyviewer.ui.window.NativeScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import org.koin.core.annotation.Module
 import org.koin.core.annotation.Provided
@@ -133,9 +133,9 @@ class AdbModule {
 /** Mirror sessions and the requests that open them. */
 @Module
 class MirrorModule {
-    /** Where the screens are; the AWT source until the windows move off AWT. */
+    /** Where the screens are, from the OS (NSScreen, EnumDisplayMonitors); no AWT. */
     @Singleton
-    fun screenGeometry(): ScreenGeometry = AwtScreenGeometry
+    fun screenGeometry(): ScreenGeometry = NativeScreenGeometry
 
     /** The computer's clipboard; the main window binds it (see Main.kt). */
     @Singleton

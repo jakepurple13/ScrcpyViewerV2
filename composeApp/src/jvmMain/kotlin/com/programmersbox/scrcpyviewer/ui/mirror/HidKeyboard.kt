@@ -2,7 +2,7 @@ package com.programmersbox.scrcpyviewer.ui.mirror
 
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
-import java.awt.Toolkit
+import com.sun.jna.NativeLibrary
 import java.awt.event.KeyEvent as AwtKeyEvent
 
 /**
@@ -277,15 +277,34 @@ class HidKeyboard(
         )
 
         /**
-         * Caps Lock and Num Lock of the computer. Toolkit cannot read Num Lock on macOS (there is none; the keypad
-         * types digits), so it is reported on there, which keeps the device keypad typing digits too.
+         * Caps Lock and Num Lock of the computer, from the OS (no AWT toolkit): CGEventSourceFlagsState on macOS,
+         * GetKeyState on Windows. macOS has no Num Lock (the keypad types digits), and Linux has no reader here: Num
+         * Lock is reported on there, which keeps the device keypad typing digits, and Caps Lock off on Linux.
          */
         fun hostLockState(): Int {
-            val toolkit = Toolkit.getDefaultToolkit()
-            fun state(key: Int, unknown: Boolean) = runCatching { toolkit.getLockingKeyState(key) }.getOrDefault(unknown)
-            return (if (state(AwtKeyEvent.VK_CAPS_LOCK, false)) MOD_CAPS else 0) or
-                (if (state(AwtKeyEvent.VK_NUM_LOCK, isMacOs())) MOD_NUM else 0)
+            val caps = runCatching { hostCapsLock() }.getOrDefault(false)
+            val num = if (Os.isWindows) runCatching { windowsKeyToggled(VK_NUMLOCK_WIN) }.getOrDefault(true) else true
+            return (if (caps) MOD_CAPS else 0) or (if (num) MOD_NUM else 0)
         }
+
+        private const val CG_EVENT_SOURCE_STATE_HID_SYSTEM = 1
+        private const val CG_EVENT_FLAG_MASK_ALPHA_SHIFT = 0x10000L
+        private const val VK_CAPITAL_WIN = 0x14
+        private const val VK_NUMLOCK_WIN = 0x90
+
+        private fun hostCapsLock(): Boolean = when {
+            Os.isMac -> {
+                val flags = NativeLibrary.getInstance("ApplicationServices").getFunction("CGEventSourceFlagsState")
+                    .invokeLong(arrayOf(CG_EVENT_SOURCE_STATE_HID_SYSTEM))
+                flags and CG_EVENT_FLAG_MASK_ALPHA_SHIFT != 0L
+            }
+            Os.isWindows -> windowsKeyToggled(VK_CAPITAL_WIN)
+            else -> false
+        }
+
+        /** GetKeyState's low bit: the key's toggle (lock) state. */
+        private fun windowsKeyToggled(vk: Int): Boolean =
+            NativeLibrary.getInstance("user32").getFunction("GetKeyState").invokeInt(arrayOf(vk)) and 1 != 0
     }
 }
 

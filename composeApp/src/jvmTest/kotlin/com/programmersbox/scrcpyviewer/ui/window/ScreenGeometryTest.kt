@@ -43,6 +43,14 @@ class ScreenGeometryTest {
     }
 
     @Test
+    fun windowsMonitorPixels_dividedByTheMonitorsDpiScale() {
+        // A 3840x2160 monitor at 150 % (144 DPI), right of the primary one, is 2560x1440 window units.
+        assertEquals(Rectangle(1280, 0, 2560, 1440), NativeScreenGeometry.scaled(Rectangle(1920, 0, 3840, 2160), 1.5))
+        val r = Rectangle(10, 20, 30, 40)
+        assertEquals(r, NativeScreenGeometry.scaled(r, 1.0))
+    }
+
+    @Test
     fun nativeScreens_doesNotThrow_andHasAMainScreenOnMac() {
         val native = NativeScreenGeometry.screens()
         println("native screens: $native")

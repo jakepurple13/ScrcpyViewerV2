@@ -186,7 +186,7 @@ internal class LinuxFileDialogs(
             return emptyList()
         }
         return try {
-            blockingModal("file-picker") {
+            run {
                 val process = ProcessBuilder(command.args).redirectError(ProcessBuilder.Redirect.DISCARD).start()
                 val output = process.inputStream.bufferedReader().readText()
                 process.waitFor(1, TimeUnit.MINUTES)
@@ -199,11 +199,3 @@ internal class LinuxFileDialogs(
         }
     }
 }
-
-/**
- * Runs [work] (a native dialog) and returns its result. On AWT's event dispatch thread, which exists only while the
- * app still runs on AWT, [work] runs on a worker thread while the event queue keeps pumping, as AWT's own modal
- * dialogs do, so callbacks the dialog's thread posts to the EDT cannot deadlock. Elsewhere it runs in place.
- */
-internal fun <T> blockingModal(name: String, work: () -> T): T =
-    if (Thread.currentThread().name.startsWith("AWT-EventQueue")) AwtModalPump.await(name, work) else work()

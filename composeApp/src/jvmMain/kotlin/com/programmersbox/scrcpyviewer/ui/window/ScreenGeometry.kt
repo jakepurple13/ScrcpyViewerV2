@@ -6,12 +6,11 @@ import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.Structure
-import java.awt.GraphicsEnvironment
+import com.sun.jna.ptr.IntByReference
 import java.awt.Rectangle
-import java.awt.Toolkit
 import kotlin.math.roundToInt
 
-/** One screen, in window units (AWT user space: points on macOS): its full [bounds] and its [workArea] (less menu bar, Dock, taskbar). */
+/** One screen, in window units (points on macOS, DPI-scaled pixels on Windows): its full [bounds] and its [workArea] (less menu bar, Dock, taskbar). */
 data class ScreenArea(val bounds: Rectangle, val workArea: Rectangle)
 
 /** Where the screens are. [screens] is empty when the platform cannot say. */
@@ -41,23 +40,9 @@ fun screenFor(window: Rectangle, screens: List<ScreenArea>): ScreenArea? {
 fun flipMacRect(x: Double, y: Double, w: Double, h: Double, mainHeight: Double): Rectangle =
     Rectangle(x.roundToInt(), (mainHeight - (y + h)).roundToInt(), w.roundToInt(), h.roundToInt())
 
-/** The screens through AWT; kept until the AWT windows are gone. */
-object AwtScreenGeometry : ScreenGeometry {
-    override fun screens(): List<ScreenArea> = try {
-        GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map {
-            val config = it.defaultConfiguration
-            val b = config.bounds
-            val i = Toolkit.getDefaultToolkit().getScreenInsets(config)
-            ScreenArea(Rectangle(b), Rectangle(b.x + i.left, b.y + i.top, b.width - i.left - i.right, b.height - i.top - i.bottom))
-        }
-    } catch (_: Throwable) {
-        emptyList()
-    }
-}
-
 /**
- * The screens from the OS, without AWT: NSScreen on macOS, EnumDisplayMonitors on Windows. Elsewhere (Linux) empty:
- * callers fall back to a default. Never throws.
+ * The screens from the OS, without AWT: NSScreen on macOS, EnumDisplayMonitors on Windows (each monitor's pixels divided
+ * by its DPI scale, as Tao's window units are). Elsewhere (Linux) empty: callers fall back to a default. Never throws.
  */
 object NativeScreenGeometry : ScreenGeometry {
     override fun screens(): List<ScreenArea> = try {
@@ -92,7 +77,8 @@ object NativeScreenGeometry : ScreenGeometry {
                 val info = MonitorInfo().apply { cbSize = size() }
                 if (monitor != null && user32.GetMonitorInfoW(monitor, info) != 0) {
                     // The primary monitor first, like the other platforms' main screen.
-                    val area = ScreenArea(info.monitor.toRectangle(), info.work.toRectangle())
+                    val scale = monitorScale(monitor)
+                    val area = ScreenArea(info.monitor.toRectangle(scale), info.work.toRectangle(scale))
                     if (info.flags and MONITORINFOF_PRIMARY != 0) out.add(0, area) else out.add(area)
                 }
                 return 1
@@ -103,6 +89,25 @@ object NativeScreenGeometry : ScreenGeometry {
     }
 
     private const val MONITORINFOF_PRIMARY = 1
+    private const val MDT_EFFECTIVE_DPI = 0
+
+    /** The monitor's DPI scale (1.0 at 96 DPI); 1.0 when shcore (Windows 8.1+) cannot say. */
+    private fun monitorScale(monitor: Pointer): Double = try {
+        val x = IntByReference()
+        val y = IntByReference()
+        val shcore = Native.load("shcore", Shcore::class.java)
+        if (shcore.GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, x, y) == 0 && x.value > 0) x.value / 96.0 else 1.0
+    } catch (_: Throwable) {
+        1.0
+    }
+
+    /** [r] in pixels as window units at [scale] pixels per unit. */
+    internal fun scaled(r: Rectangle, scale: Double): Rectangle = if (scale == 1.0) r else Rectangle(
+        (r.x / scale).roundToInt(),
+        (r.y / scale).roundToInt(),
+        (r.width / scale).roundToInt(),
+        (r.height / scale).roundToInt(),
+    )
 
     @Structure.FieldOrder("left", "top", "right", "bottom")
     class WinRect : Structure() {
@@ -110,7 +115,7 @@ object NativeScreenGeometry : ScreenGeometry {
         @JvmField var top = 0
         @JvmField var right = 0
         @JvmField var bottom = 0
-        fun toRectangle() = Rectangle(left, top, right - left, bottom - top)
+        fun toRectangle(scale: Double) = scaled(Rectangle(left, top, right - left, bottom - top), scale)
     }
 
     @Structure.FieldOrder("cbSize", "monitor", "work", "flags")
@@ -123,6 +128,10 @@ object NativeScreenGeometry : ScreenGeometry {
 
     fun interface MonitorEnumProc : Callback {
         fun invoke(monitor: Pointer?, dc: Pointer?, rect: Pointer?, data: Pointer?): Int
+    }
+
+    interface Shcore : Library {
+        fun GetDpiForMonitor(monitor: Pointer, type: Int, dpiX: IntByReference, dpiY: IntByReference): Int
     }
 
     interface User32 : Library {

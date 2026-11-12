@@ -58,12 +58,9 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.NativeFileDialogs
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
-import java.awt.datatransfer.DataFlavor
-import java.awt.datatransfer.Transferable
 import java.awt.dnd.DnDConstants
 import java.awt.dnd.DropTargetDragEvent
 import java.awt.dnd.DropTargetDropEvent
-import java.io.File
 import java.nio.file.Files
 import java.net.URI
 import java.nio.file.Path
@@ -88,12 +85,6 @@ class NativeTransferFileDialogs(private val dialogs: NativeFileDialogs = nativeF
 
     override fun chooseFiles(pushTarget: String): List<Path> = dialogs.open("Push to $pushTarget", emptyList(), multiple = true)
 }
-
-/** The files of a drag (`javaFileListFlavor`), or null when they cannot be read (yet). */
-fun Transferable.filePaths(): List<Path>? = runCatching {
-    if (!isDataFlavorSupported(DataFlavor.javaFileListFlavor)) return null
-    (getTransferData(DataFlavor.javaFileListFlavor) as? List<*>)?.filterIsInstance<File>()?.map { it.toPath() }
-}.getOrNull()
 
 /**
  * The window's install / push state: the queue (null without adb), the drag in progress and the progress label.

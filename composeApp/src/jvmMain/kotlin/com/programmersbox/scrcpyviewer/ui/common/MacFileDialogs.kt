@@ -71,7 +71,7 @@ internal object MacFileDialogs : NativeFileDialogs {
             }
         }
         if (isMainThread()) return pooled()
-        return blockingModal("file-picker") {
+        return run {
             val done = CountDownLatch(1)
             var result: Result<T>? = null
             ObjC.onMain {

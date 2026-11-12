@@ -28,7 +28,6 @@ import com.programmersbox.scrcpyviewer.state.appTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.neonText
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
-import com.programmersbox.scrcpyviewer.ui.window.LocalReclaimQuitHandler
 import com.programmersbox.scrcpyviewer.ui.window.bringToFront
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -39,8 +38,7 @@ import dev.nucleusframework.window.material.MaterialDecoratedWindow
 import dev.nucleusframework.window.material.MaterialTitleBar
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import androidx.compose.runtime.CompositionLocalProvider
-import com.programmersbox.scrcpyviewer.ui.mirror.AwtMirrorWindowHandle
-import com.programmersbox.scrcpyviewer.ui.mirror.awt
+import com.programmersbox.scrcpyviewer.ui.mirror.TaoMirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.mirror.LocalMirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
@@ -57,7 +55,6 @@ import kotlinx.coroutines.flow.first
 import kotlin.system.exitProcess
 
 fun main() {
-    AppIcon.installTaskbarIcon()
     val koin = startAppKoin()
     koin.get<ActionInbox>().start(koin.get<AppScope>())
     val appSettings = koin.get<AppSettings>()
@@ -77,6 +74,7 @@ fun main() {
             })
         }
         val shutdownState by shutdown.state.collectAsState()
+        // Cmd+Q, the app menu's Quit and the Dock's go through the shutdown too (MacQuitHook).
         DisposableEffect(Unit) {
             shutdown.installQuitHandler(shutdown::request)
             onDispose { }
@@ -90,37 +88,34 @@ fun main() {
             shutdown.request()
         }
         val shuttingDown = shutdownState as? AppShutdown.State.ShuttingDown
-        // Each window takes the macOS Quit handler for itself (see LocalReclaimQuitHandler): give it back to shutdown.
-        CompositionLocalProvider(LocalReclaimQuitHandler provides { shutdown.installQuitHandler(shutdown::request) }) {
-            AppWindow(
-                onCloseRequest = shutdown::request,
-                title = appTitle(),
-                theme = settings.appTheme,
-                visible = shuttingDown == null,
-                titleBar = { MainTitle() },
-            ) {
-                // A mirror window asked for the Actions screen: App selects the tab, this brings the window forward.
-                LaunchedEffect(actionsNavigation) {
-                    actionsNavigation.requests.collect { bringToFront(nucleusWindow) }
-                }
-                // Device clipboard sync and the mirror paste go through Compose's clipboard, bound here.
-                val clipboard = LocalClipboard.current
-                val clipboardScope = rememberCoroutineScope()
-                val pcClipboard = remember { koin.get<PcClipboard>() }
-                LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
-                // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
-                val handle = remember(nucleusWindow) { AwtMirrorWindowHandle(nucleusWindow.awt, koin.get<ScreenGeometry>()) }
-                CompositionLocalProvider(LocalMirrorWindowHandle provides handle) { App() }
+        AppWindow(
+            onCloseRequest = shutdown::request,
+            title = appTitle(),
+            theme = settings.appTheme,
+            visible = shuttingDown == null,
+            titleBar = { MainTitle() },
+        ) {
+            // A mirror window asked for the Actions screen: App selects the tab, this brings the window forward.
+            LaunchedEffect(actionsNavigation) {
+                actionsNavigation.requests.collect { bringToFront(nucleusWindow) }
             }
-            for ((serial, session) in mirrors) {
-                key(serial) {
-                    MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.captureDir, animate = settings.animateMirrorWindows, adb = adbClient)
-                }
-            }
-            if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.appTheme)
+            // Device clipboard sync and the mirror paste go through Compose's clipboard, bound here.
+            val clipboard = LocalClipboard.current
+            val clipboardScope = rememberCoroutineScope()
+            val pcClipboard = remember { koin.get<PcClipboard>() }
+            LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
+            // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
+            val handle = remember(nucleusWindow) { TaoMirrorWindowHandle(nucleusWindow, koin.get<ScreenGeometry>()) }
+            CompositionLocalProvider(LocalMirrorWindowHandle provides handle) { App() }
         }
+        for ((serial, session) in mirrors) {
+            key(serial) {
+                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.captureDir, animate = settings.animateMirrorWindows, adb = adbClient)
+            }
+        }
+        if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.appTheme)
     }
-    // Not reached on the AWT backend (nucleusApplication exits the process); kept for a backend that returns.
+    // nucleusApplication returns once the Tao event loop has ended.
     exitProcess(0)
 }
 

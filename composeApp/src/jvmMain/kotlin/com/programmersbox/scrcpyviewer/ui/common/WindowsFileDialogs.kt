@@ -155,7 +155,7 @@ internal object WindowsFileDialogs : NativeFileDialogs {
     }
 
     /** Runs [block] on a fresh thread with OLE initialized (the folder dialog needs it) and waits for it. */
-    private fun <T> onDialogThread(block: () -> T): T = blockingModal("file-picker") {
+    private fun <T> onDialogThread(block: () -> T): T = run {
         var result: Result<T>? = null
         val thread = Thread({
             val ole32 = NativeLibrary.getInstance("ole32")

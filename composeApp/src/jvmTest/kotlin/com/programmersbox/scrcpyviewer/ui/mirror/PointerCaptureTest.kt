@@ -19,7 +19,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import java.awt.Point
 import java.awt.Rectangle
 import java.awt.event.KeyEvent as AwtKeyEvent
 import kotlin.test.Test
@@ -44,7 +43,7 @@ private class FakeCursor(var canWarp: Boolean = true) : CursorControl {
 }
 
 /** A window whose content starts at [origin] on screen. */
-private class CaptureTestWindow(override var bounds: Rectangle, private val origin: Point) : MirrorWindowHandle {
+private class CaptureTestWindow(override var bounds: Rectangle, private val origin: IntOffset) : MirrorWindowHandle {
     override val size: IntSize get() = IntSize(bounds.width, bounds.height)
     override val isShowing = true
     override val focused: StateFlow<Boolean> = MutableStateFlow(true)
@@ -52,7 +51,7 @@ private class CaptureTestWindow(override var bounds: Rectangle, private val orig
     override val nsWindow: Pointer? = null
     override fun toFront() = Unit
     override fun screen(): ScreenArea? = null
-    override fun contentOrigin(): Point = Point(origin)
+    override fun contentOrigin(): IntOffset = origin
 }
 
 private fun mapperForUhid() = InputMapper.forOptions(
@@ -73,7 +72,7 @@ class PointerCaptureTest {
 
     // Content at (100, 60) on screen, density 2; the video view starts 40 pt below the content's top.
     private val density = 2f
-    private val window = CaptureTestWindow(Rectangle(100, 32, 500, 868), Point(100, 60))
+    private val window = CaptureTestWindow(Rectangle(100, 32, 500, 868), IntOffset(100, 60))
     private val stage = Rect(0f, 80f, 1000f, 1680f)
     private val viewOrigin = Offset(0f, 80f)
     private val viewSize = IntSize(1000, 1600)

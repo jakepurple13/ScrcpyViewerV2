@@ -1,6 +1,5 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
-import androidx.compose.ui.awt.awtEventOrNull
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
@@ -84,11 +83,10 @@ class MirrorKeys(
     private val pasteMask = if (mac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
     private var pasteDown = false
 
-    /** True when the window consumed [event]. On AWT the event behind it is used as is; otherwise [awtKeyOf]. */
+    /** True when the window consumed [event] (converted with [awtKeyOf]: Tao has no AWT event behind it). */
     fun onKey(event: KeyEvent): Boolean {
-        val awt = event.awtEventOrNull
-        val key = if (awt != null) AwtKeyTuple(awt.id, awt.keyCode, awt.keyChar, awt.modifiersEx, awt.keyLocation) else awtKeyOf(event)
-        return key != null && onKey(key)
+        val key = awtKeyOf(event) ?: return false
+        return onKey(key)
     }
 
     private fun onKey(ev: AwtKeyTuple): Boolean {

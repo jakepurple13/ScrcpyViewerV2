@@ -10,13 +10,10 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -32,10 +29,12 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import com.sun.jna.Pointer
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.AppIcon
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.ui.common.ProvideAppClipboard
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.LocalStyleTokens
 import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
@@ -73,19 +72,16 @@ private object CustomTitleBarScope : AppTitleBarScope {
 }
 
 /**
- * Puts the app's macOS Quit handler back. Nucleus' AWT window points the Quit command at its own `onCloseRequest`
- * when it opens and clears it when it closes; every [AppWindow] calls this after both, so Cmd+Q keeps going through
- * the app's shutdown (AppShutdown) whichever window opened or closed last. No-op by default.
- */
-val LocalReclaimQuitHandler: ProvidableCompositionLocal<() -> Unit> = staticCompositionLocalOf { {} }
-
-/**
  * A top-level window with the app's own title bar: a Nucleus [MaterialDecoratedWindow] whose [MaterialTitleBar] is
  * painted from the Material scheme in the theme's style. The [titleBar] slot is laid out inside the bar
  * (start-aligned after the window controls on macOS / Windows, centred on Linux). The slot is as wide as its
  * content, up to the room between the window controls, so a `fillMaxWidth` child spans exactly that.
  * [titleBarHeight] is the bar's height. A change of [theme] is revealed in a growing circle over [content] (see
  * [rememberThemeRevealState]); the title bar's colors tween.
+ *
+ * Glass with desktop blur needs a see-through window, which Tao only makes when the window is created: a window opened
+ * in another style keeps an opaque background until it is opened again (and one opened in Glass stays see-through,
+ * painted opaque by its content in the other styles).
  */
 @Composable
 fun NucleusApplicationScope.AppWindow(
@@ -105,9 +101,11 @@ fun NucleusApplicationScope.AppWindow(
     val reveal = rememberThemeRevealState(theme)
     val shown = reveal.shown
     val dark = shown.mode == ThemeMode.Dark
-    // Glass on macOS: the window turns see-through and AppKit blurs the desktop behind it (see setMacVibrancy).
-    val desktopBlur = shown.style == ThemeStyle.Glass && shown.desktopBlur && Os.isMac
-    val reclaimQuit = LocalReclaimQuitHandler.current
+    // Glass on macOS: the window is see-through and AppKit blurs the desktop behind it (see setMacVibrancy). Only a
+    // window created see-through can show it (creation-time on Tao).
+    val wantsBlur = shown.style == ThemeStyle.Glass && shown.desktopBlur && Os.isMac
+    val transparent = remember { wantsBlur }
+    val desktopBlur = wantsBlur && transparent
     ScrcpyViewerTheme(shown) {
         val bar = animatedBarColors(barColors(MaterialTheme.colorScheme, LocalStyleTokens.current, desktopBlur))
         MaterialDecoratedWindow(
@@ -119,38 +117,36 @@ fun NucleusApplicationScope.AppWindow(
             alwaysOnTop = alwaysOnTop,
             onPreviewKeyEvent = onPreviewKeyEvent,
             titleBarStyle = nucleusTitleBarStyle(bar, titleBarHeight),
+            transparent = transparent,
         ) {
-            DisposableEffect(Unit) {
-                reclaimQuit()
-                // Posted so it runs after the window's own teardown, which clears the handler.
-                onDispose { java.awt.EventQueue.invokeLater(reclaimQuit) }
-            }
-            // Tao windows don't inherit composition locals: the theme and the reveal origin are provided again.
+            // Tao windows run their own Compose scene: the theme, the reveal origin and the clipboard are provided
+            // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).
             CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
-                ScrcpyViewerTheme(shown) {
-                    // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).
-                    MaterialTitleBar(
-                        if (desktopBlur) ClearWindowRoot else Modifier,
-                        style = titleBarStyle(bar, titleBarHeight),
-                    ) {
-                        BoundedSlot {
-                            CompositionLocalProvider(LocalContentColor provides bar.content) {
-                                CustomTitleBarScope.titleBar()
+                ProvideAppClipboard {
+                    ScrcpyViewerTheme(shown) {
+                        // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).
+                        MaterialTitleBar(
+                            if (desktopBlur) ClearWindowRoot else Modifier,
+                            style = titleBarStyle(bar, titleBarHeight),
+                        ) {
+                            BoundedSlot {
+                                CompositionLocalProvider(LocalContentColor provides bar.content) {
+                                    CustomTitleBarScope.titleBar()
+                                }
                             }
                         }
+                        nucleusWindow.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L && Os.isMac }?.let { ns ->
+                            MacVibrancyEffect(Pointer(ns), desktopBlur, dark)
+                        }
+                        Box(
+                            Modifier
+                                // First, so it draws on the window's own canvas, not in a layer of the reveal's.
+                                .then(if (desktopBlur) ClearWindowRoot else Modifier)
+                                .fillMaxSize()
+                                .themeReveal(reveal)
+                                .styleBackdrop(transparent = desktopBlur),
+                        ) { content() }
                     }
-                    nucleusWindow.unsafe.awtWindow?.let { awt ->
-                        MacVibrancyEffect(awt, desktopBlur, dark, titleBarBackground = bar.background)
-                        WindowBackgroundEffect(awt, MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
-                    }
-                    Box(
-                        Modifier
-                            // First, so it draws on the window's own canvas, not in a layer of the reveal's.
-                            .then(if (desktopBlur) ClearWindowRoot else Modifier)
-                            .fillMaxSize()
-                            .themeReveal(reveal)
-                            .styleBackdrop(transparent = desktopBlur),
-                    ) { content() }
                 }
             }
         }
@@ -158,8 +154,8 @@ fun NucleusApplicationScope.AppWindow(
 }
 
 /**
- * Clears what is under the content to fully transparent. Nucleus' AWT window fills its root with the title bar's
- * (opaque) background before any content draws, which would hide the Glass window's blurred desktop.
+ * Clears what is under the content to fully transparent, so nothing Nucleus paints under the content (the title bar's
+ * opaque background) hides the Glass window's blurred desktop.
  */
 private val ClearWindowRoot: Modifier = Modifier.drawBehind { drawRect(Color.Black, blendMode = BlendMode.Clear) }
 
@@ -215,10 +211,9 @@ private fun TitleBarScope.BoundedSlot(content: @Composable () -> Unit) {
 }
 
 /**
- * The window's style, handed to Nucleus: [titleBarStyle] with opaque backgrounds. Nucleus' AWT window sets the frame's
- * background to them, AWT throws for a see-through background on a decorated frame, and that failure stops the
- * window's Recomposer. The Glass bar with blur is see-through, so it is laid over black (dark) or white (light) here;
- * the bar itself is drawn with [titleBarStyle], and the window stays see-through through [ClearWindowRoot] and
+ * The window's style, handed to Nucleus: [titleBarStyle] with opaque backgrounds, which Nucleus uses for the window's
+ * own background. The Glass bar with blur is see-through, so it is laid over black (dark) or white (light) here; the
+ * bar itself is drawn with [titleBarStyle], and the window stays see-through through [ClearWindowRoot] and
  * [MacVibrancyEffect].
  */
 internal fun nucleusTitleBarStyle(bar: BarColors, height: Dp): TitleBarStyle {
