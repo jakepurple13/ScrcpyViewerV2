@@ -155,6 +155,9 @@ import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.mapState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
+import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
+import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
+import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
@@ -339,6 +342,7 @@ fun MirrorWindow(
     fileDialogs: TransferFileDialogs = AwtTransferFileDialogs,
     /** "+ New action", "Edit…" and "Manage actions…" ask the main window to open the Actions screen through this. */
     actionsNavigation: ActionsNavigation = koinInject(),
+    screenGeometry: ScreenGeometry = koinInject(),
     /** Messages about action files AI tools dropped in the inbox show in every mirror window. */
     inbox: ActionInbox = koinInject(),
 ) {
@@ -463,7 +467,7 @@ fun MirrorWindow(
         zoomFrom?.let {
             zoomTarget(
                 if (positioned) requestedX ?: 100 else null, if (positioned) requestedY ?: 100 else null,
-                requestedWidth, requestedHeight, usableScreenBounds(it),
+                requestedWidth, requestedHeight, usableScreenBounds(it, screenGeometry.screens()),
             )
         }
     }
@@ -746,7 +750,8 @@ fun MirrorWindow(
             val target: IntSize? = when {
                 !autoSized -> {
                     autoSized = true
-                    val bounds = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
+                    val bounds = screenFor(awtWindow.bounds, screenGeometry.screens())?.workArea
+                        ?: java.awt.Rectangle(0, 0, 1280, 800)
                     val chromeW = windowState.size.width.value * density.density - stage.width
                     val chromeH = windowState.size.height.value * density.density - stage.height
                     val maxW = bounds.width * density.density * 0.9f - chromeW
@@ -757,7 +762,9 @@ fun MirrorWindow(
                 fit && aspectLock && lockNeeded -> {
                     // Never taller than the screen has room for below the window's top, less its chrome (title bar).
                     val chromeH = awtWindow.height * density.density - stage.height
-                    val (usable, below) = screenRoom(awtWindow)
+                    val area = screenFor(awtWindow.bounds, screenGeometry.screens())
+                        ?: ScreenArea(java.awt.Rectangle(0, 0, 1280, 800), java.awt.Rectangle(0, 0, 1280, 800))
+                    val (usable, below) = screenRoom(awtWindow.bounds, area)
                     val maxH = aspectMaxHeight(
                         roomBelow = (below * density.density - chromeH).roundToInt(),
                         usable = (usable * density.density - chromeH).roundToInt(),
@@ -962,11 +969,9 @@ private const val ASPECT_SETTLE_MS = 150L
  * and the room from the window's top down to the screen's bottom (less the Dock or taskbar; negative when the window
  * hangs below it).
  */
-private fun screenRoom(window: java.awt.Window): Pair<Int, Int> {
-    val config = window.graphicsConfiguration
-    val insets = Toolkit.getDefaultToolkit().getScreenInsets(config)
-    val bottom = config.bounds.y + config.bounds.height - insets.bottom
-    return (config.bounds.height - insets.top - insets.bottom) to (bottom - window.y)
+internal fun screenRoom(window: java.awt.Rectangle, area: ScreenArea): Pair<Int, Int> {
+    val work = area.workArea
+    return work.height to (work.y + work.height - window.y)
 }
 
 /** The smallest height the aspect ratio lock lets the stage have (px), whatever room the screen has. */

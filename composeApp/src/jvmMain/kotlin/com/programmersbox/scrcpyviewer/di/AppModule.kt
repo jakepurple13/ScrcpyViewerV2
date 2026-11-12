@@ -38,6 +38,8 @@ import org.koin.core.Koin
 import org.koin.core.annotation.ComponentScan
 import org.koin.core.annotation.Configuration
 import org.koin.core.annotation.KoinApplication
+import com.programmersbox.scrcpyviewer.ui.window.AwtScreenGeometry
+import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import org.koin.core.annotation.Module
 import org.koin.core.annotation.Provided
 import org.koin.core.annotation.Singleton
@@ -132,6 +134,10 @@ class AdbModule {
 /** Mirror sessions and the requests that open them. */
 @Module
 class MirrorModule {
+    /** Where the screens are; the AWT source until the windows move off AWT. */
+    @Singleton
+    fun screenGeometry(): ScreenGeometry = AwtScreenGeometry
+
     @Singleton
     fun mirrorRequests(): MirrorRequests = MirrorRequests()
 

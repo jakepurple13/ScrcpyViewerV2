@@ -39,7 +39,8 @@ import com.programmersbox.scrcpyviewer.ui.window.animateMacFrame
 import kotlinx.coroutines.delay
 import com.sun.jna.Function
 import com.sun.jna.ptr.IntByReference
-import java.awt.GraphicsEnvironment
+import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
+import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import java.awt.Rectangle
 import java.awt.Toolkit
 import java.awt.Window
@@ -204,16 +205,10 @@ internal fun zoomTarget(x: Int?, y: Int?, width: Int, height: Int, screen: Recta
     )
 }
 
-/** The usable bounds (less menu bar, Dock or taskbar) of the screen holding [origin]'s center; the default screen's if none. */
-internal fun usableScreenBounds(origin: Rectangle): Rectangle {
-    val env = GraphicsEnvironment.getLocalGraphicsEnvironment()
-    val cx = origin.centerX.roundToInt()
-    val cy = origin.centerY.roundToInt()
-    val config = env.screenDevices.map { it.defaultConfiguration }.firstOrNull { it.bounds.contains(cx, cy) }
-        ?: return env.maximumWindowBounds
-    val b = config.bounds
-    val i = Toolkit.getDefaultToolkit().getScreenInsets(config)
-    return Rectangle(b.x + i.left, b.y + i.top, b.width - i.left - i.right, b.height - i.top - i.bottom)
+/** The usable bounds (less menu bar, Dock or taskbar) of the screen holding [origin]'s center; the nearest screen's if none, else a default. */
+internal fun usableScreenBounds(origin: Rectangle, screens: List<ScreenArea>): Rectangle {
+    val center = Rectangle(origin.centerX.roundToInt(), origin.centerY.roundToInt(), 1, 1)
+    return screenFor(center, screens)?.workArea ?: Rectangle(0, 0, 1280, 800)
 }
 
 /** The device screen at a point of its wake: scales of the stage and how bright the white flash over it is. */

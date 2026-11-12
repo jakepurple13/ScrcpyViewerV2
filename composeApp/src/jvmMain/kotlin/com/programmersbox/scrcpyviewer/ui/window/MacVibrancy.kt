@@ -166,6 +166,21 @@ internal object ObjC {
     fun msgBool(receiver: Pointer, selector: String, vararg args: Any?): Boolean =
         msgSend.invokeInt(arrayOf(receiver, sel(selector), *args)) and 0xFF != 0
 
+    private val msgSendStret: Function? by lazy { runCatching { objc.getFunction("objc_msgSend_stret") }.getOrNull() }
+
+    /** A CGRect-returning getter as [x, y, width, height]. Intel returns structs this big through objc_msgSend_stret. */
+    fun msgRect(receiver: Pointer, selector: String): DoubleArray {
+        val arm = System.getProperty("os.arch").let { it == "aarch64" || it == "arm64" }
+        val r = if (arm) {
+            msgSend.invoke(CGRect::class.java, arrayOf(receiver, sel(selector))) as CGRect
+        } else {
+            val buffer = com.sun.jna.Memory(32)
+            (msgSendStret ?: error("no objc_msgSend_stret")).invokeVoid(arrayOf(buffer, receiver, sel(selector)))
+            CGRect().apply { x = buffer.getDouble(0); y = buffer.getDouble(8); width = buffer.getDouble(16); height = buffer.getDouble(24) }
+        }
+        return doubleArrayOf(r.x, r.y, r.width, r.height)
+    }
+
     fun nsString(value: String): Pointer = msgPtr(cls("NSString"), "stringWithUTF8String:", value)!!
 
     fun isKindOf(obj: Pointer, className: String): Boolean =
