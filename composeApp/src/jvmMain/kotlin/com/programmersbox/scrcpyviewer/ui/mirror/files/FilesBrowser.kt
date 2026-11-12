@@ -1,6 +1,17 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.adb.ShellRunner
+import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
+import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
+import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
+import org.koin.compose.koinInject
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -113,7 +124,10 @@ class FilesBrowser(
     /** The last listing; it belongs to [listingPath], which lags [path] while a new folder loads. */
     var listing by mutableStateOf<Listing?>(null)
         private set
-    private var listingPath: String? = null
+
+    /** The folder [listing] belongs to; null before the first listing. */
+    var listingPath by mutableStateOf<String?>(null)
+        private set
 
     var loading by mutableStateOf(false)
         private set
@@ -653,4 +667,38 @@ class FilesBrowser(
             cancelRename()
         }
     }
+}
+
+/**
+ * The Files tab state for one mirror window, or null without adb. It opens at [transfers]' push target the first
+ * time for [serial] in this app run (afterwards where [memory] left it), follows the session's connection, and shows
+ * its results through [notify].
+ */
+@Composable
+fun rememberFilesBrowser(
+    serial: String,
+    session: ScrcpySession,
+    adb: AdbClient?,
+    transfers: FileTransfers,
+    notify: (String) -> Unit,
+    memory: QuickActionsMemory = koinInject(),
+    settings: AppSettings = koinInject(),
+): FilesBrowser? {
+    val currentNotify by rememberUpdatedState(notify)
+    val scope = rememberCoroutineScope()
+    val browser = remember(serial, session, adb, transfers) {
+        adb?.let {
+            FilesBrowser(
+                serial,
+                DeviceFiles(ShellRunner(it, serial)) { path -> session.send(ControlMessage.ScanFile(path)) },
+                transfers, memory, settings, transfers.pushTarget, scope,
+                // The snackbar's action button comes with the tab's own snackbar; the window's shows the message.
+                notify = { snack -> currentNotify(snack.message) },
+            )
+        }
+    } ?: return null
+    LaunchedEffect(browser, session) {
+        session.status.collect { browser.onConnectionChanged(it != SessionStatus.Disconnected && it != SessionStatus.Failed) }
+    }
+    return browser
 }

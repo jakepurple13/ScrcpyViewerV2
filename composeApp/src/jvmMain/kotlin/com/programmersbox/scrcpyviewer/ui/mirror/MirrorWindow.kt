@@ -56,6 +56,8 @@ import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CropSquare
+import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
+import com.programmersbox.scrcpyviewer.ui.mirror.files.rememberFilesBrowser
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -436,6 +438,25 @@ fun MirrorWindow(
     val currentTransfers by rememberUpdatedState(transfers)
     val picker = rememberPickerGuard()
     val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
+    // Made the first time the Files tab shows, so a window that never opens it never lists a folder. A plain holder.
+    val filesWanted = remember { BooleanArray(1) }
+    quickActions.uiState.let { if (it.open && it.tab == SheetTab.Files) filesWanted[0] = true }
+    val filesBrowser = if (filesWanted[0]) rememberFilesBrowser(serial, session, adb, transfers, ::notify) else null
+    // Read when the picker closes, like currentTransfers.
+    val currentFilesBrowser by rememberUpdatedState(filesBrowser)
+    val filesTab: (@Composable () -> Unit)? = filesBrowser?.let { browser ->
+        remember(browser) {
+            @Composable {
+                FilesTab(browser, onPushFiles = {
+                    picker.launch(uiScope) {
+                        val dir = browser.path
+                        val paths = transferDialogs.chooseFiles(dir)
+                        currentFilesBrowser?.push(paths, dir)
+                    }
+                })
+            }
+        }
+    }
     val sheetFocus = remember { SheetFocus() }
 
     val orientation = remember(values) { DisplayOrientation.forOptions(values) }
@@ -923,6 +944,7 @@ fun MirrorWindow(
                         pinnedStageWidth = pinnedStage,
                         wake = readWake,
                         shellConsole = quickActions.console,
+                        filesTab = filesTab,
                         onStageBounds = { stageBounds = it },
                         onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
@@ -1062,6 +1084,8 @@ fun MirrorContent(
     wake: (() -> Float)? = null,
     /** The quick actions sheet's Shell tab console; null shows an empty Shell tab. */
     shellConsole: ShellConsole? = null,
+    /** The quick actions sheet's Files tab content; null shows an empty Files tab. */
+    filesTab: (@Composable () -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1147,7 +1171,7 @@ fun MirrorContent(
             SideToolbar(state, onAction)
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
             val panel = rememberQuickActionsPanel(
-                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null },
+                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab,
             )
             if (pinnedStageWidth != null) {
                 // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,

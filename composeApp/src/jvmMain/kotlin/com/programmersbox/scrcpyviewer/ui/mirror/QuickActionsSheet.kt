@@ -177,14 +177,16 @@ fun rememberQuickActionsPanel(
     onEvent: (QuickActionEvent) -> Unit,
     console: ShellConsole?,
     rowWidth: Dp?,
+    filesTab: (@Composable () -> Unit)? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
     val currentConsole by rememberUpdatedState(console)
     val currentRowWidth by rememberUpdatedState(rowWidth)
+    val currentFilesTab by rememberUpdatedState(filesTab)
     return remember {
         movableContentOf { modifier: Modifier ->
-            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier)
+            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab)
         }
     }
 }
@@ -194,7 +196,7 @@ fun rememberQuickActionsPanel(
  * [rowWidth] is the content row it shares with the stage and the side toolbar: the sheet leaves the stage
  * [STAGE_MIN_WIDTH] of it. Null (while the window grows or shrinks for the sheet, or unmeasured): only each tab's
  * minimum applies. A tab switch or reset animates the width with the tab switch's timing; a drag or a window resize
- * follows at once.
+ * follows at once. [filesTab] is the Files tab's content (none without adb).
  */
 @Composable
 fun QuickActionsPanel(
@@ -203,6 +205,7 @@ fun QuickActionsPanel(
     console: ShellConsole?,
     rowWidth: Dp? = null,
     modifier: Modifier = Modifier,
+    filesTab: (@Composable () -> Unit)? = null,
 ) {
     fun fit(width: Dp, tab: SheetTab) = if (rowWidth == null) {
         width.coerceAtLeast(SheetWidths.default(tab))
@@ -262,7 +265,7 @@ fun QuickActionsPanel(
                 onEvent(QuickActionEvent.ResetWidth)
             },
         )
-        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)))
+        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab)
     }
 }
 
@@ -272,6 +275,7 @@ private fun RowScope.SheetContent(
     onEvent: (QuickActionEvent) -> Unit,
     console: ShellConsole?,
     columns: Int,
+    filesTab: (@Composable () -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -317,7 +321,7 @@ private fun RowScope.SheetContent(
             when (tab) {
                 SheetTab.Actions -> ActionsTabContent(state, onEvent, columns)
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
-                SheetTab.Files -> {}
+                SheetTab.Files -> filesTab?.invoke()
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,
