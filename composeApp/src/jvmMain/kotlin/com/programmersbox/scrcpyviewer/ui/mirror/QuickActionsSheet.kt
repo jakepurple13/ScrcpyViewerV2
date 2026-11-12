@@ -92,6 +92,9 @@ val QUICK_ACTIONS_SHELL_WIDTH = 400.dp
 /** Default and minimum width of the open sheet on the Apps tab (three app cards a row), its drag bar included. */
 val QUICK_ACTIONS_APPS_WIDTH = 480.dp
 
+/** Default and minimum width of the open sheet on the Files tab, its drag bar included. */
+val QUICK_ACTIONS_FILES_WIDTH = 440.dp
+
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
 private val SLIDE_OFFSET = 40.dp
 private const val FADE_IN_DELAY_MILLIS = 60
@@ -305,6 +308,7 @@ private fun RowScope.SheetContent(
             when (tab) {
                 SheetTab.Actions -> ActionsTabContent(state, onEvent, columns)
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
+                SheetTab.Files -> {}
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,

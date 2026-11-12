@@ -91,6 +91,22 @@ class AppSettingsTest {
     }
 
     @Test
+    fun `files settings default for older files and persist`() {
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        val older = AppSettings(file).settings.value
+        assertEquals(440, older.filesWidth)
+        assertEquals("name", older.filesSort)
+        assertFalse(older.filesSortDescending)
+        assertFalse(older.filesShowHidden)
+        AppSettings(file).update { it.copy(filesWidth = 600, filesSort = "size", filesSortDescending = true, filesShowHidden = true) }
+        val saved = AppSettings(file).settings.value
+        assertEquals(600, saved.filesWidth)
+        assertEquals("size", saved.filesSort)
+        assertTrue(saved.filesSortDescending)
+        assertTrue(saved.filesShowHidden)
+    }
+
+    @Test
     fun `aiSkillFolders round trips and dedupes`() {
         Files.writeString(file, """{"themeMode":"Light"}""")
         assertEquals(emptyList(), AppSettings(file).settings.value.aiSkillFolders)

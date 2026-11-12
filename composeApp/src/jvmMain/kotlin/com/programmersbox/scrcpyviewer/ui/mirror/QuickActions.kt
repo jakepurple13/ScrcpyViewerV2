@@ -26,6 +26,7 @@ import com.programmersbox.scrcpyviewer.adb.ShellTimeoutException
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesLocation
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -163,7 +164,7 @@ open class DeviceQuickActions(
 }
 
 /** The sheet's tabs, in the order the segmented control shows them. */
-enum class SheetTab { Actions, Apps, Shell }
+enum class SheetTab { Actions, Apps, Shell, Files }
 
 /**
  * A run-once action waiting for the user: the variable prompt while [needsValues], then the confirm dialog while
@@ -174,12 +175,19 @@ data class PendingRun(val action: RunOnceAction, val needsValues: Boolean, val n
 /**
  * What the quick actions sheet remembers for the life of the app (not persisted), shared by every mirror window:
  * custom toggles without a read command (per device, per action), the last variable values (per device, action and
- * variable) and the last tab. Used on the UI thread.
+ * variable), the Files tab's folder (per device) and the last tab. Used on the UI thread.
  */
 class QuickActionsMemory {
     private val toggles = HashMap<Pair<String, String>, Boolean>()
     private val values = HashMap<Triple<String, String, String>, String>()
+    private val filesLocations = HashMap<String, FilesLocation>()
     var tab: SheetTab = SheetTab.Actions
+
+    fun filesLocation(serial: String): FilesLocation? = filesLocations[serial]
+
+    fun setFilesLocation(serial: String, location: FilesLocation) {
+        filesLocations[serial] = location
+    }
 
     fun toggle(serial: String, id: String): Boolean? = toggles[serial to id]
 
@@ -587,7 +595,9 @@ fun rememberQuickActions(
             console = ShellConsole(runner, history, scope, { currentNotify(it) }),
             memory = memory,
             onManage = { id, new -> currentOnManage(id, new) },
-            widths = settings.settings.value.let { SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth, it.appsWidth) },
+            widths = settings.settings.value.let {
+                SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth, it.appsWidth, it.filesWidth)
+            },
             // Only the tab that changed: another mirror window may have saved the others since this one opened.
             saveWidth = { tab, width ->
                 val dp = width.value.roundToInt()
@@ -596,6 +606,7 @@ fun rememberQuickActions(
                         SheetTab.Actions -> it.copy(quickActionsWidth = dp)
                         SheetTab.Apps -> it.copy(appsWidth = dp)
                         SheetTab.Shell -> it.copy(shellWidth = dp)
+                        SheetTab.Files -> it.copy(filesWidth = dp)
                     }
                 }
             },
