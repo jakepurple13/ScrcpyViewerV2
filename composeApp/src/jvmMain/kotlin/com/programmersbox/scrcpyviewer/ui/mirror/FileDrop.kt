@@ -46,7 +46,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.files.FileTransferQueue
 import com.programmersbox.scrcpyviewer.files.TransferKind
@@ -56,9 +55,9 @@ import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.NativeFileDialogs
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
-import java.awt.FileDialog
-import java.awt.Frame
+import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.Transferable
 import java.awt.dnd.DnDConstants
@@ -77,32 +76,17 @@ import kotlinx.coroutines.cancel
 /** Native file pickers for Install APK… and Push file…, behind an interface so tests never open a window. */
 interface TransferFileDialogs {
     /** APKs to install (multi-select); empty when cancelled. */
-    fun chooseApks(parent: Frame?): List<Path>
+    fun chooseApks(): List<Path>
 
     /** Files to push (multi-select); empty when cancelled. */
-    fun chooseFiles(parent: Frame?, pushTarget: String): List<Path>
+    fun chooseFiles(pushTarget: String): List<Path>
 }
 
-/** `java.awt.FileDialog` (the native dialog on macOS). The `.apk` filter is ignored by Windows' dialog. */
-object AwtTransferFileDialogs : TransferFileDialogs {
-    override fun chooseApks(parent: Frame?): List<Path> {
-        val dialog = FileDialog(parent, "Install APK", FileDialog.LOAD)
-        dialog.isMultipleMode = true
-        dialog.setFilenameFilter { _, name -> name.endsWith(".apk", ignoreCase = true) }
-        if (Os.isWindows) dialog.file = "*.apk" // the only filter the Windows dialog honours
-        return show(dialog)
-    }
+/** The platform's own open dialog through [NativeFileDialogs]; never touches the AWT toolkit. */
+class NativeTransferFileDialogs(private val dialogs: NativeFileDialogs = nativeFileDialogs()) : TransferFileDialogs {
+    override fun chooseApks(): List<Path> = dialogs.open("Install APK", listOf("apk"), multiple = true)
 
-    override fun chooseFiles(parent: Frame?, pushTarget: String): List<Path> {
-        val dialog = FileDialog(parent, "Push to $pushTarget", FileDialog.LOAD)
-        dialog.isMultipleMode = true
-        return show(dialog)
-    }
-
-    private fun show(dialog: FileDialog): List<Path> {
-        dialog.isVisible = true
-        return dialog.files.orEmpty().map { it.toPath() }
-    }
+    override fun chooseFiles(pushTarget: String): List<Path> = dialogs.open("Push to $pushTarget", emptyList(), multiple = true)
 }
 
 /** The files of a drag (`javaFileListFlavor`), or null when they cannot be read (yet). */

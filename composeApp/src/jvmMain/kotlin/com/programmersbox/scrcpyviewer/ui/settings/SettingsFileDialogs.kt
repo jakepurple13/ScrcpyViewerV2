@@ -1,10 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
-import com.programmersbox.scrcpyviewer.Os
-import java.awt.FileDialog
-import java.awt.Frame
+import com.programmersbox.scrcpyviewer.ui.common.NativeFileDialogs
+import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
 import java.nio.file.Path
-import javax.swing.JFileChooser
 
 /** Native pickers for Settings, behind an interface so tests never open a window. */
 interface SettingsFileDialogs {
@@ -18,36 +16,15 @@ interface SettingsFileDialogs {
     fun chooseFolder(title: String): Path?
 }
 
-class AwtSettingsFileDialogs(private val parent: () -> Frame? = { null }) : SettingsFileDialogs {
-    override fun chooseAdbFile(): Path? {
-        val dialog = FileDialog(parent(), "Choose adb executable", FileDialog.LOAD)
-        dialog.isVisible = true
-        val file = dialog.file ?: return null
-        return Path.of(dialog.directory ?: "", file)
-    }
+/** The platform's own open dialog, for files and folders. */
+class NativeSettingsFileDialogs(private val dialogs: NativeFileDialogs = nativeFileDialogs()) : SettingsFileDialogs {
+    override fun chooseAdbFile(): Path? =
+        dialogs.open("Choose adb executable", emptyList(), multiple = false).firstOrNull()
 
     override fun chooseFolder(initial: Path?): Path? = pickFolder("Choose folder", initial)
 
     override fun chooseFolder(title: String): Path? = pickFolder(title, null)
 
-    private fun pickFolder(title: String, initial: Path?): Path? {
-        if (Os.isMac) {
-            // AWT's native macOS dialog picks folders when this property is set.
-            val key = "apple.awt.fileDialogForDirectories"
-            System.setProperty(key, "true")
-            try {
-                val dialog = FileDialog(parent(), title, FileDialog.LOAD)
-                initial?.let { dialog.directory = it.toString() }
-                dialog.isVisible = true
-                val file = dialog.file ?: return null
-                return Path.of(dialog.directory ?: "", file)
-            } finally {
-                System.setProperty(key, "false")
-            }
-        }
-        val chooser = JFileChooser(initial?.toFile())
-        chooser.dialogTitle = title
-        chooser.fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-        return if (chooser.showOpenDialog(parent()) == JFileChooser.APPROVE_OPTION) chooser.selectedFile.toPath() else null
-    }
+    private fun pickFolder(title: String, initial: Path?): Path? =
+        dialogs.open(title, emptyList(), multiple = false, directories = true, initial = initial).firstOrNull()
 }

@@ -40,6 +40,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +52,7 @@ import com.programmersbox.scrcpyviewer.ui.actions.ActionsScreen
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsViewModel
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
+import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.devices.DevicesScreen
 import com.programmersbox.scrcpyviewer.ui.devices.DevicesViewModel
@@ -60,10 +62,10 @@ import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavDisplay
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavigator
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
 import com.programmersbox.scrcpyviewer.ui.onboarding.OnboardingDialog
-import com.programmersbox.scrcpyviewer.ui.presets.AwtPresetFileDialogs
+import com.programmersbox.scrcpyviewer.ui.presets.NativePresetFileDialogs
 import com.programmersbox.scrcpyviewer.ui.presets.PresetsScreen
 import com.programmersbox.scrcpyviewer.ui.presets.PresetsViewModel
-import com.programmersbox.scrcpyviewer.ui.settings.AwtSettingsFileDialogs
+import com.programmersbox.scrcpyviewer.ui.settings.NativeSettingsFileDialogs
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsScreen
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsViewModel
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
@@ -71,6 +73,7 @@ import com.programmersbox.scrcpyviewer.ui.update.UpdateDialog
 import com.programmersbox.scrcpyviewer.ui.update.UpdateViewModel
 import com.programmersbox.scrcpyviewer.update.UpdateState
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
 import org.koin.compose.koinInject
 import androidx.compose.ui.graphics.compositeOver
@@ -199,9 +202,12 @@ fun App(
     // Read from the store, not the ViewModel's state, so the first frame already has the saved theme.
     val settings by appSettings.settings.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
-    val fileDialogs = remember { AwtPresetFileDialogs() }
-    val actionFileDialogs = remember { AwtPresetFileDialogs(what = "actions") }
-    val settingsDialogs = remember { AwtSettingsFileDialogs() }
+    val scope = rememberCoroutineScope()
+    // No picker can be shown (Linux without zenity or kdialog, a failed native call): say so in the snackbar.
+    val nativeDialogs = remember { nativeFileDialogs { message -> scope.launch { snackbar.showSnackbar(message) } } }
+    val fileDialogs = remember { NativePresetFileDialogs(nativeDialogs) }
+    val actionFileDialogs = remember { NativePresetFileDialogs(nativeDialogs, what = "actions") }
+    val settingsDialogs = remember { NativeSettingsFileDialogs(nativeDialogs) }
     // Recordings that end with no mirror window open for their device (closed window, app-wide view).
     LaunchedEffect(mirrorController) {
         mirrorController.recordingResults
