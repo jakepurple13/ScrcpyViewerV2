@@ -223,3 +223,8 @@ The window has two boxes, an event log, and the Tao diagnostics line. Files go t
    the drag starts.
 
 Record the results in this note under the matching question and change "needs hand test" to yes or no.
+
+## Correction (after the first hand test)
+`requestDragAndDropTransfer(offset)` with a real offset only reaches a source whose own bounds contain that offset
+(Compose's `DragAndDropNode.startDragAndDropTransfer` skips it silently otherwise). The drag-out starts with the
+pointer outside the tab, so the app passes `Offset.Unspecified`. Tao takes no position from the offset.

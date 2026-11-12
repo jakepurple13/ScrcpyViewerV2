@@ -328,8 +328,8 @@ private class FileListTransferable(private val files: List<File>) : Transferable
 
 /**
  * The OS drag through Compose's drag-and-drop source (Tao's outbound drag, see
- * docs/superpowers/notes/2026-11-12-tao-drag-out-spike.md). Needs [dragOutSource] on the layout whose coordinates
- * [start] gets. Copy only: a drop must never move the cached file away. Tao shows the platform's file icon, not a
+ * docs/superpowers/notes/2026-11-12-tao-drag-out-spike.md). Needs [dragOutSource] on the tab; [start]'s position is
+ * only logged (the platform starts the drag where the mouse is). Copy only: a drop must never move the cached file away. Tao shows the platform's file icon, not a
  * custom drag image.
  */
 class ComposeDragOutStarter : OutboundDragStarter {
@@ -354,7 +354,10 @@ class ComposeDragOutStarter : OutboundDragStarter {
         accepted = null
         logDragOut("requestDragAndDropTransfer: at=$at, files=${files.map { it.name + " exists=" + it.exists() + " size=" + it.length() }}")
         try {
-            n.requestDragAndDropTransfer(at)
+            // Offset.Unspecified, not [at]: Compose only calls a source whose own bounds contain the offset, and the
+            // drag-out starts once the pointer has left the tab, so [at] is always outside them and the source was
+            // skipped (nothing started, no error). Tao takes no position from it; the OS drag starts at the mouse.
+            n.requestDragAndDropTransfer(Offset.Unspecified)
         } catch (e: Throwable) {
             logDragOutWarn("requestDragAndDropTransfer threw", e)
             throw e
