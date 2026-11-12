@@ -51,10 +51,19 @@ fun isInsideHostDir(path: Path, dir: Path): Boolean {
 /** Whether this file system has POSIX owners and permissions (not Windows). */
 internal fun hasPosixPermissions(): Boolean = "posix" in java.nio.file.FileSystems.getDefault().supportedFileAttributeViews()
 
-/** [path] (not followed if a link) belongs to the user running the app. */
+/**
+ * [path] (not followed if a link) belongs to the user running the app. "Me" is the owner of a file this process just
+ * created in the temp folder, not a lookup of `user.name`: a container or uid with no passwd entry has no such name,
+ * and the lookup would refuse every cache folder.
+ */
 internal fun ownedByCurrentUser(path: Path): Boolean = runCatching {
     val owner = Files.getOwner(path, LinkOption.NOFOLLOW_LINKS)
-    val me = path.fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name"))
+    val probe = Files.createTempFile("svw-owner", null)
+    val me = try {
+        Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS)
+    } finally {
+        runCatching { Files.deleteIfExists(probe) }
+    }
     owner == me
 }.getOrDefault(false)
 

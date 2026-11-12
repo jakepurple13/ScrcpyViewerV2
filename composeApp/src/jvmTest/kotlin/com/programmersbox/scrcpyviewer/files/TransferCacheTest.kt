@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.files
 
+import com.programmersbox.scrcpyviewer.assumePosix
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -65,6 +66,28 @@ class TransferCacheTest {
         val link = runCatching { Files.createSymbolicLink(tmp.resolve("link"), target) }.getOrNull() ?: return
         val e = assertFailsWith<IOException> { ensurePrivateDir(link) }
         assertEquals("The cache folder $link is a link; not using it", e.message)
+    }
+
+    @Test
+    fun `ownership does not depend on a passwd entry for user_name`() {
+        assumePosix()
+        val r = Files.createDirectories(tmp.resolve("mine"))
+        val saved = System.getProperty("user.name")
+        System.setProperty("user.name", "no-such-user-svw")
+        try {
+            assertTrue(ownedByCurrentUser(r))
+            assertEquals(r, ensurePrivateDir(r))
+        } finally {
+            System.setProperty("user.name", saved)
+        }
+    }
+
+    @Test
+    fun `a root owned by someone else is not mine`() {
+        assumePosix()
+        // The filesystem root is owned by root (or the system), never by the account running the tests.
+        if (Files.getOwner(Paths.get("/")) == Files.getOwner(Files.createTempFile(tmp, "p", null))) return
+        assertFalse(ownedByCurrentUser(Paths.get("/")))
     }
 
     @Test

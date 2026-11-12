@@ -23,6 +23,14 @@ import java.util.concurrent.TimeUnit
 
 data class ProcessResult(val exitCode: Int, val stdout: String, val stderr: String)
 
+/**
+ * Coroutine-context element that raises the socket read timeout of [AdbClient.shell] for one call, for a command that
+ * is silent for long (an `rm -rf` of a big folder): `withContext(ShellReadTimeout(120_000)) { adb.shell(...) }`.
+ */
+class ShellReadTimeout(val ms: Int) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+    companion object Key : kotlin.coroutines.CoroutineContext.Key<ShellReadTimeout>
+}
+
 /** Talks to the adb server over its socket protocol and runs the adb binary for everything else. */
 open class AdbClient(
     private val adbPath: () -> Path,
@@ -57,9 +65,11 @@ open class AdbClient(
      * Runs `shell:<cmd>` on [serial] and returns its output. Throws [java.net.SocketTimeoutException] when the adb
      * server sends nothing for [shellReadTimeoutMs].
      */
-    open suspend fun shell(serial: String, cmd: String): String = withContext(Dispatchers.IO) {
+    open suspend fun shell(serial: String, cmd: String): String {
+        val timeout = currentCoroutineContext()[ShellReadTimeout]?.ms ?: shellReadTimeoutMs
+        return withContext(Dispatchers.IO) {
         openSocket().use { socket ->
-            socket.soTimeout = shellReadTimeoutMs
+            socket.soTimeout = timeout
             val out = socket.getOutputStream()
             val input = socket.getInputStream()
             out.write(AdbWire.encodeRequest("host:transport:$serial"))
@@ -69,6 +79,7 @@ open class AdbClient(
             out.flush()
             AdbWire.readStatus(input)
             String(input.readBytes(), Charsets.UTF_8)
+        }
         }
     }
 

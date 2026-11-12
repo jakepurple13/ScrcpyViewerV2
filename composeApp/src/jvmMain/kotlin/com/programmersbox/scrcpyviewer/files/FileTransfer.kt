@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.files
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
+import com.programmersbox.scrcpyviewer.adb.ShellReadTimeout
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -31,6 +33,8 @@ import java.util.concurrent.TimeUnit
 const val DEFAULT_PUSH_TARGET = "/sdcard/Download/"
 
 /** Long enough for a multi-GB push over Wi-Fi; a hung adb still ends eventually. */
+private const val SWAP_READ_TIMEOUT_MS = 120_000
+private const val KEPT_MARK = "__svw_kept__"
 const val TRANSFER_TIMEOUT_MS = 30 * 60 * 1000L
 
 /** How often a pull samples the growing host file, and a push the device file (`stat`). */
@@ -250,6 +254,8 @@ class FileTransferQueue(
     private val timeoutMs: Long = TRANSFER_TIMEOUT_MS,
     private val tempRoot: Path = defaultTransferTempRoot(),
     private val securePrivateRoot: (Path) -> Unit = { ensurePrivateDir(it) },
+    /** Socket read timeout of a Replace's swap: its `rm -rf` of a big folder prints nothing for a long while. */
+    private val swapReadTimeoutMs: Int = SWAP_READ_TIMEOUT_MS,
 ) {
     private val queue = Channel<Long>(Channel.UNLIMITED)
 
@@ -553,19 +559,26 @@ class FileTransferQueue(
         val f = shellQuote(target)
         val ok = "__svw_replaced__"
         val out = try {
-            adb.shell(
-                serial,
-                "${keepOutsideGuard(dir, target, name, "is the folder being pushed into")} && " +
-                    "rm -rf -- $f && mv $t $f && echo $ok",
-            )
+            withContext(ShellReadTimeout(swapReadTimeoutMs)) {
+                adb.shell(
+                    serial,
+                    "${keepOutsideGuard(dir, target, name, "is the folder being pushed into")} && " +
+                        "rm -rf -- $f && mv $t $f && echo $ok",
+                )
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             return e.message ?: "could not replace $name"
         }
         if (ok in out) return null
-        runCatching { adb.shell(serial, "if [ -e $f ] || [ -L $f ]; then rm -rf -- $t; fi") }
-        return out.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() } ?: "could not replace $name"
+        // Something still at the target: the temp copy is junk. Nothing there (rm ran, mv failed): the temp copy is the
+        // only new one, so it stays and the message says where.
+        val kept = runCatching {
+            adb.shell(serial, "if [ -e $f ] || [ -L $f ]; then rm -rf -- $t; else echo $KEPT_MARK; fi")
+        }.getOrDefault("").contains(KEPT_MARK)
+        val reason = out.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() } ?: "could not replace $name"
+        return if (kept) "$reason. The new copy is at $temp" else reason
     }
 
     private sealed interface Pulled {

@@ -782,9 +782,49 @@ class FileTransferTest {
         assertEquals("Could not push a.jpg: a.jpg: is the folder being pushed into", withTimeout(5_000) { result.await() }.message)
         // The temp copy goes only while something still stands in the item's place.
         assertEquals(
-            "if [ -e '/sdcard/X/a.jpg' ] || [ -L '/sdcard/X/a.jpg' ]; then rm -rf -- '/sdcard/X/.svw-replace-T0K3N-a.jpg'; fi",
+            "if [ -e '/sdcard/X/a.jpg' ] || [ -L '/sdcard/X/a.jpg' ]; then rm -rf -- '/sdcard/X/.svw-replace-T0K3N-a.jpg'; else echo __svw_kept__; fi",
             adb.shellCalls.last(),
         )
+    }
+
+    @Test
+    fun `a Replace whose mv fails after rm names the hidden copy`() = runBlocking<Unit> {
+        val src = tmp.resolve("a.jpg")
+        java.nio.file.Files.write(src, ByteArray(8))
+        val adb = FakeAdb(shellHandler = {
+            when {
+                "__svw_replaced__" in it -> "mv: failed to rename: No space left on device\n"
+                "__svw_kept__" in it -> "__svw_kept__\n"
+                else -> ""
+            }
+        })
+        val q = queue(adb)
+        q.replaceToken = { "T0K3N" }
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        q.enqueue(listOf(TransferRequest(src, TransferKind.Push, "/sdcard/X", "a.jpg", replace = true)))
+        assertEquals(
+            "Could not push a.jpg: mv: failed to rename: No space left on device. The new copy is at /sdcard/X/.svw-replace-T0K3N-a.jpg",
+            withTimeout(5_000) { result.await() }.message,
+        )
+    }
+
+    @Test
+    fun `the Replace swap runs with a long read timeout`() = runBlocking<Unit> {
+        val src = tmp.resolve("a.jpg")
+        java.nio.file.Files.write(src, ByteArray(8))
+        var seen: Int? = null
+        val adb = FakeAdb(shellHandler = {
+            if ("__svw_replaced__" in it) {
+                seen = kotlin.coroutines.coroutineContext[com.programmersbox.scrcpyviewer.adb.ShellReadTimeout]?.ms
+                "__svw_replaced__\n"
+            } else ""
+        })
+        val q = FileTransferQueue("SER", adb, DEFAULT_PUSH_TARGET, { true }, { scans += it }, scope, 5_000,
+            tempRoot = tmp.resolve("scrcpy-vwr"), swapReadTimeoutMs = 123_456)
+        val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
+        q.enqueue(listOf(TransferRequest(src, TransferKind.Push, "/sdcard/X", "a.jpg", replace = true)))
+        assertEquals(TransferResult.Pushed("a.jpg", "/sdcard/X"), withTimeout(5_000) { result.await() })
+        assertEquals(123_456, seen)
     }
 
     @Test
