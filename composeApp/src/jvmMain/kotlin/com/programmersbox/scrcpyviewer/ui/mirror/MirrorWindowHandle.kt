@@ -66,6 +66,10 @@ interface MirrorWindowHandle {
 /** The window's handle, provided by [com.programmersbox.scrcpyviewer.ui.window.AppWindow]; null outside a window. */
 val LocalMirrorWindowHandle: ProvidableCompositionLocal<MirrorWindowHandle?> = staticCompositionLocalOf { null }
 
+/** The AWT window behind this Nucleus window, on Nucleus' AWT backend; kept until the windows move to Tao. */
+val dev.nucleusframework.application.NucleusWindow.awt: ComposeWindow
+    get() = unsafe.awtWindow ?: error("Not a window of Nucleus' AWT backend")
+
 /** A [MirrorWindowHandle] over an AWT window; kept until the windows move to Tao. */
 class AwtMirrorWindowHandle(private val window: java.awt.Window, private val geometry: ScreenGeometry) : MirrorWindowHandle {
     private val focusState = MutableStateFlow(window.isFocused)

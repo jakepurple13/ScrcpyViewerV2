@@ -94,7 +94,7 @@ class StylesScreenshotTest {
             shell(s) {
                 SettingsContent(
                     SettingsUiState(settings = s), UpdateUiState(state = UpdateState.Idle, currentVersion = "1.12.0", lastChecked = Instant.EPOCH),
-                    SettingsNav(selected = SettingsCategoryId.Appearance), SettingsActions(), customTitleBarSupported = true,
+                    SettingsNav(selected = SettingsCategoryId.Appearance), SettingsActions(),
                 )
             }
         }

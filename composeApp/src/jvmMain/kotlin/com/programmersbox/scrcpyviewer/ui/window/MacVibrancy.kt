@@ -259,7 +259,12 @@ fun WindowBackgroundEffect(window: ComposeWindow, color: androidx.compose.ui.gra
     val argb = color.toArgb()
     // After MacVibrancyEffect in composition order, so turning the blur off ends with this color, not the system's.
     androidx.compose.runtime.LaunchedEffect(window, argb, enabled) {
-        if (enabled) window.setWindowBackground(Color(argb, false))
+        if (enabled) {
+            window.setWindowBackground(Color(argb, false))
+            // Nucleus' window paints its AWT components in the title bar's background from a posted task when it
+            // opens; posting this too makes the theme's color land last.
+            java.awt.EventQueue.invokeLater { window.setWindowBackground(Color(argb, false)) }
+        }
     }
 }
 

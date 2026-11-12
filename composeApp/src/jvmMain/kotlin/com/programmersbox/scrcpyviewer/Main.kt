@@ -28,16 +28,19 @@ import com.programmersbox.scrcpyviewer.state.appTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.neonText
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
-import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
-import com.programmersbox.scrcpyviewer.ui.window.windowChrome
+import com.programmersbox.scrcpyviewer.ui.window.LocalReclaimQuitHandler
+import com.programmersbox.scrcpyviewer.ui.window.bringToFront
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.application
+import dev.nucleusframework.application.NucleusApplicationScope
+import dev.nucleusframework.application.nucleusApplication
+import dev.nucleusframework.window.material.MaterialDecoratedWindow
+import dev.nucleusframework.window.material.MaterialTitleBar
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import androidx.compose.runtime.CompositionLocalProvider
 import com.programmersbox.scrcpyviewer.ui.mirror.AwtMirrorWindowHandle
+import com.programmersbox.scrcpyviewer.ui.mirror.awt
 import com.programmersbox.scrcpyviewer.ui.mirror.LocalMirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
@@ -62,11 +65,17 @@ fun main() {
     val adbClient = koin.get<AdbClient>()
     val updateManager = koin.get<UpdateManager>()
     val actionsNavigation = koin.get<ActionsNavigation>()
-    // exitProcessOnExit = false so the update install below runs once the windows are gone.
-    application(exitProcessOnExit = false) {
+    // Single instance off: a dev run next to the installed app must not hand off to it and exit.
+    nucleusApplication(enableSingleInstance = false) {
         val settings by appSettings.settings.collectAsState()
         val mirrors by mirrorController.open.collectAsState()
-        val shutdown = remember { AppShutdown(mirrorController, exit = ::exitApplication) }
+        // nucleusApplication exits the process once the windows are gone, so a downloaded update installs first.
+        val shutdown = remember {
+            AppShutdown(mirrorController, exit = {
+                updateManager.installPending()
+                exitApplication()
+            })
+        }
         val shutdownState by shutdown.state.collectAsState()
         DisposableEffect(Unit) {
             shutdown.installQuitHandler(shutdown::request)
@@ -75,55 +84,44 @@ fun main() {
         LaunchedEffect(shutdownState) { shutdown.run() }
         // Checks on launch, then every 6 hours while the app runs.
         LaunchedEffect(Unit) { updateManager.checkPeriodically() }
-        // A downloaded update installs once the app has shut down (installPending below).
+        // A downloaded update installs once the app has shut down (installPending in the shutdown above).
         LaunchedEffect(Unit) {
             updateManager.state.first { it is UpdateState.Installing }
             shutdown.request()
         }
         val shuttingDown = shutdownState as? AppShutdown.State.ShuttingDown
-        // Read once: a settings change applies to windows opened later, not this one.
-        val mainChrome = remember { windowChrome(settings.useSystemTitleBar) }
-        AppWindow(
-            onCloseRequest = shutdown::request,
-            title = appTitle(),
-            theme = settings.appTheme,
-            chrome = mainChrome,
-            visible = shuttingDown == null,
-            titleBar = { if (chrome == WindowChrome.Custom) MainTitle() },
-        ) {
-            // A mirror window asked for the Actions screen: App selects the tab, this brings the window forward.
-            LaunchedEffect(actionsNavigation) {
-                actionsNavigation.requests.collect { bringToFront(window) }
+        // Each window takes the macOS Quit handler for itself (see LocalReclaimQuitHandler): give it back to shutdown.
+        CompositionLocalProvider(LocalReclaimQuitHandler provides { shutdown.installQuitHandler(shutdown::request) }) {
+            AppWindow(
+                onCloseRequest = shutdown::request,
+                title = appTitle(),
+                theme = settings.appTheme,
+                visible = shuttingDown == null,
+                titleBar = { MainTitle() },
+            ) {
+                // A mirror window asked for the Actions screen: App selects the tab, this brings the window forward.
+                LaunchedEffect(actionsNavigation) {
+                    actionsNavigation.requests.collect { bringToFront(nucleusWindow) }
+                }
+                // Device clipboard sync and the mirror paste go through Compose's clipboard, bound here.
+                val clipboard = LocalClipboard.current
+                val clipboardScope = rememberCoroutineScope()
+                val pcClipboard = remember { koin.get<PcClipboard>() }
+                LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
+                // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
+                val handle = remember(nucleusWindow) { AwtMirrorWindowHandle(nucleusWindow.awt, koin.get<ScreenGeometry>()) }
+                CompositionLocalProvider(LocalMirrorWindowHandle provides handle) { App() }
             }
-            // Device clipboard sync and the mirror paste go through Compose's clipboard, bound here.
-            val clipboard = LocalClipboard.current
-            val clipboardScope = rememberCoroutineScope()
-            val pcClipboard = remember { koin.get<PcClipboard>() }
-            LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
-            // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
-            val handle = remember(window) { AwtMirrorWindowHandle(window, koin.get<ScreenGeometry>()) }
-            CompositionLocalProvider(LocalMirrorWindowHandle provides handle) { App() }
-        }
-        for ((serial, session) in mirrors) {
-            key(serial) {
-                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.useSystemTitleBar, settings.captureDir, animate = settings.animateMirrorWindows, adb = adbClient)
+            for ((serial, session) in mirrors) {
+                key(serial) {
+                    MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.captureDir, animate = settings.animateMirrorWindows, adb = adbClient)
+                }
             }
+            if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.appTheme)
         }
-        if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.appTheme)
     }
-    // Sessions are closed and recordings finished. With a downloaded update, Nucleus starts its install script and
-    // exits the JVM here; otherwise (or if it could not start) the app exits normally.
-    updateManager.installPending()
+    // Not reached on the AWT backend (nucleusApplication exits the process); kept for a backend that returns.
     exitProcess(0)
-}
-
-/** Restores [window] when minimized, then raises and focuses it. */
-private fun bringToFront(window: java.awt.Frame) {
-    if (window.extendedState and java.awt.Frame.ICONIFIED != 0) {
-        window.extendedState = window.extendedState and java.awt.Frame.ICONIFIED.inv()
-    }
-    window.toFront()
-    window.requestFocus()
 }
 
 /** The main window's custom title bar: app icon on Windows (macOS and Linux show none), then the name. */
@@ -140,14 +138,16 @@ private fun MainTitle() {
 
 /** Shown while quitting waits for recorders to write their trailers. It cannot be closed. */
 @Composable
-private fun FinishingRecordingWindow(theme: AppTheme) {
-    Window(
+private fun NucleusApplicationScope.FinishingRecordingWindow(theme: AppTheme) = ScrcpyViewerTheme(theme) {
+    MaterialDecoratedWindow(
         onCloseRequest = {},
         title = "Scrcpy Vwr",
         icon = AppIcon.painter,
         state = rememberWindowState(size = DpSize(340.dp, 120.dp), position = WindowPosition(Alignment.Center)),
         resizable = false,
     ) {
+        MaterialTitleBar()
+        // Tao windows don't inherit composition locals: the theme is provided again.
         ScrcpyViewerTheme(theme) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                 Row(

@@ -18,7 +18,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
 import com.programmersbox.scrcpyviewer.ui.update.UpdateViewModel
 import java.nio.file.Paths
@@ -45,7 +44,6 @@ fun SettingsScreen(
         onRetroPalette = viewModel::setRetroPalette,
         onDesktopBlur = viewModel::setDesktopBlur,
         onGlassOpacity = viewModel::setGlassOpacity,
-        onUseSystemTitleBar = viewModel::setUseSystemTitleBar,
         onDefaultPreset = viewModel::setDefaultPreset,
         onAnimateMirrorWindows = viewModel::setAnimateMirrorWindows,
         onUseBundledAdb = viewModel::useBundledAdb,
@@ -85,8 +83,6 @@ fun SettingsContent(
     actions: SettingsActions,
     modifier: Modifier = Modifier,
     categories: List<SettingsCategory> = settingsCategories,
-    isLinux: Boolean = Os.isLinux,
-    customTitleBarSupported: Boolean = com.programmersbox.scrcpyviewer.ui.window.customTitleBarSupported,
 ) {
     val matches = searchSettings(categories, nav.query)
     val shown = nav.shown(matches.map { it.category.id })
@@ -97,7 +93,7 @@ fun SettingsContent(
             updateAvailable = updates.available != null, onQuery = actions.onQuery, onSelect = actions.onSelectCategory,
         )
         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        val bindings = SettingsBindings(state, updates, actions, isLinux, customTitleBarSupported)
+        val bindings = SettingsBindings(state, updates, actions)
         // Keyed by category, so filtering rows while typing updates in place instead of re-animating.
         AnimatedContent(
             targetState = match,

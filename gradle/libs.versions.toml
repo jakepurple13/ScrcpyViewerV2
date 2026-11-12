@@ -10,7 +10,6 @@ navigation3 = "1.1.2"
 lifecycle = "2.11.0-beta01"
 material3-adaptive = "1.3.0"
 qrose = "1.3.1"
-jewel = "0.41.0-262.10968.63"
 koin = "4.2.2"
 koin-compiler = "1.2.1"
 # Packaging plugin, updater runtime and CI composite actions (.github/workflows/build.yml) move together.
@@ -26,13 +25,17 @@ lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecyc
 material3-adaptive = { module = "org.jetbrains.compose.material3.adaptive:adaptive", version.ref = "material3-adaptive" }
 material3-adaptive-layout = { module = "org.jetbrains.compose.material3.adaptive:adaptive-layout", version.ref = "material3-adaptive" }
 qrose = { module = "io.github.alexzhirkevich:qrose", version.ref = "qrose" }
-jewel-decorated-window = { module = "org.jetbrains.jewel:jewel-int-ui-decorated-window", version.ref = "jewel" }
 koin-bom = { module = "io.insert-koin:koin-bom", version.ref = "koin" }
 koin-core = { module = "io.insert-koin:koin-core" }
 koin-annotations = { module = "io.insert-koin:koin-annotations" }
 koin-compose = { module = "io.insert-koin:koin-compose" }
 koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel" }
 nucleus-updater = { module = "dev.nucleusframework:nucleus.updater-runtime", version.ref = "nucleus" }
+nucleus-application = { module = "dev.nucleusframework:nucleus.nucleus-application", version.ref = "nucleus" }
+# The AWT window backend. decorated-window-awt (pulled in by it and by nucleus-application) is only the shared AWT
+# base; DecoratedWindow and the title bars live in decorated-window-jni. Ship exactly one backend module.
+nucleus-window-awt = { module = "dev.nucleusframework:nucleus.decorated-window-jni", version.ref = "nucleus" }
+nucleus-window-material3 = { module = "dev.nucleusframework:nucleus.decorated-window-material3", version.ref = "nucleus" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 

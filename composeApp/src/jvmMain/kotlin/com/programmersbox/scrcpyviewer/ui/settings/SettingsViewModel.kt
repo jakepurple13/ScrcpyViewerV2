@@ -194,7 +194,6 @@ class SettingsViewModel(
     fun setGlassOpacity(value: Float) = appSettings.update { it.copy(glassOpacity = value.coerceIn(0f, 1f)) }
 
     /** Read when a window opens, so it applies to windows opened after this. */
-    fun setUseSystemTitleBar(value: Boolean) = appSettings.update { it.copy(useSystemTitleBar = value) }
 
     fun setAnimateMirrorWindows(value: Boolean) = appSettings.update { it.copy(animateMirrorWindows = value) }
 

@@ -171,7 +171,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
-import com.programmersbox.scrcpyviewer.ui.window.windowChrome
+import dev.nucleusframework.application.LocalNucleusApplicationScope
 import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
 import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
 import java.nio.file.Paths
@@ -316,7 +316,7 @@ fun parseHexColor(value: String?): Color? {
  * deltas still flow while the pointer is over the video.
  *
  * The top strip ([TopStrip]) is the window's title bar ([AppWindow]): window controls at its edge, empty
- * space drags the window. With the system title bar it sits at the top of the content instead.
+ * space drags the window.
  */
 @Composable
 fun MirrorWindow(
@@ -324,8 +324,6 @@ fun MirrorWindow(
     session: ScrcpySession,
     controller: MirrorController,
     theme: AppTheme,
-    /** `Settings.useSystemTitleBar`, read when the window opens. */
-    useSystemTitleBar: Boolean?,
     /** `Settings.captureDir`: where screenshots and recordings started from the toolbar go. */
     captureDir: String,
     /** `Settings.animateMirrorWindows`, read when the window opens: grow from the Mirror button, wake the screen. */
@@ -631,12 +629,11 @@ fun MirrorWindow(
         )
     }
 
-    AppWindow(
+    LocalNucleusApplicationScope.current.AppWindow(
         onCloseRequest = requestClose,
         visible = shown,
         title = mirrorTitle(model, serial, values),
         theme = theme,
-        chrome = remember { windowChrome(useSystemTitleBar) },
         state = windowState,
         alwaysOnTop = "always-on-top" in e,
         icon = AppIcon.painter,
@@ -648,15 +645,13 @@ fun MirrorWindow(
         },
     ) {
         // Every move, resize, focus and native call on the window goes through this (AWT now, Tao later).
-        val handle = remember(window) { AwtMirrorWindowHandle(window, screenGeometry) }
+        val handle = remember(nucleusWindow) { AwtMirrorWindowHandle(nucleusWindow.awt, screenGeometry) }
         LaunchedEffect(serial) {
             controller.focusRequests.filter { it == serial }.collect { handle.toFront() }
         }
         if ("print-fps" in e) {
             LaunchedEffect(session) { session.fps.collect { if (it > 0) println("[$serial] %.1f fps".format(it)) } }
         }
-        // Still AWT, each behind its own seam later: pointer capture, file drop and file pickers.
-        val awtWindow = window
         LaunchedEffect(session, handle) {
             windowHandle = handle
             handle.focused.collect { windowFocused = it }

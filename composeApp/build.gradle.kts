@@ -68,13 +68,15 @@ kotlin {
             implementation(libs.material3.adaptive)
             implementation(libs.material3.adaptive.layout)
             implementation(libs.qrose)
-            implementation(libs.jewel.decorated.window)
             implementation(project.dependencies.platform(libs.koin.bom))
             implementation(libs.koin.core)
             implementation(libs.koin.annotations)
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.nucleus.updater)
+            implementation(libs.nucleus.application)
+            implementation(libs.nucleus.window.awt)
+            implementation(libs.nucleus.window.material3)
             implementation(libs.jna)
             val ffmpeg = libs.versions.ffmpeg.get()
             val javacpp = libs.versions.javacpp.get()
@@ -87,15 +89,6 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
         }
-    }
-}
-
-// Jewel's icon libraries pull in IntelliJ's coroutines fork, a different module with the same classes but missing newer
-// methods (Job.cancel$default). Both jars shipped and the fork won, crashing on cancel; use the one real coroutines.
-configurations.configureEach {
-    resolutionStrategy.dependencySubstitution {
-        substitute(module("org.jetbrains.intellij.deps.kotlinx:kotlinx-coroutines-core-jvm"))
-            .using(module("org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:${libs.versions.coroutines.get()}"))
     }
 }
 
@@ -112,8 +105,8 @@ val needsAppRuntime: Boolean = gradle.startParameter.taskNames.any { requested -
 // `application { }` block of its own.
 nucleus.application {
     mainClass = "com.programmersbox.scrcpyviewer.MainKt"
-    // The custom title bar (Jewel DecoratedWindow) needs JetBrains Runtime, and Jewel 0.41 is Java 25 bytecode,
-    // so the app runs on JBR 25; Gradle auto-provisions it via foojay. Compilation stays on jvmToolchain(21).
+    // The app runs on JBR 25 (kept from the Jewel title bar until the Tao backend decides the runtime); Gradle
+    // auto-provisions it via foojay. Compilation stays on jvmToolchain(21).
     // javaHome is a plain String, so resolve JBR 25 only when a run or packaging task is requested; tests,
     // CI test jobs and IDE sync then never download it.
     if (needsAppRuntime) {

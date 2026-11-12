@@ -1,38 +1,27 @@
 package com.programmersbox.scrcpyviewer.ui.window
 
+import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.ui.settings.settingsCategories
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+/** "Use system title bar" is retired: every window draws the Nucleus Material title bar. */
 class WindowChromeTest {
     @Test
-    fun `macOS and Windows default to custom`() = assertEquals(WindowChrome.Custom, windowChrome(null, isLinux = false, supported = true))
-
-    @Test
-    fun `Linux defaults to system`() = assertEquals(WindowChrome.System, windowChrome(null, isLinux = true, supported = true))
-
-    @Test
-    fun `explicit setting wins over OS default`() {
-        assertEquals(WindowChrome.Custom, windowChrome(false, isLinux = true, supported = true))
-        assertEquals(WindowChrome.System, windowChrome(true, isLinux = false, supported = true))
+    fun `Settings no longer offers the system title bar`() {
+        val ids = settingsCategories.flatMap { c -> c.entries.map { it.id } }
+        assertTrue("title-bar" !in ids, "title-bar entry still listed: $ids")
     }
 
     @Test
-    fun `unsupported runtime always system`() = assertEquals(WindowChrome.System, windowChrome(false, isLinux = false, supported = false))
-
-    @Test
-    fun `JBR 21 cannot load Jewel`() = assertFalse(jewelUsable(jbrAvailable = true, javaFeature = 21))
-
-    @Test
-    fun `JBR 25 can load Jewel`() = assertTrue(jewelUsable(jbrAvailable = true, javaFeature = 25))
-
-    @Test
-    fun `stock JDK 25 cannot use the custom bar`() = assertFalse(jewelUsable(jbrAvailable = false, javaFeature = 25))
-
-    @Test
-    fun `probe is false and does not throw below Java 25`() {
-        // Tests run on the compile toolchain (21), where Jewel classes can't load.
-        if (Runtime.version().feature() < 25) assertFalse(customTitleBarSupported)
+    fun `a settings file that chose the system title bar still loads`() {
+        val file = Files.createTempDirectory("settings").resolve("settings.json")
+        Files.writeString(file, """{"themeMode":"Dark","useSystemTitleBar":true}""")
+        val settings = AppSettings(file).settings.value
+        assertEquals(com.programmersbox.scrcpyviewer.ui.theme.ThemeMode.Dark, settings.themeMode)
+        // Kept so the file parses; nothing reads it.
+        assertEquals(true, settings.useSystemTitleBar)
     }
 }

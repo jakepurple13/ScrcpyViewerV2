@@ -21,7 +21,7 @@ data class Settings(
     val adbPathOverride: String? = null,
     /** Resolved when absent from the file: `~/Movies/ScrcpyViewer` on macOS, `~/Videos/ScrcpyViewer` elsewhere. */
     val captureDir: String = defaultCaptureDir(),
-    /** Whether new windows use the OS title bar; null = OS default. */
+    /** Retired ("Use system title bar"): still parsed so older files load, but nothing reads it. */
     val useSystemTitleBar: Boolean? = null,
     /** False until the first-run guide is finished or skipped. True when absent, so upgrades from older files skip it. */
     val onboardingSeen: Boolean = true,

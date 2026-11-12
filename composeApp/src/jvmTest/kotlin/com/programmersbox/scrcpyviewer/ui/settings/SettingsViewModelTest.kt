@@ -160,15 +160,6 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun `system title bar choice is saved`() {
-        val vm = vm()
-        vm.setUseSystemTitleBar(true)
-        assertEquals(true, settings.settings.value.useSystemTitleBar)
-        vm.setUseSystemTitleBar(false)
-        assertEquals(false, settings.settings.value.useSystemTitleBar)
-    }
-
-    @Test
     fun `mirror window animation is on by default and saved`() {
         val vm = vm()
         assertEquals(true, settings.settings.value.animateMirrorWindows)
