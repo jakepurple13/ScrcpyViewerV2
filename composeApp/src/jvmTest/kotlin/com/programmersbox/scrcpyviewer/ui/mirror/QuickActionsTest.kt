@@ -199,6 +199,19 @@ class QuickActionsTest {
     }
 
     @Test
+    fun `a built-in toggle that succeeds on every device shows no result line`() = runBlocking {
+        val device = FakeDevice().apply { setResult = CompletableDeferred(Unit) }
+        val pixel = FollowerRunner()
+        val messages = mutableListOf<String>()
+        val actions = QuickActions(device, eager, followers = { listOf(FollowRunner("Pixel 9", pixel, "P9")) }) { messages += it }
+
+        actions.onEvent(QuickActionEvent.Toggle(QuickToggle.ShowTaps, true))
+
+        assertEquals(listOf("settings put system show_touches 1"), pixel.runs)
+        assertTrue(messages.isEmpty())
+    }
+
+    @Test
     fun `a built-in toggle that fails on the leader is not sent to followers`() = runBlocking {
         val device = FakeDevice()
         val pixel = FollowerRunner()

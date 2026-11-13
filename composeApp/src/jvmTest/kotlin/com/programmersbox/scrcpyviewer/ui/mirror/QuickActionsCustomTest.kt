@@ -558,6 +558,34 @@ class QuickActionsCustomTest {
     }
 
     @Test
+    fun `a toggle that succeeds everywhere shows no result line`() {
+        store.upsert(noRead)
+        val qa = quickActions(followers = two)
+
+        qa.onEvent(QuickActionEvent.CustomToggle("plain", true))
+
+        assertEquals(listOf("echo {on}"), pixel9.runs)
+        assertTrue(messages.isEmpty())
+    }
+
+    @Test
+    fun `a slow follower gets a quick on then off in order`() {
+        store.upsert(noRead)
+        val gate = CompletableDeferred<Unit>()
+        pixel9.gate = gate
+        val qa = quickActions(followers = two)
+
+        qa.onEvent(QuickActionEvent.CustomToggle("plain", true))
+        qa.onEvent(QuickActionEvent.CustomToggle("plain", false))
+
+        assertEquals(false, qa.uiState.customState["plain"]) // the leader is not held back by the slow follower
+        assertEquals(listOf("echo {on}", "echo off"), tablet.runs)
+        assertEquals(listOf("echo {on}"), pixel9.runs) // "off" waits for "on" to finish
+        gate.complete(Unit)
+        assertEquals(listOf("echo {on}", "echo off"), pixel9.runs)
+    }
+
+    @Test
     fun `followers are not driven when the leader's toggle fails`() {
         store.upsert(stayAwake)
         runner.result = { ShellResult("Error: denied\n", 255, 3) }

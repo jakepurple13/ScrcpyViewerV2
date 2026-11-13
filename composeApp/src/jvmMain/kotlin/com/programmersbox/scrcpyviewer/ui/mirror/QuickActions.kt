@@ -29,6 +29,7 @@ import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesLocation
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -236,7 +237,7 @@ data class QuickActionsUiState(
 )
 
 /** A window following this one's input: its device title (for the result line), shell runner and serial. */
-data class FollowRunner(val title: String, val runner: ShellRunner, val serial: String = "")
+data class FollowRunner(val title: String, val runner: ShellRunner, val serial: String)
 
 /**
  * The result line of a quick action that also ran on following windows: [total] counts the leader and its followers,
@@ -458,21 +459,26 @@ class QuickActions internal constructor(
         if (toggle in pending) return
         val before = toggles[toggle]
         val targets = followers()
+        val turns = takeTurns(targets, "builtin:${toggle.name}")
         pending = pending + toggle
         toggles = toggles + (toggle to on)
         scope.launch {
-            val ok = try {
-                d.set(toggle, on)
-                true
-            } catch (e: Exception) {
-                toggles = toggles + (toggle to before)
-                notify("Could not turn ${toggle.label} ${if (on) "on" else "off"}: ${e.message ?: e}")
-                false
+            try {
+                val ok = try {
+                    d.set(toggle, on)
+                    true
+                } catch (e: Exception) {
+                    toggles = toggles + (toggle to before)
+                    notify("Could not turn ${toggle.label} ${if (on) "on" else "off"}: ${e.message ?: e}")
+                    false
+                } finally {
+                    pending = pending - toggle
+                }
+                // Followers are set to the leader's new state, never flipped: theirs may already differ.
+                if (ok) toggleResult(targets, runOn(targets, toggle.setCommand(on), turns))
             } finally {
-                pending = pending - toggle
+                turns.forEach(::endTurn)
             }
-            // Followers are set to the leader's new state, never flipped: theirs may already differ.
-            if (ok && targets.isNotEmpty()) notify(followResult(targets.size + 1, runOn(targets, toggle.setCommand(on))))
         }
     }
 
@@ -483,29 +489,61 @@ class QuickActions internal constructor(
         if (id in customPending) return
         val before = customState[id]
         val targets = followers()
+        val turns = takeTurns(targets, "custom:$id")
         val cmd = if (on) action.on else action.off
         customPending = customPending + id
         customState = customState + (id to on)
         scope.launch {
-            val ok = try {
-                r.runChecked(cmd)
-                if (action.read == null) memory.setToggle(serial, id, on)
-                true
-            } catch (e: Exception) {
-                customState = customState + (id to before)
-                notify(failure("Could not turn ${action.name} ${if (on) "on" else "off"}", e))
-                false
-            } finally {
-                customPending = customPending - id
-            }
-            if (ok && targets.isNotEmpty()) {
-                val failures = runOn(targets, cmd) { f ->
-                    // A follower's sheet shows the state it was set to, like the leader's.
-                    if (action.read == null && f.serial.isNotEmpty()) memory.setToggle(f.serial, id, on)
+            try {
+                val ok = try {
+                    r.runChecked(cmd)
+                    if (action.read == null) memory.setToggle(serial, id, on)
+                    true
+                } catch (e: Exception) {
+                    customState = customState + (id to before)
+                    notify(failure("Could not turn ${action.name} ${if (on) "on" else "off"}", e))
+                    false
+                } finally {
+                    customPending = customPending - id
                 }
-                notify(followResult(targets.size + 1, failures))
+                if (ok) {
+                    val failures = runOn(targets, cmd, turns) { f ->
+                        // A follower's sheet shows the state it was set to, like the leader's.
+                        if (action.read == null) memory.setToggle(f.serial, id, on)
+                    }
+                    toggleResult(targets, failures)
+                }
+            } finally {
+                turns.forEach(::endTurn)
             }
         }
+    }
+
+    /**
+     * The last queued command of each follower's toggle, by (follower serial, toggle key); it completes once that
+     * command has run. Followers' toggle commands run one after another in tap order, so a quick on-then-off cannot
+     * leave a slow follower on. The leader's own toggle is never held back by them. Used on the UI thread.
+     */
+    private val followerTurns = HashMap<Pair<String, String>, CompletableDeferred<Unit>>()
+
+    /** One follower's place in its toggle's queue, taken at tap time: it runs after [previous] completes. */
+    private class Turn(val key: Pair<String, String>, val previous: CompletableDeferred<Unit>?, val mine: CompletableDeferred<Unit>)
+
+    private fun takeTurns(targets: List<FollowRunner>, toggleKey: String): List<Turn> = targets.map { f ->
+        val key = f.serial to toggleKey
+        val mine = CompletableDeferred<Unit>()
+        Turn(key, followerTurns.put(key, mine), mine)
+    }
+
+    /** Lets the next command in [turn]'s queue run; safe to call more than once. */
+    private fun endTurn(turn: Turn) {
+        turn.mine.complete(Unit)
+        if (followerTurns[turn.key] === turn.mine) followerTurns.remove(turn.key)
+    }
+
+    /** A toggle switch reports its followers only when one failed; a run-once action always does. */
+    private fun toggleResult(targets: List<FollowRunner>, failures: List<Pair<String, String>>) {
+        if (failures.isNotEmpty()) notify(followResult(targets.size + 1, failures))
     }
 
     /** A run-once tap: the variable prompt, then the confirm dialog, then the run; the steps it doesn't need are skipped. */
@@ -582,16 +620,20 @@ class QuickActions internal constructor(
 
     /**
      * Runs [cmd] on every follower at once and returns the failures as (title, reason) in [targets]' order;
-     * [onSuccess] runs for each follower whose command succeeded.
+     * [onSuccess] runs for each follower whose command succeeded. With [turns] (one per target), each follower waits
+     * for its previous command for the same toggle first, and lets the next one run when done.
      */
     private suspend fun runOn(
         targets: List<FollowRunner>,
         cmd: String,
+        turns: List<Turn>? = null,
         onSuccess: (FollowRunner) -> Unit = {},
     ): List<Pair<String, String>> = coroutineScope {
-        targets.map { f ->
+        targets.mapIndexed { i, f ->
             async {
+                val turn = turns?.get(i)
                 try {
+                    turn?.previous?.await()
                     f.runner.runChecked(cmd)
                     onSuccess(f)
                     null
@@ -599,6 +641,8 @@ class QuickActions internal constructor(
                     throw e
                 } catch (e: Exception) {
                     f.title to reason(e)
+                } finally {
+                    turn?.let(::endTurn)
                 }
             }
         }.awaitAll().filterNotNull()
