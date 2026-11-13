@@ -112,7 +112,7 @@ fun ActionEditor(
         ) {
           // The test output sits outside the spaced column, so while collapsed it adds no gap.
           Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            draft.fromTemplate?.let { TemplateBanner(it) }
+            draft.fromTemplate?.takeIf { draft.templateBanner }?.let { TemplateBanner(it) }
             if (draft.source == ActionSource.Ai && draft.id != null) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Made by AI", Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)

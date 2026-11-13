@@ -813,4 +813,89 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror files tab retro`() = filesStates(ThemeStyle.Retro, onlySelection = true)
+
+    /** Answers `am start -W` with [answer]. */
+    private class LinksShotRunner(private val answer: String) :
+        ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "R5CX12GDWPZ") {
+        override suspend fun run(cmd: String, timeoutMs: Long) = com.programmersbox.scrcpyviewer.adb.ShellResult(answer, 0, 1)
+    }
+
+    private fun renderLinks(name: String, mode: ThemeMode, answer: String, setUp: (com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState) -> Unit) {
+        val now = System.currentTimeMillis()
+        val store = com.programmersbox.scrcpyviewer.links.LinkStore(java.nio.file.Files.createTempDirectory("links-shot").resolve("links.json"))
+        val starred = com.programmersbox.scrcpyviewer.links.LinkEntry("https://example.com/login?next=/account", "com.android.chrome", "Chrome", ok = true, at = now - 720_000)
+        store.record("R5CX12GDWPZ", com.programmersbox.scrcpyviewer.links.LinkEntry("https://www.youtube.com/@AndroidDevelopers", ok = true, appLabel = "YouTube", at = now - 86_400_000))
+        store.record("R5CX12GDWPZ", com.programmersbox.scrcpyviewer.links.LinkEntry("market://details?id=com.android.chrome", ok = false, at = now - 3_600_000))
+        store.record("R5CX12GDWPZ", starred)
+        store.star(starred, true)
+        val apps = listOf(
+            DeviceApp("com.android.chrome", "Chrome", system = true, versionName = null, versionCode = null),
+            DeviceApp("com.google.android.youtube", "YouTube", system = true, versionName = null, versionCode = null),
+        )
+        val scope = CoroutineScope(Dispatchers.Unconfined + kotlinx.coroutines.Job())
+        val links = com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState("R5CX12GDWPZ", LinksShotRunner(answer), store, { apps }, scope)
+        setUp(links)
+        val state = QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Links, apps = AppsUiState(apps = apps))
+        val out = outDir.resolve(name)
+        try {
+            renderToPng(com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_LINKS_WIDTH.value.toInt(), 900, out, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize()) {
+                        QuickActionsPanel(state, { (it as? com.programmersbox.scrcpyviewer.ui.mirror.QuickActionEvent.Links)?.let { e -> links.onEvent(e.event) } }, console = null, links = links, motion = false)
+                    }
+                }
+            }
+        } finally {
+            scope.cancel()
+        }
+        assertTrue(Files.size(out) > 5_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror links tab`() {
+        val ok = "Starting: Intent { act=android.intent.action.VIEW dat=https://example.com/... }\nStatus: ok\nLaunchState: COLD\n" +
+            "Activity: com.android.chrome/com.google.android.apps.chrome.Main\nTotalTime: 412\nWaitTime: 420\nComplete"
+        val error = "Starting: Intent { act=android.intent.action.VIEW dat=myapp://settings/profile }\n" +
+            "Error: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW dat=myapp://settings/profile flg=0x10000000 }"
+        fun send(l: com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState, e: com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent) = l.onEvent(e)
+        for (mode in listOf(ThemeMode.Light, ThemeMode.Dark)) {
+            val m = mode.name.lowercase()
+            renderLinks("mirror-links-idle-$m.png", mode, ok) {
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetText("https://example.com/orders/1042"))
+            }
+            renderLinks("mirror-links-success-$m.png", mode, ok) {
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetText("https://example.com/orders/1042"))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetPackage("com.android.chrome"))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetBefore(com.programmersbox.scrcpyviewer.links.Before.ForceStop))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.Open)
+            }
+            renderLinks("mirror-links-failure-$m.png", mode, error) {
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetText("myapp://settings/profile"))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.Open)
+            }
+            renderLinks("mirror-links-details-$m.png", mode, ok) {
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetText("https://example.com/orders/1042"))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.ToggleDetails)
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetExtra(
+                    com.programmersbox.scrcpyviewer.links.Extra(com.programmersbox.scrcpyviewer.links.ExtraType.String, "source", "qa"),
+                ))
+            }
+            // The narrowest sheet: six icons, the Shell dot, Files badge and Logcat's window icon with its live badge.
+            val narrow = outDir.resolve("mirror-sheet-tabs-icons-$m.png")
+            renderToPng(QUICK_ACTIONS_WIDTH.value.toInt(), 160, narrow, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize()) {
+                        QuickActionsPanel(
+                            QuickActionsUiState(
+                                open = true, enabled = true, tab = SheetTab.Actions, consoleRunning = true, filesTransfersRunning = 2,
+                                logcatPopped = true, logcatLive = true,
+                            ),
+                            {}, console = null,
+                        )
+                    }
+                }
+            }
+            assertTrue(Files.size(narrow) > 2_000)
+        }
+    }
 }

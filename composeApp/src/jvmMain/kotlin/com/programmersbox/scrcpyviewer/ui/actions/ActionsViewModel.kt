@@ -68,6 +68,8 @@ data class ActionDraft(
     val confirm: Boolean = false,
     /** Name of the built-in template this unsaved draft started from, for the editor's banner; null once saved. */
     val fromTemplate: String? = null,
+    /** False for a draft filled from a template that isn't built in (a saved link): the editor shows no banner. */
+    val templateBanner: Boolean = true,
     /** Carried through editing so saving an AI-made action keeps its mark. */
     val source: ActionSource = ActionSource.User,
 )
@@ -244,7 +246,7 @@ class ActionsViewModel(
             request.new && request.template == null && e.draft != null && e.draft.id == null && e.draft.fromTemplate == null -> Unit
             !request.new && request.actionId == e.selectedId && e.draft != null -> Unit
             dirty -> _pendingDiscard.value = request
-            request.template != null -> startFromTemplate(request.template)
+            request.template != null -> startFromTemplate(request.template, request.banner)
             request.new -> new()
             else -> select(request.actionId!!)
         }
@@ -259,11 +261,12 @@ class ActionsViewModel(
 
     /** Drops unsaved changes, then opens [id], or a new action when [id] is null. */
     fun discardAndSelect(id: String?) {
-        val template = _pendingDiscard.value?.template
+        val pending = _pendingDiscard.value
+        val template = pending?.template
         _pendingDiscard.value = null
         when {
             id != null -> load(id)
-            template != null -> startFromTemplate(template)
+            template != null -> startFromTemplate(template, pending?.banner ?: true)
             else -> startNew()
         }
     }
@@ -447,8 +450,8 @@ class ActionsViewModel(
     private fun startNew() = open(null, ActionDraft(id = null, type = ActionType.Toggle, name = "", icon = ActionIcons.TOGGLE_DEFAULT))
 
     /** The draft has no baseline, so it counts as unsaved until Save. */
-    private fun startFromTemplate(template: ActionTemplate) =
-        open(null, template.action.toDraft().copy(id = null, fromTemplate = template.name), baseline = null)
+    private fun startFromTemplate(template: ActionTemplate, banner: Boolean = true) =
+        open(null, template.action.toDraft().copy(id = null, fromTemplate = template.name, templateBanner = banner), baseline = null)
 
     private fun open(id: String?, draft: ActionDraft, baseline: ActionDraft? = draft) {
         cancelTest()
