@@ -58,6 +58,13 @@ private const val TOLERANCE = 4
  */
 private const val TILE_SLACK = 24
 
+/**
+ * Keep tiled re-applies one window's app-caused resizes may start within [REAPPLY_WINDOW_MS]; past that its bounds are
+ * taken as they are (a tile below the window's minimum size would otherwise loop).
+ */
+private const val MAX_REAPPLIES = 2
+private const val REAPPLY_WINDOW_MS = 3_000L
+
 /** Applies in a row whose positions did not take before the arranger gives up (Wayland). */
 private const val MISSES_TO_DISABLE = 2
 
@@ -96,6 +103,8 @@ class WindowArranger(
     private val animator: WindowAnimator = WindowAnimator { entry, to, millis ->
         animateWindowBounds(entry.handle, to, millis, grow = true, screens)
     },
+    /** Milliseconds on a monotonic clock. */
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val _state = MutableStateFlow(ArrangeState())
     val state: StateFlow<ArrangeState> = _state.asStateFlow()
@@ -130,6 +139,9 @@ class WindowArranger(
     /** Windows whose app-caused resize ended and is settling: their bounds changes are not the user's yet. */
     private val appSettling = ConcurrentHashMap.newKeySet<String>()
 
+    /** When each window's app-caused resizes last had the layout applied again (see [MAX_REAPPLIES]). */
+    private val reapplies = ConcurrentHashMap<String, ArrayDeque<Long>>()
+
     init {
         // Keep tiled: a window opened or closed.
         scope.launch {
@@ -141,12 +153,22 @@ class WindowArranger(
                 if (s.keepTiled && s.layout != ArrangeLayout.AsPlaced && s.movable) apply(s.layout, focus)
             }
         }
+        // One watcher per registered window, kept while that same entry stays registered: another window opening or
+        // closing never restarts it (a settle in progress would be lost).
         scope.launch {
-            windows.entries.collectLatest { map ->
-                coroutineScope {
-                    for ((serial, entry) in map) {
+            val watchers = HashMap<String, Pair<WindowEntry, Job>>()
+            windows.entries.collect { map ->
+                val gone = watchers.filter { (serial, w) -> map[serial] !== w.first }
+                for ((serial, w) in gone) {
+                    w.second.cancel()
+                    watchers.remove(serial)
+                    reapplies.remove(serial)
+                }
+                for ((serial, entry) in map) {
+                    if (serial in watchers) continue
+                    watchers[serial] = entry to launch {
                         launch { entry.handle.boundsChanges.collect { onUserMoved(serial) } }
-                        launch { watchAppSizing(serial, entry) }
+                        watchAppSizing(serial, entry)
                     }
                 }
             }
@@ -195,8 +217,10 @@ class WindowArranger(
      * window it took out of its tile has the layout applied again.
      */
     private suspend fun watchAppSizing(serial: String, entry: WindowEntry) {
-        entry.appSizing.drop(1).collectLatest { sizing ->
-            if (sizing) return@collectLatest
+        var sized = false // the window has been sizing itself since this watcher started
+        entry.appSizing.collectLatest { sizing ->
+            if (sizing) sized = true
+            if (sizing || !sized) return@collectLatest
             appSettling += serial
             try {
                 delay(ARRANGE_SETTLE_MS)
@@ -206,13 +230,28 @@ class WindowArranger(
                 val s = _state.value
                 val tile = tiles[serial]
                 if (s.keepTiled && s.layout != ArrangeLayout.AsPlaced && s.movable && tile != null &&
-                    (abs(bounds.width - tile.width) > TILE_SLACK || abs(bounds.height - tile.height) > TILE_SLACK)
+                    (abs(bounds.width - tile.width) > TILE_SLACK || abs(bounds.height - tile.height) > TILE_SLACK) &&
+                    takeReapply(serial)
                 ) {
                     apply(s.layout, focus)
+                } else if (tile != null) {
+                    settled[serial] = bounds // where it stays, as far as Keep tiled goes
                 }
             } finally {
                 appSettling -= serial
             }
+        }
+    }
+
+    /** Whether [serial]'s app-caused resize may have the layout applied again now; counts it if so. */
+    private fun takeReapply(serial: String): Boolean {
+        val now = nowMs()
+        val times = reapplies.getOrPut(serial) { ArrayDeque() }
+        synchronized(times) {
+            while (times.isNotEmpty() && now - times.first() > REAPPLY_WINDOW_MS) times.removeFirst()
+            if (times.size >= MAX_REAPPLIES) return false
+            times.addLast(now)
+            return true
         }
     }
 
@@ -249,8 +288,8 @@ class WindowArranger(
                     launch {
                         val limit = ARRANGE_MILLIS + ARRANGE_STAGGER_MILLIS * i + MOVE_GRACE_MS
                         val move = launch(entry.uiContext.withoutJob()) {
-                            withTimeoutOrNull(limit) {
-                                val to = targets.getValue(serial)
+                            val to = targets.getValue(serial)
+                            val done = withTimeoutOrNull(limit) {
                                 starts[serial] = entry.handle.bounds
                                 if (animate) {
                                     delay(i * ARRANGE_STAGGER_MILLIS)
@@ -258,6 +297,11 @@ class WindowArranger(
                                 } else {
                                     entry.handle.bounds = to
                                 }
+                            }
+                            // Too slow (a stalled frame clock) but still open: no window is left halfway.
+                            if (done == null && windows.entries.value[serial] === entry) {
+                                starts.putIfAbsent(serial, entry.handle.bounds)
+                                entry.handle.bounds = to
                             }
                         }
                         // A window that closes mid-move: its frame clock may never tick again.

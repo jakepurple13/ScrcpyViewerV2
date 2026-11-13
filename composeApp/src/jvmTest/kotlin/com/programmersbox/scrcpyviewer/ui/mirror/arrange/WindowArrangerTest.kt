@@ -7,6 +7,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.sun.jna.Pointer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
@@ -15,11 +16,14 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import java.awt.Rectangle
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -52,6 +56,9 @@ class WindowArrangerTest {
                 changes.emit(Unit)
             }
         }
+
+        /** A bounds change reported late, after whatever caused it has gone (on [lateScope], else at once). */
+        fun reportLate() = emitChange()
 
         /** The app resizes the window itself (the sheet, a new frame size). */
         fun appResize(to: Rectangle) {
@@ -96,6 +103,7 @@ class WindowArrangerTest {
         minimized: () -> Boolean = { false },
         chromeW: () -> Int = { 0 },
         appSizing: MutableStateFlow<Boolean> = MutableStateFlow(false),
+        uiContext: CoroutineContext = EmptyCoroutineContext,
     ) = WindowEntry(
         handle = handle,
         info = { ArrangeWindow(serial, IntSize(1080, 2400), chromeW(), 40) },
@@ -104,6 +112,7 @@ class WindowArrangerTest {
         showing = { true },
         arranging = mutableStateOf(false),
         appSizing = appSizing,
+        uiContext = uiContext,
     )
 
     /** Runs the arranger (on the test's background scope, which advanceUntilIdle skips) until it has settled. */
@@ -114,13 +123,18 @@ class WindowArrangerTest {
 
     private class Rig(val windows: MirrorWindows, val arranger: WindowArranger, val animations: MutableList<String>)
 
-    /** An animator that moves in 4 steps over 380 ms of virtual time. */
+    /**
+     * An animator that moves in 4 steps over 380 ms of virtual time. Cut short, the window reports its last frame (as
+     * the native window does, after the move's coroutine is gone).
+     */
     private fun TestScope.rig(
         animate: Boolean = true,
         reduceMotion: Boolean = false,
         scope: CoroutineScope = backgroundScope,
         /** Serials whose move never ends (a closed window's frame clock). */
         hang: Set<String> = emptySet(),
+        /** Serials whose move runs at a third of the speed (a slow frame clock), past the move's time limit. */
+        slow: Set<String> = emptySet(),
     ): Rig {
         val windows = MirrorWindows().apply { mainWindowBounds = { Rectangle(100, 100, 800, 600) } }
         val animations = mutableListOf<String>()
@@ -131,17 +145,24 @@ class WindowArrangerTest {
             reduceMotion = { reduceMotion },
             scope = scope,
             animator = { entry, to, millis ->
-                animations += entry.info().serial
-                if (entry.info().serial in hang) awaitCancellation()
-                val from = entry.handle.bounds
-                for (i in 1..4) {
-                    delay(millis / 4L)
-                    entry.handle.bounds = Rectangle(
-                        from.x + (to.x - from.x) * i / 4, from.y + (to.y - from.y) * i / 4,
-                        from.width + (to.width - from.width) * i / 4, from.height + (to.height - from.height) * i / 4,
-                    )
+                val serial = entry.info().serial
+                animations += serial
+                try {
+                    if (serial in hang) awaitCancellation()
+                    val from = entry.handle.bounds
+                    for (i in 1..4) {
+                        delay(millis / 4L * (if (serial in slow) 3 else 1))
+                        entry.handle.bounds = Rectangle(
+                            from.x + (to.x - from.x) * i / 4, from.y + (to.y - from.y) * i / 4,
+                            from.width + (to.width - from.width) * i / 4, from.height + (to.height - from.height) * i / 4,
+                        )
+                    }
+                } catch (c: CancellationException) {
+                    (entry.handle as FakeHandle).reportLate()
+                    throw c
                 }
             },
+            nowMs = { testScheduler.currentTime },
         )
         return Rig(windows, arranger, animations)
     }
@@ -394,14 +415,18 @@ class WindowArrangerTest {
     @Test
     fun lateEventsAcrossOverlappingAppliesAreTheArrangers() = runTest {
         val r = rig()
-        val a = FakeHandle(Rectangle(10, 10, 300, 600), lateScope = backgroundScope, lateMs = 150)
-        val b = FakeHandle(Rectangle(20, 20, 300, 600), lateScope = backgroundScope, lateMs = 150)
-        r.windows.register("a", entry("a", a))
-        r.windows.register("b", entry("b", b))
+        // The windows' UI thread is a dispatcher of its own, so every hop onto it really waits its turn.
+        val ui = StandardTestDispatcher(testScheduler)
+        val a = FakeHandle(Rectangle(10, 10, 300, 600), lateScope = backgroundScope, lateMs = LATE_MS)
+        val b = FakeHandle(Rectangle(20, 20, 300, 600), lateScope = backgroundScope, lateMs = LATE_MS)
+        r.windows.register("a", entry("a", a, uiContext = ui))
+        r.windows.register("b", entry("b", b, uiContext = ui))
         r.arranger.apply(ArrangeLayout.Grid, focus = null)
         r.arranger.setKeepTiled(true)
         settle()
-        // Grid to Cascade, then Side by side mid-move: each cut-short move's events land during or after the next.
+        assertTrue(r.arranger.state.value.keepTiled)
+        // Grid to Cascade, cut short mid-move by Side by side: the cut-short moves report their last frame as the
+        // next apply starts.
         r.arranger.apply(ArrangeLayout.Cascade, focus = null)
         advanceTimeBy(200)
         r.arranger.apply(ArrangeLayout.SideBySide, focus = null)
@@ -411,6 +436,68 @@ class WindowArrangerTest {
         assertTrue(r.arranger.state.value.keepTiled)
         assertFalse(r.arranger.busy)
         assertEquals(ArrangeLayout.SideBySide, r.arranger.state.value.layout)
+    }
+
+    @Test
+    fun anotherWindowOpeningNeverLosesASettleInProgress() = runTest {
+        val r = rig()
+        val a = FakeHandle(Rectangle(10, 10, 300, 600))
+        val b = FakeHandle(Rectangle(20, 20, 300, 600))
+        val sizing = MutableStateFlow(false)
+        var sheet = 0
+        r.windows.register("a", entry("a", a, chromeW = { sheet }, appSizing = sizing))
+        r.windows.register("b", entry("b", b))
+        r.arranger.apply(ArrangeLayout.Grid, focus = null)
+        r.arranger.setKeepTiled(true)
+        settle()
+        val tile = a.bounds
+        val setsBefore = a.sets.size
+
+        // The sheet opens on a; while it settles, b's window registers again (same serials: no Keep tiled re-apply).
+        sizing.value = true
+        sheet = 280
+        a.appResize(Rectangle(tile.x, tile.y, tile.width + 280, tile.height))
+        advanceTimeBy(50)
+        sizing.value = false
+        advanceTimeBy(100)
+        r.windows.register("b", entry("b", b))
+        settle()
+        assertTrue(a.sets.size > setsBefore, "a is re-tiled around its sheet")
+        assertTrue(r.arranger.state.value.keepTiled)
+    }
+
+    @Test
+    fun keepTiledStopsReapplyingAWindowThatCannotFitItsTile() = runTest {
+        val r = rig()
+        val a = FakeHandle(Rectangle(10, 10, 300, 600))
+        val b = FakeHandle(Rectangle(20, 20, 300, 600))
+        val sizing = MutableStateFlow(false)
+        val ea = entry("a", a, appSizing = sizing)
+        r.windows.register("a", ea)
+        r.windows.register("b", entry("b", b))
+        // Window a has a minimum width far above its tile: once arranged, it widens itself back every time.
+        backgroundScope.launch {
+            var was = false
+            while (true) {
+                val now = ea.arranging.value
+                if (was && !now) {
+                    sizing.value = true
+                    a.appResize(Rectangle(a.rect.x, a.rect.y, maxOf(a.rect.width, 900), a.rect.height))
+                    delay(20)
+                    sizing.value = false
+                }
+                was = now
+                delay(10)
+            }
+        }
+        r.arranger.apply(ArrangeLayout.Grid, focus = null)
+        r.arranger.setKeepTiled(true)
+        advanceTimeBy(20_000)
+        runCurrent()
+        val moves = r.animations.count { it == "a" }
+        assertTrue(moves <= 4, "first apply (and its Keep tiled restart) plus at most 2 re-applies, was $moves")
+        assertTrue(r.arranger.state.value.keepTiled)
+        assertFalse(r.arranger.busy)
     }
 
     @Test
@@ -443,7 +530,35 @@ class WindowArrangerTest {
         settle()
         assertFalse(ea.arranging.value || eb.arranging.value)
         assertFalse(r.arranger.busy)
+        assertEquals(gridTargets()["b"], eb.handle.bounds, "put in place when its move gives up")
     }
+
+    @Test
+    fun aSlowMoveEndsInPlaceAndIsNoMiss() = runTest {
+        val r = rig(slow = setOf("a", "b"))
+        val ea = entry("a", FakeHandle(Rectangle(10, 10, 300, 600)))
+        val eb = entry("b", FakeHandle(Rectangle(20, 20, 300, 600)))
+        r.windows.register("a", ea)
+        r.windows.register("b", eb)
+        repeat(2) {
+            r.arranger.apply(ArrangeLayout.Grid, focus = null)
+            settle()
+            r.arranger.apply(ArrangeLayout.Cascade, focus = null)
+            settle()
+        }
+        r.arranger.apply(ArrangeLayout.Grid, focus = null)
+        settle()
+        assertEquals(gridTargets()["a"], ea.handle.bounds)
+        assertEquals(gridTargets()["b"], eb.handle.bounds)
+        assertTrue(r.arranger.state.value.movable)
+    }
+
+    /** Grid's places for two phone windows a and b in the test screen. */
+    private fun gridTargets() = layout(
+        ArrangeLayout.Grid,
+        listOf(ArrangeWindow("a", IntSize(1080, 2400), 0, 40), ArrangeWindow("b", IntSize(1080, 2400), 0, 40)),
+        screen.workArea, null, ARRANGE_GAP,
+    )
 
     @Test
     fun asPlacedKeepsBoundsOfWindowsItCouldNotRestore() = runTest {
@@ -466,3 +581,6 @@ class WindowArrangerTest {
         assertEquals(startB, b.bounds)
     }
 }
+
+/** How late the fake windows report a bounds change in the race test: one dispatch, no virtual time. */
+private const val LATE_MS = 0L
