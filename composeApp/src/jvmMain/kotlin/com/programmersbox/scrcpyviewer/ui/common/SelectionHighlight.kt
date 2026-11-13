@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.ui.common
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -10,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
@@ -22,8 +24,7 @@ import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.LayoutDirection
-import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.collectLatest
 
 /**
  * Tracks the selected row's bounds (relative to the list container) and the animated rect drawn behind it.
@@ -43,10 +44,21 @@ class SelectionHighlightState {
         container = coordinates
     }
 
-    internal fun onRowPlaced(row: LayoutCoordinates) {
+    private var owner: Any? = null
+
+    internal fun onRowPlaced(row: LayoutCoordinates, token: Any) {
         val parent = container?.takeIf { it.isAttached } ?: return
         if (!row.isAttached) return
+        owner = token
         target = parent.localBoundingBoxOf(row)
+    }
+
+    /** Clears the target if [token] is the row that set it; a newer selected row keeps its own. */
+    internal fun release(token: Any) {
+        if (owner === token) {
+            owner = null
+            target = null
+        }
     }
 }
 
@@ -54,8 +66,15 @@ class SelectionHighlightState {
 fun rememberSelectionHighlight(): SelectionHighlightState = remember { SelectionHighlightState() }
 
 /** Marks the selected row; its bounds become the highlight target. Unselected rows are ignored. */
-fun Modifier.selectionHighlightTarget(state: SelectionHighlightState, selected: Boolean): Modifier =
-    if (selected) onPlaced { state.onRowPlaced(it) } else this
+fun Modifier.selectionHighlightTarget(state: SelectionHighlightState, selected: Boolean): Modifier = composed {
+    val token = remember { Any() }
+    if (selected) {
+        DisposableEffect(state, token) { onDispose { state.release(token) } }
+        onPlaced { state.onRowPlaced(it, token) }
+    } else {
+        this
+    }
+}
 
 /**
  * On the list container: draws [color] in [shape] behind the content at the selected row, sliding
@@ -65,7 +84,14 @@ fun Modifier.selectionHighlight(state: SelectionHighlightState, color: Color, sh
     val reduceMotion = LocalReduceMotion.current
     LaunchedEffect(state, reduceMotion) {
         var animatable: Animatable<Rect, *>? = null
-        snapshotFlow { state.target }.filterNotNull().collect { rect ->
+        snapshotFlow { state.target }.collectLatest { rect ->
+            if (rect == null) {
+                // A switch clears one row and places the next in the same frame; only a target still gone a frame later is a real deselect.
+                withFrameNanos { }
+                animatable = null
+                state.current = null
+                return@collectLatest
+            }
             val running = animatable
             if (running == null || reduceMotion) {
                 animatable = Animatable(rect, Rect.VectorConverter)
@@ -77,7 +103,7 @@ fun Modifier.selectionHighlight(state: SelectionHighlightState, color: Color, sh
     }
     onPlaced { state.onContainerPlaced(it) }.drawBehind {
         val rect = state.current ?: return@drawBehind
-        val outline: Outline = shape.createOutline(rect.size, LayoutDirection.Ltr, Density(density, fontScale))
+        val outline: Outline = shape.createOutline(rect.size, layoutDirection, Density(density, fontScale))
         translate(rect.left, rect.top) { drawOutline(outline, color) }
     }
 }

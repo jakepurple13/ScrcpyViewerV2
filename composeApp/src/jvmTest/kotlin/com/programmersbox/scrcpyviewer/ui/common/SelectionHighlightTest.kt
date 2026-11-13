@@ -26,6 +26,53 @@ class SelectionHighlightTest {
     private var selected by mutableIntStateOf(0)
     private var state: SelectionHighlightState? = null
 
+    private fun scene() = SceneDriver(ImageComposeScene(200, 200, Density(1f)) {
+        val highlight = rememberSelectionHighlight().also { state = it }
+        Column(Modifier.selectionHighlight(highlight, Color.Red, RoundedCornerShape(4.dp))) {
+            repeat(3) { i ->
+                Box(Modifier.fillMaxWidth().height(40.dp).selectionHighlightTarget(highlight, selected == i))
+            }
+        }
+    })
+
+    @Test
+    fun `retargeting mid-slide settles on the newest row`() = onEdt {
+        selected = 0
+        val scene = scene()
+        try {
+            scene.frames(5)
+            selected = 2
+            scene.frames(8)
+            val atSwitch = state!!.current!!.top
+            assertTrue(atSwitch > 0f && atSwitch < 80f, "mid-slide: $atSwitch")
+            selected = 1
+            scene.frames(4)
+            assertTrue(state!!.current!!.top < 80f, "never reaches the stale row")
+            scene.frames(150)
+            assertEquals(40f, state!!.current!!.top, 0.5f)
+        } finally {
+            scene.scene.close()
+        }
+    }
+
+    @Test
+    fun `deselecting everything stops drawing the highlight`() = onEdt {
+        selected = 1
+        val scene = scene()
+        try {
+            scene.frames(5)
+            assertNotNull(state!!.current)
+            selected = -1
+            scene.frames(6)
+            assertEquals(null, state!!.current)
+            selected = 2
+            scene.frames(6)
+            assertEquals(80f, state!!.current!!.top, 0.5f)
+        } finally {
+            scene.scene.close()
+        }
+    }
+
     @Test
     fun `highlight slides from the old row to the new one`() = onEdt {
         val scene = SceneDriver(ImageComposeScene(200, 200, Density(1f)) {
