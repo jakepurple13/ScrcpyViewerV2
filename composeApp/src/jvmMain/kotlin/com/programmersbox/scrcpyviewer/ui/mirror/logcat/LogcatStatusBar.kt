@@ -104,13 +104,14 @@ private fun LiveIndicator(run: LogcatRun, motion: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val live = run == LogcatRun.Running
     val dot by animateColorAsState(if (live) LogcatColors.level(LogLevel.Info).first else scheme.outline, if (motion) tween(300) else snap())
+    // Held as State and read in the layer, so the blink redraws the dot without recomposing.
     val blink = if (live && motion) {
-        rememberInfiniteTransition().animateFloat(1f, 0.35f, infiniteRepeatable(tween(800), RepeatMode.Reverse)).value
+        rememberInfiniteTransition().animateFloat(1f, 0.35f, infiniteRepeatable(tween(800), RepeatMode.Reverse))
     } else {
-        1f
+        null
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).graphicsLayer { alpha = blink }.background(dot, CircleShape))
+        Box(Modifier.size(8.dp).graphicsLayer { alpha = blink?.value ?: 1f }.background(dot, CircleShape))
         Spacer(Modifier.size(6.dp))
         val text = when (run) {
             LogcatRun.NotStarted -> "Not running"

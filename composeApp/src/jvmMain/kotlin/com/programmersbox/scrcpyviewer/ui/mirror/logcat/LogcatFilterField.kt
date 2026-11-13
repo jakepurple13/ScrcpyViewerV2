@@ -60,7 +60,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -177,19 +178,40 @@ internal fun LogcatFilterField(controller: LogcatController, motion: Boolean, mo
         if (focused) scheme.surface else scheme.surfaceContainerHigh,
         if (motion) tween(200) else snap(),
     )
-    val colorFor = SpanKind.entries.associateWith { LogcatColors.query(it) }
-    val transformation = remember(colorFor) {
+    val keyColor = LogcatColors.query(SpanKind.Key)
+    val errorColor = LogcatColors.query(SpanKind.Error)
+    val opColor = LogcatColors.query(SpanKind.Operator)
+    val quotedColor = LogcatColors.query(SpanKind.Quoted)
+    val transformation = remember(controller, keyColor, errorColor, opColor, quotedColor) {
+        val colorFor: (SpanKind) -> Color = {
+            when (it) {
+                SpanKind.Key -> keyColor
+                SpanKind.Negation, SpanKind.Error -> errorColor
+                SpanKind.Operator -> opColor
+                SpanKind.Quoted -> quotedColor
+            }
+        }
         VisualTransformation { t ->
-            TransformedText(highlightQuery(t.text, LogcatQuery.parse(t.text).spans, colorFor::getValue), OffsetMapping.Identity)
+            // The controller already parsed its query; parse here only for text it doesn't hold yet.
+            val spans = controller.parsed.takeIf { controller.query == t.text }?.spans ?: LogcatQuery.parse(t.text).spans
+            TransformedText(highlightQuery(t.text, spans, colorFor), OffsetMapping.Identity)
         }
     }
     var layout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    var wrapX by remember { mutableFloatStateOf(0f) }
+    // Where the text starts inside the wrapper; it changes only with the layout, not as the sheet slides.
     var fieldX by remember { mutableFloatStateOf(0f) }
     var wrapWidth by remember { mutableIntStateOf(0) }
+    val coords = remember { arrayOfNulls<LayoutCoordinates>(2) }
+    fun measureField() {
+        val wrap = coords[0]?.takeIf { it.isAttached } ?: return
+        val field = coords[1]?.takeIf { it.isAttached } ?: return
+        val x = wrap.localPositionOf(field, Offset.Zero).x
+        if (x != fieldX) fieldX = x
+        if (wrap.size.width != wrapWidth) wrapWidth = wrap.size.width
+    }
 
     Column(modifier) {
-        Box(Modifier.fillMaxWidth().onGloballyPositioned { wrapX = it.positionInRoot().x; wrapWidth = it.size.width }) {
+        Box(Modifier.fillMaxWidth().onGloballyPositioned { coords[0] = it; measureField() }) {
             Row(
                 Modifier.fillMaxWidth().height(36.dp).background(container, FieldShape).border(1.dp, border, FieldShape)
                     .padding(start = 9.dp, end = 3.dp),
@@ -216,7 +238,7 @@ internal fun LogcatFilterField(controller: LogcatController, motion: Boolean, mo
                         onTextLayout = { layout = it },
                         modifier = Modifier.fillMaxWidth()
                             .focusRequester(focus)
-                            .onGloballyPositioned { fieldX = it.positionInRoot().x }
+                            .onGloballyPositioned { coords[1] = it; measureField() }
                             .onFocusChanged {
                                 if (it.isFocused && !focused) dismissed = false
                                 focused = it.isFocused
@@ -251,7 +273,7 @@ internal fun LogcatFilterField(controller: LogcatController, motion: Boolean, mo
                 val s = held[0]
                 val tokenX = layout?.let { l -> l.getHorizontalPosition(s.start.coerceIn(0, l.layoutInput.text.length), true) } ?: 0f
                 val minWidth = with(density) { 270.dp.toPx() }
-                val x = (fieldX - wrapX + tokenX - with(density) { 8.dp.toPx() })
+                val x = (fieldX + tokenX - with(density) { 8.dp.toPx() })
                     .coerceAtMost(wrapWidth - minWidth).coerceAtLeast(0f)
                 Popup(
                     offset = IntOffset(x.toInt(), with(density) { 40.dp.roundToPx() }),
