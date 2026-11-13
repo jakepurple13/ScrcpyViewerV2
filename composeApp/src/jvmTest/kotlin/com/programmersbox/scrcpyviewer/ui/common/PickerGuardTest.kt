@@ -45,7 +45,8 @@ class PickerGuardTest {
     @Test
     fun aFailedOrCancelledPickFreesTheGuard() = runBlocking<Unit> {
         val guard = PickerGuard()
-        val failing = CoroutineScope(Job())
+        // Handled here, so the failure does not reach the global handler and fail a later runTest in the suite.
+        val failing = CoroutineScope(Job() + kotlinx.coroutines.CoroutineExceptionHandler { _, _ -> })
         withTimeout(5_000) { guard.launch(failing) { error("picker failed") }!!.join() }
         assertFalse(guard.inProgress)
         // A scope already cancelled (the screen left) never runs the pick, and must not leave the guard stuck.

@@ -209,6 +209,39 @@ straight from full to menu. Applies to:
   window-growth logic (`SheetGrowth.kt`, `sheetFrameBounds`). The window still grows on open when there is
   screen room. Floating only applies when the window is already too narrow.
 
+### 6a. Mirror sheet tabs below their minimums (added 2026-11-13)
+
+Main (v1.17) gave the sheet four tabs: Actions (280 dp minimum), Apps (480), Shell (400) and Files (440).
+Approved through the addendum mockup https://claude.ai/artifact/6wsGe9iFtdpu4JJPkzcTi7.
+
+- **Placement** uses each tab's own minimum: docked while toolbar + 160 dp + that tab's width fit, floating
+  below that, full width under toolbar + that tab's minimum. When full, the sheet can be as narrow as 280 dp
+  (344 dp window), so every tab's inside reflows below its old minimum. Above the tab's minimum nothing
+  changes. The docked minimums and the saved widths stay as they are.
+- **Tab control** (`QuickActionsSheet.kt` `SheetTabs`): under 340 dp sheet width the segments show icons
+  (Actions = bolt, Apps = grid, Shell = terminal, Files = folder). The selected segment keeps its label and
+  takes more of the width; the change animates. Shell's red dot and the Files transfer badge sit on the icon.
+  Tooltips give the names.
+- **Shell:** under 360 dp Copy folds into ⋮. Pause, Run and Stop never fold.
+- **Apps:**
+  - Under 400 dp the All / User / System chips become one chip showing the current filter and its count,
+    opening a menu with all three. Reload stays.
+  - The card grid already reflows (2 columns at 280 dp); cards keep animating to new places.
+  - Options sheet under 360 dp: the version boxes stack, and the four actions become a 2 × 2 grid with the
+    icon beside the label. Launch stays first.
+- **Files:**
+  - Toolbar: Refresh and New folder fold into ⋮ under 440 dp, Push under 340 dp. Folded items show first
+    in the menu. The path keeps at least 120 dp and still fades at its start.
+  - Free space: under 380 dp it moves under the filter field as a full-width meter with the text at its end.
+  - Rows: under 400 dp Modified moves to a second line under the name (rows grow from 40 to 52 dp); under
+    330 dp Size joins that line ("4.1 MB · Nov 8, 2:32 PM"). The column header becomes one sort chip
+    opening the sort menu. Cells glide to their new place.
+  - Selection bar: under 380 dp Rename and Delete fold into the bar's ⋮ (first in the menu). Pull never folds.
+  - Transfers tray: under 400 dp each transfer stacks: name, bar, then destination and progress.
+  - Dialogs (delete, name clash): under 340 dp the buttons stack full width with the filled one on top.
+  - The drop chip keeps a 12 dp margin and ellipsizes the folder name.
+- **Motion:** as everywhere else: moves use `layoutSpring`, folds fade, reduced motion fades or snaps.
+
 ### Window minimums
 
 A floor, not the fix:
@@ -236,7 +269,8 @@ Tao window backend is merged. This branch has been fast-forwarded there.
   - Row stack/level choice from widths.
   - Bar fold order.
   - Pane mode (two panes / list view / item view) from window width and `detailOpen`.
-  - Mirror sheet docked / floating / full.
+  - Mirror sheet docked / floating / full, per tab minimum.
+  - Sheet tab breakpoints (tab control, Apps, Files, Shell) from the sheet width.
 - Compose UI tests (existing jvmTest setup) at **360, 520, 700 and 1000 dp** for each top-level screen.
   Assert that the primary actions are displayed and not clipped, and that no row's text gets less than its
   minimum width.

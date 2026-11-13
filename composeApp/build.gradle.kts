@@ -17,7 +17,7 @@ plugins {
 
 // Single source of truth: feeds packageVersion and the generated APP_VERSION constant shown in the window title.
 // Local update tests only: -PappVersion=1.6.1 builds a "newer" package.
-val appVersion = (findProperty("appVersion") as String?) ?: "1.16.0"
+val appVersion = (findProperty("appVersion") as String?) ?: "1.17.1"
 
 val generateAppVersion = tasks.register("generateAppVersion") {
     val version = appVersion
@@ -77,6 +77,11 @@ kotlin {
             implementation(libs.nucleus.window.tao)
             implementation(libs.nucleus.window.material3)
             implementation(libs.jna)
+            // Only icon and resource parsing is used: the signing parts (BouncyCastle) and annotations stay out.
+            implementation("net.dongliu:apk-parser:${libs.versions.apk.parser.get()}") {
+                exclude(group = "org.bouncycastle")
+                exclude(group = "com.google.code.findbugs")
+            }
             val ffmpeg = libs.versions.ffmpeg.get()
             val javacpp = libs.versions.javacpp.get()
             implementation("org.bytedeco:ffmpeg:$ffmpeg")

@@ -52,8 +52,12 @@ import com.programmersbox.scrcpyviewer.di.startAppKoin
 import com.programmersbox.scrcpyviewer.update.UpdateManager
 import com.programmersbox.scrcpyviewer.update.UpdateState
 import kotlinx.coroutines.flow.first
+import com.programmersbox.scrcpyviewer.files.DragCache
+import kotlin.concurrent.thread
 
 fun main() {
+    // Files a crashed or killed run left in the Files tab's cache (drags, opened files, APKs being installed).
+    thread(name = "drag-cache-sweep", isDaemon = true) { DragCache().sweep() }
     val koin = startAppKoin()
     koin.get<ActionInbox>().start(koin.get<AppScope>())
     val appSettings = koin.get<AppSettings>()

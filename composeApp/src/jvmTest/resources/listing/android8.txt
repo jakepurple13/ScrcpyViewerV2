@@ -1,0 +1,3 @@
+directory|4096|1700000000|/sdcard/DCIM|__svend__
+regular file|214337|1699400000|/sdcard/notes.txt|__svend__
+directory|4096|1700000100|/sdcard/.thumbnails|__svend__
