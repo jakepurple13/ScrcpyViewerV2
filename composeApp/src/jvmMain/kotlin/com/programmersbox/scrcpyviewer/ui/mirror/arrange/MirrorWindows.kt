@@ -40,6 +40,19 @@ class MirrorWindows {
     @Volatile
     var mainWindowBounds: () -> Rectangle? = { null }
 
+    private val _lastFocused = MutableStateFlow<String?>(null)
+
+    /**
+     * The serial of the mirror window that last had the keyboard focus (still while focus is in another app or the menu
+     * bar menu), or null when none has or it closed. The menu bar's "Focus the front window" puts it in the large area.
+     */
+    val lastFocused: StateFlow<String?> = _lastFocused.asStateFlow()
+
+    /** [serial]'s window gained the keyboard focus. */
+    fun focused(serial: String) {
+        _lastFocused.value = serial
+    }
+
     fun register(serial: String, entry: WindowEntry) {
         _entries.update { it + (serial to entry) }
     }
@@ -47,5 +60,6 @@ class MirrorWindows {
     /** Removes [serial] if [entry] is still its entry (a reopened window may have registered meanwhile). */
     fun unregister(serial: String, entry: WindowEntry) {
         _entries.update { if (it[serial] === entry) it - serial else it }
+        if (serial !in _entries.value) _lastFocused.compareAndSet(serial, null)
     }
 }

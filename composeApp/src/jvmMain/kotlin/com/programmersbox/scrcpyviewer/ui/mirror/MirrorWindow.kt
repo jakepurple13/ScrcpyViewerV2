@@ -41,7 +41,15 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeWindow
+import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ARRANGE_LABEL
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeButton
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeMenu
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.rememberArrangeStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.ArrangePlace
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowEntry
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
@@ -379,6 +387,10 @@ fun MirrorWindow(
     following: InputFollowing = koinInject(),
     /** The open mirror windows the arranger moves; this window joins once it has its first frame and size. */
     mirrorWindows: MirrorWindows = koinInject(),
+    /** Arrange mirror windows: the title bar's Arrange button applies layouts through it. */
+    arranger: WindowArranger = koinInject(),
+    /** `Settings.shortcuts`, shown next to the Arrange menu's layouts once set. */
+    appSettings: AppSettings = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -629,6 +641,8 @@ fun MirrorWindow(
         reduceMotion = reduceMotion,
         control = control,
     )
+    val shortcuts = appSettings.settings.collectAsState().value.shortcuts
+    val arrangeStrip = rememberArrangeStrip(serial, arranger, controller.open, shortcuts, reduceMotion)
     val followRings = remember(session) { ClickIndicator(mapper::displayedRect) }
     FollowedTouchRings(serial, following, followRings, mapper::toView)
 
@@ -745,7 +759,7 @@ fun MirrorWindow(
         onPreviewKeyEvent = keys::onKey,
         titleBar = {
             // The overflow menu's Copy command shows its "Copied" message in the window's snackbar.
-            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, followStrip, applyZoom) }
+            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, followStrip, arrangeStrip, applyZoom) }
         },
     ) {
         // Every move, resize, focus and native call on the window goes through this.
@@ -758,7 +772,11 @@ fun MirrorWindow(
         }
         LaunchedEffect(session, handle) {
             windowHandle = handle
-            handle.focused.collect { windowFocused = it }
+            handle.focused.collect {
+                windowFocused = it
+                // The menu bar's "Focus the front window" arranges around the window focused last.
+                if (it) mirrorWindows.focused(serial)
+            }
         }
         // Every gain and loss, not the merged state: each loss releases what the device holds.
         LaunchedEffect(keys, handle) {
@@ -1361,24 +1379,33 @@ private object NoTitleBarScope : AppTitleBarScope {
  * it is transparent (the bar paints `surfaceContainer`) and as tall as the bar; its clickables are [interactive].
  *
  * With [follow]: the "Following" chip after the model while this window follows, and the "Send input to…" button
- * before the copy button while other mirror windows are open (never on a follower). Which parts show is [stripRoom];
+ * before the copy button while other mirror windows are open (never on a follower). With [arrange] (two or more mirror
+ * windows open): the Arrange button before the copy button, in the ⋮ menu when narrow. Which parts show is [stripRoom];
  * every part that comes or goes expands or shrinks with a fade ([stripEnter], [stripExit]), so starting or stopping
  * following, opening a second window or resizing never changes the bar in one frame.
  */
 @Composable
-internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip? = null, onZoom: (ZoomCommand) -> Unit) {
+internal fun AppTitleBarScope.TopStrip(
+    state: MirrorUiState,
+    follow: FollowStrip? = null,
+    arrange: ArrangeStrip? = null,
+    onZoom: (ZoomCommand) -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     val custom = chrome == WindowChrome.Custom
-    val reduce = follow?.reduceMotion == true
+    val reduce = (follow?.reduceMotion ?: arrange?.reduceMotion) == true
     val modelStyle = stripModelStyle()
     val chip = rememberChipWidths(state.model, modelStyle, follow)
     // The chip's widths while it leaves (following stopped, chip already null), so its width cap does not jump. A
     // plain holder.
     val lastChip = remember { arrayOfNulls<ChipWidths>(1) }
     if (chip != null) lastChip[0] = chip
+    // The same for the Arrange button while it shrinks away (the second window closed, arrange already null).
+    val lastArrange = remember { arrayOfNulls<ArrangeStrip>(1) }
+    if (arrange != null) lastArrange[0] = arrange
     BoxWithConstraints(Modifier.fillMaxWidth().background(if (custom) Color.Transparent else colors.surfaceContainer)) {
         val w = maxWidth
-        val room = stripRoom(w, STRIP_MINS, state.details.isNotEmpty(), follow, chip)
+        val room = stripRoom(w, STRIP_MINS, state.details.isNotEmpty(), follow, chip, arrange = arrange != null)
         val following = follow?.role is FollowRole.Follower
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (custom) 0.dp else 4.dp).heightIn(min = 40.dp),
@@ -1441,11 +1468,15 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip
                     )
                 }
             }
+            StripSlot(room.arrange == ArrangePlace.Strip, reduce) {
+                (arrange ?: lastArrange[0])?.let { ArrangeButton(it, Modifier.interactive("arrange")) }
+            }
             StripSlot(room.copy, reduce) { CopyButton(text = { state.command }, label = "Copy command", modifier = Modifier.interactive("copy")) }
             StripSlot(room.overflow, reduce) {
                 OverflowMenu(
                     state, onZoom, showZoom = room.zoom, showFit = room.fit, showCopy = room.copy,
                     follow = follow.takeIf { room.send == SendPlace.Overflow },
+                    arrange = arrange.takeIf { room.arrange == ArrangePlace.Overflow },
                 )
             }
         }
@@ -1533,14 +1564,22 @@ private fun AppTitleBarScope.OverflowMenu(
     showCopy: Boolean,
     /** "Send input to…" when the strip has no room for its button: the item opens its menu here. */
     follow: FollowStrip? = null,
+    /** "Arrange mirror windows" when the strip has no room for its button: the item opens its menu here. */
+    arrange: ArrangeStrip? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     var sendOpen by remember { mutableStateOf(false) }
+    var arrangeOpen by remember { mutableStateOf(false) }
     val copy = rememberCopyAction()
     Box {
         if (follow != null) {
             SendInputMenu(sendOpen, { sendOpen = false }, follow.role, follow.others, follow.captureOn, follow.onChange)
         }
+        // Kept composed after the button moves back to the strip (the pick widened the window), so the menu still
+        // closes with its animation.
+        val lastArrange = remember { arrayOfNulls<ArrangeStrip>(1) }
+        if (arrange != null) lastArrange[0] = arrange
+        lastArrange[0]?.let { ArrangeMenu(arrangeOpen, { arrangeOpen = false }, it) }
         IconButton(onClick = { open = true }, Modifier.interactive("overflow").size(32.dp)) {
             Icon(Icons.Filled.MoreVert, contentDescription = "More")
         }
@@ -1565,6 +1604,9 @@ private fun AppTitleBarScope.OverflowMenu(
             }
             if (follow != null) {
                 item(sendInputLabel(follow.role)) { sendOpen = true }
+            }
+            if (arrange != null) {
+                item(ARRANGE_LABEL) { arrangeOpen = true }
             }
         }
     }

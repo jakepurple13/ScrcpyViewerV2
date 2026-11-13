@@ -1,7 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.arrange
 
 import com.programmersbox.scrcpyviewer.ui.mirror.animateWindowBounds
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import kotlinx.coroutines.CoroutineScope

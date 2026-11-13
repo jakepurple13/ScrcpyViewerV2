@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.tray
 
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeLayout
 import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequest
 import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
@@ -26,6 +27,8 @@ class TrayCommandsTest {
         focus = { calls += "focus $it" },
         select = { calls += "select $it" },
         quit = { calls += "quit" },
+        arrange = { calls += "arrange $it" },
+        keepTiled = { calls += "keep tiled $it" },
     )
 
     /** The first value [flow] gets while [action] runs. */
@@ -79,5 +82,13 @@ class TrayCommandsTest {
         commands.dispatch(TrayAction.Mirror, null)
         commands.dispatch(TrayAction.Focus, null)
         assertEquals(emptyList(), calls)
+    }
+
+    @Test
+    fun `arrange entries go to the arranger`() {
+        commands.dispatch(TrayAction.Arrange(ArrangeLayout.Focus), null)
+        commands.dispatch(TrayAction.KeepTiled(true), null)
+        commands.dispatch(TrayAction.KeepTiled(false), null)
+        assertEquals(listOf("arrange Focus", "keep tiled true", "keep tiled false"), calls)
     }
 }

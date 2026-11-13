@@ -44,6 +44,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindow
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.App
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
@@ -105,6 +106,8 @@ fun main() {
     val mirrorRequests = koin.get<MirrorRequests>()
     val deviceOptions = koin.get<DeviceOptionsStore>()
     val deviceSelection = koin.get<DeviceSelection>()
+    val mirrorWindows = koin.get<MirrorWindows>()
+    val arranger = koin.get<WindowArranger>()
     // Fixed files the native tray reads (see trayIconFiles); without them the app runs with no tray icon.
     val trayIcons = runCatching { trayIconFiles(koin.get<DataDir>().path.resolve("tray")) }
         .onFailure { System.getLogger("scrcpyviewer.Tray").log(System.Logger.Level.WARNING, "No tray icon files", it) }
@@ -147,9 +150,13 @@ fun main() {
                     focus = mirrorController::focus,
                     select = deviceSelection::select,
                     quit = shutdown::request,
+                    // Focus from the menu bar arranges around the mirror window focused last.
+                    arrange = { layout -> arranger.apply(layout, focus = mirrorWindows.lastFocused.value) },
+                    keepTiled = arranger::setKeepTiled,
                 )
             }
-            ScrcpyTray(trayIcons, devices, mirrors.keys, trayCommands::dispatch)
+            val arrangeState by arranger.state.collectAsState()
+            ScrcpyTray(trayIcons, devices, mirrors.keys, arrangeState, trayCommands::dispatch)
         }
         // Cmd+Q, the app menu's Quit and the Dock's go through the shutdown too (MacQuitHook).
         DisposableEffect(Unit) {

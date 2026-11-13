@@ -2,9 +2,12 @@ package com.programmersbox.scrcpyviewer.ui.tray
 
 import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceState
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeLayout
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 class TrayMenuModelTest {
     private fun device(serial: String, state: DeviceState = DeviceState.Device) =
@@ -96,8 +99,8 @@ class TrayMenuModelTest {
         assertNotEquals(menu(listOf(device("a"), device("b"))), menu(listOf(device("b"), device("a"))))
         val sameTitle = { _: Device -> "Pixel 7" }
         assertNotEquals(
-            trayMenu(listOf(device("a")), emptySet(), sameTitle),
-            trayMenu(listOf(device("b")), emptySet(), sameTitle),
+            trayMenu(listOf(device("a")), emptySet(), title = sameTitle),
+            trayMenu(listOf(device("b")), emptySet(), title = sameTitle),
         )
     }
 
@@ -112,5 +115,68 @@ class TrayMenuModelTest {
             ),
             rows,
         )
+    }
+
+    // --- Arrange mirror windows ----------------------------------------------------------------------------------
+
+    private fun submenus(rows: List<TrayRow>) = rows.filterIsInstance<TrayRow.Submenu>()
+
+    @Test
+    fun arrangeSubmenuOnlyWithTwoOrMoreMirrors() {
+        val devices = listOf(device("a"), device("b"))
+        assertEquals(emptyList(), submenus(menu(devices, setOf("a"))), "no arrange state")
+        assertEquals(emptyList(), submenus(trayMenu(devices, emptySet(), ArrangeState()) { it.serial }))
+        assertEquals(emptyList(), submenus(trayMenu(devices, setOf("a"), ArrangeState()) { it.serial }))
+        val two = trayMenu(devices, setOf("a", "b"), ArrangeState()) { it.serial }
+        assertEquals(listOf("Arrange mirror windows"), submenus(two).map { it.label })
+        // After the devices, before Open / Settings / Quit.
+        assertEquals(tail, two.takeLast(tail.size))
+        assertEquals(TrayRow.Divider, two[two.size - tail.size - 2])
+        assertTrue(two[two.size - tail.size - 1] is TrayRow.Submenu)
+    }
+
+    @Test
+    fun arrangeSubmenuChecksTheCurrentLayoutAndKeepTiled() {
+        assertEquals(
+            TrayRow.Submenu(
+                "Arrange mirror windows",
+                listOf(
+                    TrayRow.Command("✓ As placed", TrayAction.Arrange(ArrangeLayout.AsPlaced)),
+                    TrayRow.Command("Grid", TrayAction.Arrange(ArrangeLayout.Grid)),
+                    TrayRow.Command("Side by side", TrayAction.Arrange(ArrangeLayout.SideBySide)),
+                    TrayRow.Command("Focus the front window", TrayAction.Arrange(ArrangeLayout.Focus)),
+                    TrayRow.Command("Cascade", TrayAction.Arrange(ArrangeLayout.Cascade)),
+                    TrayRow.Divider,
+                    TrayRow.Command("Keep tiled as windows open and close", TrayAction.KeepTiled(true)),
+                ),
+            ),
+            arrangeSubmenu(ArrangeState()),
+        )
+        val grid = arrangeSubmenu(ArrangeState(layout = ArrangeLayout.Grid, keepTiled = true)).rows
+        assertEquals(listOf("✓ Grid"), grid.filterIsInstance<TrayRow.Command>().map { it.label }.filter { it.startsWith("✓ G") })
+        assertEquals("As placed", (grid[0] as TrayRow.Command).label)
+        assertEquals(
+            TrayRow.Command("✓ Keep tiled as windows open and close", TrayAction.KeepTiled(false)),
+            grid.last(),
+        )
+    }
+
+    @Test
+    fun arrangeSubmenuDisabledWithTheNoteWhenWindowsCannotMove() {
+        val rows = arrangeSubmenu(ArrangeState(movable = false)).rows
+        assertEquals(TrayRow.Header("Your desktop doesn't let apps move windows"), rows.first())
+        val commands = rows.filterIsInstance<TrayRow.Command>()
+        assertEquals(6, commands.size)
+        assertTrue(commands.none { it.enabled })
+    }
+
+    @Test
+    fun arrangeStateChangesTheRows() {
+        // The rows are the native menu's rebuild key: a new layout or Keep tiled must rebuild it.
+        val devices = listOf(device("a"), device("b"))
+        val m = { s: ArrangeState -> trayMenu(devices, setOf("a", "b"), s) { it.serial } }
+        assertNotEquals(m(ArrangeState()), m(ArrangeState(layout = ArrangeLayout.Grid)))
+        assertNotEquals(m(ArrangeState()), m(ArrangeState(keepTiled = true)))
+        assertNotEquals(m(ArrangeState()), m(ArrangeState(movable = false)))
     }
 }
