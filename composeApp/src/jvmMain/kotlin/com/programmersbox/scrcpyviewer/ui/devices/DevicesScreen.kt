@@ -53,15 +53,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import androidx.compose.material3.AssistChip
 import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.AssistChip
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.HorizontalDivider

@@ -1,7 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector2D
@@ -31,12 +30,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -242,23 +240,10 @@ private fun TwoColumnGrid(content: @Composable () -> Unit) {
     }
 }
 
-/** A category chip whose fill, outline and label color glide between selected and not. */
+/** A category chip; its fill, outline and label color glide between selected and not (the styled [FilterChip]). */
 @Composable
 private fun GroupChip(selected: Boolean, label: String, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    val spec = if (selected) arrive<Color>() else leave()
-    val fill by animateColorAsState(if (selected) colors.secondaryContainer else Color.Transparent, spec)
-    val outline by animateColorAsState(if (selected) Color.Transparent else colors.outlineVariant, spec)
-    val text by animateColorAsState(if (selected) colors.onSecondaryContainer else colors.onSurfaceVariant, spec)
-    FilterChip(
-        selected, onClick, label = { Text(label) },
-        colors = FilterChipDefaults.filterChipColors(
-            containerColor = fill, selectedContainerColor = fill, labelColor = text, selectedLabelColor = text,
-        ),
-        border = FilterChipDefaults.filterChipBorder(
-            enabled = true, selected = selected, borderColor = outline, selectedBorderColor = outline, selectedBorderWidth = 1.dp,
-        ),
-    )
+    FilterChip(selected, onClick, label = { Text(label) })
 }
 
 /** One template; the whole card is the button. */
