@@ -92,8 +92,8 @@ The user picked two directions from the mockup and wants both, as a choice in Se
 
 - `Settings.launchQuitAnimation: String = "IconUnfold"`, read through an enum `LaunchQuitAnimation { IconUnfold,
   ScreenOn, Off }` with `fromName` falling back to `IconUnfold` for unknown values.
-- Settings → Appearance, next to "Animate mirror windows": a row "Launch & quit animation" with a three-option control
-  (segmented buttons or a dropdown, matching the nearest existing three-way control in Settings). Supporting text:
+- Settings → Appearance (the last entry; "Animate mirror windows" lives under Mirroring): a row "Launch & quit
+  animation" with a three-option segmented button row, matching the style picker's `SingleChoiceSegmentedButtonRow`. Supporting text:
   "Plays when Scrcpy Vwr opens and quits."
 - Launch reads the value saved by the previous run. Changing it takes effect at the next quit.
 
