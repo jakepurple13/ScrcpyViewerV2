@@ -132,9 +132,16 @@ class LogcatQueryTest {
     fun spans() {
         val spans = LogcatQuery.parse("-tag~:\"a b\"").spans
         assertEquals(
-            listOf(QuerySpan(0, 1, SpanKind.Negation), QuerySpan(1, 6, SpanKind.Key), QuerySpan(6, 11, SpanKind.Quoted)),
+            listOf(
+                QuerySpan(0, 1, SpanKind.Negation),
+                QuerySpan(1, 4, SpanKind.Key),
+                QuerySpan(4, 5, SpanKind.Operator),
+                QuerySpan(5, 6, SpanKind.Key),
+                QuerySpan(6, 11, SpanKind.Quoted),
+            ),
             spans,
         )
+        assertEquals(listOf(QuerySpan(0, 4, SpanKind.Key)), LogcatQuery.parse("tag:x").spans)
         assertEquals(listOf(QuerySpan(2, 3, SpanKind.Operator)), LogcatQuery.parse("a | b").spans)
         assertEquals(SpanKind.Error, LogcatQuery.parse("level:loud").spans.first().kind)
     }

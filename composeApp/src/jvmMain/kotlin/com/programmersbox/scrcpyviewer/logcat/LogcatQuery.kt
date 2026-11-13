@@ -150,7 +150,13 @@ class LogcatQuery private constructor(
                 var p = at
                 if (neg) spans += QuerySpan(p++, p, SpanKind.Negation)
                 val keyEnd = p + key.length + 1 + op.length
-                spans += QuerySpan(p, keyEnd, if (flagged) SpanKind.Error else SpanKind.Key)
+                if (flagged || op.isEmpty()) {
+                    spans += QuerySpan(p, keyEnd, if (flagged) SpanKind.Error else SpanKind.Key)
+                } else {
+                    spans += QuerySpan(p, p + key.length, SpanKind.Key)
+                    spans += QuerySpan(p + key.length, p + key.length + 1, SpanKind.Operator)
+                    spans += QuerySpan(keyEnd - 1, keyEnd, SpanKind.Key)
+                }
                 if (raw.isNotEmpty()) {
                     val kind = when {
                         flagged -> SpanKind.Error
