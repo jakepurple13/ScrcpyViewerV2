@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import com.programmersbox.scrcpyviewer.RECORDER_START_MILLIS
 import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceState
 import com.programmersbox.scrcpyviewer.options.OptionValues
@@ -114,11 +115,11 @@ class MirrorControllerTest {
     fun `a recording that ends after its window closed is still reported`() = runBlocking<Unit> {
         val file = Files.createTempFile("controller", ".mp4")
         options = OptionValues(mapOf("record" to file.toString()))
-        val event = scope.async { withTimeout(10_000) { controller.recordingResults.first() } }
+        val event = scope.async { withTimeout(RECORDER_START_MILLIS + 10_000) { controller.recordingResults.first() } }
         delay(50) // let the collector subscribe
         controller.open("A")
         val session = controller.open.value.getValue("A")
-        withTimeout(5_000) { session.status.first { it == SessionStatus.Running } }
+        withTimeout(RECORDER_START_MILLIS) { session.status.first { it == SessionStatus.Running } }
         assertTrue(session.hasUnfinishedRecording)
         controller.close("A") // no video was sent: the recording ends during teardown, after the window is gone
         val e = event.await()

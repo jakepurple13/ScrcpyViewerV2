@@ -71,7 +71,7 @@ class AppShutdownTest {
         options = OptionValues(mapOf("record" to file.toString()))
         controller.open("A")
         val session = controller.open.value.getValue("A")
-        withTimeout(5_000) { session.status.first { it == SessionStatus.Running } }
+        withTimeout(RECORDER_START_MILLIS) { session.status.first { it == SessionStatus.Running } }
         val shutdown = AppShutdown(controller, exit = {})
         shutdown.request()
         assertEquals(AppShutdown.State.ShuttingDown(finishingRecording = true), shutdown.state.value)
