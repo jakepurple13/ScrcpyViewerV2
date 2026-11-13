@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Never start `adb logcat` without a Play press. Leaving the tab, closing the sheet, and disconnect stop it.
+- Never start `adb logcat` without a Play press. Leaving the tab, closing the sheet, and disconnect stop it; while Logcat is in its own window only disconnect does.
 - First start: `logcat -v threadtime -T 1000`. Resume: `logcat -v threadtime -T '<MM-DD HH:MM:SS.mmm of last line>'`.
 - Buffer: 20,000 entries per window (`LOGCAT_MAX_ENTRIES = 20_000`).
 - Nothing persisted except the tab width: `logcatWidth: Int = 560` in `AppSettings`; Logcat default and minimum width `QUICK_ACTIONS_LOGCAT_WIDTH = 560.dp`.
@@ -31,6 +31,7 @@
 - **Odd lines**: tags with spaces or colons (`Finsky: [123]`), empty messages, `--------- beginning of crash` markers, CRLF, a line split across socket chunks, non-ASCII. Parser keeps or skips them correctly. Tests in Task 1.
 - **Resume duplicates**: `-T <time>` replays lines at the boundary timestamp; none show twice, and a different line with the same timestamp is not dropped. Test in Task 6.
 - **Five segments at the 280 dp Actions width**: "Actions", "Logcat" etc. must not clip or wrap. Test in Task 7.
+- **Closing the mirror window while the Logcat window is out, or the device disconnecting**: the Logcat window goes away with the mirror (no orphan window, no running `adb logcat`); a disconnect pauses it in place. Tests in Task 11.
 - **Typing a half-finished query** (`tag~:(`, `level:`, `-`, a lone `"`): no exception, no flicker of the whole list to empty; incomplete terms are ignored. Tests in Task 3.
 
 ---
@@ -267,3 +268,29 @@ All paths under `composeApp/src/jvmMain/kotlin/com/programmersbox/scrcpyviewer/`
 - [ ] **Step 4:** Run, then the full suite — PASS.
 - [ ] **Step 5:** Device check: `cdm acquire --android --device R5CX12GDWPZ`, run the app, open a mirror, Logcat tab: confirm nothing runs before Play (`adb shell ps -A | grep logcat` empty), Play shows lines with packages, filter `package:mine` after "Show in Logcat" on an app, Pause/Resume shows the divider without duplicates, switching tabs stops the device `logcat` process. `cdm release`.
 - [ ] **Step 6:** Commit: `feat(logcat): keyboard shortcuts`
+
+### Task 11: Logcat in its own window
+
+**Files:**
+- Create: `ui/mirror/logcat/LogcatWindow.kt` (the second `AppWindow`), `ui/mirror/logcat/LogcatPoppedCard.kt`
+- Modify: `ui/mirror/logcat/LogcatController.kt`, `ui/mirror/logcat/LogcatTab.kt` (pop-out button), `ui/mirror/QuickActions.kt` (stop-on-leave only when not popped; dock opens the sheet on Logcat; Show in Logcat raises the window), `ui/mirror/QuickActionsSheet.kt` (segment window icon + live dot; Logcat branch shows the card while popped), `ui/mirror/MirrorWindow.kt` (compose `LogcatWindow` while popped)
+- Test: extend `LogcatControllerTest`, `QuickActionsLogcatTest`, `SheetTabsTest`; new `LogcatWindowTest` for the card and title-bar pin (SceneDriver); a screenshot scene of the card.
+
+**Interfaces:**
+- Consumes: `AppWindow(onCloseRequest, title, theme, state, alwaysOnTop, onPreviewKeyEvent, titleBar, content)` from `ui/window/AppWindow.kt`; `LogcatTab` (Task 8).
+- Produces on `LogcatController`: `popped: Boolean`, `alwaysOnTop: Boolean`, `raiseRequests: Int`, `fun popOut()`, `fun dock()`, `fun raise()`, `fun toggleAlwaysOnTop()`. `popOut()` resets `alwaysOnTop = false`. `dock()` never changes `run`.
+- `@Composable fun LogcatWindow(controller: LogcatController, deviceName: String, onDock: () -> Unit)` — `rememberWindowState(size = DpSize(720.dp, 640.dp))` created fresh each time it is composed; `onCloseRequest = onDock`; title "Logcat · $deviceName"; pin `IconToggleButton` in the title bar slot; `LaunchedEffect(raiseRequests)` brings the window to front.
+
+- [ ] **Step 1: Write failing tests**:
+  - `popOut keeps lines, query and run state; dock keeps them too` (running stays running, paused stays paused).
+  - `while popped, leaving the tab and closing the sheet don't stop logcat; disconnect still pauses it`.
+  - `dock with the sheet closed opens it on the Logcat tab`.
+  - `ShowInLogcat while popped raises the window and doesn't change the tab`.
+  - `alwaysOnTop starts off on every popOut and toggles with toast "Logcat window stays on top" / "Logcat window no longer stays on top"`.
+  - `Logcat tab shows the own-window card with Show window and Move back here while popped`; `segment shows the window icon, and the live dot only while running`.
+  - `the pop-out button reads "Open in new window", then "Move back to the sheet"`.
+- [ ] **Step 2:** Run those classes — FAIL.
+- [ ] **Step 3:** Implement. Compose `LogcatWindow` from `MirrorWindow` only while `controller.popped`, inside the mirror's composition so it closes with the mirror window. Card swap uses `AnimatedContent` (fade + 12 dp rise). Keys in the Logcat window go through its own `onPreviewKeyEvent` (Space, ⌘F, ⌘K) and never reach the device.
+- [ ] **Step 4:** Run, record the screenshot, run the full suite — PASS.
+- [ ] **Step 5:** Device check with the held device: pop out while running, switch the sheet to Files (log keeps flowing), pin on top, close the Logcat window (back in the tab, still running), pop out again (default size, pin off), close the mirror (Logcat window closes; `adb shell ps -A | grep logcat` empty). `cdm release`.
+- [ ] **Step 6:** Commit: `feat(logcat): open Logcat in its own window`

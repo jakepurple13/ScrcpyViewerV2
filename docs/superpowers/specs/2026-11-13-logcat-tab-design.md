@@ -13,14 +13,15 @@ Shell tab's raw text or the "Logcat for app" template.
 ### Running
 
 - Opening the tab never starts `adb logcat`. The tab first shows a "Logcat isn't running" card with a large Play
-  button: "Press Play to read this device's log. It stops when you leave this tab."
+  button: "Press Play to read this device's log. It stops when you leave this tab, unless Logcat is in its own window."
 - **Play** (first time): starts `logcat -v threadtime -T 1000` (the last 1,000 lines, then live). The card fades and
   scales away.
 - **Pause**: stops the device command. A banner drops in: "Paused at HH:MM:SS".
 - **Resume**: starts `logcat -v threadtime -T '<timestamp of the last line received>'`, drops lines already shown, and
   puts a dashed divider before the read-back lines: "Paused HH:MM:SS – HH:MM:SS".
 - **Leaving the tab** (another tab, closing the sheet, device disconnect) stops the command, same as Pause, with the
-  banner "Stopped when you left the tab · Resume to catch up". Coming back pulses the Resume button twice.
+  banner "Stopped when you left the tab · Resume to catch up". Coming back pulses the Resume button twice. Tab changes
+  and sheet close don't apply while Logcat is in its own window (see Own window); disconnect always does.
 - Window closing ends everything. Nothing about Logcat is saved: not the lines, not the filter, not the picked app.
 - Buffer: the last **20,000** lines per window; older ones drop off.
 - **Clear** empties the window's list only (toast: "Cleared. Older lines stay on the device buffer.").
@@ -115,6 +116,28 @@ One text field; the query text is the only filter state. Chips and clicks edit t
 most once per second) and maps pid → process name; the package is the process name before any `:`. Lines from
 unknown pids show an empty package until the lookup answers.
 
+### Own window
+
+Mockup (approved 2026-11-13): https://claude.ai/artifact/X98VxkKERkMjCYBQn5rZ4e
+
+- A window button next to Play ("Open in new window") moves the whole Logcat panel (lines, filter, Play state, compact
+  and wrap) into its own window. It is the same controller, moved, not copied.
+- One Logcat window per mirror window, titled "Logcat · <device name>", opened at the default size (720 × 640 dp)
+  every time. Nothing about it is saved.
+- While it is out, Logcat keeps running when the sheet changes tab or closes. The Logcat segment shows a window icon,
+  plus a blinking green dot while running.
+- The Logcat tab then shows a card: "Logcat is open in its own window" / "It keeps running while you use the other
+  tabs. Close that window to move it back here." with **Show window** (brings it to the front) and **Move back here**.
+- In the window, the same button reads "Move back to the sheet" (dock icon).
+- **Closing the Logcat window** docks it: Logcat goes back into the tab exactly as it was (running stays running, paused
+  stays paused), and the sheet opens on the Logcat tab.
+- **Always on top**: a pin button in the Logcat window's title bar. Off each time the window opens. Pressed: the
+  window stays above other windows, the mirror included (toast "Logcat window stays on top" / "Logcat window no longer
+  stays on top").
+- "Show in Logcat" in the Apps tab brings the Logcat window forward instead of switching tabs when Logcat is out.
+- Closing the mirror window closes the Logcat window. A disconnect pauses Logcat wherever it is.
+- Keys (Space, ⌘F, ⌘K) work in the Logcat window.
+
 ## Motion
 
 | Change | Motion |
@@ -133,6 +156,12 @@ unknown pids show an empty package until the lookup answers.
 | Filter error hint | expands vertically, 220 ms |
 | Resume button pulse | two 900 ms rings when returning to a stopped tab |
 | Apps "Logcat" badge | scales in |
+| Pop out | the Logcat window opens with the app's window-open animation; the tab cross-fades to the "own window" card, which rises 12 dp |
+| Dock | the window closes with the app's window-close animation; the card cross-fades back to the panel |
+| Segment window icon / live dot | width grows 0 → 14 dp / dot scales in |
+| Pop-out button icon | open ⇄ dock icon swap, scale + fade 280 ms |
+| Show window | the window is brought to front (`toFront`) |
+| Pin | pin icon rotates 45°, container fades to primaryContainer |
 
 Honor the app's reduced-motion handling (see `MirrorWindowMotion.kt`).
 
