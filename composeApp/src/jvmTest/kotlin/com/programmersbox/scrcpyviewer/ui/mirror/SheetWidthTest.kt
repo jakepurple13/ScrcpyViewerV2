@@ -146,6 +146,29 @@ class SheetWidthTest {
     }
 
     @Test
+    fun `links tab width`() {
+        assertEquals(400.dp, sheetWidth(true, SheetTab.Links))
+        assertEquals(SheetWidths(links = 520.dp), SheetWidths().with(SheetTab.Links, 520.dp))
+        assertEquals(400.dp, clampSheetWidth(300.dp, SheetTab.Links, 1200.dp, 64.dp))
+        assertEquals(SheetWidths(links = 400.dp), SheetWidths.fromSettings(280, 400, 480, 440, 560, 100))
+        assertEquals(SheetWidths(links = 640.dp), SheetWidths.fromSettings(280, 400, 480, 440, 560, 640))
+        assertEquals(SheetWidths(links = SHEET_MAX_WIDTH), SheetWidths.fromSettings(280, 400, 480, 440, 560, 99_999))
+    }
+
+    @Test
+    fun `resizing the links tab saves the links width`() {
+        val saved = mutableListOf<Pair<SheetTab, Dp>>()
+        val qa = QuickActions(
+            device = null, scope = CoroutineScope(Dispatchers.Unconfined), saveWidth = { tab, width -> saved += tab to width },
+        ) {}
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Links))
+        qa.onEvent(QuickActionEvent.Resize(480.dp))
+        qa.onEvent(QuickActionEvent.ResizeDone(SheetTab.Links))
+        assertEquals(SheetWidths(links = 480.dp), qa.uiState.widths)
+        assertEquals(listOf(SheetTab.Links to 480.dp), saved)
+    }
+
+    @Test
     fun `files location is remembered per device`() {
         val memory = QuickActionsMemory()
         assertNull(memory.filesLocation("a"))

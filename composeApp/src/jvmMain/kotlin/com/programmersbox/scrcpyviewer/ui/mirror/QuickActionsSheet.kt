@@ -119,6 +119,9 @@ val QUICK_ACTIONS_FILES_WIDTH = 440.dp
 /** Default and minimum width of the open sheet on the Logcat tab, its drag bar included. */
 val QUICK_ACTIONS_LOGCAT_WIDTH = 560.dp
 
+/** Default and minimum width of the open sheet on the Links tab, its drag bar included. */
+val QUICK_ACTIONS_LINKS_WIDTH = 400.dp
+
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
 private val SLIDE_OFFSET = 40.dp
 private const val FADE_IN_DELAY_MILLIS = 60
@@ -356,6 +359,8 @@ private fun RowScope.SheetContent(
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
                 // No Files tab content means no adb: say so rather than show nothing.
                 SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
+                // The Links tab's content comes with Task 4 of the link launcher; until then, an empty panel.
+                SheetTab.Links -> Box(Modifier.fillMaxSize())
                 // No controller means no adb, said the same way.
                 SheetTab.Logcat -> if (logcat != null) LogcatSheetTab(logcat, sheetWidth, motion) else AdbUnavailableState()
                 SheetTab.Shell -> if (console != null) {

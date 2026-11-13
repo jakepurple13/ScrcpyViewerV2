@@ -106,4 +106,17 @@ class AppNavigationTest {
         }
         assertEquals(listOf(ActionsRequest("a", false), ActionsRequest(null, true), ActionsRequest(null, false)), got)
     }
+
+    @Test
+    fun `openNew emits a new action request from the template without the banner`() {
+        val nav = ActionsNavigation()
+        val got = mutableListOf<ActionsRequest>()
+        val t = com.programmersbox.scrcpyviewer.actions.ActionTemplates.all.first()
+        runBlocking {
+            val job = launch(kotlinx.coroutines.Dispatchers.Unconfined) { nav.requests.collect { got += it } }
+            nav.openNew(t)
+            job.cancel()
+        }
+        assertEquals(listOf(ActionsRequest(null, new = true, template = t, banner = false)), got)
+    }
 }

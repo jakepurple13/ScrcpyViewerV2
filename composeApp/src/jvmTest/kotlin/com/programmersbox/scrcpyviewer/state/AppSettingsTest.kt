@@ -96,6 +96,7 @@ class AppSettingsTest {
         val older = AppSettings(file).settings.value
         assertEquals(440, older.filesWidth)
         assertEquals(560, older.logcatWidth)
+        assertEquals(400, older.linksWidth)
         assertEquals("name", older.filesSort)
         assertFalse(older.filesSortDescending)
         assertFalse(older.filesShowHidden)

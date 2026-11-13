@@ -472,7 +472,7 @@ fun MirrorWindow(
     val currentTransfers by rememberUpdatedState(transfers)
     val picker = rememberPickerGuard()
     val quickActions = rememberQuickActions(
-        serial, session, adb, ::notify, onManage = actionsNavigation::open, title = model,
+        serial, session, adb, ::notify, onManage = actionsNavigation::open, onNewAction = actionsNavigation::openNew, title = model,
         followers = {
             followRunners(serial, following.state.value, controller.open.value, adb) { s ->
                 devices.firstOrNull { it.serial == s }?.let(::deviceTitle) ?: s

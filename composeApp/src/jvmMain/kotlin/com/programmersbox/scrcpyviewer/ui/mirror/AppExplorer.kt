@@ -81,6 +81,9 @@ class AppExplorer(
 
     val uiState: AppsUiState get() = AppsUiState(apps, loading, query, filter, icons.toMap(), busy)
 
+    /** The listed apps; null until listed. */
+    val listed: List<DeviceApp>? get() = apps
+
     /** Lists the apps unless they are listed or being listed. */
     fun ensureLoaded() {
         if (apps == null && !loading) load()
