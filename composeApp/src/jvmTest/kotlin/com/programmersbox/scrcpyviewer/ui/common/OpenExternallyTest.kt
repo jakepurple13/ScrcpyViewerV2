@@ -10,6 +10,8 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.unit.Density
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
 import com.programmersbox.scrcpyviewer.ui.update.UpdateDialog
@@ -98,8 +100,15 @@ class OpenExternallyTest {
         })
         try {
             driver.frames(10)
-            for (y in 10 until 700 step 12) for (x in 10 until 800 step 12) {
-                val at = Offset(x.toFloat(), y.toFloat())
+            // Click only what can be clicked: nodes carrying an OnClick action, found through the semantics tree.
+            val targets = mutableListOf<Offset>()
+            fun walk(node: SemanticsNode) {
+                if (SemanticsActions.OnClick in node.config) targets += node.boundsInRoot.center
+                node.children.forEach(::walk)
+            }
+            driver.scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
+            assertTrue(targets.isNotEmpty(), "the update UI should expose clickable nodes")
+            for (at in targets) {
                 driver.scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
                 driver.scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, button = PointerButton.Primary)
                 driver.frame()
