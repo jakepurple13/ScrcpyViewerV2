@@ -9,6 +9,8 @@ import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.scrcpy.LocalPairLauncher
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
+import com.programmersbox.scrcpyviewer.ui.common.startDetached
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
 import com.programmersbox.scrcpyviewer.ui.mirror.FileTransfers
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
