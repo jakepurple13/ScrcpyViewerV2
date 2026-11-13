@@ -209,4 +209,13 @@ class AppSettingsTest {
         AppSettings(file).update { it.copy(showTrayIcon = false) }
         assertFalse(AppSettings(file).settings.value.showTrayIcon)
     }
+
+    @Test
+    fun `shortcuts default empty, load from older file and round-trip`() {
+        assertEquals(emptyMap(), Settings().shortcuts)
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertEquals(emptyMap(), AppSettings(file).settings.value.shortcuts)
+        AppSettings(file).update { it.copy(shortcuts = mapOf("follow" to "AM:71")) }
+        assertEquals(mapOf("follow" to "AM:71"), AppSettings(file).settings.value.shortcuts)
+    }
 }
