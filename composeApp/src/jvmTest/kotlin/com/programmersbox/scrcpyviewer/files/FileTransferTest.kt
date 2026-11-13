@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -585,6 +586,121 @@ class FileTransferTest {
         // The next result is the plain pull's: the drag-out pull said nothing.
         q.enqueue(listOf(pull(drag, "b.txt")))
         assertEquals(listOf("Pulled b.txt to drag"), withTimeout(5_000) { results.await() }.map { it.message })
+    }
+
+    private fun streamed(name: String, total: Long? = 100) =
+        TransferRequest(Paths.get(""), TransferKind.Pull, "/sdcard/Download", name, size = total)
+
+    @Test
+    fun `a tracked job shows running in the list, follows its bytes and ends as told`() = runBlocking<Unit> {
+        val adb = FakeAdb()
+        val q = queue(adb)
+        val tracked = q.track(streamed("a.mp4")) {}!!
+        assertEquals(JobState.Running, q.jobs.value.single { it.id == tracked.id }.state)
+        assertEquals(100L, q.jobs.value.single().total)
+        tracked.progress(40)
+        assertEquals(40L, q.jobs.value.single().bytes)
+        tracked.finish(JobState.Done)
+        assertEquals(JobState.Done, q.jobs.value.single().state)
+        // Ended: later calls change nothing.
+        tracked.progress(90)
+        tracked.finish(JobState.Failed("late"))
+        assertEquals(JobState.Done, q.jobs.value.single().state)
+        assertEquals(40L, q.jobs.value.single().bytes)
+        assertTrue(adb.calls.isEmpty(), "a tracked job runs no adb of the queue's")
+    }
+
+    @Test
+    fun `cancelling a tracked job tells its owner and ends it cancelled`() = runBlocking<Unit> {
+        val q = queue(FakeAdb())
+        var cancels = 0
+        val tracked = q.track(streamed("a.mp4")) { cancels++ }!!
+        q.cancel(tracked.id)
+        assertEquals(1, cancels)
+        assertEquals(JobState.Cancelled, q.jobs.value.single().state)
+        tracked.finish(JobState.Failed("stream closed"))
+        assertEquals(JobState.Cancelled, q.jobs.value.single().state, "the cancel wins")
+    }
+
+    @Test
+    fun `a tracked job does not hold up queued ones`() = runBlocking<Unit> {
+        val drag = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "x"); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        q.track(streamed("a.mp4")) {}!!
+        val id = q.enqueue(listOf(pull(drag, "b.txt"))).single()
+        q.awaitJob(id) { it.state == JobState.Done }
+    }
+
+    @Test
+    fun `no tracked job while the device is away`() = runBlocking<Unit> {
+        val q = queue(FakeAdb(), connected = { false })
+        assertNull(q.track(streamed("a.mp4")) {})
+        assertTrue(q.jobs.value.isEmpty())
+    }
+
+    @Test
+    fun `the window closing cancels tracked jobs and tells their owners`() = runBlocking<Unit> {
+        // The queue's thread is busy until after the cancel: its loop never starts, as when a window closes at once.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val hold = java.util.concurrent.CountDownLatch(1)
+        executor.execute { hold.await() }
+        val own = CoroutineScope(Job() + executor.asCoroutineDispatcher())
+        val q = FileTransferQueue("SER", FakeAdb(), DEFAULT_PUSH_TARGET, { true }, {}, own, tempRoot = tmp.resolve("scrcpy-vwr"))
+        val told = CompletableDeferred<Unit>()
+        q.track(streamed("a.mp4")) { told.complete(Unit) }!!
+        own.cancel()
+        hold.countDown()
+        executor.shutdown()
+        withTimeout(5_000) { told.await() }
+        withTimeout(5_000) { q.jobs.first { list -> list.single().state == JobState.Cancelled } }
+    }
+
+    @Test
+    fun `a pull with a host target writes exactly there and reports where`() = runBlocking<Unit> {
+        val picked = java.nio.file.Files.createDirectories(tmp.resolve("Desktop"))
+        // The drop target already holds the name: the promise named its own ("a 2.txt"), the queue must not rename it.
+        java.nio.file.Files.writeString(picked.resolve("a.txt"), "old")
+        val target = picked.resolve("a 2.txt")
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "data"); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        val results = async(start = CoroutineStart.UNDISPATCHED) { q.results.take(1).toList() }
+        val id = q.enqueue(listOf(pull(picked, "a.txt").copy(hostTarget = target))).single()
+        val job = q.awaitJob(id) { it.state == JobState.Done }
+        assertEquals(target, job.hostResult)
+        assertEquals(target.toString(), adb.calls.single().last())
+        assertEquals("data", java.nio.file.Files.readString(target))
+        assertEquals("old", java.nio.file.Files.readString(picked.resolve("a.txt")))
+        assertEquals(listOf("Pulled a 2.txt to Desktop"), withTimeout(5_000) { results.await() }.map { it.message })
+    }
+
+    @Test
+    fun `a folder pull with a host target replaces the empty folder the drop target made`() = runBlocking<Unit> {
+        val picked = java.nio.file.Files.createDirectories(tmp.resolve("Desktop"))
+        val target = java.nio.file.Files.createDirectories(picked.resolve("Camera"))
+        val adb = FakeAdb { args ->
+            // adb pull of a folder onto an existing folder nests it inside: the target must be gone first.
+            val to = Paths.get(args.last())
+            assertFalse(java.nio.file.Files.exists(to), "target still there when adb ran")
+            java.nio.file.Files.createDirectories(to)
+            java.nio.file.Files.writeString(to.resolve("1.jpg"), "x")
+            ProcessResult(0, "", "")
+        }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(pull(picked, "Camera").copy(isDirectory = true, hostTarget = target))).single()
+        q.awaitJob(id) { it.state == JobState.Done }
+        assertEquals("x", java.nio.file.Files.readString(target.resolve("1.jpg")))
+    }
+
+    @Test
+    fun `a failed pull with a host target removes what it wrote there`() = runBlocking<Unit> {
+        val picked = java.nio.file.Files.createDirectories(tmp.resolve("Desktop"))
+        val target = picked.resolve("a.txt")
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "par"); ProcessResult(1, "adb: error: lost", "") }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(pull(picked, "a.txt").copy(hostTarget = target))).single()
+        q.awaitJob(id) { it.state is JobState.Failed }
+        assertFalse(java.nio.file.Files.exists(target))
     }
 
     @Test

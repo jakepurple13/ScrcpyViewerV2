@@ -77,6 +77,13 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `launch quit animation choice is saved`() {
+        val vm = vm()
+        vm.setLaunchQuitAnimation(com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation.Off)
+        assertEquals("Off", settings.settings.value.launchQuitAnimation)
+    }
+
+    @Test
     fun `theme change is saved`() {
         val vm = vm()
         vm.setTheme(ThemeMode.Dark)

@@ -67,6 +67,13 @@ class TaoMirrorWindowHandle(private val window: NucleusWindow, private val geome
             return if (handle == 0L) null else Pointer(handle)
         }
 
+    override val hwnd: Pointer?
+        get() {
+            if (!Os.isWindows) return null
+            val handle = tao?.nativeHandle ?: return null
+            return if (handle == 0L) null else Pointer(handle)
+        }
+
     override fun toFront() {
         window.toFront()
         window.requestFocus()

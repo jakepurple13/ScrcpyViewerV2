@@ -103,6 +103,34 @@ open class AdbClient(
     }
 
     /**
+     * Runs `exec:<cmd>` on [serial] and hands back its output as a stream, byte for byte as it arrives (a file read
+     * with `cat` for a virtual-file drag). Closing the stream closes the connection, which stops the command. Blocks
+     * while connecting: never on the UI thread. A device silent for [readTimeoutMs] fails the read.
+     */
+    open fun openExecStream(serial: String, cmd: String, readTimeoutMs: Int = 30_000): java.io.InputStream {
+        val socket = openSocket()
+        try {
+            socket.soTimeout = readTimeoutMs
+            val out = socket.getOutputStream()
+            val input = socket.getInputStream()
+            out.write(AdbWire.encodeRequest("host:transport:$serial"))
+            out.flush()
+            AdbWire.readStatus(input)
+            out.write(AdbWire.encodeRequest("exec:$cmd"))
+            out.flush()
+            AdbWire.readStatus(input)
+            return object : java.io.FilterInputStream(input) {
+                override fun close() {
+                    socket.close()
+                }
+            }
+        } catch (e: Throwable) {
+            runCatching { socket.close() }
+            throw e
+        }
+    }
+
+    /**
      * Runs `shell:<cmd>` on [serial] and emits its output as UTF-8 text chunks as they arrive. Unlike [shell] there
      * is no read timeout and nothing is buffered. Cancelling the collector (or completion) closes the socket.
      */

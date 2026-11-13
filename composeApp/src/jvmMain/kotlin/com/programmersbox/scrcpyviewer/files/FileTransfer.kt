@@ -56,7 +56,9 @@ enum class TransferKind { Install, Push, Pull, InstallFromDevice }
  * unknown) and [isDirectory] says the pulled device entry is a folder. [dragOut] marks a pull into the drag cache for
  * a drag out of the window: it reports nothing when it succeeds (the drop is the result) and the tray does not list it.
  * [replace] (a Push into [deviceDir]) replaces the item named [deviceName] there, file or folder: the push goes to a
- * temp name, which takes the item's place only once it succeeded.
+ * temp name, which takes the item's place only once it succeeded. [hostTarget] (a Pull) is the exact host path to write,
+ * named by someone else (a file-promise drop: the drop target picked the name and the folder): it is not made unique,
+ * and an empty folder already standing there for a folder pull is replaced.
  */
 data class TransferRequest(
     val path: Path,
@@ -68,6 +70,7 @@ data class TransferRequest(
     val isDirectory: Boolean = false,
     val dragOut: Boolean = false,
     val replace: Boolean = false,
+    val hostTarget: Path? = null,
 ) {
     val name: String get() = deviceName ?: path.fileName?.toString() ?: path.toString()
 }
@@ -268,6 +271,9 @@ class FileTransferQueue(
     private var runningProcess: Process? = null
     private var cancelRequested = false
 
+    /** What a tracked job's owner does when it is cancelled; held while the job runs. */
+    private val trackedCancels = HashMap<Long, () -> Unit>()
+
     private val _jobs = MutableStateFlow<List<TransferJob>>(emptyList())
     val jobs: StateFlow<List<TransferJob>> = _jobs.asStateFlow()
 
@@ -279,16 +285,22 @@ class FileTransferQueue(
 
     init {
         scope.launch {
-            try {
-                for (id in queue) run(id)
-            } finally {
-                _progress.value = null
-                // The window went away: nothing left will run.
-                synchronized(lock) {
-                    _jobs.value = _jobs.value.map { if (it.active) it.copy(state = JobState.Cancelled) else it }
-                }
-            }
-        }.invokeOnCompletion { queue.cancel() }
+            for (id in queue) run(id)
+        }.invokeOnCompletion {
+            // Here, not in a finally: a scope cancelled before the loop started never runs the loop's body.
+            queue.cancel()
+            stopAll()
+        }
+    }
+
+    /** The window went away: nothing left will run, and tracked transfers are told to stop. */
+    private fun stopAll() {
+        _progress.value = null
+        val owners = synchronized(lock) {
+            _jobs.value = _jobs.value.map { if (it.active) it.copy(state = JobState.Cancelled) else it }
+            trackedCancels.values.toList().also { trackedCancels.clear() }
+        }
+        owners.forEach { runCatching(it) }
     }
 
     /** Queues [requests] and returns their job ids; empty (and a [TransferResult.Refused]) when the device is not connected. */
@@ -324,12 +336,48 @@ class FileTransferQueue(
     fun enqueuePaths(paths: List<Path>): List<Long> = enqueue(requestsFor(paths))
 
     /**
+     * A transfer that runs outside the queue, shown in [jobs] like the others: a Windows virtual-file drag, whose
+     * bytes Explorer reads through a stream after the drop. It starts [JobState.Running] beside whatever the queue
+     * runs; its owner reports its bytes and how it ended. [cancel] calls [onCancel] (the owner stops reading) and
+     * ends it [JobState.Cancelled]. Null when the device is not connected.
+     */
+    fun track(request: TransferRequest, onCancel: () -> Unit): Tracked? {
+        if (!canTransfer()) return null
+        return synchronized(lock) {
+            val id = nextId++
+            trackedCancels[id] = onCancel
+            _jobs.value += TransferJob(id, request, JobState.Running, 0, request.size, null)
+            Tracked(id)
+        }
+    }
+
+    /** A job made by [track]. Thread-safe; calls after it ended change nothing. */
+    inner class Tracked internal constructor(val id: Long) {
+        private val started = System.nanoTime()
+
+        fun progress(bytes: Long) {
+            val elapsedMs = ((System.nanoTime() - started) / 1_000_000).coerceAtLeast(1)
+            synchronized(lock) {
+                updateJob(id) { if (it.state == JobState.Running) it.copy(bytes = bytes, bytesPerSecond = bytes * 1000 / elapsedMs) else it }
+            }
+        }
+
+        fun finish(state: JobState) {
+            synchronized(lock) {
+                trackedCancels.remove(id)
+                updateJob(id) { if (it.state == JobState.Running) it.copy(state = state) else it }
+            }
+        }
+    }
+
+    /**
      * Stops job [id]: a queued job is removed without running adb; a running one has its adb killed and what it wrote
      * removed (the partial host file of a pull, `rm -f` of the partial device file of a push), then turns
      * [JobState.Cancelled]; nothing is removed when adb had not started yet. No-op once the job ended, and an adb
      * run that already exited successfully still completes the job (a late cancel does not undo it).
      */
     fun cancel(id: Long) {
+        var owner: (() -> Unit)? = null
         val process = synchronized(lock) {
             val job = _jobs.value.find { it.id == id } ?: return
             when (job.state) {
@@ -338,7 +386,11 @@ class FileTransferQueue(
                     pending--
                     null
                 }
-                JobState.Running -> if (runningId == id) {
+                JobState.Running -> if (id in trackedCancels) {
+                    owner = trackedCancels.remove(id)
+                    updateJob(id) { it.copy(state = JobState.Cancelled) }
+                    null
+                } else if (runningId == id) {
                     cancelRequested = true
                     runningProcess
                 } else {
@@ -348,6 +400,8 @@ class FileTransferQueue(
             }
         }
         process?.destroyForcibly()
+        // Outside the lock: the owner may close a stream another thread is reading.
+        owner?.invoke()
     }
 
     /** Forgets the ended job [id]; queued and running jobs stay. */
@@ -470,7 +524,11 @@ class FileTransferQueue(
         TransferKind.Install -> install(request, request.path)
         TransferKind.Push -> push(id, request)
         TransferKind.Pull -> {
-            val dir = if (request.opensAfter) tempRoot.resolve(serialPathSegment(serial)).resolve("open") else request.path
+            val dir = when {
+                request.opensAfter -> tempRoot.resolve(serialPathSegment(serial)).resolve("open")
+                request.hostTarget != null -> request.hostTarget.parent ?: request.path
+                else -> request.path
+            }
             when (val pulled = pull(id, request, dir)) {
                 is Pulled.Failed -> failed(request, pulled.reason)
                 // Open on computer and drag-out pulls report nothing: the caller uses [hostResult].
@@ -603,7 +661,9 @@ class FileTransferQueue(
             }
         }
         Files.createDirectories(hostDir)
-        val target = hostUniquePath(hostDir, hostFileName(name), request.isDirectory)
+        val target = request.hostTarget?.takeUnless { request.opensAfter || request.kind != TransferKind.Pull }
+            ?.also(::clearPromisedFolder)
+            ?: hostUniquePath(hostDir, hostFileName(name), request.isDirectory)
         synchronized(lock) { updateJob(id) { it.copy(total = if (request.isDirectory) null else request.size) } }
         var keep = false
         var started = false
@@ -617,6 +677,17 @@ class FileTransferQueue(
         } finally {
             // Only what this pull's adb may have written.
             if (!keep && started) runCatching { deleteRecursively(target) }
+        }
+    }
+
+    /**
+     * A drop target may make the promised folder before asking for it; `adb pull` onto an existing folder would put
+     * the pulled one inside it. Only an empty folder goes: anything with content stays, and adb nests into it.
+     */
+    private fun clearPromisedFolder(target: Path) {
+        if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) return
+        runCatching { Files.list(target).use { it.findFirst().isPresent } }.getOrNull()?.let { notEmpty ->
+            if (!notEmpty) runCatching { Files.delete(target) }
         }
     }
 

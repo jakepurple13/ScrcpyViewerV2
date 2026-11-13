@@ -146,4 +146,38 @@ class DeviceListingTest {
         assertNull(parseFreeSpace("df: /sdcard: No such file"))
         assertNull(parseFreeSpace(""))
     }
+
+    @Test
+    fun `tree command lists every file and folder under the names, relative to the folder`() {
+        assertEquals(
+            "cd '/sdcard/My '\\''Dir' && find './Camera' './-x.jpg' \\( -type d -o -type f \\) " +
+                "-exec stat -c '%F|%s|%n|__svend__' {} + 2>/dev/null",
+            treeCommand("/sdcard/My 'Dir", listOf("Camera", "-x.jpg")),
+        )
+    }
+
+    @Test
+    fun `tree output keeps folders and regular files, drops links and odd entries`() {
+        val out = "directory|3452|./Camera|__svend__\n" +
+            "regular file|120|./Camera/1.jpg|__svend__\n" +
+            "regular empty file|0|./Camera/empty|__svend__\n" +
+            "directory|3452|./Camera/Sub dir|__svend__\n" +
+            "regular file|7|./Camera/Sub dir/a|b.txt|__svend__\n" +
+            "symbolic link|9|./Camera/link|__svend__\n" +
+            "regular file|9|./Camera/two\nlines|__svend__\n" +
+            "regular file|nope|./bad|__svend__\n" +
+            "regular file|55|./-x.jpg|__svend__\n"
+        assertEquals(
+            listOf(
+                TreeEntry("Camera", isDir = true, size = 0),
+                TreeEntry("Camera/1.jpg", isDir = false, size = 120),
+                TreeEntry("Camera/empty", isDir = false, size = 0),
+                TreeEntry("Camera/Sub dir", isDir = true, size = 0),
+                TreeEntry("Camera/Sub dir/a|b.txt", isDir = false, size = 7),
+                TreeEntry("Camera/two\nlines", isDir = false, size = 9),
+                TreeEntry("-x.jpg", isDir = false, size = 55),
+            ),
+            parseTree(out),
+        )
+    }
 }

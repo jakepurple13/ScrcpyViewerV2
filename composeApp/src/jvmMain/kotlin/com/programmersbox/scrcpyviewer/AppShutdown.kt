@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer
 
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +17,8 @@ import com.sun.jna.Pointer
 /**
  * The one way the app quits: the main window's close button and the macOS Quit command (Cmd+Q, Dock, menu) both
  * call [request]. [run] then closes every mirror session, which waits for their recorders to write the trailer
- * (bounded by [timeoutMs]), then runs [install] on [installDispatcher] and only then calls [exit]. While it waits,
+ * (bounded by [timeoutMs]), plays the main window's quit animation ([animateOut], bounded by [animateTimeoutMs]), then
+ * runs [install] on [installDispatcher] and only then calls [exit]. While it waits,
  * [state] says whether a recording is being finished, so the UI can say so instead of freezing silently.
  *
  * [install] starts a downloaded update's installer, which blocks on `adb kill-server` and ends the process with
@@ -30,6 +32,10 @@ class AppShutdown(
     private val quitHook: QuitHook = MacQuitHook,
     private val install: () -> Unit = {},
     private val installDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /** The main window's quit animation; runs on the calling (UI) thread after the sessions close, before [install]. */
+    private val animateOut: suspend () -> Unit = {},
+    /** [animateOut] is cut off after this long, and a failing one is skipped: the exit never waits on it. */
+    private val animateTimeoutMs: Long = DEFAULT_ANIMATE_TIMEOUT_MS,
 ) {
     sealed interface State {
         data object Running : State
@@ -51,6 +57,16 @@ class AppShutdown(
         if (withTimeoutOrNull(timeoutMs) { controller.closeAll() } == null) {
             log.log(System.Logger.Level.WARNING, "Sessions still closing after $timeoutMs ms, exiting anyway")
         }
+        // Before the quit hook lets go, so a second Cmd+Q during the animation is still caught (and ignored).
+        try {
+            if (withTimeoutOrNull(animateTimeoutMs) { animateOut() } == null) {
+                log.log(System.Logger.Level.WARNING, "Quit animation still running after $animateTimeoutMs ms, exiting anyway")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            log.log(System.Logger.Level.WARNING, "Quit animation failed, exiting anyway", t)
+        }
         quitHook.release()
         // Ends the process when an update is pending; otherwise returns and the app exits normally.
         withContext(installDispatcher) { install() }
@@ -66,6 +82,9 @@ class AppShutdown(
     companion object {
         /** Generous: each session's teardown may wait up to 10 s for its recorder. */
         const val DEFAULT_TIMEOUT_MS = 15_000L
+
+        /** The longest quit animation is 420 ms; this is only a backstop. */
+        const val DEFAULT_ANIMATE_TIMEOUT_MS = 1_000L
         private val log = System.getLogger("scrcpyviewer.AppShutdown")
     }
 }

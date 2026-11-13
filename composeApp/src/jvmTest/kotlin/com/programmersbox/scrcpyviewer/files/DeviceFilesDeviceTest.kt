@@ -108,4 +108,42 @@ class DeviceFilesDeviceTest {
             runCatching { files.delete("/sdcard/Download", listOf(name)) }
         }
     }
+
+    @Test
+    fun `tree lists a folder's contents and exec streams read a file byte for byte`() = runBlocking<Unit> {
+        val files = DeviceFiles(ShellRunner(adb, serial)) {}
+        val runner = ShellRunner(adb, serial)
+        val base = "/sdcard/Download"
+        val top = "svwt-tree 'q'"
+        val dir = devicePath(base, top)
+        try {
+            runner.run(
+                "mkdir -p ${shellQuote("$dir/sub dir")} && printf 'abc' > ${shellQuote("$dir/a b.txt")} && " +
+                    ": > ${shellQuote("$dir/empty")} && head -c 300000 /dev/urandom > ${shellQuote("$dir/sub dir/big.bin")} && " +
+                    "ln -s /sdcard ${shellQuote("$dir/link")}",
+            )
+            val tree = files.tree(base, listOf(top))
+            assertEquals(
+                setOf(
+                    TreeEntry(top, true, 0),
+                    TreeEntry("$top/a b.txt", false, 3),
+                    TreeEntry("$top/empty", false, 0),
+                    TreeEntry("$top/sub dir", true, 0),
+                    TreeEntry("$top/sub dir/big.bin", false, 300000),
+                ),
+                tree.toSet(),
+            )
+            assertEquals(top, tree.first().path, "the folder comes before its contents")
+
+            val big = "$dir/sub dir/big.bin"
+            val streamed = adb.openExecStream(serial, "cat ${shellQuote(big)}").use { it.readBytes() }
+            assertEquals(300000, streamed.size)
+            val sum = runner.run("md5sum ${shellQuote(big)}").output.trim().substringBefore(' ')
+            val local = java.security.MessageDigest.getInstance("MD5").digest(streamed).joinToString("") { "%02x".format(it) }
+            assertEquals(sum, local)
+            assertEquals("abc", adb.openExecStream(serial, "cat ${shellQuote("$dir/a b.txt")}").use { String(it.readBytes()) })
+        } finally {
+            runCatching { runner.run("rm -rf ${shellQuote(dir)}") }
+        }
+    }
 }

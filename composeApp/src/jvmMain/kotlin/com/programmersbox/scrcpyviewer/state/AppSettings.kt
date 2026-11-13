@@ -65,6 +65,8 @@ data class Settings(
     val glassOpacity: Float = DEFAULT_GLASS_OPACITY,
     /** Mirror windows grow out of the Mirror button and the device screen switches on with the first frame. */
     val animateMirrorWindows: Boolean = true,
+    /** A [LaunchQuitAnimation] name; unknown or missing names fall back to IconUnfold. */
+    val launchQuitAnimation: String = LaunchQuitAnimation.IconUnfold.name,
 )
 
 /** Everything the theme reads from [Settings]. */

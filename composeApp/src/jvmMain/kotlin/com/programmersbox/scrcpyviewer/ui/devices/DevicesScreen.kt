@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.graphicsLayer
+import com.programmersbox.scrcpyviewer.ui.window.launch.launchEntrance
 import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -337,7 +338,7 @@ private fun DeviceColumn(
             )
             // Each row carries its own gap below it, so a leaving row's gap collapses along with it.
             else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                entries.forEach { entry ->
+                entries.forEachIndexed { index, entry ->
                     AnimatedDeviceItem(entry, onExited = list::exited) { glow ->
                         val device = entry.device
                         DeviceRow(
@@ -352,7 +353,8 @@ private fun DeviceColumn(
                             interactive = entry.present,
                             status = chipStatus(device, switching = device.serial in state.switching),
                             glow = glow,
-                            modifier = Modifier.padding(bottom = 6.dp),
+                            // Icon unfold's launch: the rows fade up in a stagger as the window appears.
+                            modifier = Modifier.launchEntrance(index).padding(bottom = 6.dp),
                         )
                     }
                 }
