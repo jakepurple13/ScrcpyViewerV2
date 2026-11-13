@@ -147,7 +147,8 @@ class TrayMenuModelTest {
                     TrayRow.Command("Focus the front window", TrayAction.Arrange(ArrangeLayout.Focus)),
                     TrayRow.Command("Cascade", TrayAction.Arrange(ArrangeLayout.Cascade)),
                     TrayRow.Divider,
-                    TrayRow.Command("Keep tiled as windows open and close", TrayAction.KeepTiled(true)),
+                    // As placed has no layout to keep.
+                    TrayRow.Command("Keep tiled as windows open and close", TrayAction.KeepTiled(true), enabled = false),
                 ),
             ),
             arrangeSubmenu(ArrangeState()),

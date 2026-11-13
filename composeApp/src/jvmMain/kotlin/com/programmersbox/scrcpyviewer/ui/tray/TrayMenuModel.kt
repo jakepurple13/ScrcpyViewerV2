@@ -39,7 +39,8 @@ const val TRAY_CHECK = "✓ "
 
 /**
  * The "Arrange mirror windows" submenu for [state]: the five layouts (the current one checked) and Keep tiled. When the
- * desktop does not let the app move windows, the note first and every entry disabled.
+ * desktop does not let the app move windows, the note first and every entry disabled. Keep tiled is disabled under
+ * As placed (no layout to keep).
  */
 fun arrangeSubmenu(state: ArrangeState): TrayRow.Submenu = TrayRow.Submenu(
     ARRANGE_LABEL,
@@ -54,7 +55,7 @@ fun arrangeSubmenu(state: ArrangeState): TrayRow.Submenu = TrayRow.Submenu(
             TrayRow.Command(
                 (if (state.keepTiled) TRAY_CHECK else "") + KEEP_TILED,
                 TrayAction.KeepTiled(!state.keepTiled),
-                enabled = state.movable,
+                enabled = state.keepTiledEnabled,
             )
         )
     },

@@ -169,7 +169,7 @@ fun ArrangeButton(arrange: ArrangeStrip, modifier: Modifier = Modifier) {
 /**
  * The Arrange menu: the title, the five layouts (a check on the current one) and Keep tiled.
  * When the desktop does not let the app move windows ([ArrangeState.movable] false) the entries are disabled under
- * [NOT_MOVABLE_NOTE].
+ * [NOT_MOVABLE_NOTE]. Keep tiled is disabled under As placed as well ([ArrangeState.keepTiledEnabled]).
  *
  * Picking a layout moves the check mark to it at once (it scales in over [CHECK_IN_MILLIS] while the old one scales
  * out), then after [PICK_CLOSE_DELAY_MILLIS] the menu closes and [ArrangeStrip.onPick] runs, so the windows move as
@@ -237,9 +237,10 @@ fun ArrangeMenu(expanded: Boolean, onDismiss: () -> Unit, arrange: ArrangeStrip)
         DropdownMenuItem(
             // Wraps: the menu is at most 280 dp wide and the copy is longer.
             text = { Text(KEEP_TILED, maxLines = 2) },
-            leadingIcon = { Checkbox(checked = state.keepTiled, onCheckedChange = null, enabled = state.movable) },
+            // Disabled under As placed too: there is no layout to keep.
+            leadingIcon = { Checkbox(checked = state.keepTiled, onCheckedChange = null, enabled = state.keepTiledEnabled) },
             onClick = { arrange.onKeepTiled(!state.keepTiled) },
-            enabled = state.movable,
+            enabled = state.keepTiledEnabled,
             modifier = Modifier.semantics {
                 role = Role.Checkbox
                 toggleableState = ToggleableState(state.keepTiled)

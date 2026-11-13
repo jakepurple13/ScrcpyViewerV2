@@ -353,6 +353,7 @@ class MirrorScreenshotTest {
         val grid = arrangeStrip(ArrangeState(layout = ArrangeLayout.Grid, keepTiled = true))
         renderArrangeMenu("mirror-arrange-menu-light.png", ThemeMode.Light, grid)
         renderArrangeMenu("mirror-arrange-menu-dark.png", ThemeMode.Dark, grid)
+        // As placed: Keep tiled is disabled (no layout to keep).
         renderArrangeMenu("mirror-arrange-menu-default.png", ThemeMode.Light, arrangeStrip())
         // Wayland: positions don't take, so the layouts are disabled under the note.
         renderArrangeMenu("mirror-arrange-menu-not-movable.png", ThemeMode.Light, arrangeStrip(ArrangeState(movable = false)))

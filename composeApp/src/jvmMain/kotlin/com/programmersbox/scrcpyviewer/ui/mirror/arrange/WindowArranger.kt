@@ -74,7 +74,10 @@ data class ArrangeState(
     val layout: ArrangeLayout = ArrangeLayout.AsPlaced,
     val keepTiled: Boolean = false,
     val movable: Boolean = true,
-)
+) {
+    /** Keep tiled can be changed: the windows can move, and there is a layout to keep (As placed has none). */
+    val keepTiledEnabled: Boolean get() = movable && layout != ArrangeLayout.AsPlaced
+}
 
 /** Moves one window to its place with animation, over the given milliseconds. */
 fun interface WindowAnimator {

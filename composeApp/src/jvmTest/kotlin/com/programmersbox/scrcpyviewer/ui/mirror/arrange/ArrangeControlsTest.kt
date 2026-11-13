@@ -250,6 +250,18 @@ class ArrangeControlsTest {
     }
 
     @Test
+    fun `Keep tiled is disabled under As placed`() = withMenu(ArrangeState()) { picks ->
+        assertFalse(enabled(KEEP_TILED), "As placed has no layout to keep")
+        assertTrue(enabled("Grid"))
+        click(row(KEEP_TILED))
+        frames(20)
+        assertEquals(emptyList(), picks.keep)
+        assertFalse(ArrangeState().keepTiledEnabled)
+        assertTrue(ArrangeState(layout = ArrangeLayout.Cascade).keepTiledEnabled)
+        assertFalse(ArrangeState(layout = ArrangeLayout.Cascade, movable = false).keepTiledEnabled)
+    }
+
+    @Test
     fun `when windows cannot move the layouts are disabled under the note`() = withMenu(ArrangeState(movable = false)) { picks ->
         assertNotNull(text(NOT_MOVABLE_NOTE))
         for (l in listOf("As placed", "Grid", "Side by side", "Focus this window", "Cascade", KEEP_TILED)) {
