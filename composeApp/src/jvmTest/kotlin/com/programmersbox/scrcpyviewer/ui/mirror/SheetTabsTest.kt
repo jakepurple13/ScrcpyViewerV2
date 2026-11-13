@@ -298,7 +298,8 @@ class SheetTabsTest {
         var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, widths = SheetWidths(actions = 380.dp)))
         val driver = SceneDriver(ImageComposeScene(800, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
-                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null) }
+                // Motion on explicitly: CI's macOS and Windows runners report the OS's reduce motion as on.
+                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null, motion = true) }
             }
         })
         driver.frames(5)
@@ -480,7 +481,8 @@ class SheetTabsTest {
             }
             val end = path.last()
             assertNull(driver.described("Shell"), "names at 400 dp")
-            assertTrue(end - start > 10f, "the word is wider than the icon: $start then $end")
+            // "Shell" in the small size is only a few px wider than the 16 dp icon with Windows' fonts.
+            assertTrue(end - start > 4f, "the word is wider than the icon: $start then $end")
             if (motion) {
                 val steps = path.zipWithNext { a, b -> b - a }
                 assertTrue(steps.all { it >= -0.5f }, "the dot moves one way: $path")
