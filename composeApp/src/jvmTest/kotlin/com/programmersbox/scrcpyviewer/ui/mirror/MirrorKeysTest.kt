@@ -325,6 +325,17 @@ class MirrorKeysTest {
     }
 
     @Test
+    fun follower_sheetFocus_releasesHeldKey() {
+        val k = keys()
+        k.onKey(down(Key.A))
+        followerSent.clear()
+        k.onSheetFocusGained()
+        val up = assertIs<ControlMessage.InjectKeycode>(followerSent.single())
+        assertEquals(InputMapper.KEY_ACTION_UP, up.action)
+        assertTrue(k.followerHeldKeyUp().isEmpty(), "forgotten: nothing left to release")
+    }
+
+    @Test
     fun follower_focusLoss_releasesHeldKey() {
         val k = keys()
         k.onKey(down(Key.A))

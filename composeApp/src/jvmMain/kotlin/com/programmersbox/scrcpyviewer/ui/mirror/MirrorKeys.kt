@@ -167,8 +167,12 @@ class MirrorKeys(
      */
     fun followerHeldKeyUp(): List<ControlMessage> = followerMapper.heldKeyUp()
 
-    /** Focus entered the quick actions sheet: keys held for the device would never see their release. */
+    /**
+     * Focus entered the quick actions sheet: keys held for the device, and the key held for followers, would never see
+     * their release.
+     */
     fun onSheetFocusGained() {
         hidKeyboard?.let { send(it.releaseAll()) }
+        followerSend(followerMapper.releaseKey())
     }
 }

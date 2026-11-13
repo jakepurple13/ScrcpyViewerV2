@@ -45,6 +45,32 @@ class WindowFollowTest {
     }
 
     @Test
+    fun `releaseAll sends the held key's UP to the followers even once the link is gone`() {
+        follow.send(listOf(down()))
+        sent.values.forEach { it.clear() }
+        // The leader closes: the window is disposed before followersChanged sees the reset link.
+        followers = emptySet()
+        follow.releaseAll()
+        for (s in listOf("A", "B")) {
+            val got = sent.getValue(s)
+            assertEquals(InputMapper.ACTION_UP, assertIs<ControlMessage.InjectTouch>(got[0]).action, "$s: $got")
+            assertEquals(shiftUp, got[1], "$s: $got")
+        }
+        // C's options turn the keyboard off: only its press is lifted.
+        assertIs<ControlMessage.InjectTouch>(sent.getValue("C").single())
+    }
+
+    @Test
+    fun `releaseAll sends no key UP to windows that never followed`() {
+        followers = setOf("A")
+        follow.send(listOf(down()))
+        sent.values.forEach { it.clear() }
+        follow.releaseAll()
+        assertEquals(shiftUp, sent.getValue("A").last())
+        assertTrue(sent.getValue("B").none { it is ControlMessage.InjectKeycode }, "B never followed: ${sent["B"]}")
+    }
+
+    @Test
     fun `nothing is sent when no follower leaves`() {
         follow.followersChanged(setOf("A"), setOf("A", "B"))
         assertTrue(sent.values.all { it.isEmpty() })

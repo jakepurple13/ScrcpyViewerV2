@@ -40,9 +40,13 @@ class InputFollowing(
         open.onEach { sessions -> _state.update { it.pruned(sessions.keys) } }.launchIn(scope)
     }
 
+    /**
+     * Makes [leader] lead [followers] (none: following stops). A window that closes while this runs is pruned again
+     * after the write, so it never stays behind as a ghost follower.
+     */
     fun setFollowers(leader: String, followers: Set<String>) {
-        val serials = open.value.keys
-        _state.value = FollowState(leader, followers - leader).pruned(serials)
+        _state.update { FollowState(leader, followers - leader).pruned(open.value.keys) }
+        _state.update { it.pruned(open.value.keys) }
     }
 
     fun stop() {

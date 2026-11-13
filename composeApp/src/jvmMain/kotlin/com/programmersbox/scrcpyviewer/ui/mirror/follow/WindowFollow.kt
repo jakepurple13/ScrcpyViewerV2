@@ -16,6 +16,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.FollowRunner
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
 import com.programmersbox.scrcpyviewer.scrcpy.Position
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
+import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
 import com.programmersbox.scrcpyviewer.ui.mirror.ClickIndicator
 import com.programmersbox.scrcpyviewer.ui.mirror.InputMapper.Companion.ACTION_DOWN
@@ -58,9 +59,13 @@ class WindowFollow(
         }
     }
 
+    /** The followers input last went to: where a held key may still be down if the link goes before a release. */
+    private var lastFollowers: Set<String> = emptySet()
+
     fun send(messages: List<ControlMessage>) {
         if (messages.isEmpty()) return
         val f = followers()
+        lastFollowers = f
         if (f.isNotEmpty()) sender.send(f, messages)
     }
 
@@ -69,34 +74,48 @@ class WindowFollow(
      * key UP for a held key (a held Shift would otherwise stay down on them).
      */
     fun followersChanged(previous: Set<String>, now: Set<String>) {
+        lastFollowers = now
         val gone = previous - now
         if (gone.isEmpty()) return
         sender.release(gone)
+        sendKeyUp(gone)
+    }
+
+    /**
+     * Lifts every press still held on a follower, and the held key on the followers it went to (focus lost, window
+     * closing: a leader that closes can be disposed before the link resets, so [followersChanged] never runs).
+     */
+    fun releaseAll() {
+        sender.release(serials())
+        sendKeyUp(lastFollowers + followers())
+    }
+
+    private fun sendKeyUp(to: Set<String>) {
         val up = heldKeyUp()
         if (up.isEmpty()) return
-        for (s in gone) {
+        for (s in to) {
             val t = target(s) ?: continue
             if (t.flags.control && t.flags.keyboard) up.forEach(t.send)
         }
     }
-
-    /** Lifts every press still held on a follower (focus lost, window closing). */
-    fun releaseAll() = sender.release(serials())
 }
 
 /**
  * Where [serial]'s quick actions also run while it leads: one shell runner per follower, titled by [titleOf]. A
- * follower whose options turn control off is not driven, so it is left out; so is one whose session is gone.
+ * follower whose options turn control off is not driven, so it is left out; so is one whose session is gone or not
+ * running (disconnected and waiting for a reconnect: its command would only wait out the timeout).
  */
 fun followRunners(
     serial: String,
     state: FollowState,
     open: Map<String, ScrcpySession>,
     adb: AdbClient?,
+    /** Whether a session is connected; a disconnected one waiting for a reconnect is left out. */
+    running: (ScrcpySession) -> Boolean = { it.status.value == SessionStatus.Running },
     titleOf: (String) -> String,
 ): List<FollowRunner> {
     if (adb == null || state.leader != serial) return emptyList()
-    return state.followers.filter { s -> open[s]?.let { followerFlags(it.values).control } == true }
+    return state.followers.filter { s -> open[s]?.let { followerFlags(it.values).control && running(it) } == true }
         .map { s -> FollowRunner(titleOf(s), ShellRunner(adb, s), s) }
 }
 

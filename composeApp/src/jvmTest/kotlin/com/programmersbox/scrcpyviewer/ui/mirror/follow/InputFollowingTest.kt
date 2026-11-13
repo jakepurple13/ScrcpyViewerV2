@@ -8,7 +8,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -101,11 +103,37 @@ class InputFollowingTest {
         val noControl = ScrcpySession(
             "C", OptionValues(mapOf("no-control" to "")), LocalPairLauncher(), { _, _ -> null }, { _, _ -> null }, sessionScope,
         )
-        val sessions = sessions("A", "B") + ("C" to noControl)
-        val state = FollowState("A", setOf("B", "C", "gone"))
+        val sessions = sessions("A", "B", "D") + ("C" to noControl)
+        val state = FollowState("A", setOf("B", "C", "D", "gone"))
+        // D is disconnected, waiting for a reconnect: its command would only wait out the timeout.
+        val running = { s: ScrcpySession -> s.serial != "D" }
 
-        assertEquals(listOf("Title B" to "B"), followRunners("A", state, sessions, adb) { "Title $it" }.map { it.title to it.serial })
-        assertEquals(emptyList(), followRunners("B", state, sessions, adb) { it }) // not the leader
-        assertEquals(emptyList(), followRunners("A", state, sessions, null) { it }) // no adb
+        assertEquals(
+            listOf("Title B" to "B"),
+            followRunners("A", state, sessions, adb, running) { "Title $it" }.map { it.title to it.serial },
+        )
+        assertEquals(emptyList(), followRunners("B", state, sessions, adb, running) { it }) // not the leader
+        assertEquals(emptyList(), followRunners("A", state, sessions, null, running) { it }) // no adb
+    }
+
+    @Test
+    fun `a window that closes while followers are set is pruned after the write`() {
+        // The open map drops C right after setFollowers reads it, before its write lands.
+        val backing = MutableStateFlow(sessions("A", "B", "C"))
+        val racing = DroppingOnRead(backing) { backing.value = backing.value - "C" }
+        val f = InputFollowing(racing, scope)
+        f.setFollowers("A", setOf("B", "C"))
+        assertEquals(FollowState("A", setOf("B")), f.state.value)
+    }
+
+    /** [backing], running [onFirstRead] just after the first read of its value returns. */
+    @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+    private class DroppingOnRead(
+        private val backing: MutableStateFlow<Map<String, ScrcpySession>>,
+        private val onFirstRead: () -> Unit,
+    ) : StateFlow<Map<String, ScrcpySession>> by backing {
+        private var read = false
+        override val value: Map<String, ScrcpySession>
+            get() = backing.value.also { if (!read) { read = true; onFirstRead() } }
     }
 }
