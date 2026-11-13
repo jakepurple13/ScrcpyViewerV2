@@ -14,6 +14,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.remember
@@ -36,6 +37,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+
+/** Rail labels need room: below this window width the rail shrinks to icons only. */
+fun railShowsLabels(windowWidth: Dp): Boolean = windowWidth >= 540.dp
 
 /** The destinations of the navigation rail. */
 @Serializable

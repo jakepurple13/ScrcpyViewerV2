@@ -28,6 +28,7 @@ import com.programmersbox.scrcpyviewer.state.appTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.neonText
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
+import com.programmersbox.scrcpyviewer.ui.window.MainWindowMinSize
 import com.programmersbox.scrcpyviewer.ui.window.bringToFront
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -171,6 +172,7 @@ fun main() {
             // the fade keeps it until it has faded; otherwise it goes at once, as it always has.
             visible = realVisible && (shuttingDown == null || (quit.keepsWindow && !quit.hidden) || !quit.faded),
             titleBar = { MainTitle() },
+            minSize = MainWindowMinSize,
         ) {
             SideEffect { mainWindow = nucleusWindow }
             if (quit.effect == LaunchEffect.Fade) {
