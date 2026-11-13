@@ -56,7 +56,9 @@ enum class TransferKind { Install, Push, Pull, InstallFromDevice }
  * unknown) and [isDirectory] says the pulled device entry is a folder. [dragOut] marks a pull into the drag cache for
  * a drag out of the window: it reports nothing when it succeeds (the drop is the result) and the tray does not list it.
  * [replace] (a Push into [deviceDir]) replaces the item named [deviceName] there, file or folder: the push goes to a
- * temp name, which takes the item's place only once it succeeded.
+ * temp name, which takes the item's place only once it succeeded. [hostTarget] (a Pull) is the exact host path to write,
+ * named by someone else (a file-promise drop: the drop target picked the name and the folder): it is not made unique,
+ * and an empty folder already standing there for a folder pull is replaced.
  */
 data class TransferRequest(
     val path: Path,
@@ -68,6 +70,7 @@ data class TransferRequest(
     val isDirectory: Boolean = false,
     val dragOut: Boolean = false,
     val replace: Boolean = false,
+    val hostTarget: Path? = null,
 ) {
     val name: String get() = deviceName ?: path.fileName?.toString() ?: path.toString()
 }
@@ -470,7 +473,11 @@ class FileTransferQueue(
         TransferKind.Install -> install(request, request.path)
         TransferKind.Push -> push(id, request)
         TransferKind.Pull -> {
-            val dir = if (request.opensAfter) tempRoot.resolve(serialPathSegment(serial)).resolve("open") else request.path
+            val dir = when {
+                request.opensAfter -> tempRoot.resolve(serialPathSegment(serial)).resolve("open")
+                request.hostTarget != null -> request.hostTarget.parent ?: request.path
+                else -> request.path
+            }
             when (val pulled = pull(id, request, dir)) {
                 is Pulled.Failed -> failed(request, pulled.reason)
                 // Open on computer and drag-out pulls report nothing: the caller uses [hostResult].
@@ -603,7 +610,9 @@ class FileTransferQueue(
             }
         }
         Files.createDirectories(hostDir)
-        val target = hostUniquePath(hostDir, hostFileName(name), request.isDirectory)
+        val target = request.hostTarget?.takeUnless { request.opensAfter || request.kind != TransferKind.Pull }
+            ?.also(::clearPromisedFolder)
+            ?: hostUniquePath(hostDir, hostFileName(name), request.isDirectory)
         synchronized(lock) { updateJob(id) { it.copy(total = if (request.isDirectory) null else request.size) } }
         var keep = false
         var started = false
@@ -617,6 +626,17 @@ class FileTransferQueue(
         } finally {
             // Only what this pull's adb may have written.
             if (!keep && started) runCatching { deleteRecursively(target) }
+        }
+    }
+
+    /**
+     * A drop target may make the promised folder before asking for it; `adb pull` onto an existing folder would put
+     * the pulled one inside it. Only an empty folder goes: anything with content stays, and adb nests into it.
+     */
+    private fun clearPromisedFolder(target: Path) {
+        if (!Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS)) return
+        runCatching { Files.list(target).use { it.findFirst().isPresent } }.getOrNull()?.let { notEmpty ->
+            if (!notEmpty) runCatching { Files.delete(target) }
         }
     }
 

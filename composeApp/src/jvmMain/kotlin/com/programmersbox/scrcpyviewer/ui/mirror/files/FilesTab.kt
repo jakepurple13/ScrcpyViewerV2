@@ -34,6 +34,7 @@ import androidx.compose.ui.layout.findRootCoordinates
 import com.programmersbox.scrcpyviewer.files.DragCache
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.IntSize
+import com.programmersbox.scrcpyviewer.ui.mirror.LocalMirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.mirror.readDragData
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.mutableStateOf
@@ -200,6 +201,16 @@ fun FilesTab(
 ) = FilesTab(browser, modifier, onPushFiles, onPullTo, downloads, zone, locale, motion, isMac, ::readDragData)
 
 /**
+ * The macOS file-promise drag for this window (the drop target asks for the files after the drop), or null elsewhere:
+ * then rows dragged out are pulled before the OS drag starts.
+ */
+@Composable
+private fun rememberPromiseDragStarter(isMac: Boolean): PromiseDragStarter? {
+    val handle = LocalMirrorWindowHandle.current
+    return remember(isMac, handle) { if (isMac && handle != null) MacFilePromiseDragStarter { handle.nsWindow } else null }
+}
+
+/**
  * [FilesTab] reading a computer drag's data through [dragData], handing drags out of the window to [dragOutStarter]
  * through the drag folders of [dragCache] (tests).
  */
@@ -218,11 +229,12 @@ internal fun FilesTab(
     dragData: (DragAndDropEvent) -> DragData?,
     dragOutStarter: OutboundDragStarter = remember { ComposeDragOutStarter() },
     dragCache: DragCache = remember { DragCache() },
+    promiseStarter: PromiseDragStarter? = rememberPromiseDragStarter(isMac),
 ) {
     var menu by remember { mutableStateOf<FilesMenu?>(null) }
     val drop = remember(browser) { FilesDropState(browser) }
     val dragScope = rememberCoroutineScope()
-    val dragOut = remember(browser, dragOutStarter, dragCache) {
+    val dragOut = remember(browser, dragOutStarter, dragCache, promiseStarter) {
         DragOutController(
             browser.serial, dragCache,
             pull = { names, dir ->
@@ -238,6 +250,15 @@ internal fun FilesTab(
             currentJobs = browser.queueJobsNow,
             // While the OS drag runs, letting go over this window (mirror or tab) pushes nothing back.
             onOsDrag = browser::setDraggingOut,
+            promises = promiseStarter,
+            promisedEntries = { names ->
+                // Read now: the move is gone by the time the drop target asks for the files.
+                val from = drop.movingFrom ?: browser.path
+                drop.movingEntries.filter { it.name in names }.map { entry ->
+                    PromisedEntry(entry.name, entry.isDir, entry.size.takeUnless { entry.isDir }) { target -> browser.pullPromised(from, entry, target) }
+                }
+            },
+            jobUpdates = browser.queueJobUpdates,
         ).also { it.onFinished = drop::cancelMove }
     }
     LaunchedEffect(dragOut) { snapshotFlow { browser.transferJobs }.collect(dragOut::onJobs) }

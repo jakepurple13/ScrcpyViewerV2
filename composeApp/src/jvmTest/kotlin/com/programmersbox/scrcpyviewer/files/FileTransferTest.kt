@@ -588,6 +588,53 @@ class FileTransferTest {
     }
 
     @Test
+    fun `a pull with a host target writes exactly there and reports where`() = runBlocking<Unit> {
+        val picked = java.nio.file.Files.createDirectories(tmp.resolve("Desktop"))
+        // The drop target already holds the name: the promise named its own ("a 2.txt"), the queue must not rename it.
+        java.nio.file.Files.writeString(picked.resolve("a.txt"), "old")
+        val target = picked.resolve("a 2.txt")
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "data"); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        val results = async(start = CoroutineStart.UNDISPATCHED) { q.results.take(1).toList() }
+        val id = q.enqueue(listOf(pull(picked, "a.txt").copy(hostTarget = target))).single()
+        val job = q.awaitJob(id) { it.state == JobState.Done }
+        assertEquals(target, job.hostResult)
+        assertEquals(target.toString(), adb.calls.single().last())
+        assertEquals("data", java.nio.file.Files.readString(target))
+        assertEquals("old", java.nio.file.Files.readString(picked.resolve("a.txt")))
+        assertEquals(listOf("Pulled a 2.txt to Desktop"), withTimeout(5_000) { results.await() }.map { it.message })
+    }
+
+    @Test
+    fun `a folder pull with a host target replaces the empty folder the drop target made`() = runBlocking<Unit> {
+        val picked = java.nio.file.Files.createDirectories(tmp.resolve("Desktop"))
+        val target = java.nio.file.Files.createDirectories(picked.resolve("Camera"))
+        val adb = FakeAdb { args ->
+            // adb pull of a folder onto an existing folder nests it inside: the target must be gone first.
+            val to = Paths.get(args.last())
+            assertFalse(java.nio.file.Files.exists(to), "target still there when adb ran")
+            java.nio.file.Files.createDirectories(to)
+            java.nio.file.Files.writeString(to.resolve("1.jpg"), "x")
+            ProcessResult(0, "", "")
+        }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(pull(picked, "Camera").copy(isDirectory = true, hostTarget = target))).single()
+        q.awaitJob(id) { it.state == JobState.Done }
+        assertEquals("x", java.nio.file.Files.readString(target.resolve("1.jpg")))
+    }
+
+    @Test
+    fun `a failed pull with a host target removes what it wrote there`() = runBlocking<Unit> {
+        val picked = java.nio.file.Files.createDirectories(tmp.resolve("Desktop"))
+        val target = picked.resolve("a.txt")
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "par"); ProcessResult(1, "adb: error: lost", "") }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(pull(picked, "a.txt").copy(hostTarget = target))).single()
+        q.awaitJob(id) { it.state is JobState.Failed }
+        assertFalse(java.nio.file.Files.exists(target))
+    }
+
+    @Test
     fun `hostUniquePath never names an existing file`() {
         val d = java.nio.file.Files.createDirectories(tmp.resolve("u"))
         fun touch(name: String) = java.nio.file.Files.createFile(d.resolve(name))

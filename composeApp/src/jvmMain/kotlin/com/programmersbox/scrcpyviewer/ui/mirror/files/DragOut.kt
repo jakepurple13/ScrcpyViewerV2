@@ -22,7 +22,11 @@ import com.programmersbox.scrcpyviewer.files.TransferJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.awt.datatransfer.DataFlavor
 import java.awt.datatransfer.Transferable
 import java.awt.datatransfer.UnsupportedFlavorException
@@ -50,6 +54,49 @@ interface OutboundDragStarter {
      * event loop until the drop. False when it did not start. [onEnd] hears whether something was dropped.
      */
     fun start(files: List<File>, at: Offset, onEnd: (dropped: Boolean) -> Unit): Boolean
+}
+
+/** How a promised write ended. */
+sealed interface PromiseOutcome {
+    data object Done : PromiseOutcome
+
+    /** Stopped from the tray: the drop target drops its placeholder quietly. */
+    data object Cancelled : PromiseOutcome
+
+    data class Failed(val reason: String) : PromiseOutcome
+}
+
+/**
+ * One file or folder of a promise drag: nothing exists until the drop target asks for it. [write] puts it at the
+ * path the drop target picked (its folder, and a name it may have changed to avoid a clash) and blocks until done; it
+ * runs on the platform's promise thread, never the UI thread, and reports the pull's bytes of its total (null:
+ * unknown, as for a folder) as they come.
+ */
+class PromisedItem(
+    val name: String,
+    val isDirectory: Boolean,
+    /** The file's size from the listing, for the drop target's progress from the start; null for a folder. */
+    val size: Long?,
+    val write: (target: Path, progress: (bytes: Long, total: Long?) -> Unit) -> PromiseOutcome,
+)
+
+/**
+ * A device entry to promise, with how to queue its pull: [enqueue] queues a pull of it to an exact host path and
+ * returns the job's id, or null when it could not be queued. Called on the UI thread.
+ */
+class PromisedEntry(val name: String, val isDirectory: Boolean, val size: Long?, val enqueue: (target: Path) -> Long?)
+
+/**
+ * Hands promised files to the computer's own drag and drop (macOS file promises). The drag starts at once; the drop
+ * target asks for each item after the drop, through [PromisedItem.write].
+ */
+interface PromiseDragStarter {
+    /**
+     * Starts the OS drag of [items] from the pointer event being handled (UI thread, inside it: the platform takes
+     * the event). Returns at once; false when it did not start. [onEnd] (UI thread) hears whether something was
+     * dropped. The writes may outlive the drag.
+     */
+    fun start(items: List<PromisedItem>, onEnd: (dropped: Boolean) -> Unit): Boolean
 }
 
 /** When the OS drag starts once the pulled files are ready (the button always still held). */
@@ -85,6 +132,11 @@ enum class DragOutPhase {
  * drag-out ends on its own (the OS drag returned, a pull failed). [onJobs] feeds the queue's jobs in (a snapshot that
  * may lag); [currentJobs] reads the queue's jobs as they are now, to tell whether a pull can still write. Folders are
  * deleted on [cleanupScope], which outlives the tab (the window's). UI thread only.
+ *
+ * With [promises] (macOS), [begin] starts the OS drag at once instead, with nothing pulled: the drop target asks for
+ * each of [promisedEntries] after the drop, and the pull goes straight to the path it picked (a job in the tray, which
+ * [jobUpdates] follows until it ends). Without them, or when the promise drag does not start, the rows are pulled
+ * first as above.
  */
 @Stable
 class DragOutController(
@@ -102,6 +154,11 @@ class DragOutController(
     private val rule: DragOutStartRule = DragOutStartRule.WhenReady,
     /** Hears the OS drag start (true) and end (false): the window's drop targets refuse it meanwhile. */
     private val onOsDrag: (Boolean) -> Unit = {},
+    private val promises: PromiseDragStarter? = null,
+    private val promisedEntries: (names: List<String>) -> List<PromisedEntry> = { emptyList() },
+    private val jobUpdates: Flow<List<TransferJob>>? = null,
+    /** Where promised pulls are queued from (the UI thread). */
+    private val ui: CoroutineContext = Dispatchers.Main,
 ) {
     /** One drag-out: its folder and pull jobs. */
     private class Drag(val dir: Path, val ids: Set<Long>) {
@@ -141,6 +198,7 @@ class DragOutController(
             logDragOut("begin refused: active=$active, phase=$phase, names=$names")
             return false
         }
+        if (beginPromised(names)) return true
         val dir = cache.newDragDir(serial)
         logDragOut("begin: names=$names, at=$at, dragDir=$dir, rule=$rule")
         val ids = pull(names, dir)
@@ -156,6 +214,66 @@ class DragOutController(
         moveToPhase(DragOutPhase.Pulling)
         onJobs(lastJobs)
         return true
+    }
+
+    /** Starts the promise drag of [names]; false (nothing changed) when there are no promises or it did not start. */
+    private fun beginPromised(names: List<String>): Boolean {
+        val starter = promises ?: return false
+        val jobs = jobUpdates ?: return false
+        val entries = promisedEntries(names)
+        if (entries.isEmpty()) return false
+        val items = entries.map { e -> PromisedItem(e.name, e.isDirectory, e.size) { target, progress -> writePromised(e, target, jobs, progress) } }
+        logDragOut("begin (promise): names=${entries.map { it.name }}")
+        moveToPhase(DragOutPhase.OsDrag)
+        onOsDrag(true)
+        val started = try {
+            starter.start(items) { dropped ->
+                logDragOut("promise drag ended: dropped=$dropped")
+                onOsDrag(false)
+                reset()
+                onFinished()
+            }
+        } catch (e: Exception) {
+            logDragOutWarn("promise drag threw", e)
+            false
+        }
+        if (!started) {
+            logDragOut("promise drag did not start: pulling first instead")
+            onOsDrag(false)
+            moveToPhase(DragOutPhase.Idle)
+        }
+        return started
+    }
+
+    /** Queues [entry]'s pull to [target] and waits for it (the platform's promise thread). */
+    private fun writePromised(
+        entry: PromisedEntry,
+        target: Path,
+        jobs: Flow<List<TransferJob>>,
+        progress: (bytes: Long, total: Long?) -> Unit,
+    ): PromiseOutcome = runBlocking {
+        val id = withContext(ui) { entry.enqueue(target) }
+            ?: return@runBlocking PromiseOutcome.Failed("could not pull ${entry.name}")
+        logDragOut("promise write: ${entry.name} -> $target, jobId=$id")
+        var seen = false
+        val end = jobs.first { list ->
+            val job = list.firstOrNull { it.id == id }
+            if (job != null) {
+                seen = true
+                progress(job.bytes, job.total)
+            }
+            (job == null && seen) || job?.active == false
+        }.firstOrNull { it.id == id }
+        val outcome = when (val state = end?.state) {
+            JobState.Done -> PromiseOutcome.Done
+            JobState.Cancelled -> PromiseOutcome.Cancelled
+            is JobState.Failed -> PromiseOutcome.Failed(state.reason)
+            // Gone before it ended: the queue drops a job cancelled while queued (only ended jobs are dismissed).
+            null -> PromiseOutcome.Cancelled
+            else -> PromiseOutcome.Failed("the pull of ${entry.name} stopped unexpectedly")
+        }
+        logDragOut("promise write ended: ${entry.name}, $outcome")
+        outcome
     }
 
     /** The pointer moved to [at] (the tab's coordinates). */
