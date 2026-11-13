@@ -38,6 +38,9 @@ import androidx.compose.ui.geometry.Rect
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorContent
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorUiState
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsUiState
+import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsPanel
+import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_LOGCAT_WIDTH
+import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_WIDTH
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickToggle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.dropHint
@@ -72,6 +75,12 @@ import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.styleBackdrop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.cancel
+import com.programmersbox.scrcpyviewer.logcat.LogLevel
+import com.programmersbox.scrcpyviewer.logcat.LogcatLine
+import com.programmersbox.scrcpyviewer.logcat.LogcatSource
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatTab
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.ZoneOffset
@@ -520,6 +529,112 @@ class MirrorScreenshotTest {
                 ),
             )
             renderFiles("mirror-files-$tag-tray-$m.png", theme, filesBrowser("/sdcard/Download", transfers))
+        }
+    }
+
+    // Logcat tab, at the own window's default 720 dp width.
+
+    private class LogcatShotSource(private val shot: List<LogcatLine>) : LogcatSource(object : AdbClient(adbPath = { error("no adb") }) {}, "SER") {
+        override fun lines(since: String?): Flow<LogcatLine> = flow {
+            shot.forEach { emit(it) }
+            awaitCancellation()
+        }
+        override suspend fun processes(): Map<Int, String> =
+            mapOf(4121 to "com.example.notes", 612 to "system_server", 1890 to "com.android.systemui")
+    }
+
+    private fun logLine(time: String, pid: Int, tid: Int, level: LogLevel, tag: String, message: String) =
+        LogcatLine("11-13", time, pid, tid, level, tag, message)
+
+    private val logcatShot: List<LogcatLine> = listOf(
+        logLine("10:41:02.118", 612, 640, LogLevel.Info, "ActivityManager", "Start proc 4121:com.example.notes/u0a212 for activity"),
+        logLine("10:41:02.402", 4121, 4121, LogLevel.Debug, "NotesRepo", "Loaded 128 notes from cache in 14ms"),
+        logLine("10:41:02.517", 4121, 4133, LogLevel.Verbose, "SyncWorker", "Sync started: 3 dirty notes"),
+        logLine("10:41:02.733", 1890, 1890, LogLevel.Debug, "Choreographer", "Skipped 38 frames!  The application may be doing too much work on its main thread."),
+        logLine("10:41:03.020", 4121, 4133, LogLevel.Warn, "OkHttp", "Sync request failed, will retry"),
+        logLine("10:41:03.020", 4121, 4133, LogLevel.Warn, "OkHttp", "java.net.SocketTimeoutException: timeout"),
+        logLine("10:41:03.020", 4121, 4133, LogLevel.Warn, "OkHttp", "\tat okhttp3.internal.http2.Http2Stream.waitForIo(Http2Stream.kt:675)"),
+        logLine("10:41:03.311", 4121, 4121, LogLevel.Info, "NoteListViewModel", "Showing 128 notes"),
+        logLine("10:41:04.006", 4121, 4121, LogLevel.Error, "AndroidRuntime", "FATAL EXCEPTION: main"),
+        logLine("10:41:04.006", 4121, 4121, LogLevel.Error, "AndroidRuntime", "Process: com.example.notes, PID: 4121"),
+        logLine("10:41:04.006", 4121, 4121, LogLevel.Error, "AndroidRuntime", "java.lang.IllegalStateException: Note 42 has no body"),
+        logLine("10:41:04.006", 4121, 4121, LogLevel.Error, "AndroidRuntime", "\tat com.example.notes.NotesRepo.load(NotesRepo.kt:118)"),
+        logLine("10:41:04.006", 4121, 4121, LogLevel.Error, "AndroidRuntime", "\tat com.example.notes.NoteListViewModel.open(NoteListViewModel.kt:57)"),
+        logLine("10:41:04.006", 4121, 4121, LogLevel.Error, "AndroidRuntime", "\tat android.os.Handler.dispatchMessage(Handler.java:99)"),
+        logLine("10:41:04.215", 612, 1204, LogLevel.Warn, "ActivityManager", "Process com.example.notes (pid 4121) has died: fg TOP"),
+        logLine("10:41:04.330", 1890, 1890, LogLevel.Info, "SystemUI", "Notes keeps stopping: dialog shown"),
+    )
+
+    /** The Logcat tab: [setup] plays, pauses or leaves the controller as it is before the frame. */
+    private fun renderLogcat(name: String, mode: ThemeMode, setup: (LogcatController) -> Unit) {
+        val out = outDir.resolve(name)
+        val scope = CoroutineScope(Dispatchers.Unconfined + kotlinx.coroutines.Job())
+        val controller = LogcatController(LogcatShotSource(logcatShot), scope, {}, io = kotlin.coroutines.EmptyCoroutineContext)
+        setup(controller)
+        try {
+            renderToPng(720, 640, out, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainer) {
+                        LogcatTab(controller, 720.dp, motion = false)
+                    }
+                }
+            }
+        } finally {
+            scope.cancel()
+        }
+        assertTrue(Files.size(out) > 5_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror logcat tab`() {
+        for (mode in listOf(ThemeMode.Light, ThemeMode.Dark)) {
+            val m = mode.name.lowercase()
+            renderLogcat("mirror-logcat-running-$m.png", mode) {
+                it.pick("com.example.notes")
+                it.query = ""
+                it.play()
+            }
+            renderLogcat("mirror-logcat-paused-$m.png", mode) {
+                it.play()
+                it.pause()
+            }
+            renderLogcat("mirror-logcat-start-$m.png", mode) {}
+        }
+    }
+
+    @Test
+    fun `mirror logcat own window card`() {
+        for (mode in listOf(ThemeMode.Light, ThemeMode.Dark)) {
+            val name = "mirror-logcat-own-window-${mode.name.lowercase()}.png"
+            val out = outDir.resolve(name)
+            val scope = CoroutineScope(Dispatchers.Unconfined + kotlinx.coroutines.Job())
+            val controller = LogcatController(LogcatShotSource(logcatShot), scope, {}, io = kotlin.coroutines.EmptyCoroutineContext)
+            controller.play()
+            controller.popOut()
+            val state = QuickActionsUiState(
+                open = true, enabled = true, tab = SheetTab.Logcat, logcatPopped = true, logcatLive = true,
+            )
+            try {
+                renderToPng(QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(), 640, out, settleMillis = 1_000) {
+                    ScrcpyViewerTheme(AppTheme(mode)) {
+                        Surface(Modifier.fillMaxSize()) {
+                            QuickActionsPanel(state, {}, console = null, logcat = controller)
+                        }
+                    }
+                }
+            } finally {
+                scope.cancel()
+            }
+            assertTrue(Files.size(out) > 5_000, "$name should not be blank")
+            // At the Actions width the Logcat segment shows the window icon with the live badge instead of its label.
+            val narrow = outDir.resolve("mirror-logcat-own-window-narrow-${mode.name.lowercase()}.png")
+            renderToPng(QUICK_ACTIONS_WIDTH.value.toInt(), 160, narrow, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize()) {
+                        QuickActionsPanel(state.copy(tab = SheetTab.Actions), {}, console = null)
+                    }
+                }
+            }
         }
     }
 

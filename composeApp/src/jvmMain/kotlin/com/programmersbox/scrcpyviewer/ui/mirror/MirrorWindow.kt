@@ -58,6 +58,8 @@ import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CropSquare
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
 import com.programmersbox.scrcpyviewer.ui.mirror.files.rememberFilesBrowser
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatWindow
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -962,6 +964,7 @@ fun MirrorWindow(
                         wake = readWake,
                         shellConsole = quickActions.console,
                         filesTab = filesTab,
+                        logcat = quickActions.logcat,
                         onStageBounds = { stageBounds = it },
                         onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
@@ -973,6 +976,8 @@ fun MirrorWindow(
             }
         }
     }
+    // Logcat's own window, while it is out: part of this window's composition, so it closes with it.
+    quickActions.logcat?.let { LogcatWindow(it, model, theme) }
 }
 
 /** What the window's sheet-growth effect last ran for; a plain holder, read and written only in that effect. */
@@ -1104,6 +1109,8 @@ fun MirrorContent(
     shellConsole: ShellConsole? = null,
     /** The quick actions sheet's Files tab content; null shows an empty Files tab. */
     filesTab: (@Composable () -> Unit)? = null,
+    /** The quick actions sheet's Logcat tab; null (no adb) says adb isn't available. */
+    logcat: LogcatController? = null,
     /** The quick actions sheet's bounds in root pixels while it shows, null once it is gone. */
     onSheetBounds: (Rect?) -> Unit = {},
 ) {
@@ -1191,7 +1198,7 @@ fun MirrorContent(
             SideToolbar(state, onAction)
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
             val panel = rememberQuickActionsPanel(
-                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab,
+                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
             )
             // Where the sheet is, so the window's file drop leaves it to the sheet (the Files tab takes drops there).
             val currentSheetBounds by rememberUpdatedState(onSheetBounds)

@@ -28,12 +28,22 @@ import com.programmersbox.scrcpyviewer.ui.SceneDriver
 import com.programmersbox.scrcpyviewer.ui.onEdt
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.logcat.LogcatLine
+import com.programmersbox.scrcpyviewer.logcat.LogcatSource
+import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatRun
+import androidx.compose.ui.geometry.Rect
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.emptyFlow
 import java.awt.Canvas
 import java.awt.event.KeyEvent as AwtKeyEvent
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -133,6 +143,97 @@ class SheetKeyFocusTest {
             open = false
             driver.frames(30)
             assertFalse(focus.focused)
+        } finally {
+            driver.scene.close()
+        }
+    }
+
+    private class SilentLogcat : LogcatSource(object : AdbClient(adbPath = { error("no adb") }) {}, "serial") {
+        override fun lines(since: String?): Flow<LogcatLine> = Channel<LogcatLine>(Channel.UNLIMITED).consumeAsFlow()
+        override suspend fun processes(): Map<Int, String> = emptyMap()
+    }
+
+    @Test
+    fun `Logcat keys in the sheet don't reach the device`() = onEdt {
+        val focus = SheetFocus()
+        val logcat = LogcatController(SilentLogcat(), CoroutineScope(Dispatchers.Unconfined), {}, io = EmptyCoroutineContext)
+        val sent = mutableListOf<ControlMessage>()
+        val frame = mutableStateOf<VideoFrame?>(null)
+        val driver = SceneDriver(ImageComposeScene(1280, 800, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize()) {
+                    CompositionLocalProvider(LocalSheetFocus provides focus) {
+                        MirrorContent(
+                            MirrorUiState(
+                                model = "Pixel", details = "", status = SessionStatus.Running, frameSize = IntSize(1080, 2400),
+                                quickActions = QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat),
+                            ),
+                            frame, {}, {}, {}, {}, {}, {},
+                            onQuickAction = {},
+                            logcat = logcat,
+                        )
+                    }
+                }
+            }
+        })
+        // The window's dispatcher: MirrorKeys first, Compose only for keys it leaves.
+        val keys = MirrorKeys(
+            mapper = InputMapper(frameSize = { IntSize(1080, 2400) }, viewRect = { Rect(0f, 0f, 540f, 1200f) }),
+            hidKeyboard = null,
+            send = { sent += it },
+            clipboardText = { null },
+            scope = CoroutineScope(Dispatchers.Unconfined),
+            sheetOpen = { true },
+            sheetFocused = { focus.focused },
+            closeSheet = {},
+            applyZoom = {},
+            mac = Os.isMac,
+        )
+        val cmd = if (Os.isMac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
+        fun window(id: Int, code: Int, char: Char = AwtKeyEvent.CHAR_UNDEFINED, mods: Int = 0) {
+            val typed = id == AwtKeyEvent.KEY_TYPED
+            val awt = AwtKeyEvent(source, id, 0L, mods, if (typed) AwtKeyEvent.VK_UNDEFINED else code, char)
+            val type = when (id) {
+                AwtKeyEvent.KEY_PRESSED -> KeyEventType.KeyDown
+                AwtKeyEvent.KEY_RELEASED -> KeyEventType.KeyUp
+                else -> KeyEventType.Unknown
+            }
+            val event = KeyEvent(
+                Key(if (typed) AwtKeyEvent.VK_UNDEFINED else code), type, codePoint = char.code,
+                isCtrlPressed = mods and AwtKeyEvent.CTRL_DOWN_MASK != 0,
+                isMetaPressed = mods and AwtKeyEvent.META_DOWN_MASK != 0,
+                nativeEvent = awt,
+            )
+            if (!keys.onKey(event)) driver.scene.sendKeyEvent(event)
+        }
+        try {
+            logcat.play()
+            driver.frames(30)
+            // A press on the list's empty space puts focus in the sheet.
+            driver.click(1000f, 500f)
+            assertTrue(focus.focused, "the list click focused the sheet")
+
+            window(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_SPACE, ' ')
+            window(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_SPACE, ' ')
+            window(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_SPACE, ' ')
+            driver.frames(5)
+            assertEquals(LogcatRun.Paused, logcat.run, "Space paused")
+
+            window(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_F, mods = cmd)
+            window(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_F, mods = cmd)
+            driver.frames(5)
+            window(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_X, 'x')
+            window(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_X, 'x')
+            window(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_X, 'x')
+            driver.frames(5)
+            assertEquals("x", logcat.query, "the shortcut focused the filter, which took the typing")
+
+            window(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_K, mods = cmd)
+            window(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_K, mods = cmd)
+            driver.frames(5)
+            assertEquals("x", logcat.query, "the clear shortcut typed nothing")
+
+            assertTrue(sent.isEmpty(), "nothing reached the device: $sent")
         } finally {
             driver.scene.close()
         }
