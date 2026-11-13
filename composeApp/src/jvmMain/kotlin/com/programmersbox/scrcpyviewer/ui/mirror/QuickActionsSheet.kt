@@ -12,6 +12,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,7 +54,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,6 +82,7 @@ import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
+import com.programmersbox.scrcpyviewer.ui.mirror.files.AdbUnavailableState
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
@@ -91,6 +97,9 @@ val QUICK_ACTIONS_SHELL_WIDTH = 400.dp
 
 /** Default and minimum width of the open sheet on the Apps tab (three app cards a row), its drag bar included. */
 val QUICK_ACTIONS_APPS_WIDTH = 480.dp
+
+/** Default and minimum width of the open sheet on the Files tab, its drag bar included. */
+val QUICK_ACTIONS_FILES_WIDTH = 440.dp
 
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
 private val SLIDE_OFFSET = 40.dp
@@ -112,16 +121,17 @@ fun sheetWidthSpec(from: Dp, to: Dp): TweenSpec<Float> = growSpec(to > from)
 
 /**
  * The "Slide" tab switch: the outgoing tab moves 40 dp toward the side it leaves from while fading out; the incoming
- * one enters from the other side, fading in slightly later. To Shell uses the open timing, back to Actions the close
- * one.
+ * one enters from the other side, fading in slightly later. Tabs sit in order, so moving to a later one ([SheetTab.ordinal])
+ * enters from the right with the open timing, and to an earlier one from the left with the close timing.
  */
-fun slideTransform(toShell: Boolean, density: Density): ContentTransform {
+fun slideTransform(from: SheetTab, to: SheetTab, density: Density): ContentTransform {
+    val forward = to.ordinal > from.ordinal
     val offset = with(density) { SLIDE_OFFSET.roundToPx() }
-    val sign = if (toShell) 1 else -1
-    val millis = if (toShell) OPEN_MILLIS else CLOSE_MILLIS
-    val enter = slideInHorizontally(growSpec(toShell)) { sign * offset } +
+    val sign = if (forward) 1 else -1
+    val millis = if (forward) OPEN_MILLIS else CLOSE_MILLIS
+    val enter = slideInHorizontally(growSpec(forward)) { sign * offset } +
         fadeIn(tween(millis - FADE_IN_DELAY_MILLIS, delayMillis = FADE_IN_DELAY_MILLIS, easing = LinearEasing))
-    val exit = slideOutHorizontally(growSpec(toShell)) { -sign * offset } +
+    val exit = slideOutHorizontally(growSpec(forward)) { -sign * offset } +
         fadeOut(tween(FADE_OUT_MILLIS, easing = LinearEasing))
     return enter togetherWith exit
 }
@@ -168,14 +178,16 @@ fun rememberQuickActionsPanel(
     onEvent: (QuickActionEvent) -> Unit,
     console: ShellConsole?,
     rowWidth: Dp?,
+    filesTab: (@Composable () -> Unit)? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
     val currentConsole by rememberUpdatedState(console)
     val currentRowWidth by rememberUpdatedState(rowWidth)
+    val currentFilesTab by rememberUpdatedState(filesTab)
     return remember {
         movableContentOf { modifier: Modifier ->
-            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier)
+            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab)
         }
     }
 }
@@ -185,7 +197,7 @@ fun rememberQuickActionsPanel(
  * [rowWidth] is the content row it shares with the stage and the side toolbar: the sheet leaves the stage
  * [STAGE_MIN_WIDTH] of it. Null (while the window grows or shrinks for the sheet, or unmeasured): only each tab's
  * minimum applies. A tab switch or reset animates the width with the tab switch's timing; a drag or a window resize
- * follows at once.
+ * follows at once. [filesTab] is the Files tab's content (none without adb).
  */
 @Composable
 fun QuickActionsPanel(
@@ -194,6 +206,7 @@ fun QuickActionsPanel(
     console: ShellConsole?,
     rowWidth: Dp? = null,
     modifier: Modifier = Modifier,
+    filesTab: (@Composable () -> Unit)? = null,
 ) {
     fun fit(width: Dp, tab: SheetTab) = if (rowWidth == null) {
         width.coerceAtLeast(SheetWidths.default(tab))
@@ -253,7 +266,7 @@ fun QuickActionsPanel(
                 onEvent(QuickActionEvent.ResetWidth)
             },
         )
-        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)))
+        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab)
     }
 }
 
@@ -263,6 +276,7 @@ private fun RowScope.SheetContent(
     onEvent: (QuickActionEvent) -> Unit,
     console: ShellConsole?,
     columns: Int,
+    filesTab: (@Composable () -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -271,7 +285,10 @@ private fun RowScope.SheetContent(
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Quick actions", style = MaterialTheme.typography.titleMedium)
-                Text("Runs adb shell on this device", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                Text(
+                    if (state.tab == SheetTab.Files) "Browse and move files on this device" else "Runs adb shell on this device",
+                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                )
             }
             Box {
                 IconButton(onClick = { overflow = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More") }
@@ -290,7 +307,7 @@ private fun RowScope.SheetContent(
             }
         }
         SheetTabs(
-            state.tab, state.consoleRunning,
+            state.tab, state.consoleRunning, state.filesTransfersRunning,
             onSelect = { if (it != state.tab) onEvent(QuickActionEvent.SelectTab(it)) },
             Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
         )
@@ -299,12 +316,14 @@ private fun RowScope.SheetContent(
         AnimatedContent(
             targetState = state.tab,
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            transitionSpec = { slideTransform(targetState.ordinal > initialState.ordinal, density) },
+            transitionSpec = { slideTransform(initialState, targetState, density) },
             contentAlignment = Alignment.TopStart,
         ) { tab ->
             when (tab) {
                 SheetTab.Actions -> ActionsTabContent(state, onEvent, columns)
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
+                // No Files tab content means no adb: say so rather than show nothing.
+                SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,
@@ -321,19 +340,26 @@ private val TrackShape = RoundedCornerShape(10.dp)
 private val SegmentShape = RoundedCornerShape(8.dp)
 
 /**
- * The Actions / Apps / Shell segmented control. The highlight glides to the selected segment with the tab switch's
- * timing; the Shell segment shows a red dot while a console command runs.
+ * The Actions / Apps / Shell / Files segmented control. The highlight glides to the selected segment with the tab
+ * switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of running
+ * transfers.
  */
 @Composable
-private fun SheetTabs(tab: SheetTab, consoleRunning: Boolean, onSelect: (SheetTab) -> Unit, modifier: Modifier = Modifier) {
+private fun SheetTabs(
+    tab: SheetTab,
+    consoleRunning: Boolean,
+    filesRunning: Int,
+    onSelect: (SheetTab) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val colors = MaterialTheme.colorScheme
     val segments = SheetTab.entries.size
-    val target = tab.ordinal.toFloat()
     // Forward (to the right) uses the open timing, backward the close one, like the content's slide.
-    val lastTarget = remember { floatArrayOf(target) }
-    val forward = target >= lastTarget[0]
-    lastTarget[0] = target
-    val position by animateFloatAsState(target, growSpec(forward))
+    val previous = remember { arrayOf(tab) } // the tab before this one: picks the glide's timing
+    val position by animateFloatAsState(tab.ordinal.toFloat(), growSpec(tab.ordinal > previous[0].ordinal))
+    SideEffect { previous[0] = tab }
+    var lastCount by remember { mutableIntStateOf(filesRunning) } // stays readable while the badge scales out
+    if (filesRunning > 0 && filesRunning != lastCount) lastCount = filesRunning
     Box(modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest).padding(3.dp)) {
         Box(
             Modifier.fillMaxHeight()
@@ -367,6 +393,23 @@ private fun SheetTabs(tab: SheetTab, consoleRunning: Boolean, onSelect: (SheetTa
                             Modifier.padding(start = 6.dp).size(6.dp).background(colors.error, CircleShape)
                                 .semantics { contentDescription = "Command running" },
                         )
+                    }
+                    if (segment == SheetTab.Files) {
+                        AnimatedVisibility(
+                            visible = filesRunning > 0,
+                            enter = scaleIn(growSpec(true)),
+                            exit = scaleOut(growSpec(false)),
+                        ) {
+                            val count = lastCount
+                            Box(
+                                Modifier.padding(start = 6.dp).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                    .background(colors.primary, CircleShape).padding(horizontal = 4.dp)
+                                    .semantics { contentDescription = if (count == 1) "1 transfer running" else "$count transfers running" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(count.toString(), style = MaterialTheme.typography.labelSmall, color = colors.onPrimary)
+                            }
+                        }
                     }
                 }
             }

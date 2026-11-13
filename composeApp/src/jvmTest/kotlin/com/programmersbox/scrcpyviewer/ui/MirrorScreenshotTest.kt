@@ -56,8 +56,26 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.programmersbox.scrcpyviewer.apps.AppFilter
 import com.programmersbox.scrcpyviewer.apps.DeviceApp
 import com.programmersbox.scrcpyviewer.ui.mirror.AppsUiState
+import com.programmersbox.scrcpyviewer.files.DeviceEntry
+import com.programmersbox.scrcpyviewer.files.DeviceFiles
+import com.programmersbox.scrcpyviewer.files.DeviceSpace
+import com.programmersbox.scrcpyviewer.files.JobState
+import com.programmersbox.scrcpyviewer.files.Listing
+import com.programmersbox.scrcpyviewer.files.TransferJob
+import com.programmersbox.scrcpyviewer.files.TransferKind
+import com.programmersbox.scrcpyviewer.files.TransferRequest
+import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.ui.mirror.FileTransfers
+import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
+import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesBrowser
+import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.styleBackdrop
+import kotlinx.coroutines.flow.emptyFlow
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.time.ZoneOffset
+import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -435,4 +453,82 @@ class MirrorScreenshotTest {
         render("mirror-quick-actions-shell-dark.png", ThemeMode.Dark, shell, shellConsole = console)
         console.stop()
     }
+
+    // Files tab, at the sheet's default 440 dp width.
+
+    private class FilesShotDevice : DeviceFiles(ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "serial"), {}) {
+        private fun file(name: String, size: Long) = DeviceEntry(name, false, size, 1_731_000_000_000)
+        private fun folder(name: String) = DeviceEntry(name, true, 4096, 1_731_000_000_000)
+        override suspend fun list(dir: String): Listing = when (dir) {
+            "/sdcard/Download" -> Listing.Entries(
+                listOf(
+                    folder("Telegram"), folder("Screenshots"),
+                    file("a-very-long-file-name-for-a-holiday-photo-album-2024.jpg", 4_200_000),
+                    file("notes.txt", 5_400), file("app-release.apk", 48_000_000), file("trip.mp4", 380_000_000),
+                    file("voice.ogg", 91_000), file("report.pdf", 1_200_000), file("backup.zip", 22_000_000),
+                ),
+            )
+            "/sdcard/Documents" -> Listing.Entries(emptyList())
+            else -> Listing.Blocked
+        }
+        override suspend fun counts(dir: String, folders: List<String>): Map<String, Int> = folders.associateWith { 7 }
+        override suspend fun freeSpace() = DeviceSpace(44_236_955_648, 122_880_000_000)
+    }
+
+    private fun filesTransfers() = FileTransfers(queue = null, pushTarget = "/sdcard/Download/") {}
+
+    private fun filesBrowser(start: String, transfers: FileTransfers = filesTransfers()) = FilesBrowser(
+        "SER", FilesShotDevice(), transfers, QuickActionsMemory(),
+        AppSettings(Files.createTempDirectory("files-shot").resolve("settings.json")), start,
+        CoroutineScope(Dispatchers.Unconfined), {}, enqueue = { emptyList() }, jobs = emptyFlow(),
+    )
+
+    private fun renderFiles(name: String, theme: AppTheme, browser: FilesBrowser) {
+        val out = outDir.resolve(name)
+        renderToPng(440, 800, out, settleMillis = 1_000) {
+            ScrcpyViewerTheme(theme) {
+                Box(Modifier.fillMaxSize().styleBackdrop()) {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainer) {
+                        FilesTab(browser, zone = ZoneOffset.UTC, locale = Locale.US, motion = false)
+                    }
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 5_000, "$name should not be blank")
+    }
+
+    /** The five Files tab states in [style]; [onlySelection] renders just the list with a selection. */
+    private fun filesStates(style: ThemeStyle, onlySelection: Boolean) {
+        val tag = style.name.lowercase()
+        for (mode in listOf(ThemeMode.Light, ThemeMode.Dark)) {
+            val theme = AppTheme(mode, style = style)
+            val m = mode.name.lowercase()
+            renderFiles("mirror-files-$tag-selection-$m.png", theme, filesBrowser("/sdcard/Download").apply {
+                click("Telegram"); toggle("notes.txt"); toggle("app-release.apk")
+            })
+            if (onlySelection) continue
+            renderFiles("mirror-files-$tag-empty-$m.png", theme, filesBrowser("/sdcard/Documents"))
+            renderFiles("mirror-files-$tag-blocked-$m.png", theme, filesBrowser("/sdcard/Android/data"))
+            renderFiles("mirror-files-$tag-delete-$m.png", theme, filesBrowser("/sdcard/Download").apply {
+                click("notes.txt"); toggle("Telegram"); askDelete()
+            })
+            val transfers = filesTransfers()
+            transfers.jobs = listOf(
+                TransferJob(
+                    1, TransferRequest(Paths.get("/Users/me/trip.mp4"), TransferKind.Push),
+                    JobState.Running, 120_000_000, 380_000_000, 18_000_000,
+                ),
+            )
+            renderFiles("mirror-files-$tag-tray-$m.png", theme, filesBrowser("/sdcard/Download", transfers))
+        }
+    }
+
+    @Test
+    fun `mirror files tab material`() = filesStates(ThemeStyle.Material, onlySelection = false)
+
+    @Test
+    fun `mirror files tab glass`() = filesStates(ThemeStyle.Glass, onlySelection = true)
+
+    @Test
+    fun `mirror files tab retro`() = filesStates(ThemeStyle.Retro, onlySelection = true)
 }

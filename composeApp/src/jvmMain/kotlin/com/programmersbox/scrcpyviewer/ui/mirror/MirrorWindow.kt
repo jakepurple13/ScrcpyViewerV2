@@ -56,6 +56,8 @@ import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CropSquare
+import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
+import com.programmersbox.scrcpyviewer.ui.mirror.files.rememberFilesBrowser
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -76,6 +78,8 @@ import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import com.programmersbox.scrcpyviewer.files.DragCache
+import kotlin.concurrent.thread
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.State
@@ -111,6 +115,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -432,10 +437,40 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
+    // Files dragged out of the Files tab wait in the drag cache; the window takes them with it when it closes.
+    DisposableEffect(serial) {
+        onDispose { thread(name = "drag-cache-delete") { DragCache().deleteSession(serial) } }
+    }
     // Read when a picker closes: a Reconnect meanwhile replaces the transfers (pickAndStart).
     val currentTransfers by rememberUpdatedState(transfers)
     val picker = rememberPickerGuard()
     val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
+    // Made the first time the Files tab shows, so a window that never opens it never lists a folder. A plain holder.
+    val filesWanted = remember { BooleanArray(1) }
+    quickActions.uiState.let { if (it.open && it.tab == SheetTab.Files) filesWanted[0] = true }
+    val filesBrowser = if (filesWanted[0]) rememberFilesBrowser(serial, session, adb, transfers) else null
+    // Read when the picker closes, like currentTransfers.
+    val currentFilesBrowser by rememberUpdatedState(filesBrowser)
+    val filesTab: (@Composable () -> Unit)? = filesBrowser?.let { browser ->
+        remember(browser) {
+            @Composable {
+                FilesTab(browser, onPushFiles = {
+                    picker.launch(uiScope) {
+                        val dir = browser.path
+                        val paths = transferDialogs.chooseFiles(dir)
+                        currentFilesBrowser?.push(paths, dir)
+                    }
+                }, onPullTo = { names ->
+                    val from = browser.path
+                    picker.launch(uiScope) {
+                        val folder = transferDialogs.chooseFolder("Pull to") ?: return@launch
+                        // Only while the names' folder is still open: a pull reads them from the open folder.
+                        currentFilesBrowser?.takeIf { it === browser && it.path == from }?.pull(names, folder)
+                    }
+                })
+            }
+        }
+    }
     val sheetFocus = remember { SheetFocus() }
 
     val orientation = remember(values) { DisplayOrientation.forOptions(values) }
@@ -490,6 +525,9 @@ fun MirrorWindow(
     var viewSize by remember { mutableStateOf(IntSize.Zero) }
     // The visible stage in window pixels: the zoomed canvas can be larger than it.
     var stageBounds by remember { mutableStateOf<Rect?>(null) }
+    // The quick actions sheet in root pixels while it shows (a plain holder, read by the window's file drop).
+    val sheetBounds = remember { arrayOfNulls<Rect>(1) }
+    val overSheet = remember { { p: Offset -> sheetBounds[0]?.contains(p) == true } }
     val currentFit by rememberUpdatedState(fit)
     val control = "no-control" !in e
     val hidKeyboard = remember(session) { if (control && e["keyboard"] == "uhid") HidKeyboard() else null }
@@ -588,7 +626,7 @@ fun MirrorWindow(
         transferEnabled = transfers.enabled,
         transferLabel = transfers.progressLabel,
         dropHint = transfers.hint,
-        quickActions = quickActions.uiState,
+        quickActions = quickActions.uiState.copy(filesTransfersRunning = transfers.runningCount),
     )
 
     // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now
@@ -882,8 +920,8 @@ fun MirrorWindow(
         val frame = session.frames.collectAsStateWithLifecycle()
 
         ScrcpyViewerTheme {
-            // Drops anywhere on the window install / push (COPY only, see fileDropTarget).
-            Box(Modifier.fillMaxSize().fileDropTarget(transfers)) {
+            // Drops anywhere on the window but the sheet install / push (COPY only, see fileDropTarget).
+            Box(Modifier.fillMaxSize().fileDropTarget(transfers, overSheet)) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     CompositionLocalProvider(
                         LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus, LocalMirrorWindowHandle provides handle,
@@ -923,9 +961,11 @@ fun MirrorWindow(
                         pinnedStageWidth = pinnedStage,
                         wake = readWake,
                         shellConsole = quickActions.console,
+                        filesTab = filesTab,
                         onStageBounds = { stageBounds = it },
                         onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
+                        onSheetBounds = { sheetBounds[0] = it },
                     )
                     }
                 }
@@ -1062,6 +1102,10 @@ fun MirrorContent(
     wake: (() -> Float)? = null,
     /** The quick actions sheet's Shell tab console; null shows an empty Shell tab. */
     shellConsole: ShellConsole? = null,
+    /** The quick actions sheet's Files tab content; null shows an empty Files tab. */
+    filesTab: (@Composable () -> Unit)? = null,
+    /** The quick actions sheet's bounds in root pixels while it shows, null once it is gone. */
+    onSheetBounds: (Rect?) -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1147,16 +1191,23 @@ fun MirrorContent(
             SideToolbar(state, onAction)
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
             val panel = rememberQuickActionsPanel(
-                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null },
+                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab,
             )
+            // Where the sheet is, so the window's file drop leaves it to the sheet (the Files tab takes drops there).
+            val currentSheetBounds by rememberUpdatedState(onSheetBounds)
+            val sheetBounds = Modifier.onGloballyPositioned { currentSheetBounds(it.boundsInRoot()) }
             if (pinnedStageWidth != null) {
                 // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
                 // so a tab switch's width change leaves no gap while the window catches up.
                 Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                    panel(AtLeastAvailableWidth.then(sheetPresses))
+                    DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
+                    panel(AtLeastAvailableWidth.then(sheetPresses).then(sheetBounds))
                 }
             } else {
-                QuickActionsSheet(state.quickActions.open) { panel(sheetPresses) }
+                QuickActionsSheet(state.quickActions.open) {
+                    DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
+                    panel(sheetPresses.then(sheetBounds))
+                }
             }
         }
         HorizontalDivider(color = colors.outlineVariant)

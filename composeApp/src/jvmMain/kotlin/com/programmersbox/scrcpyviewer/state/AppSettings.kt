@@ -33,6 +33,14 @@ data class Settings(
     val shellWidth: Int = 400,
     /** The sheet's width (dp) on the Apps tab. */
     val appsWidth: Int = 480,
+    /** The sheet's width (dp) on the Files tab. */
+    val filesWidth: Int = 440,
+    /** How the Files tab sorts a folder: "name", "size" or "mtime". A string so an unknown value never corrupts the file. */
+    val filesSort: String = "name",
+    /** Whether the Files tab sorts descending. */
+    val filesSortDescending: Boolean = false,
+    /** Whether the Files tab lists hidden (dot) files. */
+    val filesShowHidden: Boolean = false,
     /** Folders the user picked to install the AI skill into (absolute paths, no duplicates). */
     val aiSkillFolders: List<String> = emptyList(),
     /** Whether the Devices screen shows the full options pane instead of the simple one (preset, Mirror, Wi-Fi). */
