@@ -9,9 +9,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
+import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
 import com.programmersbox.scrcpyviewer.scrcpy.Position
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
+import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
 import com.programmersbox.scrcpyviewer.ui.mirror.ClickIndicator
 import com.programmersbox.scrcpyviewer.ui.mirror.InputMapper.Companion.ACTION_DOWN
 import com.programmersbox.scrcpyviewer.ui.mirror.InputMapper.Companion.ACTION_MOVE
@@ -24,28 +26,34 @@ import kotlinx.coroutines.flow.StateFlow
 fun frameSizeOf(session: ScrcpySession): IntSize? =
     session.frames.value?.let { IntSize(it.width, it.height) } ?: session.frameSize.value
 
+/** [session] as a follower: its frame size and option flags right now, and its send. */
+fun followTargetOf(session: ScrcpySession): FollowTarget =
+    FollowTarget(frameSizeOf(session), followerFlags(session.values), session::send)
+
 /**
  * One mirror window's side of following. While the window leads, [send] passes its pointer, nav and key messages on to
- * the followers through [sender]; it is called at the window's tee points only (the pointer path, the toolbar actions,
- * and `MirrorKeys.followerSend`), never for what `MirrorKeys` sends to this window's own device. Sessions are looked
- * up by serial on every message, so a reconnected follower is picked up. Every touch that reaches a follower is
- * reported to [InputFollowing.touched] for its click ring.
+ * the [followers] through [sender]; it is called at the window's tee points only (the pointer path, the toolbar actions,
+ * and `MirrorKeys.followerSend`), never for what `MirrorKeys` sends to this window's own device. [target] is looked up
+ * on every message, so a reconnected follower is picked up. Every touch that reaches a follower goes to [onTouch] for
+ * its click ring.
  */
 class WindowFollow(
-    private val serial: String,
-    private val following: InputFollowing,
-    private val open: () -> Map<String, ScrcpySession>,
+    private val followers: () -> Set<String>,
+    private val target: (serial: String) -> FollowTarget?,
+    /** Every open mirror's serial: where a held press may still be down. */
+    private val serials: () -> Set<String>,
+    private val onTouch: (FollowedTouch) -> Unit = {},
 ) {
+    /** The plain key UP for the key held for followers (`MirrorKeys.followerHeldKeyUp`); set once the keys exist. */
+    var heldKeyUp: () -> List<ControlMessage> = { emptyList() }
+
     val sender = FollowSender { s ->
-        val session = open()[s] ?: return@FollowSender null
-        FollowTarget(frameSizeOf(session), followerFlags(session.values)) { msg ->
-            session.send(msg)
-            if (msg is ControlMessage.InjectTouch) following.touched(FollowedTouch(s, msg.action, msg.position))
+        val t = target(s) ?: return@FollowSender null
+        FollowTarget(t.frameSize, t.flags) { msg ->
+            t.send(msg)
+            if (msg is ControlMessage.InjectTouch) onTouch(FollowedTouch(s, msg.action, msg.position))
         }
     }
-
-    /** The windows following this one right now (none unless it leads). */
-    fun followers(): Set<String> = following.state.value.let { if (it.leader == serial) it.followers else emptySet() }
 
     fun send(messages: List<ControlMessage>) {
         if (messages.isEmpty()) return
@@ -53,23 +61,45 @@ class WindowFollow(
         if (f.isNotEmpty()) sender.send(f, messages)
     }
 
+    /**
+     * The follower set went from [previous] to [now]: the ones that left get an `ACTION_UP` for a held press and the
+     * key UP for a held key (a held Shift would otherwise stay down on them).
+     */
+    fun followersChanged(previous: Set<String>, now: Set<String>) {
+        val gone = previous - now
+        if (gone.isEmpty()) return
+        sender.release(gone)
+        val up = heldKeyUp()
+        if (up.isEmpty()) return
+        for (s in gone) {
+            val t = target(s) ?: continue
+            if (t.flags.control && t.flags.keyboard) up.forEach(t.send)
+        }
+    }
+
     /** Lifts every press still held on a follower (focus lost, window closing). */
-    fun releaseAll() = sender.release(open().keys)
+    fun releaseAll() = sender.release(serials())
 }
 
 /**
- * [WindowFollow] for [serial], releasing held presses on the followers that leave (following stopped or the set
- * shrank) and on all of them when the window goes away.
+ * [WindowFollow] for [serial], releasing held presses and keys on the followers that leave (following stopped or the
+ * set shrank) and held presses on all of them when the window goes away.
  */
 @Composable
 fun rememberWindowFollow(serial: String, following: InputFollowing, open: StateFlow<Map<String, ScrcpySession>>): WindowFollow {
-    val follow = remember(serial, following, open) { WindowFollow(serial, following) { open.value } }
+    val follow = remember(serial, following, open) {
+        WindowFollow(
+            followers = { following.state.value.let { if (it.leader == serial) it.followers else emptySet() } },
+            target = { s -> open.value[s]?.let(::followTargetOf) },
+            serials = { open.value.keys },
+            onTouch = following::touched,
+        )
+    }
     LaunchedEffect(follow) {
         var previous = emptySet<String>()
         following.state.collect { s ->
             val now = if (s.leader == serial) s.followers else emptySet()
-            val gone = previous - now
-            if (gone.isNotEmpty()) follow.sender.release(gone)
+            follow.followersChanged(previous, now)
             previous = now
         }
     }
@@ -78,8 +108,9 @@ fun rememberWindowFollow(serial: String, following: InputFollowing, open: StateF
 }
 
 /**
- * The title bar's follow state for [serial]: its role, the other open windows (titled by [titleOf]), and while it
+ * The title bar's follow state for [serial]: its role, the other open windows (titled from [devices]), and while it
  * follows, the leader's title and whether the two screens' shapes differ ([ownFrame] against the leader's frame).
+ * The candidate list and the change callback are remembered, so an unchanged strip compares equal.
  */
 @Composable
 fun rememberFollowStrip(
@@ -87,7 +118,7 @@ fun rememberFollowStrip(
     following: InputFollowing,
     open: StateFlow<Map<String, ScrcpySession>>,
     follow: WindowFollow,
-    titleOf: (String) -> String,
+    devices: List<Device>,
     captureOn: Boolean,
     ownFrame: IntSize?,
     reduceMotion: Boolean,
@@ -99,18 +130,22 @@ fun rememberFollowStrip(
         serial in state.followers && state.leader != null -> FollowRole.Follower(state.leader!!)
         else -> FollowRole.None
     }
+    fun titleOf(s: String) = devices.firstOrNull { it.serial == s }?.let(::deviceTitle) ?: s
+    val others = remember(serial, sessions.keys, devices) {
+        sessions.keys.filter { it != serial }.map { FollowCandidate(it, titleOf(it)) }
+    }
+    val onChange = remember(serial, following) { { set: Set<String> -> following.setFollowers(serial, set) } }
     val leader = (role as? FollowRole.Follower)?.leader
     val leaderSession = leader?.let { sessions[it] }
     val leaderFrame by remember(leaderSession) { leaderSession?.frameSize ?: MutableStateFlow(null) }.collectAsState()
     val differs = ownFrame != null && leaderFrame != null && follow.sender.layoutDiffers(ownFrame, leaderFrame!!)
-    val currentTitleOf by rememberUpdatedState(titleOf)
     return FollowStrip(
         role = role,
-        others = sessions.keys.filter { it != serial }.map { FollowCandidate(it, currentTitleOf(it)) },
+        others = others,
         captureOn = captureOn,
-        leaderTitle = leader?.let(currentTitleOf),
+        leaderTitle = leader?.let(::titleOf),
         layoutDiffers = differs,
-        onChange = { following.setFollowers(serial, it) },
+        onChange = onChange,
         reduceMotion = reduceMotion,
     )
 }

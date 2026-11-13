@@ -161,6 +161,12 @@ class MirrorKeys(
         }
     }
 
+    /**
+     * The plain key UP for the key held for followers right now, for a follower that stops following mid-press (its
+     * real release would never reach it). The key stays held for the others.
+     */
+    fun followerHeldKeyUp(): List<ControlMessage> = followerMapper.heldKeyUp()
+
     /** Focus entered the quick actions sheet: keys held for the device would never see their release. */
     fun onSheetFocusGained() {
         hidKeyboard?.let { send(it.releaseAll()) }

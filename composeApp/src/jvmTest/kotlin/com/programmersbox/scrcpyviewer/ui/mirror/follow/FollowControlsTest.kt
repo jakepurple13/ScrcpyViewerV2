@@ -174,6 +174,15 @@ class FollowControlsTest {
     }
 
     @Test
+    fun `with no room Layout differs is a warning icon described by its words`() {
+        val d = ui { FollowingChip("Galaxy A15 5G", layoutDiffers = true, reduceMotion = false, compactWarning = true) }
+        assertFalse("Layout differs" in d.texts(), d.texts().toString())
+        val described = d.nodes().flatMap { it.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() }
+        assertTrue("Layout differs" in described, described.toString())
+        assertTrue("Following Galaxy A15 5G" in d.texts())
+    }
+
+    @Test
     fun `chip expands in over 250 ms without jumps and shrinks out over 200 ms`() {
         var visible by mutableStateOf(false)
         val widths = ArrayList<Int>()

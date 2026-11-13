@@ -106,6 +106,14 @@ class InputMapper(
         return keyEvent(false, code, lastKeyMods, lastKeyLocation)
     }
 
+    /** The UP [releaseKey] would send, without forgetting the held key (it is still held for other devices). */
+    fun heldKeyUp(): List<ControlMessage> {
+        val code = lastKeyDown
+        if (code == -1) return emptyList()
+        val android = convertKeycode(code, lastKeyMods, lastKeyLocation) ?: return emptyList()
+        return listOf(ControlMessage.InjectKeycode(KEY_ACTION_UP, android, 0, metaState(lastKeyMods)))
+    }
+
     /** Relative motion of a captured pointer (UHID mouse only). */
     fun relativeMove(dx: Int, dy: Int): List<ControlMessage> {
         val hid = hidMouse ?: return emptyList()

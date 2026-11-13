@@ -27,6 +27,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.outlined.Mouse
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -180,12 +184,14 @@ fun SendInputButton(
 private fun SendInputLabel(role: FollowRole, compact: Boolean, reduceMotion: Boolean) {
     val count = (role as? FollowRole.Leader)?.followers?.size ?: 0
     AnimatedContent(
-        targetState = count,
+        targetState = LabelKey(count, compact),
         transitionSpec = {
-            val dir = if (targetState > initialState) 1 else -1
-            if (reduceMotion) {
-                val fade = tween<Float>(FollowMotion.REDUCED_FADE_MILLIS, easing = LinearEasing)
-                (fadeIn(fade) togetherWith fadeOut(fade)).using(SizeTransform(clip = true) { _, _ -> tween(FollowMotion.REDUCED_FADE_MILLIS, easing = FastOutSlowInEasing) })
+            val dir = if (targetState.count > initialState.count) 1 else -1
+            if (reduceMotion || targetState.count == initialState.count) {
+                // Words dropped or back (the strip's width): a fade while the width follows.
+                val millis = if (reduceMotion) FollowMotion.REDUCED_FADE_MILLIS else FollowMotion.LABEL_MILLIS
+                val fade = tween<Float>(millis, easing = LinearEasing)
+                (fadeIn(fade) togetherWith fadeOut(fade)).using(SizeTransform(clip = true) { _, _ -> tween(millis, easing = FastOutSlowInEasing) })
             } else {
                 val slide = tween<androidx.compose.ui.unit.IntOffset>(FollowMotion.LABEL_MILLIS, easing = EmphasizedDecelerate)
                 val fade = tween<Float>(FollowMotion.LABEL_MILLIS, easing = EmphasizedDecelerate)
@@ -195,7 +201,7 @@ private fun SendInputLabel(role: FollowRole, compact: Boolean, reduceMotion: Boo
         },
         contentAlignment = Alignment.CenterStart,
         label = "sendInputLabel",
-    ) { n ->
+    ) { (n, compact) ->
         val text = when {
             !compact -> if (n > 0) "Sending to $n" else SEND_INPUT_IDLE
             n > 0 -> "$n"
@@ -204,6 +210,8 @@ private fun SendInputLabel(role: FollowRole, compact: Boolean, reduceMotion: Boo
         if (text.isNotEmpty()) Text(text, Modifier.padding(start = 6.dp), maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelLarge)
     }
 }
+
+private data class LabelKey(val count: Int, val compact: Boolean)
 
 /** The "Send input to" menu: a check row per other window, then "All mirror windows"; the capture note when it applies. */
 @Composable
@@ -260,18 +268,32 @@ private fun CheckRow(title: String, checked: Boolean, onClick: () -> Unit) {
 
 // --- Follower chip ------------------------------------------------------------------------------------------------------
 
-/** "Following <device>", then "Layout differs" in warning colors while [layoutDiffers] (it expands in and out). */
+/** The follower chip's text. */
+fun followingText(leaderTitle: String) = "Following $leaderTitle"
+
+/** A pill's horizontal padding, the gap before "Layout differs", its icon's size, and the leader pill's widest. */
+val PILL_PADDING = 16.dp
+val CHIP_GAP = 6.dp
+val WARNING_ICON = 22.dp
+val FOLLOWING_MAX = 220.dp
+
+/**
+ * "Following <device>", then "Layout differs" in warning colors while [layoutDiffers] (it expands in and out). With
+ * [compactWarning] (no room) it is a warning icon instead, its words in the tooltip and content description.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FollowingChip(
     leaderTitle: String,
     layoutDiffers: Boolean,
     modifier: Modifier = Modifier,
     reduceMotion: Boolean = remember { systemReducesMotion() },
+    compactWarning: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         // Weighted: "Layout differs" is measured first, so the device title is what ellipsizes.
-        Pill("Following $leaderTitle", colors.primaryContainer, colors.onPrimaryContainer, Modifier.weight(1f, fill = false).widthIn(max = 220.dp))
+        Pill(followingText(leaderTitle), colors.primaryContainer, colors.onPrimaryContainer, Modifier.weight(1f, fill = false).widthIn(max = FOLLOWING_MAX))
         val size = tween<androidx.compose.ui.unit.IntSize>(FollowMotion.LAYOUT_MILLIS, easing = FastOutSlowInEasing)
         val fade = tween<Float>(if (reduceMotion) FollowMotion.REDUCED_FADE_MILLIS else FollowMotion.LAYOUT_MILLIS, easing = LinearEasing)
         androidx.compose.animation.AnimatedVisibility(
@@ -281,8 +303,30 @@ fun FollowingChip(
         ) {
             val warn = warnColor()
             Row {
-                Spacer(Modifier.width(6.dp))
-                Pill(LAYOUT_DIFFERS, warn.copy(alpha = 0.16f), warn)
+                Spacer(Modifier.width(CHIP_GAP))
+                AnimatedContent(
+                    targetState = compactWarning,
+                    transitionSpec = {
+                        (fadeIn(fade) togetherWith fadeOut(fade)).using(SizeTransform(clip = true) { _, _ -> tween(FollowMotion.LAYOUT_MILLIS, easing = FastOutSlowInEasing) })
+                    },
+                    label = "layoutDiffers",
+                ) { compact ->
+                    if (compact) {
+                        TooltipArea(tooltip = {
+                            Surface(shape = styledCorner(4.dp), color = colors.inverseSurface) {
+                                Text(LAYOUT_DIFFERS, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = colors.inverseOnSurface)
+                            }
+                        }) {
+                            Surface(Modifier.size(WARNING_ICON), shape = CircleShape, color = warn.copy(alpha = 0.16f), contentColor = warn) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Filled.Warning, contentDescription = LAYOUT_DIFFERS, Modifier.size(14.dp))
+                                }
+                            }
+                        }
+                    } else {
+                        Pill(LAYOUT_DIFFERS, warn.copy(alpha = 0.16f), warn)
+                    }
+                }
             }
         }
     }
@@ -310,6 +354,9 @@ fun FollowerChip(
     layoutDiffers: Boolean,
     reduceMotion: Boolean,
     modifier: Modifier = Modifier,
+    compactWarning: Boolean = false,
+    /** Space before the chip, inside its animation, so it grows and shrinks with it. */
+    gap: Dp = 0.dp,
 ) {
     // The chip keeps what it said while it leaves (the link is already gone). A plain holder.
     val last = remember { arrayOfNulls<String>(1) }
@@ -327,7 +374,10 @@ fun FollowerChip(
         shrinkHorizontally(outSize, shrinkTowards = Alignment.Start) + fadeOut(tween(FollowMotion.CHIP_OUT_MILLIS, easing = EmphasizedAccelerate))
     }
     androidx.compose.animation.AnimatedVisibility(visible, modifier, enter = enter, exit = exit) {
-        FollowingChip(last[0] ?: "", layoutDiffers, reduceMotion = reduceMotion)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (gap > 0.dp) Spacer(Modifier.width(gap))
+            FollowingChip(last[0] ?: "", layoutDiffers, reduceMotion = reduceMotion, compactWarning = compactWarning)
+        }
     }
 }
 
@@ -377,7 +427,9 @@ fun rememberFollowGlow(active: Boolean, reduceMotion: Boolean): FollowGlow {
                     )
                 }
                 if (!reduceMotion) {
-                    pulse.snapTo(0f)
+                    // Only from rest: a pulse still fading (following stopped and started again) runs on from where
+                    // it is, so its band never vanishes in one frame.
+                    if (pulse.value <= 0f || pulse.value >= 1f) pulse.snapTo(0f)
                     pulse.animateTo(1f, tween(FollowMotion.PULSE_MILLIS, easing = EmphasizedDecelerate))
                 }
             }

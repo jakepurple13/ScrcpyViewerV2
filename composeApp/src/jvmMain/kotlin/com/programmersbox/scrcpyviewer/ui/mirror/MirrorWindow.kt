@@ -180,6 +180,15 @@ import com.programmersbox.scrcpyviewer.ui.mirror.follow.followGlow
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberFollowStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberWindowFollow
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.sendInputLabel
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FOLLOWER_FIXED
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.MODEL_KEEP
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendPlace
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.StripMins
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberChipWidths
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripEnter
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripExit
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripModelStyle
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripRoom
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.LocalNeonGlow
@@ -590,7 +599,7 @@ fun MirrorWindow(
     val reduceMotion = remember { systemReducesMotion() }
     val followStrip = rememberFollowStrip(
         serial, following, controller.open, follow,
-        titleOf = { s -> devices.firstOrNull { it.serial == s }?.let(::deviceTitle) ?: s },
+        devices = devices,
         captureOn = capture != null,
         ownFrame = frameSize,
         reduceMotion = reduceMotion,
@@ -696,7 +705,7 @@ fun MirrorWindow(
             legacyPaste = "legacy-paste" in e,
             followerSend = follow::send,
             followerKeyRepeat = "no-key-repeat" !in e,
-        )
+        ).also { follow.heldKeyUp = it::followerHeldKeyUp }
     }
 
     LocalNucleusApplicationScope.current.AppWindow(
@@ -1259,14 +1268,6 @@ private val COPY_MIN = 620.dp
 private val FIT_MIN = 480.dp
 private val ZOOM_MIN = 340.dp
 
-/** With following on: the "Send input to…" button keeps its words from here; the details and copy move up to make room. */
-private val SEND_WORDS_MIN = 760.dp
-private val SEND_ROOM = 150.dp
-private val SEND_ICON_ROOM = 60.dp
-private val CHIP_ROOM = 240.dp
-private const val MODEL_SHARE_FOLLOWING = 0.25f
-private val CHIP_EARLY = 120.dp
-
 /** [TopStrip] drawn inside the content (offscreen renders): nothing to mark for the window. */
 private object NoTitleBarScope : AppTitleBarScope {
     override val chrome get() = WindowChrome.System
@@ -1278,33 +1279,24 @@ private object NoTitleBarScope : AppTitleBarScope {
  * it is transparent (the bar paints `surfaceContainer`) and as tall as the bar; its clickables are [interactive].
  *
  * With [follow]: the "Following" chip after the model while this window follows, and the "Send input to…" button
- * before the copy button (words dropped below [SEND_WORDS_MIN], in the overflow menu below [FIT_MIN] and while this
- * window follows, where the chip takes its room). The copy button and the details give way to them first.
+ * before the copy button while other mirror windows are open (never on a follower). Which parts show is [stripRoom];
+ * every part that comes or goes expands or shrinks with a fade ([stripEnter], [stripExit]), so starting or stopping
+ * following, opening a second window or resizing never changes the bar in one frame.
  */
 @Composable
 internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip? = null, onZoom: (ZoomCommand) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val custom = chrome == WindowChrome.Custom
+    val reduce = follow?.reduceMotion == true
+    val modelStyle = stripModelStyle()
+    val chip = rememberChipWidths(state.model, modelStyle, follow)
     BoxWithConstraints(Modifier.fillMaxWidth().background(if (custom) Color.Transparent else colors.surfaceContainer)) {
         val w = maxWidth
+        val room = stripRoom(w, STRIP_MINS, state.details.isNotEmpty(), follow, chip)
         val following = follow?.role is FollowRole.Follower
-        val detailsRoom = when {
-            follow == null -> 0.dp
-            following -> CHIP_ROOM
-            else -> SEND_ROOM
-        }
-        val showDetails = state.details.isNotEmpty() && w >= DETAILS_MIN + detailsRoom
-        val showCopy = w >= COPY_MIN + (if (follow != null) SEND_ICON_ROOM else 0.dp)
-        // The chip needs room too: Fit and zoom give way to it a little sooner.
-        val chipRoom = if (following) CHIP_EARLY else 0.dp
-        val showFit = w >= FIT_MIN + chipRoom
-        val showZoom = w >= ZOOM_MIN + chipRoom
-        val sendInStrip = follow != null && showFit && !following
-        val overflow = !showCopy || !showFit || !showZoom || (follow != null && !sendInStrip)
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (custom) 0.dp else 4.dp).heightIn(min = 40.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val dot = when (state.status) {
                 SessionStatus.Running -> colors.primary
@@ -1313,26 +1305,27 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip
             }
             Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
             // The model and the details take the room the controls leave; the controls keep their content width,
-            // and the model ellipsizes after the details (secondary text) have been dropped.
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // and the model ellipsizes after the details (secondary text) have been dropped. The chip is measured
+            // before the model but leaves it MODEL_KEEP (stripRoom moves the controls out first).
+            Row(Modifier.weight(1f).padding(start = STRIP_GAP), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     state.model,
-                    // While following, the model is measured first (at most a quarter of the strip) and the chip takes
-                    // the rest; otherwise the model takes the room the details leave.
-                    if (following) Modifier.widthIn(max = w * MODEL_SHARE_FOLLOWING) else Modifier.weight(1f, fill = false),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium,
+                    Modifier.weight(1f, fill = false),
+                    style = modelStyle,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (follow != null) {
+                    val keep = minOf(chip?.model ?: MODEL_KEEP, MODEL_KEEP)
                     FollowerChip(
                         following, follow.leaderTitle, follow.layoutDiffers, follow.reduceMotion,
-                        if (following) Modifier.weight(1f, fill = false) else Modifier,
+                        Modifier.widthIn(max = (w - FOLLOWER_FIXED - keep).coerceAtLeast(STRIP_GAP * 4)),
+                        compactWarning = room.compactWarning,
+                        gap = STRIP_GAP,
                     )
                 }
-                if (showDetails) {
+                StripSlot(room.details, reduce) {
                     Text(
                         state.details,
                         style = MaterialTheme.typography.bodySmall,
@@ -1343,8 +1336,8 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip
                     )
                 }
             }
-            if (showZoom) ZoomControls(state, onZoom)
-            if (showFit) {
+            StripSlot(room.zoom, reduce) { ZoomControls(state, onZoom) }
+            StripSlot(room.fit, reduce) {
                 FilterChip(
                     selected = state.fit,
                     onClick = { onZoom(if (state.fit) ZoomCommand.Actual else ZoomCommand.Fit) },
@@ -1352,17 +1345,44 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip
                     modifier = Modifier.interactive("fit"),
                 )
             }
-            if (sendInStrip) {
-                SendInputButton(
-                    follow.role, follow.others, follow.captureOn, follow.onChange,
-                    compact = w < SEND_WORDS_MIN, modifier = Modifier.interactive("send-input"), reduceMotion = follow.reduceMotion,
+            // A follower never shows it: it changes role only when its leader lets it go or closes.
+            val sendStrip = follow != null && !following && (room.send == SendPlace.Words || room.send == SendPlace.Icon)
+            StripSlot(sendStrip, reduce) {
+                if (follow != null) {
+                    SendInputButton(
+                        follow.role, follow.others, follow.captureOn, follow.onChange,
+                        compact = room.send != SendPlace.Words, modifier = Modifier.interactive("send-input"), reduceMotion = reduce,
+                    )
+                }
+            }
+            StripSlot(room.copy, reduce) { CopyButton(text = { state.command }, label = "Copy command", modifier = Modifier.interactive("copy")) }
+            StripSlot(room.overflow, reduce) {
+                OverflowMenu(
+                    state, onZoom, showZoom = room.zoom, showFit = room.fit, showCopy = room.copy,
+                    follow = follow.takeIf { room.send == SendPlace.Overflow },
                 )
             }
-            if (showCopy) CopyButton(text = { state.command }, label = "Copy command", modifier = Modifier.interactive("copy"))
-            if (overflow) OverflowMenu(state, onZoom, showZoom = showZoom, showFit = showFit, showCopy = showCopy, follow = follow.takeIf { !sendInStrip })
         }
     }
 }
+
+/** One title bar part, with the gap before it inside its expand / shrink + fade, so the gap comes and goes with it. */
+@Composable
+private fun StripSlot(visible: Boolean, reduce: Boolean, content: @Composable () -> Unit) {
+    // Fully qualified: no RowScope variant, the transitions are given here.
+    androidx.compose.animation.AnimatedVisibility(visible, enter = stripEnter(reduce), exit = stripExit(reduce)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.width(STRIP_GAP))
+            content()
+        }
+    }
+}
+
+/** Widths (dp) of the top strip at which secondary parts collapse into the overflow menu ([stripRoom] adds following). */
+private val STRIP_MINS = StripMins(details = DETAILS_MIN, copy = COPY_MIN, fit = FIT_MIN, zoom = ZOOM_MIN)
+
+/** Space between the title bar's parts. */
+private val STRIP_GAP = 10.dp
 
 /** "−", the zoom percent (a click toggles Fit and 100 %) and "+". */
 @Composable

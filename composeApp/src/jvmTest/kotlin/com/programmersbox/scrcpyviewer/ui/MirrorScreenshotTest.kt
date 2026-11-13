@@ -199,7 +199,7 @@ class MirrorScreenshotTest {
         FollowCandidate("TAB", "Pixel Tablet · emulator"),
     )
 
-    private fun followStrip(role: FollowRole, leaderTitle: String? = null, layoutDiffers: Boolean = false, captureOn: Boolean = false) =
+    private fun followStrip(role: FollowRole, leaderTitle: String? = null, layoutDiffers: Boolean = false, captureOn: Boolean = false, others: List<FollowCandidate> = this.others) =
         FollowStrip(role, others, captureOn, leaderTitle, layoutDiffers, onChange = {})
 
     /** The title bar as the custom bar paints it, at [width] (an 80dp control inset first). */
@@ -246,6 +246,10 @@ class MirrorScreenshotTest {
         renderFollowStrip("mirror-follow-leader-idle-700.png", ThemeMode.Light, followStrip(FollowRole.None), width = 80 + 700)
         renderFollowStrip("mirror-follow-leader-idle-1100.png", ThemeMode.Light, followStrip(FollowRole.None), width = 1100)
         renderFollowStrip("mirror-follow-leader-idle-narrow.png", ThemeMode.Light, followStrip(FollowRole.None), width = 80 + 420)
+        // One mirror open: no button, today's cutoffs (details and copy at 820 like the plain strip).
+        val alone = followStrip(FollowRole.None, others = emptyList())
+        renderFollowStrip("mirror-follow-single-window-900.png", ThemeMode.Light, alone, width = 80 + 820)
+        renderFollowStrip("mirror-follow-single-window-640.png", ThemeMode.Light, alone, width = 80 + 640)
     }
 
     @Test
@@ -268,6 +272,8 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror follow follower`() {
+        val f = followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G")
+        for (w in listOf(420, 560, 900, 1200)) renderFollowStrip("mirror-follow-follower-strip-$w.png", ThemeMode.Light, f, width = 80 + w)
         renderFollowerWindow("mirror-follow-follower-light.png", ThemeMode.Light, followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G"))
         renderFollowerWindow("mirror-follow-follower-dark.png", ThemeMode.Dark, followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G"))
     }
@@ -277,9 +283,8 @@ class MirrorScreenshotTest {
         val differs = followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G", layoutDiffers = true)
         renderFollowerWindow("mirror-follow-follower-layout-differs-light.png", ThemeMode.Light, differs)
         renderFollowerWindow("mirror-follow-follower-layout-differs-dark.png", ThemeMode.Dark, differs)
-        renderFollowStrip("mirror-follow-follower-layout-differs-strip-560.png", ThemeMode.Light, differs, width = 80 + 560)
-        renderFollowStrip("mirror-follow-follower-layout-differs-strip-420.png", ThemeMode.Light, differs, width = 80 + 420)
-        renderFollowStrip("mirror-follow-follower-layout-differs-strip-1200.png", ThemeMode.Light, differs, width = 1200)
+        for (w in listOf(420, 560, 900, 1200)) renderFollowStrip("mirror-follow-follower-layout-differs-strip-$w.png", ThemeMode.Light, differs, width = 80 + w)
+        renderFollowStrip("mirror-follow-follower-layout-differs-strip-320.png", ThemeMode.Light, differs, width = 80 + 320)
     }
 
     @Test

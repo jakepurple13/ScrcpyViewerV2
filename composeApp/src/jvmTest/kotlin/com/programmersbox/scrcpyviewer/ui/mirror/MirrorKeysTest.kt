@@ -344,4 +344,19 @@ class MirrorKeysTest {
         repeat(3) { noRepeat.onKey(down(Key.A)) }
         assertEquals(1, followerSent.size, "no-key-repeat: only the first press reaches followers")
     }
+
+    @Test
+    fun follower_heldKeyUp_releasesTheHeldKeyAndKeepsItHeld() {
+        val k = keys()
+        assertTrue(k.followerHeldKeyUp().isEmpty())
+        k.onKey(down(Key.ShiftLeft))
+        val up = assertIs<ControlMessage.InjectKeycode>(k.followerHeldKeyUp().single())
+        assertEquals(InputMapper.KEY_ACTION_UP, up.action)
+        // Still held for the followers that stay: asking again gives the same UP, and its real release still goes.
+        assertEquals(listOf<ControlMessage>(up), k.followerHeldKeyUp())
+        followerSent.clear()
+        k.onKey(up(Key.ShiftLeft))
+        assertEquals(InputMapper.KEY_ACTION_UP, assertIs<ControlMessage.InjectKeycode>(followerSent.single()).action)
+        assertTrue(k.followerHeldKeyUp().isEmpty())
+    }
 }
