@@ -1,6 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.onboarding
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -10,7 +12,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,8 +23,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.DeveloperMode
@@ -30,65 +36,110 @@ import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Wifi
-import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.programmersbox.scrcpyviewer.AppIcon
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
 import com.programmersbox.scrcpyviewer.ui.common.dialogEntrance
+import com.programmersbox.scrcpyviewer.ui.common.dialogWidth
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.common.stackMotion
+import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 
 const val ONBOARDING_PAGE_COUNT = 4
 
+/** A minimum height read at layout time, so the animated value does not recompose the dialog every frame. */
+private fun Modifier.minHeightOf(min: State<Dp>): Modifier = layout { measurable, constraints ->
+    val floor = min.value.roundToPx().coerceIn(constraints.minHeight, constraints.maxHeight)
+    val placeable = measurable.measure(constraints.copy(minHeight = floor))
+    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+}
+
 /** First-run walkthrough. Stateless: the caller owns [page] (screenshots pass a fixed one). */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OnboardingDialog(
     page: Int,
     onPage: (Int) -> Unit,
     onFinish: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onFinish, properties = DialogProperties(dismissOnClickOutside = false)) {
+    Dialog(onDismissRequest = onFinish, properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false)) {
         Surface(
-            modifier = Modifier.dialogEntrance().width(560.dp),
+            modifier = Modifier.dialogEntrance().dialogWidth(560.dp).testTag("onboarding-card"),
             shape = MaterialTheme.shapes.extraLarge,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             tonalElevation = 6.dp,
         ) {
-            Column(Modifier.padding(28.dp)) {
-                AnimatedContent(
-                    targetState = page,
-                    transitionSpec = {
-                        val dir = if (targetState > initialState) 1 else -1
-                        (slideInHorizontally { it / 4 * dir } + fadeIn()) togetherWith
-                            (slideOutHorizontally { -it / 4 * dir } + fadeOut())
-                    },
-                    modifier = Modifier.fillMaxWidth().height(370.dp),
-                ) { p ->
-                    when (p) {
-                        0 -> WelcomePage()
-                        1 -> UsbDebuggingPage()
-                        2 -> ConnectPage()
-                        else -> MirrorPage()
+            BoxWithConstraints {
+                // The tall page only when the window has room for it, the footer and the padding; otherwise the
+                // page fits its content and the card scrolls.
+                val reduce = LocalReduceMotion.current
+                val pageMinHeight = animateDpAsState(
+                    if (maxHeight >= 490.dp) 370.dp else 0.dp,
+                    if (reduce) snap() else layoutSpring(),
+                    label = "page min height",
+                )
+                val narrow = maxWidth < 400.dp
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(28.dp)) {
+                    AnimatedContent(
+                        targetState = page,
+                        transitionSpec = {
+                            val dir = if (targetState > initialState) 1 else -1
+                            (slideInHorizontally { it / 4 * dir } + fadeIn()) togetherWith
+                                (slideOutHorizontally { -it / 4 * dir } + fadeOut())
+                        },
+                        modifier = Modifier.fillMaxWidth().minHeightOf(pageMinHeight),
+                    ) { p ->
+                        when (p) {
+                            0 -> WelcomePage()
+                            1 -> UsbDebuggingPage()
+                            2 -> ConnectPage()
+                            else -> MirrorPage()
+                        }
                     }
-                }
-                Spacer(Modifier.height(20.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PageDots(page, ONBOARDING_PAGE_COUNT, Modifier.weight(1f))
-                    if (page < ONBOARDING_PAGE_COUNT - 1) TextButton(onFinish) { Text("Skip") }
-                    if (page > 0) TextButton({ onPage(page - 1) }) { Text("Back") }
-                    Spacer(Modifier.width(8.dp))
-                    if (page < ONBOARDING_PAGE_COUNT - 1) {
-                        Button({ onPage(page + 1) }) { Text("Next") }
-                    } else {
-                        Button(onFinish) { Text("Get started") }
+                    Spacer(Modifier.height(20.dp))
+                    LookaheadScope {
+                        val scope = this
+                        // Under 400 dp the page dots take a full line above the buttons.
+                        FlowRow(
+                            Modifier.fillMaxWidth().animateHeight(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            itemVerticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            PageDots(
+                                page,
+                                ONBOARDING_PAGE_COUNT,
+                                (if (narrow) Modifier.fillMaxWidth() else Modifier.weight(1f)).stackMotion(scope).testTag("page-dots"),
+                            )
+                            Row(Modifier.stackMotion(scope), verticalAlignment = Alignment.CenterVertically) {
+                                if (page < ONBOARDING_PAGE_COUNT - 1) TextButton(onFinish) { Text("Skip") }
+                                if (page > 0) TextButton({ onPage(page - 1) }) { Text("Back") }
+                                Spacer(Modifier.width(8.dp))
+                                if (page < ONBOARDING_PAGE_COUNT - 1) {
+                                    Button({ onPage(page + 1) }) { Text("Next") }
+                                } else {
+                                    Button(onFinish) { Text("Get started") }
+                                }
+                            }
+                        }
                     }
                 }
             }
