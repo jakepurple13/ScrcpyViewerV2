@@ -110,6 +110,12 @@ class LogcatController(
     var nudge by mutableIntStateOf(0)
         private set
 
+    /**
+     * The [nudge] the Play button last pulsed for. The tab writes it, so each bump pulses once, also when the bump
+     * came while the tab wasn't shown (returning to a stopped tab). Not state.
+     */
+    var nudgeShown = 0
+
     private var itemsState by mutableStateOf<List<LogcatItem>>(emptyList())
 
     /** Writes to [items] so far; the batching test reads it. */
