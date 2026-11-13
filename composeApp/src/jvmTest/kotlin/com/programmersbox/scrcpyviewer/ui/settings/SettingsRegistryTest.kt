@@ -29,6 +29,18 @@ class SettingsRegistryTest {
         assertEquals(listOf("updates"), hit("github"))
         assertEquals(listOf("welcome-guide"), hit("wifi"))
         assertEquals(listOf("ai-skill"), hit("gemini"))
-        assertEquals(listOf("animate-mirror"), hit("animation"))
+        assertEquals(listOf("launch-quit-animation"), hit("animation"))
+        assertEquals(listOf("launch-quit-animation"), hit("startup"))
+        assertEquals(listOf("animate-mirror"), hit("zoom"))
+    }
+
+    @Test
+    fun `launch quit animation is the last appearance entry`() {
+        val entry = settingsCategories.first { it.id == Appearance }.entries.last()
+        assertEquals("launch-quit-animation", entry.id)
+        assertEquals("Launch & quit animation", entry.title)
+        assertEquals("Plays when Scrcpy Vwr opens and quits.", entry.description)
+        // Preview tiles below the title, like the Style picker.
+        assertEquals(EntryLayout.Block, entry.layout)
     }
 }

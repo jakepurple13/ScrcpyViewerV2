@@ -54,6 +54,32 @@ import com.programmersbox.scrcpyviewer.update.UpdateState
 import kotlinx.coroutines.flow.first
 import com.programmersbox.scrcpyviewer.files.DragCache
 import kotlin.concurrent.thread
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.ImageBitmap
+import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchEffect
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchEntrance
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchHandoff
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchOverlayWindow
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchPhase
+import com.programmersbox.scrcpyviewer.ui.window.launch.LocalLaunchEntrance
+import com.programmersbox.scrcpyviewer.ui.window.launch.WindowPicture
+import com.programmersbox.scrcpyviewer.ui.window.launch.fadeWindow
+import com.programmersbox.scrcpyviewer.ui.window.launch.launchEffectNow
+import com.programmersbox.scrcpyviewer.ui.window.launch.recordInto
+import dev.nucleusframework.application.NucleusWindowBounds
+import dev.nucleusframework.application.NucleusWindow
+import androidx.compose.runtime.SideEffect
+import com.programmersbox.scrcpyviewer.ui.window.launch.QuitAnimator
+import com.programmersbox.scrcpyviewer.ui.window.launch.LAUNCH_FADE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.window.launch.LAUNCH_WATCHDOG_SLACK_MILLIS
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchMotion
+import com.programmersbox.scrcpyviewer.ui.window.launch.launchWatchdog
+import com.programmersbox.scrcpyviewer.ui.window.launch.setWindowAlpha
+import com.programmersbox.scrcpyviewer.ui.window.launch.QuitScrim
 
 fun main() {
     // Files a crashed or killed run left in the Files tab's cache (drags, opened files, APKs being installed).
@@ -69,9 +95,24 @@ fun main() {
     nucleusApplication(enableSingleInstance = false) {
         val settings by appSettings.settings.collectAsState()
         val mirrors by mirrorController.open.collectAsState()
+        // Launch: the settings saved by the last run pick the effect, once.
+        // A fade launch stays hidden until its opacity is 0 (macOS), so it never shows one opaque frame first.
+        val launch = remember { LaunchHandoff(launchEffectNow(settings, fullscreen = false), hideForFade = Os.isMac) }
+        val picture = remember { WindowPicture() }
+        var mainWindow by remember { mutableStateOf<NucleusWindow?>(null) }
+        // Quit: the chosen animation plays after the sessions close (AppShutdown's animateOut).
+        val quit = remember { QuitAnimator(picture) { mainWindow?.boundsOnScreen() } }
+        // Icon unfold's launch fades the device rows up in a stagger once the real window shows.
+        val entrance = remember {
+            (launch.effect as? LaunchEffect.Overlay)?.takeIf { it.anim == LaunchQuitAnimation.IconUnfold }
+                ?.let { LaunchEntrance(launch.realVisible) }
+        }
         // A downloaded update installs after the sessions close, off the UI thread, before the app exits.
         val shutdown = remember {
-            AppShutdown(mirrorController, exit = ::exitApplication, install = updateManager::installPending)
+            AppShutdown(
+                mirrorController, exit = ::exitApplication, install = updateManager::installPending,
+                animateOut = quit::play,
+            )
         }
         val shutdownState by shutdown.state.collectAsState()
         // Cmd+Q, the app menu's Quit and the Dock's go through the shutdown too (MacQuitHook).
@@ -79,7 +120,22 @@ fun main() {
             shutdown.installQuitHandler(shutdown::request)
             onDispose { }
         }
-        LaunchedEffect(shutdownState) { shutdown.run() }
+        LaunchedEffect(shutdownState) {
+            if (shutdownState is AppShutdown.State.ShuttingDown) {
+                // A quit during the launch animation: the real window takes over at once, with all its rows.
+                launch.cancel()
+                entrance?.skip()
+                quit.begin(
+                    launchEffectNow(
+                        appSettings.settings.value,
+                        fullscreen = mainWindow?.isFullscreen == true,
+                        minimized = mainWindow?.isMinimized == true,
+                    ),
+                    sessionsOpen = mirrorController.open.value.isNotEmpty(),
+                )
+            }
+            shutdown.run()
+        }
         // Checks on launch, then every 6 hours while the app runs.
         LaunchedEffect(Unit) { updateManager.checkPeriodically() }
         // A downloaded update installs once the app has shut down (installPending in the shutdown above).
@@ -88,13 +144,65 @@ fun main() {
             shutdown.request()
         }
         val shuttingDown = shutdownState as? AppShutdown.State.ShuttingDown
+        val launchEffect = launch.effect
+        val realVisible by launch.realVisible.collectAsState()
+        val overlayOpen by launch.overlayOpen.collectAsState()
+        var launchPicture by remember { mutableStateOf<ImageBitmap?>(null) }
+        var mainBounds by remember { mutableStateOf<NucleusWindowBounds?>(null) }
+        // Whatever stalls the overlay or the fade, the window shows in the end.
+        LaunchedEffect(Unit) {
+            val animMs = when (launchEffect) {
+                is LaunchEffect.Overlay -> LaunchMotion.durationMs(launchEffect.anim, LaunchPhase.Launch)
+                LaunchEffect.Fade -> LAUNCH_FADE_MILLIS
+                LaunchEffect.None -> return@LaunchedEffect
+            }
+            launchWatchdog(launch, animMs + LAUNCH_WATCHDOG_SLACK_MILLIS)
+            if (launchEffect == LaunchEffect.Fade && shutdown.state.value == AppShutdown.State.Running) {
+                // A fade that never ran would leave the window shown but see-through.
+                launch.fadeReady()
+                mainWindow?.let { setWindowAlpha(it, 1f) }
+            }
+        }
         AppWindow(
             onCloseRequest = shutdown::request,
             title = appTitle(),
             theme = settings.appTheme,
-            visible = shuttingDown == null,
+            // Quitting with the overlay keeps the window up (dimmed while sessions close) until the overlay covers it;
+            // the fade keeps it until it has faded; otherwise it goes at once, as it always has.
+            visible = realVisible && (shuttingDown == null || (quit.keepsWindow && !quit.hidden) || !quit.faded),
             titleBar = { MainTitle() },
         ) {
+            SideEffect { mainWindow = nucleusWindow }
+            if (quit.effect == LaunchEffect.Fade) {
+                LaunchedEffect(Unit) {
+                    fadeWindow(nucleusWindow, from = 1f, to = 0f)
+                    quit.fadeFinished()
+                }
+            }
+            // Where the overlay goes, once the (still hidden) window exists; then a picture of its first frames.
+            LaunchedEffect(Unit) {
+                if (!overlayOpen) return@LaunchedEffect
+                mainBounds = nucleusWindow.boundsOnScreen()
+                withFrameNanos { }
+                launchPicture = picture.capture()
+                if (mainBounds == null) launch.cancel() // nowhere to draw: show the window as before
+            }
+            // The overlay closes once the real window has drawn since it was shown.
+            LaunchedEffect(realVisible) {
+                if (!realVisible) return@LaunchedEffect
+                withFrameNanos { }
+                withFrameNanos { }
+                launch.realWindowDrew()
+            }
+            if (launchEffect == LaunchEffect.Fade) {
+                // The window exists (hidden): make it see-through, show it, then fade it in.
+                LaunchedEffect(Unit) {
+                    setWindowAlpha(nucleusWindow, 0f)
+                    launch.fadeReady()
+                    withFrameNanos { }
+                    fadeWindow(nucleusWindow, from = 0f, to = 1f)
+                }
+            }
             // A mirror window asked for the Actions screen: App selects the tab, this brings the window forward.
             LaunchedEffect(actionsNavigation) {
                 actionsNavigation.requests.collect { bringToFront(nucleusWindow) }
@@ -106,14 +214,41 @@ fun main() {
             LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
             // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
             val handle = remember(nucleusWindow) { TaoMirrorWindowHandle(nucleusWindow, koin.get<ScreenGeometry>()) }
-            CompositionLocalProvider(LocalMirrorWindowHandle provides handle) { App() }
+            CompositionLocalProvider(LocalMirrorWindowHandle provides handle, LocalLaunchEntrance provides entrance) {
+                Box(Modifier.fillMaxSize().recordInto(picture)) { App() }
+            }
+            QuitScrim(visible = quit.dimmed, finishingRecording = shuttingDown?.finishingRecording == true)
+        }
+        val bounds = mainBounds
+        if (overlayOpen && launchEffect is LaunchEffect.Overlay && bounds != null) {
+            LaunchOverlayWindow(
+                position = WindowPosition(bounds.x.dp, bounds.y.dp),
+                size = DpSize(bounds.width.dp, bounds.height.dp),
+                anim = launchEffect.anim,
+                phase = LaunchPhase.Launch,
+                picture = { launchPicture },
+                theme = settings.appTheme,
+                onEnd = launch::overlayEnded,
+            )
+        }
+        quit.playing?.let { play ->
+            LaunchOverlayWindow(
+                position = WindowPosition(play.bounds.x.dp, play.bounds.y.dp),
+                size = DpSize(play.bounds.width.dp, play.bounds.height.dp),
+                anim = play.anim,
+                phase = LaunchPhase.Quit,
+                picture = { play.picture },
+                theme = settings.appTheme,
+                onFirstFrame = quit::overlayFirstFrame,
+                onEnd = quit::overlayEnded,
+            )
         }
         for ((serial, session) in mirrors) {
             key(serial) {
                 MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.captureDir, animate = settings.animateMirrorWindows, adb = adbClient)
             }
         }
-        if (shuttingDown?.finishingRecording == true) FinishingRecordingWindow(settings.appTheme)
+        if (shuttingDown?.finishingRecording == true && !quit.keepsWindow) FinishingRecordingWindow(settings.appTheme)
     }
     // nucleusApplication never returns: the Tao backend calls System.exit once its event loop ends. Shutdown work
     // belongs in AppShutdown, not here.

@@ -139,4 +139,58 @@ class AppShutdownTest {
         assertTrue(installThread != null && installThread !== caller, "install ran on the calling thread")
         assertEquals(caller, exitThread)
     }
+
+    @Test
+    fun `animateOut runs after sessions close and before install and exit`() = runBlocking<Unit> {
+        controller.open("A")
+        val session = controller.open.value.getValue("A")
+        withTimeout(5_000) { session.status.first { it == SessionStatus.Running } }
+        val events = java.util.Collections.synchronizedList(ArrayList<String>())
+        val shutdown = AppShutdown(
+            controller,
+            exit = { events += "exit" },
+            install = { events += "install" },
+            animateOut = { events += "animate sessions=${controller.open.value.size}" },
+        )
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(listOf("animate sessions=0", "install", "exit"), events)
+    }
+
+    @Test
+    fun `a failing animateOut does not block exit`() = runBlocking<Unit> {
+        val exits = AtomicInteger()
+        val shutdown = AppShutdown(controller, exit = { exits.incrementAndGet() }, animateOut = { error("overlay broke") })
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(1, exits.get())
+    }
+
+    @Test
+    fun `a stuck animateOut is cut off after the timeout`() = runBlocking<Unit> {
+        val exits = AtomicInteger()
+        val shutdown = AppShutdown(
+            controller, exit = { exits.incrementAndGet() },
+            animateOut = { kotlinx.coroutines.delay(60_000) }, animateTimeoutMs = 100,
+        )
+        shutdown.request()
+        withTimeout(2_000) { shutdown.run() }
+        assertEquals(1, exits.get())
+    }
+
+    @Test
+    fun `an update still installs after the animation`() = runBlocking<Unit> {
+        val installs = AtomicInteger()
+        val shutdown = AppShutdown(
+            controller, exit = {}, install = { installs.incrementAndGet() },
+            animateOut = { kotlinx.coroutines.delay(50) },
+        )
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(1, installs.get())
+    }
+
+    @Test
+    fun `the default animate timeout is one second`() =
+        assertEquals(1_000L, AppShutdown.DEFAULT_ANIMATE_TIMEOUT_MS)
 }

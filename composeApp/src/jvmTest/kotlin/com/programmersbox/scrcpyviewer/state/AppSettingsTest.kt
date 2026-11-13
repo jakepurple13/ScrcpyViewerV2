@@ -169,4 +169,25 @@ class AppSettingsTest {
         Files.writeString(file, """{"themeStyle":"Aero"}""")
         assertEquals(ThemeStyle.Material, AppSettings(file).settings.value.appTheme.style)
     }
+
+    @Test
+    fun `launch quit animation defaults to icon unfold and falls back on unknown names`() {
+        assertEquals(LaunchQuitAnimation.IconUnfold, Settings().launchQuit)
+        assertEquals(LaunchQuitAnimation.IconUnfold, LaunchQuitAnimation.fromName("Sparkles"))
+        assertEquals(LaunchQuitAnimation.IconUnfold, LaunchQuitAnimation.fromName(null))
+        assertEquals(LaunchQuitAnimation.ScreenOn, LaunchQuitAnimation.fromName("ScreenOn"))
+        assertEquals(LaunchQuitAnimation.Off, LaunchQuitAnimation.fromName("Off"))
+    }
+
+    @Test
+    fun `launch quit animation persists`() {
+        AppSettings(file).update { it.copy(launchQuitAnimation = LaunchQuitAnimation.ScreenOn.name) }
+        assertEquals(LaunchQuitAnimation.ScreenOn, AppSettings(file).settings.value.launchQuit)
+    }
+
+    @Test
+    fun `launch quit animation absent from older file loads as icon unfold`() {
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertEquals(LaunchQuitAnimation.IconUnfold, AppSettings(file).settings.value.launchQuit)
+    }
 }

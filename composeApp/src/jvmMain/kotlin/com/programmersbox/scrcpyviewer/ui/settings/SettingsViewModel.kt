@@ -197,6 +197,10 @@ class SettingsViewModel(
 
     fun setAnimateMirrorWindows(value: Boolean) = appSettings.update { it.copy(animateMirrorWindows = value) }
 
+    /** Read at launch and at quit: a change applies from the next quit. */
+    fun setLaunchQuitAnimation(value: com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation) =
+        appSettings.update { it.copy(launchQuitAnimation = value.name) }
+
     /** Reopens the first-run guide; it marks itself seen again when closed. */
     fun showOnboarding() = appSettings.update { it.copy(onboardingSeen = false) }
 
