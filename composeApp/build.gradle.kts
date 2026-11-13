@@ -76,6 +76,7 @@ kotlin {
             implementation(libs.nucleus.application)
             implementation(libs.nucleus.window.tao)
             implementation(libs.nucleus.window.material3)
+            implementation(libs.composenativetray)
             implementation(libs.jna)
             // Only icon and resource parsing is used: the signing parts (BouncyCastle) and annotations stay out.
             implementation("net.dongliu:apk-parser:${libs.versions.apk.parser.get()}") {

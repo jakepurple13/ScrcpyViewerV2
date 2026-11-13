@@ -52,6 +52,7 @@ fun SettingsScreen(
         onGlassOpacity = viewModel::setGlassOpacity,
         onDefaultPreset = viewModel::setDefaultPreset,
         onAnimateMirrorWindows = viewModel::setAnimateMirrorWindows,
+        onShowTrayIcon = viewModel::setShowTrayIcon,
         onLaunchQuitAnimation = viewModel::setLaunchQuitAnimation,
         onUseBundledAdb = viewModel::useBundledAdb,
         onUseCustomAdb = viewModel::useCustomAdb,

@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.actions.SkillTarget
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
@@ -41,6 +42,7 @@ class SettingsActions(
     val onGlassOpacity: (Float) -> Unit = {},
     val onDefaultPreset: (String?) -> Unit = {},
     val onAnimateMirrorWindows: (Boolean) -> Unit = {},
+    val onShowTrayIcon: (Boolean) -> Unit = {},
     val onLaunchQuitAnimation: (com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation) -> Unit = {},
     val onUseBundledAdb: () -> Unit = {},
     val onUseCustomAdb: (String) -> Unit = {},
@@ -77,6 +79,10 @@ class SettingEntry(
 
 class SettingsCategory(val id: SettingsCategoryId, val title: String, val entries: List<SettingEntry>)
 
+/** macOS calls it the menu bar; Windows and Linux the system tray. */
+internal fun trayIconSettingTitle(isMac: Boolean = Os.isMac): String =
+    if (isMac) "Show icon in menu bar" else "Show icon in system tray"
+
 /** Every Settings category and setting. The list pane, the detail pane and search all read this. */
 val settingsCategories: List<SettingsCategory> = listOf(
     SettingsCategory(
@@ -111,6 +117,14 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 keywords = listOf("color", "colour", "accent", "palette", "custom", "hue"),
                 layout = EntryLayout.Block,
                 content = { PaletteControl(it) },
+            ),
+            // Shown on Linux too: ComposeNativeTray 2.1.7 has no way to ask whether the desktop has a tray.
+            SettingEntry(
+                "tray-icon", trayIconSettingTitle(),
+                "Lists your devices. Mirror one, bring its window forward, open Settings or quit from there.",
+                keywords = listOf("tray", "system tray", "menu bar", "menubar", "status bar", "notification area", "taskbar", "icon"),
+                rowModifier = { trayIconToggle(it) },
+                content = { TrayIconSwitch(it) },
             ),
             SettingEntry(
                 "launch-quit-animation", "Launch & quit animation", "Plays when Scrcpy Vwr opens and quits.",

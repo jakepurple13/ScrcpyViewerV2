@@ -80,6 +80,15 @@ import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchMotion
 import com.programmersbox.scrcpyviewer.ui.window.launch.launchWatchdog
 import com.programmersbox.scrcpyviewer.ui.window.launch.setWindowAlpha
 import com.programmersbox.scrcpyviewer.ui.window.launch.QuitScrim
+import com.programmersbox.scrcpyviewer.di.DataDir
+import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
+import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
+import com.programmersbox.scrcpyviewer.ui.devices.canMirror
+import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
+import com.programmersbox.scrcpyviewer.ui.tray.ScrcpyTray
+import com.programmersbox.scrcpyviewer.ui.tray.TrayCommands
+import com.programmersbox.scrcpyviewer.ui.tray.trayIconFiles
 
 fun main() {
     // Files a crashed or killed run left in the Files tab's cache (drags, opened files, APKs being installed).
@@ -91,6 +100,14 @@ fun main() {
     val adbClient = koin.get<AdbClient>()
     val updateManager = koin.get<UpdateManager>()
     val actionsNavigation = koin.get<ActionsNavigation>()
+    val mainWindowRequests = koin.get<MainWindowRequests>()
+    val mirrorRequests = koin.get<MirrorRequests>()
+    val deviceOptions = koin.get<DeviceOptionsStore>()
+    val deviceSelection = koin.get<DeviceSelection>()
+    // Fixed files the native tray reads (see trayIconFiles); without them the app runs with no tray icon.
+    val trayIcons = runCatching { trayIconFiles(koin.get<DataDir>().path.resolve("tray")) }
+        .onFailure { System.getLogger("scrcpyviewer.Tray").log(System.Logger.Level.WARNING, "No tray icon files", it) }
+        .getOrNull()
     // Single instance off: a dev run next to the installed app must not hand off to it and exit.
     nucleusApplication(enableSingleInstance = false) {
         val settings by appSettings.settings.collectAsState()
@@ -115,6 +132,24 @@ fun main() {
             )
         }
         val shutdownState by shutdown.state.collectAsState()
+        // The tray menu: in the application scope, so it lives as long as the app (closing the main window still quits).
+        // It goes once quitting starts, so nothing opens a mirror while the sessions close.
+        if (settings.showTrayIcon && trayIcons != null && shutdownState == AppShutdown.State.Running) {
+            val devices by mirrorController.devices.collectAsState()
+            val trayCommands = remember {
+                TrayCommands(
+                    mirrorRequests = mirrorRequests,
+                    mainWindow = mainWindowRequests,
+                    canMirror = { serial ->
+                        mirrorController.devices.value.firstOrNull { it.serial == serial }?.let(deviceOptions::canMirror) == true
+                    },
+                    focus = mirrorController::focus,
+                    select = deviceSelection::select,
+                    quit = shutdown::request,
+                )
+            }
+            ScrcpyTray(trayIcons, devices, mirrors.keys, trayCommands::dispatch)
+        }
         // Cmd+Q, the app menu's Quit and the Dock's go through the shutdown too (MacQuitHook).
         DisposableEffect(Unit) {
             shutdown.installQuitHandler(shutdown::request)
@@ -206,6 +241,10 @@ fun main() {
             // A mirror window asked for the Actions screen: App selects the tab, this brings the window forward.
             LaunchedEffect(actionsNavigation) {
                 actionsNavigation.requests.collect { bringToFront(nucleusWindow) }
+            }
+            // The tray menu's Open / Settings…: App selects the destination, this brings the window forward.
+            LaunchedEffect(mainWindowRequests) {
+                mainWindowRequests.requests.collect { bringToFront(nucleusWindow) }
             }
             // Device clipboard sync and the mirror paste go through Compose's clipboard, bound here.
             val clipboard = LocalClipboard.current

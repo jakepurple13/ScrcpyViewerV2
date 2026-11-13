@@ -28,6 +28,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.InputFollowing
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
 import com.programmersbox.scrcpyviewer.ui.mirror.OpenMirrors
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
@@ -159,6 +160,10 @@ class MirrorModule {
     /** Mirror windows ask the main window to open the Actions screen through this. */
     @Singleton
     fun actionsNavigation(): ActionsNavigation = ActionsNavigation()
+
+    /** The tray menu asks for the main window (and a rail destination) through this. */
+    @Singleton
+    fun mainWindowRequests(): MainWindowRequests = MainWindowRequests()
 
     /** Typed shell commands, shared by every mirror window's console. */
     @Singleton

@@ -67,6 +67,17 @@ class MirrorControllerTest {
     }
 
     @Test
+    fun `focus asks an open window forward and never opens one`() = runBlocking<Unit> {
+        val focus = scope.async { withTimeout(5_000) { controller.focusRequests.first() } }
+        delay(50) // let the focus collector subscribe
+        controller.focus("B")
+        assertTrue("B" !in controller.open.value)
+        controller.open("A")
+        controller.focus("A")
+        assertEquals("A", focus.await())
+    }
+
+    @Test
     fun `close removes the session and closes it`() = runBlocking<Unit> {
         controller.open("A")
         controller.open("B")

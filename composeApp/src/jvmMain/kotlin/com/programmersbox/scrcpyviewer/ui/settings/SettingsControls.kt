@@ -135,3 +135,14 @@ internal fun animateMirrorToggle(b: SettingsBindings) = Modifier.toggleable(
 internal fun AnimateMirrorSwitch(b: SettingsBindings) {
     Switch(checked = b.state.settings.animateMirrorWindows, onCheckedChange = null)
 }
+
+/** The whole row toggles. */
+internal fun trayIconToggle(b: SettingsBindings) = Modifier.toggleable(
+    value = b.state.settings.showTrayIcon, role = Role.Switch,
+    onValueChange = b.actions.onShowTrayIcon,
+)
+
+@Composable
+internal fun TrayIconSwitch(b: SettingsBindings) {
+    Switch(checked = b.state.settings.showTrayIcon, onCheckedChange = null)
+}

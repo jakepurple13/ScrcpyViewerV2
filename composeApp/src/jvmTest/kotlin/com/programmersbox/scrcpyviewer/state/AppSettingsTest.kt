@@ -200,4 +200,13 @@ class AppSettingsTest {
         AppSettings(file).update { it.copy(deviceDetailTab = "Info") }
         assertEquals("Info", AppSettings(file).settings.value.deviceDetailTab)
     }
+
+    @Test
+    fun `showTrayIcon defaults on, loads on from an older file and round-trips`() {
+        assertTrue(Settings().showTrayIcon)
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertTrue(AppSettings(file).settings.value.showTrayIcon)
+        AppSettings(file).update { it.copy(showTrayIcon = false) }
+        assertFalse(AppSettings(file).settings.value.showTrayIcon)
+    }
 }
