@@ -39,18 +39,22 @@ fun OverlayScene(
     titleBar: Color,
     accent: Color,
     modifier: Modifier = Modifier,
+    /** The icon's size as a fraction of the window's shorter side; the Settings previews draw it larger. */
+    iconFraction: Float = 0.22f,
+    /** A hairline around the window, so a small preview's window stands out from its desktop. */
+    windowOutline: Color? = null,
 ) {
     Canvas(modifier.fillMaxSize()) {
-        drawWindow(frame, picture, surface, titleBar)
+        drawWindow(frame, picture, surface, titleBar, windowOutline)
         drawBeam(frame, accent)
-        drawIcon(frame, accent)
+        drawIcon(frame, accent, iconFraction)
     }
 }
 
 /** Title bar height when there is no picture to measure it from. */
 private val FALLBACK_TITLE_BAR = 38.dp
 
-private fun DrawScope.drawWindow(frame: OverlayFrame, picture: ImageBitmap?, surface: Color, titleBar: Color) {
+private fun DrawScope.drawWindow(frame: OverlayFrame, picture: ImageBitmap?, surface: Color, titleBar: Color, outline: Color?) {
     if (frame.windowAlpha <= 0f) return
     val clip = frame.windowClip
     val rect = RoundRect(
@@ -76,6 +80,9 @@ private fun DrawScope.drawWindow(frame: OverlayFrame, picture: ImageBitmap?, sur
             val wash = ((frame.windowBrightness - 1f) / 1.8f).coerceIn(0f, 0.9f)
             if (wash > 0f) drawRect(Color.White, alpha = wash * frame.windowAlpha)
         }
+        if (outline != null) {
+            drawPath(Path().apply { addRoundRect(rect) }, outline, alpha = frame.windowAlpha, style = Stroke(1.dp.toPx()))
+        }
     }
 }
 
@@ -92,9 +99,9 @@ private fun DrawScope.drawBeam(frame: OverlayFrame, accent: Color) {
  * The app icon (composeApp/icons/app-icon.svg, a 512 unit square) centred on the window: a dark rounded tile, the
  * back phone's outline, the front phone, and its screen, which flashes [accent].
  */
-private fun DrawScope.drawIcon(frame: OverlayFrame, accent: Color) {
+private fun DrawScope.drawIcon(frame: OverlayFrame, accent: Color, fraction: Float) {
     if (frame.iconAlpha <= 0f || frame.iconScale <= 0f) return
-    val side = 0.22f * min(size.width, size.height) * frame.iconScale
+    val side = fraction * min(size.width, size.height) * frame.iconScale
     val u = side / 512f
     val origin = Offset(center.x - side / 2, center.y - side / 2 + frame.iconOffsetY * size.height)
     val a = frame.iconAlpha

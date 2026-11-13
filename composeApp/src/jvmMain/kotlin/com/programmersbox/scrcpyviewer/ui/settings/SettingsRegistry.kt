@@ -111,6 +111,7 @@ val settingsCategories: List<SettingsCategory> = listOf(
             SettingEntry(
                 "launch-quit-animation", "Launch & quit animation", "Plays when Scrcpy Vwr opens and quits.",
                 keywords = listOf("animation", "motion", "launch", "startup", "quit", "shutdown", "splash", "open", "close"),
+                layout = EntryLayout.Block,
                 content = { LaunchQuitAnimationControl(it) },
             ),
         ),

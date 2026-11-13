@@ -40,5 +40,7 @@ class SettingsRegistryTest {
         assertEquals("launch-quit-animation", entry.id)
         assertEquals("Launch & quit animation", entry.title)
         assertEquals("Plays when Scrcpy Vwr opens and quits.", entry.description)
+        // Preview tiles below the title, like the Style picker.
+        assertEquals(EntryLayout.Block, entry.layout)
     }
 }
