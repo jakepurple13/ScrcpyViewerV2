@@ -88,6 +88,9 @@ class QuickActionsLogcatTest {
         f.qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Apps))
         f.qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Logcat))
         assertEquals(1, f.logcat.nudge)
+        // Selecting the tab that already shows is not a return: no second pulse.
+        f.qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Logcat))
+        assertEquals(1, f.logcat.nudge)
 
         // Paused by the user, then away and back: still a pulse, and leaving keeps it Paused.
         f.logcat.play()

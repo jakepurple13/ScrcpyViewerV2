@@ -355,11 +355,12 @@ class QuickActions internal constructor(
 
     /** Shows [to]: leaving Logcat stops its stream, and coming back to a stopped one pulses Play. */
     private fun select(to: SheetTab) {
-        if (tab == SheetTab.Logcat && to != SheetTab.Logcat) logcat?.stopForLeaving()
+        val from = tab
+        if (from == SheetTab.Logcat && to != SheetTab.Logcat) logcat?.stopForLeaving()
         tab = to
         memory.tab = to
         if (to == SheetTab.Apps) apps?.ensureLoaded()
-        if (to == SheetTab.Logcat) nudgeIfStopped()
+        if (to == SheetTab.Logcat && from != to) nudgeIfStopped()
     }
 
     private fun nudgeIfStopped() {

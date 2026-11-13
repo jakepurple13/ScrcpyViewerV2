@@ -139,15 +139,14 @@ class SheetTabsTest {
     }
 
     @Test
-    fun `segment labels fit at the Actions width`() = onEdt {
+    fun `segment labels fit at the Actions width, with the Shell dot and the Files badge`() = onEdt {
+        val state = QuickActionsUiState(open = true, enabled = true, consoleRunning = true, filesTransfersRunning = 2)
         val driver = SceneDriver(ImageComposeScene(QUICK_ACTIONS_WIDTH.value.toInt(), 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
-                Surface(Modifier.fillMaxSize()) {
-                    QuickActionsPanel(QuickActionsUiState(open = true, enabled = true), {}, console = null)
-                }
+                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null) }
             }
         })
-        driver.frames(5)
+        driver.frames(60) // the Files badge has scaled in
         val tabs = driver.nodes().filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
         assertEquals(SheetTab.entries.size, tabs.size)
         for (tab in tabs) {
@@ -162,8 +161,48 @@ class SheetTabsTest {
             val room = layout.layoutInput.constraints.maxWidth
             assertTrue(natural <= room, "$name is $natural px wide in a $room px segment")
             assertFalse(layout.didOverflowHeight, "$name is cut off")
-            assertEquals(1, layout.lineCount, "$name wraps")
+            // The dot and the badge keep their full size and stay inside the segment, after the label.
+            // The badge sits under its AnimatedVisibility's own node: search the segment, not just its children.
+            fun descendants(n: SemanticsNode): List<SemanticsNode> = n.children.flatMap { listOf(it) + descendants(it) }
+            val extras = descendants(tab).filter { it.config.getOrNull(SemanticsProperties.ContentDescription) != null }
+            for (extra in extras) {
+                val what = extra.config[SemanticsProperties.ContentDescription].first()
+                val minWidth = if (what == "Command running") 6f else 16f
+                assertTrue(extra.boundsInRoot.width >= minWidth, "$what in $name is squeezed to ${extra.boundsInRoot.width} px")
+                assertTrue(extra.boundsInRoot.right <= tab.boundsInRoot.right, "$what spills out of $name")
+                assertTrue(extra.boundsInRoot.left >= label.boundsInRoot.right, "$what overlaps the $name label")
+            }
+            when (name) {
+                "Shell" -> assertEquals(listOf("Command running"), extras.map { it.config[SemanticsProperties.ContentDescription].first() })
+                "Files" -> assertEquals(listOf("2 transfers running"), extras.map { it.config[SemanticsProperties.ContentDescription].first() })
+            }
         }
+    }
+
+    @Test
+    fun `segment labels ease to the larger size as the sheet grows, without a snap`() = onEdt {
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true))
+        val driver = SceneDriver(ImageComposeScene(800, 800, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null) }
+            }
+        })
+        driver.frames(5)
+        fun labelSize(): Float {
+            val label = driver.nodes().filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
+                .first().children.first { it.config.getOrNull(SemanticsProperties.Text) != null }
+            val layouts = mutableListOf<TextLayoutResult>()
+            label.config[SemanticsActions.GetTextLayoutResult].action!!(layouts)
+            return layouts.single().layoutInput.style.fontSize.value
+        }
+        val small = labelSize()
+        state = state.copy(tab = SheetTab.Apps) // 280 dp to 480 dp
+        driver.frames(6)
+        val mid = labelSize()
+        driver.frames(60)
+        val large = labelSize()
+        assertTrue(small < large, "$small then $large")
+        assertTrue(mid > small && mid < large, "mid-switch $mid is between $small and $large")
     }
 
     @Test

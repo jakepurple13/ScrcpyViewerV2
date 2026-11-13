@@ -851,8 +851,9 @@ private fun ActionButtons(app: DeviceApp, actions: AppActions, onClose: () -> Un
             }
             SheetAction(Icons.Filled.Delete, "Uninstall", colors.errorContainer, colors.onErrorContainer, Modifier.weight(1f), onAskUninstall)
         }
-        // Under the row: a fifth square would squeeze every label at the Apps tab's default width.
-        FilledTonalButton(
+        // Under the row: a fifth square would squeeze every label at the Apps tab's default width. The styled button, by
+        // its full name: the confirm step below needs Material's, whose error colors the styled one would override.
+        com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton(
             onClick = {
                 onClose()
                 actions.showInLogcat(app)

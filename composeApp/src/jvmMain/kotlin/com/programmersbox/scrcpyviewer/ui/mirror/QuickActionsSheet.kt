@@ -21,7 +21,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -82,6 +81,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
+import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.ui.mirror.files.AdbUnavailableState
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
@@ -323,9 +324,9 @@ private fun RowScope.SheetContent(
             }
         }
         SheetTabs(
-            state.tab, state.consoleRunning, state.filesTransfersRunning,
+            state.tab, state.consoleRunning, state.filesTransfersRunning, sheetWidth,
             onSelect = { if (it != state.tab) onEvent(QuickActionEvent.SelectTab(it)) },
-            Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
+            Modifier.padding(start = TABS_SIDE_PADDING, end = TABS_SIDE_PADDING, top = 8.dp),
         )
         // The command field takes focus on every switch to Shell: composed afresh, or, when a switch away is reversed
         // mid-transition, kept and selected again.
@@ -360,6 +361,10 @@ private val SegmentShape = RoundedCornerShape(8.dp)
 /** Segments narrower than this use labelMedium for their labels instead of labelLarge. */
 private val SMALL_LABEL_UNDER = 60.dp
 
+/** Space left and right of the segmented control, and inside its track around the segments. */
+private val TABS_SIDE_PADDING = 12.dp
+private val TRACK_PADDING = 3.dp
+
 /**
  * The Actions / Apps / Shell / Files / Logcat segmented control. The highlight glides to the selected segment with the
  * tab switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of running
@@ -370,6 +375,8 @@ private fun SheetTabs(
     tab: SheetTab,
     consoleRunning: Boolean,
     filesRunning: Int,
+    /** The width the sheet is settling on (the selected tab's), not the animating one: the label size follows it. */
+    sheetWidth: Dp,
     onSelect: (SheetTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -381,15 +388,23 @@ private fun SheetTabs(
     SideEffect { previous[0] = tab }
     var lastCount by remember { mutableIntStateOf(filesRunning) } // stays readable while the badge scales out
     if (filesRunning > 0 && filesRunning != lastCount) lastCount = filesRunning
-    BoxWithConstraints(
-        modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest).padding(3.dp),
+    // Five labels fit the Actions tab's 280 dp only a size down (and without tracking, for the Shell dot and Files
+    // badge). Picked from the width the sheet settles on and eased with the width's own timing, so a tab switch
+    // never snaps the labels halfway through the sheet's resize.
+    val track = sheetWidth - SHEET_DRAG_BAR_WIDTH - TABS_SIDE_PADDING * 2 - TRACK_PADDING * 2
+    val compact = track / segments < SMALL_LABEL_UNDER
+    val toCompact by animateFloatAsState(if (compact) 1f else 0f, growSpec(!compact)) // larger labels as the sheet grows
+    val typography = MaterialTheme.typography
+    val labelStyle = typography.labelLarge.copy(
+        fontSize = lerp(typography.labelLarge.fontSize, typography.labelMedium.fontSize, toCompact),
+        letterSpacing = lerp(typography.labelLarge.letterSpacing.takeIf { it.isSp } ?: 0.sp, 0.sp, toCompact),
+    )
+    // Between a label and the Shell dot or Files badge: "Files" plus its badge needs the narrower gap at 280 dp.
+    val gap = lerp(6.dp, 4.dp, toCompact)
+    Box(
+        modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest)
+            .padding(TRACK_PADDING),
     ) {
-        // Five labels fit the Actions tab's 280 dp only a size down.
-        val labelStyle = if (maxWidth / segments < SMALL_LABEL_UNDER) {
-            MaterialTheme.typography.labelMedium
-        } else {
-            MaterialTheme.typography.labelLarge
-        }
         Box(
             Modifier.fillMaxHeight()
                 .layout { measurable, constraints ->
@@ -419,7 +434,7 @@ private fun SheetTabs(
                     )
                     if (segment == SheetTab.Shell && consoleRunning) {
                         Box(
-                            Modifier.padding(start = 6.dp).size(6.dp).background(colors.error, CircleShape)
+                            Modifier.padding(start = gap).size(6.dp).background(colors.error, CircleShape)
                                 .semantics { contentDescription = "Command running" },
                         )
                     }
@@ -431,9 +446,9 @@ private fun SheetTabs(
                         ) {
                             val count = lastCount
                             Box(
-                                Modifier.padding(start = 6.dp).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
-                                    .background(colors.primary, CircleShape).padding(horizontal = 4.dp)
-                                    .semantics { contentDescription = if (count == 1) "1 transfer running" else "$count transfers running" },
+                                Modifier.padding(start = gap).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                    .semantics { contentDescription = if (count == 1) "1 transfer running" else "$count transfers running" }
+                                    .background(colors.primary, CircleShape).padding(horizontal = 4.dp),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Text(count.toString(), style = MaterialTheme.typography.labelSmall, color = colors.onPrimary)
