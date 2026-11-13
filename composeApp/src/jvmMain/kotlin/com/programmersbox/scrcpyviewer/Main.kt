@@ -54,6 +54,23 @@ import com.programmersbox.scrcpyviewer.update.UpdateState
 import kotlinx.coroutines.flow.first
 import com.programmersbox.scrcpyviewer.files.DragCache
 import kotlin.concurrent.thread
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.graphics.ImageBitmap
+import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchEffect
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchEntrance
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchHandoff
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchOverlayWindow
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchPhase
+import com.programmersbox.scrcpyviewer.ui.window.launch.LocalLaunchEntrance
+import com.programmersbox.scrcpyviewer.ui.window.launch.WindowPicture
+import com.programmersbox.scrcpyviewer.ui.window.launch.fadeWindow
+import com.programmersbox.scrcpyviewer.ui.window.launch.launchEffectNow
+import com.programmersbox.scrcpyviewer.ui.window.launch.recordInto
+import dev.nucleusframework.application.NucleusWindowBounds
 
 fun main() {
     // Files a crashed or killed run left in the Files tab's cache (drags, opened files, APKs being installed).
@@ -88,13 +105,43 @@ fun main() {
             shutdown.request()
         }
         val shuttingDown = shutdownState as? AppShutdown.State.ShuttingDown
+        // Launch: the settings saved by the last run pick the effect, once.
+        val launch = remember { LaunchHandoff(launchEffectNow(settings, fullscreen = false)) }
+        val launchEffect = remember { launch.effect }
+        val realVisible by launch.realVisible.collectAsState()
+        val overlayOpen by launch.overlayOpen.collectAsState()
+        val picture = remember { WindowPicture() }
+        var launchPicture by remember { mutableStateOf<ImageBitmap?>(null) }
+        var mainBounds by remember { mutableStateOf<NucleusWindowBounds?>(null) }
+        val entrance = remember {
+            (launchEffect as? LaunchEffect.Overlay)?.takeIf { it.anim == LaunchQuitAnimation.IconUnfold }
+                ?.let { LaunchEntrance(launch.realVisible) }
+        }
         AppWindow(
             onCloseRequest = shutdown::request,
             title = appTitle(),
             theme = settings.appTheme,
-            visible = shuttingDown == null,
+            visible = realVisible && shuttingDown == null,
             titleBar = { MainTitle() },
         ) {
+            // Where the overlay goes, once the (still hidden) window exists; then a picture of its first frames.
+            LaunchedEffect(Unit) {
+                if (!overlayOpen) return@LaunchedEffect
+                mainBounds = nucleusWindow.boundsOnScreen()
+                withFrameNanos { }
+                launchPicture = picture.capture()
+                if (mainBounds == null) launch.cancel() // nowhere to draw: show the window as before
+            }
+            // The overlay closes once the real window has drawn since it was shown.
+            LaunchedEffect(realVisible) {
+                if (!realVisible) return@LaunchedEffect
+                withFrameNanos { }
+                withFrameNanos { }
+                launch.realWindowDrew()
+            }
+            if (launchEffect == LaunchEffect.Fade) {
+                LaunchedEffect(Unit) { fadeWindow(nucleusWindow, from = 0f, to = 1f) }
+            }
             // A mirror window asked for the Actions screen: App selects the tab, this brings the window forward.
             LaunchedEffect(actionsNavigation) {
                 actionsNavigation.requests.collect { bringToFront(nucleusWindow) }
@@ -106,7 +153,21 @@ fun main() {
             LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
             // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
             val handle = remember(nucleusWindow) { TaoMirrorWindowHandle(nucleusWindow, koin.get<ScreenGeometry>()) }
-            CompositionLocalProvider(LocalMirrorWindowHandle provides handle) { App() }
+            CompositionLocalProvider(LocalMirrorWindowHandle provides handle, LocalLaunchEntrance provides entrance) {
+                Box(Modifier.fillMaxSize().recordInto(picture)) { App() }
+            }
+        }
+        val bounds = mainBounds
+        if (overlayOpen && launchEffect is LaunchEffect.Overlay && bounds != null) {
+            LaunchOverlayWindow(
+                position = WindowPosition(bounds.x.dp, bounds.y.dp),
+                size = DpSize(bounds.width.dp, bounds.height.dp),
+                anim = launchEffect.anim,
+                phase = LaunchPhase.Launch,
+                picture = { launchPicture },
+                theme = settings.appTheme,
+                onEnd = launch::overlayEnded,
+            )
         }
         for ((serial, session) in mirrors) {
             key(serial) {

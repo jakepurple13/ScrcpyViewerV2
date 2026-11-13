@@ -2,6 +2,11 @@ package com.programmersbox.scrcpyviewer.ui.window.launch
 
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
+import com.programmersbox.scrcpyviewer.state.Settings
+import com.programmersbox.scrcpyviewer.state.appTheme
+import com.programmersbox.scrcpyviewer.state.launchQuit
+import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 
 /** Where the launch overlay would run. Linux is split by session: Wayland needs the overlay on an XWayland surface. */
 enum class OverlayPlatform {
@@ -61,3 +66,17 @@ fun launchEffect(c: LaunchConditions): LaunchEffect = when {
 
 /** The millis of the fade [LaunchEffect.Fade] plays. */
 const val LAUNCH_FADE_MILLIS = 150
+
+/** [launchEffect] for this machine now: the chosen setting, this platform, the OS's motion preference, Glass blur. */
+fun launchEffectNow(settings: Settings, fullscreen: Boolean): LaunchEffect {
+    val theme = settings.appTheme
+    return launchEffect(
+        LaunchConditions(
+            setting = settings.launchQuit,
+            platform = OverlayPlatform.current(),
+            reduceMotion = systemReducesMotion(),
+            glassBlur = Os.isMac && theme.style == ThemeStyle.Glass && theme.desktopBlur,
+            fullscreen = fullscreen,
+        ),
+    )
+}

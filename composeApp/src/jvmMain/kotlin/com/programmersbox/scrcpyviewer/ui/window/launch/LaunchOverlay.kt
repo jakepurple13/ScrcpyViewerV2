@@ -25,6 +25,13 @@ import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import dev.nucleusframework.application.DecoratedWindow
 import dev.nucleusframework.application.NucleusApplicationScope
+import dev.nucleusframework.application.NucleusWindow
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
+import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
+import com.sun.jna.Pointer
 
 /**
  * Pictures of the main window's content for the launch and quit overlay. [recordInto] on the content keeps the last
@@ -107,4 +114,15 @@ fun NucleusApplicationScope.LaunchOverlayWindow(
             )
         }
     }
+}
+
+/**
+ * [LaunchEffect.Fade]: the window's native opacity from [from] to [to] over [LAUNCH_FADE_MILLIS]. macOS only (NSWindow
+ * alphaValue); elsewhere there is no native opacity to animate and the window appears or goes as it is.
+ */
+suspend fun fadeWindow(window: NucleusWindow, from: Float, to: Float) {
+    if (!Os.isMac) return
+    val ns = window.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L }?.let(::Pointer) ?: return
+    setMacAlpha(ns, from.toDouble())
+    Animatable(from).animateTo(to, tween(LAUNCH_FADE_MILLIS, easing = LinearEasing)) { setMacAlpha(ns, value.toDouble()) }
 }
