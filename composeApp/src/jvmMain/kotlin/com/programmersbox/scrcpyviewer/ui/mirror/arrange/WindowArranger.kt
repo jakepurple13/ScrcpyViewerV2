@@ -6,6 +6,7 @@ import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -227,7 +228,8 @@ class WindowArranger(
                 delay(ARRANGE_SETTLE_MS)
                 if (busy) return@collectLatest // the apply saves the bounds itself
                 val bounds = withContext(entry.uiContext.withoutJob()) { entry.handle.bounds }
-                if (settled.containsKey(serial)) settled[serial] = bounds
+                // Where it stays, as far as Keep tiled goes (a re-apply below sets new ones from the start).
+                settled.computeIfPresent(serial) { _, _ -> bounds }
                 val s = _state.value
                 val tile = tiles[serial]
                 if (s.keepTiled && s.layout != ArrangeLayout.AsPlaced && s.movable && tile != null &&
@@ -235,8 +237,6 @@ class WindowArranger(
                     takeReapply(serial)
                 ) {
                     apply(s.layout, focus)
-                } else if (tile != null) {
-                    settled[serial] = bounds // where it stays, as far as Keep tiled goes
                 }
             } finally {
                 appSettling -= serial
@@ -257,18 +257,22 @@ class WindowArranger(
     }
 
     private suspend fun run(layout: ArrangeLayout, focus: String?) {
-        val eligible = windows.entries.value.filterValues { it.floating() && !it.minimized() && it.showing() }
-        if (eligible.isEmpty()) return
-        val ui = eligible.values.first().uiContext.withoutJob()
-        val targets: Map<String, Rectangle> = withContext(ui) {
-            if (layout == ArrangeLayout.AsPlaced) {
-                placed.filterKeys { it in eligible }
-            } else {
-                val work = workArea() ?: return@withContext emptyMap()
-                for ((serial, entry) in eligible) placed.putIfAbsent(serial, entry.handle.bounds)
-                layout(layout, eligible.map { (serial, e) -> e.info().copy(serial = serial) }, work, focus, ARRANGE_GAP)
+        val all = windows.entries.value
+        if (all.isEmpty()) return
+        val ui = all.values.first().uiContext.withoutJob()
+        // The windows' state is read where their native calls run (showing() asks AppKit on macOS).
+        val (eligible, targets) = withContext(ui) {
+            val eligible = all.filterValues { it.floating() && !it.minimized() && it.showing() }
+            eligible to when {
+                eligible.isEmpty() -> emptyMap<String, Rectangle>()
+                layout == ArrangeLayout.AsPlaced -> placed.filterKeys { it in eligible }
+                else -> workArea()?.let { work ->
+                    for ((serial, entry) in eligible) placed.putIfAbsent(serial, entry.handle.bounds)
+                    layout(layout, eligible.map { (serial, e) -> e.info().copy(serial = serial) }, work, focus, ARRANGE_GAP)
+                } ?: emptyMap()
             }
         }
+        if (eligible.isEmpty()) return
         val moving = eligible.filterKeys { it in targets }
         // The expected bounds are the new ones from the start: a late event from an earlier move is compared to them.
         if (layout == ArrangeLayout.AsPlaced) {
@@ -283,7 +287,8 @@ class WindowArranger(
         val animate = animateWindows() && !reduceMotion()
         val starts = ConcurrentHashMap<String, Rectangle>()
         try {
-            moving.values.forEach { it.arranging.value = true }
+            // Compose state: written on the windows' UI thread.
+            withContext(ui) { moving.values.forEach { it.arranging.value = true } }
             coroutineScope {
                 moving.entries.forEachIndexed { i, (serial, entry) ->
                     launch {
@@ -299,7 +304,9 @@ class WindowArranger(
                                     entry.handle.bounds = to
                                 }
                             }
-                            // Too slow (a stalled frame clock) but still open: no window is left halfway.
+                            // Too slow (a stalled frame clock) but still open: no window is left halfway. The one
+                            // place a window jumps instead of moving, accepted as the exception to "nothing snaps":
+                            // a working frame clock always finishes the move well inside the limit.
                             if (done == null && windows.entries.value[serial] === entry) {
                                 starts.putIfAbsent(serial, entry.handle.bounds)
                                 entry.handle.bounds = to
@@ -337,7 +344,7 @@ class WindowArranger(
             }
             misses.set(0)
         } finally {
-            moving.values.forEach { it.arranging.value = false }
+            withContext(ui + NonCancellable) { moving.values.forEach { it.arranging.value = false } }
         }
         if (layout == ArrangeLayout.AsPlaced) {
             // Windows that were not put back (minimized, say) keep theirs for a later As placed.
