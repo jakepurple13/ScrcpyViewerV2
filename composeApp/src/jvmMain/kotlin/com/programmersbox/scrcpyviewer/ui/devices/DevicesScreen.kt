@@ -111,7 +111,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import com.programmersbox.scrcpyviewer.ui.theme.selectedRow
 import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
 import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTabRow
-import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTabs
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailPane
 import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoUiState
 
 @Composable
@@ -272,29 +272,32 @@ fun DevicesContent(
                 Column(Modifier.fillMaxSize()) {
                     // The back button lives in the tab row, so the panes below get none of their own.
                     DetailTabRow(state.selectedSerial != null, detailTab, onDetailTab, onBack)
-                    if (state.selectedSerial == null) {
-                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("Select a device to choose its options", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    } else DetailTabs(
-                        detailTab, info, state.devices.map { it.serial }, onInfoActive, onInfoRetry,
-                    ) { tabModifier ->
-                        ViewSwitch(state.advanced, tabModifier) { advanced, motion ->
+                    // Each device's content (and none) animates in and out as a whole; `shown` is that device's state.
+                    DetailPane(
+                        state, { it.selectedSerial }, state.devices.map { it.serial }, detailTab, info, onInfoActive, onInfoRetry,
+                        Modifier.weight(1f).fillMaxWidth(),
+                        empty = { emptyModifier ->
+                            Box(emptyModifier, contentAlignment = Alignment.Center) {
+                                Text("Select a device to choose its options", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                    ) { shown, tabModifier ->
+                        ViewSwitch(shown.advanced, tabModifier) { advanced, motion ->
                             if (advanced) {
                                 Box(Modifier.fillMaxSize()) {
                                     ViewSwitchContainer(motion, isPane = true, Modifier.matchParentSize())
                                     Column(Modifier.fillMaxSize()) {
                                         OptionsPane(
-                                            state, onQuery, onGroup, onToggle, onValue, onBack = null,
+                                            shown, onQuery, onGroup, onToggle, onValue, onBack = null,
                                             onSimple = { onAdvanced(false) },
                                             modifier = Modifier.weight(1f).advancedContentMotion(motion),
                                         )
-                                        Footer(state, onSave, onSaveAsNew, onMirror, onPreset, presetMenuOpen, onConnectWifi, motion)
+                                        Footer(shown, onSave, onSaveAsNew, onMirror, onPreset, presetMenuOpen, onConnectWifi, motion)
                                     }
                                 }
                             } else {
                                 SimpleDevicePane(
-                                    state, onPreset, onMirror, onConnectWifi,
+                                    shown, onPreset, onMirror, onConnectWifi,
                                     onAdvanced = { onAdvanced(true) }, onBack = null, presetMenuOpen = presetMenuOpen,
                                     motion = motion,
                                 )

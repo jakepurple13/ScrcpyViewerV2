@@ -12,6 +12,9 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.Density
@@ -159,6 +162,107 @@ class DetailTabMotionTest {
         assertTrue(inY.all { it in -0.5f..18.5f }, "incoming rises from +18: $inY")
         assertEquals(0f, inY.last())
         assertTrue(frames.all { f -> f.values.all { it.x == 0f } })
+    }
+
+    @Test
+    fun `selecting a device or none cross-fades without sliding`() {
+        val frames = track<String?>(null, "a") { _, _ -> selectionFade(reduced = false) }
+        assertTrue(frames.all { f -> f.values.all { it == Offset.Zero } })
+        // Both are shown together while the old content fades out (100 ms), then only the device.
+        val together = frames.count { it.size == 2 }
+        assertTrue(together in 5..8, "both shown for $together frames")
+        assertEquals(setOf<String?>("a"), frames.last().keys)
+    }
+
+    // --- The detail pane's wiring --------------------------------------------------------------------------------------
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    private class PaneHarness {
+        var page by mutableStateOf<String?>("a")
+        var tab by mutableStateOf(DetailTab.Options)
+        val active = ArrayList<Boolean>()
+        var counter: androidx.compose.runtime.MutableIntState? = null
+        val scene = ImageComposeScene(400, 400, Density(1f)) {
+            DetailPane(
+                page, { it }, listOf("a", "b"), tab, DeviceInfoUiState(serial = page), { active += it }, {},
+                reduceMotion = true,
+                empty = {},
+            ) { _, _ ->
+                counter = androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableIntStateOf(0) }
+            }
+        }
+        val driver = SceneDriver(scene)
+        fun settle() = driver.frames(40)
+    }
+
+    @Test
+    fun `info is active only while a device shows the info tab`() {
+        val h = PaneHarness()
+        try {
+            h.settle()
+            assertEquals(emptyList(), h.active)
+            h.tab = DetailTab.Info
+            h.settle()
+            assertEquals(listOf(true), h.active)
+            // Another device keeps Info on screen: no false in between.
+            h.page = "b"
+            h.settle()
+            assertEquals(listOf(true), h.active)
+            h.tab = DetailTab.Options
+            h.settle()
+            assertEquals(listOf(true, false), h.active)
+            h.tab = DetailTab.Info
+            h.settle()
+            h.page = null
+            h.settle()
+            assertEquals(listOf(true, false, true, false), h.active)
+        } finally {
+            h.scene.close()
+        }
+    }
+
+    @Test
+    fun `options keep their saved state across a tab switch`() {
+        val h = PaneHarness()
+        try {
+            h.settle()
+            h.counter!!.intValue = 7
+            h.tab = DetailTab.Info
+            h.settle()
+            h.tab = DetailTab.Options
+            h.settle()
+            assertEquals(7, h.counter!!.intValue)
+        } finally {
+            h.scene.close()
+        }
+    }
+
+    @OptIn(ExperimentalComposeUiApi::class)
+    @Test
+    fun `clicking the info segment asks for the info tab`() {
+        val picked = ArrayList<DetailTab>()
+        val scene = ImageComposeScene(400, 56, Density(1f)) {
+            DetailTabRow(selected = true, tab = DetailTab.Options, onTab = { picked += it }, onBack = null, reduceMotion = true)
+        }
+        try {
+            val driver = SceneDriver(scene)
+            driver.frames(30)
+            // The control is centered; Info is its right half (each segment is at least 120 wide).
+            val at = Offset(260f, 28f)
+            scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
+            scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, button = PointerButton.Primary)
+            scene.sendPointerEvent(PointerEventType.Release, at, type = PointerType.Mouse, button = PointerButton.Primary)
+            driver.frames(5)
+            assertEquals(listOf(DetailTab.Info), picked)
+        } finally {
+            scene.close()
+        }
+    }
+
+    @Test
+    fun `segment labels`() {
+        assertEquals("Options", DetailTab.Options.label())
+        assertEquals("Info", DetailTab.Info.label())
     }
 
     @Test

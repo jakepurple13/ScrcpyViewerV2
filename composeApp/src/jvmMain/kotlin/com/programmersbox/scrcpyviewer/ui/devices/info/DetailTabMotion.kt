@@ -8,19 +8,18 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.SegmentedButton
@@ -31,6 +30,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -56,9 +56,13 @@ internal const val DEVICE_IN_MILLIS = 340
 internal val DEVICE_OUT_SLIDE = 14.dp
 internal val DEVICE_IN_SLIDE = 18.dp
 
-/** How long the tab control takes to open its row when a device gets selected, and to close it when none is. */
-private const val TAB_ROW_OPEN_MILLIS = 260
-private const val TAB_ROW_CLOSE_MILLIS = 200
+/** Selecting a device or none: the old content fades out, then the new one fades in, with the tab control. */
+internal const val SELECT_OUT_MILLIS = 100
+internal const val SELECT_IN_DELAY_MILLIS = 60
+internal const val SELECT_FADE_MILLIS = 200
+
+/** The tab row's height. It is kept with no device selected too, so the content below never moves. */
+internal val DETAIL_TAB_ROW_HEIGHT = 56.dp
 
 /**
  * One shared-axis switch along [axis]: the outgoing content moves to [exitOffset] and fades out over [exitMillis];
@@ -135,8 +139,35 @@ fun deviceSwitchTransform(fromIndex: Int, toIndex: Int, reduced: Boolean, densit
     deviceSwitch(fromIndex, toIndex, reduced).transform(density)
 
 /**
+ * No device ↔ a device: a fade-through. The old content fades out over [SELECT_OUT_MILLIS] while the new one fades
+ * in over [SELECT_FADE_MILLIS] after [SELECT_IN_DELAY_MILLIS]. The fade-in uses FastOutSlowIn: the emphasized curve
+ * puts a dense pane at about two-thirds opacity on its first frame, which reads as a pop.
+ */
+internal fun selectionFade(reduced: Boolean): ContentTransform {
+    if (reduced) {
+        return ContentTransform(
+            fadeIn(tween(REDUCED_FADE_MILLIS)), fadeOut(tween(REDUCED_FADE_MILLIS)), sizeTransform = SizeTransform(clip = true),
+        )
+    }
+    return ContentTransform(
+        fadeIn(selectInSpec()),
+        fadeOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate)),
+        sizeTransform = SizeTransform(clip = true),
+    )
+}
+
+private fun <T> selectInSpec() = tween<T>(SELECT_FADE_MILLIS, SELECT_IN_DELAY_MILLIS, FastOutSlowInEasing)
+
+/** What the segmented control calls each tab. */
+internal fun DetailTab.label(): String = when (this) {
+    DetailTab.Options -> "Options"
+    DetailTab.Info -> "Info"
+}
+
+/**
  * The detail pane's top row: the back button (single-pane layout) and, while a device is [selected], the
- * Options | Info control. The control opens and closes its row as a device gets selected or none is.
+ * Options | Info control, which fades and scales in and out. The row keeps [DETAIL_TAB_ROW_HEIGHT] either way, so
+ * nothing below it moves.
  */
 @Composable
 fun DetailTabRow(
@@ -145,95 +176,103 @@ fun DetailTabRow(
     onTab: (DetailTab) -> Unit,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    reduceMotion: Boolean = remember { systemReducesMotion() },
 ) {
-    val reduce = remember { systemReducesMotion() }
-    Box(modifier.fillMaxWidth()) {
+    Box(modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
         if (onBack != null) DetailBackButton(onBack, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
         AnimatedVisibility(
             visible = selected,
             modifier = Modifier.align(Alignment.Center),
-            enter = if (reduce) fadeIn(tween(REDUCED_FADE_MILLIS)) else
-                // Size changes use FastOutSlowIn: the emphasized curve jumps half the height on the first frame.
-                expandVertically(tween(TAB_ROW_OPEN_MILLIS, easing = FastOutSlowInEasing)) +
-                    fadeIn(tween(TAB_ROW_OPEN_MILLIS, easing = EmphasizedDecelerate)),
-            exit = if (reduce) fadeOut(tween(REDUCED_FADE_MILLIS)) else
-                shrinkVertically(tween(TAB_ROW_CLOSE_MILLIS, easing = FastOutSlowInEasing)) +
-                    fadeOut(tween(TAB_ROW_CLOSE_MILLIS, easing = EmphasizedAccelerate)),
+            // Arrives and leaves with the content below (see selectionFade).
+            enter = if (reduceMotion) fadeIn(tween(REDUCED_FADE_MILLIS)) else
+                fadeIn(selectInSpec()) + scaleIn(selectInSpec(), initialScale = 0.92f),
+            exit = if (reduceMotion) fadeOut(tween(REDUCED_FADE_MILLIS)) else
+                fadeOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate)) +
+                    scaleOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate), targetScale = 0.92f),
         ) {
-            SingleChoiceSegmentedButtonRow(Modifier.padding(vertical = 8.dp)) {
+            SingleChoiceSegmentedButtonRow {
                 DetailTab.entries.forEachIndexed { i, entry ->
                     SegmentedButton(
                         selected = tab == entry,
                         onClick = { onTab(entry) },
                         shape = styledSegmentShape(i, DetailTab.entries.size),
                         modifier = Modifier.widthIn(min = 120.dp),
-                    ) { Text(entry.name) }
+                    ) { Text(entry.label()) }
                 }
             }
         }
     }
 }
 
+/** What one device's detail shows; a leaving device keeps its last one while it animates out. */
+private data class Shown<T>(val page: T, val info: DeviceInfoUiState)
+
 /**
- * The selected device's detail below the tab row: [options] (the pane as it was before tabs) or the Info pane, with
- * the sideways shared axis between them. On Info, another device swaps the pane along the vertical axis, in the
- * direction of its place in [serials]; [onInfoActive] is true while the Info tab is composed, so polling stops when
- * it is not on screen.
+ * The detail pane below the tab row. With no device ([serialOf] gives null) it shows [empty]; selecting a device or
+ * none cross-fades. Another device swaps the content along the vertical axis, in the direction of its place in
+ * [serials], on either tab. Within one device, [options] (the pane as it was before tabs) and the Info pane switch
+ * along the sideways shared axis, and each tab keeps its saveable state (scroll and the like) per device.
+ *
+ * [onInfoActive] is true while a device is selected with the Info tab chosen, so polling stops when Info is not on
+ * screen. Updates for the same device (a new [page], Info's polls) recompose the shown content without motion.
  */
 @Composable
-fun ColumnScope.DetailTabs(
+fun <T> DetailPane(
+    page: T,
+    serialOf: (T) -> String?,
+    serials: List<String>,
     tab: DetailTab,
     info: DeviceInfoUiState,
-    serials: List<String>,
     onInfoActive: (Boolean) -> Unit,
     onInfoRetry: () -> Unit,
-    options: @Composable (Modifier) -> Unit,
+    modifier: Modifier = Modifier,
+    reduceMotion: Boolean = remember { systemReducesMotion() },
+    empty: @Composable (Modifier) -> Unit,
+    options: @Composable (page: T, modifier: Modifier) -> Unit,
 ) {
-    val reduce = remember { systemReducesMotion() }
     val density = LocalDensity.current
-    AnimatedContent(
-        targetState = tab,
-        modifier = Modifier.weight(1f).fillMaxWidth(),
-        transitionSpec = { detailTabTransform(initialState, targetState, reduce, density) },
-        label = "detail tab",
-    ) { shown ->
-        when (shown) {
-            DetailTab.Options -> options(Modifier.fillMaxSize())
-            DetailTab.Info -> InfoTab(info, serials, reduce, onInfoActive, onInfoRetry)
-        }
-    }
-}
-
-@Composable
-private fun InfoTab(
-    info: DeviceInfoUiState,
-    serials: List<String>,
-    reduce: Boolean,
-    onInfoActive: (Boolean) -> Unit,
-    onInfoRetry: () -> Unit,
-) {
+    val infoShown = serialOf(page) != null && tab == DetailTab.Info
     val active by rememberUpdatedState(onInfoActive)
-    DisposableEffect(Unit) {
-        active(true)
-        onDispose { active(false) }
+    DisposableEffect(infoShown) {
+        if (infoShown) active(true)
+        onDispose { if (infoShown) active(false) }
     }
-    val density = LocalDensity.current
-    Column(Modifier.fillMaxSize()) {
+    val saved = rememberSaveableStateHolder()
+    AnimatedContent(
+        targetState = Shown(page, info),
+        modifier = modifier,
+        contentKey = { serialOf(it.page) },
+        transitionSpec = {
+            val from = serialOf(initialState.page)
+            val to = serialOf(targetState.page)
+            if (from == null || to == null) selectionFade(reduceMotion)
+            else deviceSwitchTransform(serials.indexOf(from), serials.indexOf(to), reduceMotion, density)
+        },
+        label = "detail device",
+    ) { shown ->
+        val serial = serialOf(shown.page)
+        if (serial == null) {
+            empty(Modifier.fillMaxSize())
+            return@AnimatedContent
+        }
+        // Info can still describe the previous device for a moment after the selection changes.
+        val deviceInfo = if (shown.info.serial == serial) shown.info else DeviceInfoUiState(serial = serial)
         AnimatedContent(
-            targetState = info,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            // The leaving pane keeps its device's last state; only a new serial switches panes.
-            contentKey = { it.serial },
-            transitionSpec = {
-                deviceSwitchTransform(serials.indexOf(initialState.serial), serials.indexOf(targetState.serial), reduce, density)
-            },
-            label = "info device",
-        ) { shown ->
-            DeviceInfoPane(
-                shown, onInfoRetry,
-                Modifier.padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 14.dp),
-                reduceMotion = reduce,
-            )
+            targetState = tab,
+            modifier = Modifier.fillMaxSize(),
+            transitionSpec = { detailTabTransform(initialState, targetState, reduceMotion, density) },
+            label = "detail tab",
+        ) { shownTab ->
+            saved.SaveableStateProvider("$serial/${shownTab.name}") {
+                when (shownTab) {
+                    DetailTab.Options -> options(shown.page, Modifier.fillMaxSize())
+                    DetailTab.Info -> DeviceInfoPane(
+                        deviceInfo, onInfoRetry,
+                        Modifier.padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 14.dp),
+                        reduceMotion = reduceMotion,
+                    )
+                }
+            }
         }
     }
 }
