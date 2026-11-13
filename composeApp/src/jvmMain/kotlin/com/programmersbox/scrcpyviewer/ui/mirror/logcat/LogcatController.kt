@@ -35,6 +35,9 @@ const val LOGCAT_MAX_ENTRIES = 20_000
 /** How often buffered lines are moved into the list, at most. */
 private const val DRAIN_MILLIS = 50L
 
+/** Lines arriving this soon after Play or a resume are taken as the read-back backlog. */
+internal const val BACKLOG_MILLIS = 1_500L
+
 /** At most one `ps` per this long. */
 private const val LOOKUP_MILLIS = 1_000L
 
@@ -195,6 +198,7 @@ class LogcatController(
         }
         run = LogcatRun.Running
         pausedAt = null
+        backlogUntil = clock() + BACKLOG_MILLIS
         val buffer = Channel<LogcatLine>(Channel.UNLIMITED)
         streamJob = scope.launch {
             launch(io) {
@@ -270,6 +274,15 @@ class LogcatController(
     fun requestNudge() {
         nudge++
     }
+
+    /** Host time until which arriving lines count as read-back: the `-T` backlog after Play or a resume. */
+    private var backlogUntil = Long.MIN_VALUE
+
+    /**
+     * True for an entry that arrived within [BACKLOG_MILLIS] of the last [play]: most likely the device's buffered
+     * lines read back, not a live one. The list doesn't grow or flash these.
+     */
+    internal fun isBacklog(entry: LogcatEntry): Boolean = entry.receivedAtMillis < backlogUntil
 
     /** Shows [message] as a toast, for the list's clicks. */
     internal fun toast(message: String) = notify(message)

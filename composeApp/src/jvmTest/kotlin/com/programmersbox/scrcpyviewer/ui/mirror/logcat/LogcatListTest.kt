@@ -310,6 +310,79 @@ class LogcatListTest {
     }
 
     @Test
+    fun `a package that only shares the prefix is not an own frame, and one trace line reads 1 line`() = onEdt {
+        withScene {
+            controller.pick("com.example.notes")
+            controller.query = ""
+            started()
+            send(
+                line("Helper failed", LogLevel.Warn, "Helper", tid = 1400),
+                line("\tat com.example.notesextra.Helper.run(Helper.kt:3)", LogLevel.Warn, "Helper", tid = 1400),
+            )
+            assertNull(text("1 lines"))
+            click(checkNotNull(text("1 line")))
+            frames(30)
+            val trace = checkNotNull(containing("Helper.kt:3"))
+            assertTrue(linksIn(trace).isEmpty(), "com.example.notesextra is not com.example.notes")
+        }
+        assertTrue(isOwnFrame("com.example.notes.NotesRepo.load", "com.example.notes"))
+        assertTrue(isOwnFrame("com.example.notes", "com.example.notes"))
+        assertFalse(isOwnFrame("com.example.notesextra.Helper.run", "com.example.notes"))
+    }
+
+    @Test
+    fun `highlight matches case-insensitively on the original text`() {
+        // "İ" lowercases to two chars, which would shift indices into a lowercased copy.
+        val message = "İİ Sync ERROR here, error again"
+        val spans = highlight(message, listOf("error"), androidx.compose.ui.graphics.Color.Yellow).spanStyles
+        assertEquals(listOf(message.indexOf("ERROR"), message.lastIndexOf("error")), spans.map { it.start })
+        assertTrue(spans.all { message.substring(it.start, it.end).equals("error", ignoreCase = true) })
+    }
+
+    @Test
+    fun `lines arriving soon after play are backlog`() {
+        var now = CLOCK
+        val c = LogcatController(source, scope, {}, clock = { now }, io = EmptyCoroutineContext)
+        c.play()
+        settle()
+        source.stream.trySend(line("backlog"))
+        settle()
+        now += BACKLOG_MILLIS + 500
+        source.stream.trySend(line("live"))
+        settle()
+        val lines = c.items.filterIsInstance<LogcatItem.Line>()
+        assertEquals(listOf(true, false), lines.map { c.isBacklog(it.entry) })
+        // The list doesn't grow the backlog line even in a small batch.
+        val live = LiveRows(c::isBacklog)
+        live.observe(emptyList())
+        live.observe(lines.take(1))
+        live.observe(lines)
+        assertEquals(setOf(lines[1].key), live.fresh)
+        scope.cancel()
+    }
+
+    @Test
+    fun `loosening the filter while scrolled up doesn't count revealed lines`() = onEdt {
+        withScene {
+            controller.query = "tag:OkHttp"
+            started()
+            send(*Array(80) { line("line $it") })
+            repeat(10) {
+                scene.sendPointerEvent(PointerEventType.Scroll, Offset(450f, 300f), scrollDelta = Offset(0f, -10f), type = PointerType.Mouse)
+                frame()
+            }
+            frames(30)
+            send(line("hidden a", tag = "Other"), line("hidden b", tag = "Other"))
+            assertNull(containing("new line"), "hidden lines don't count")
+            controller.query = ""
+            frames(30)
+            assertNull(containing("new line"), "revealed lines don't count")
+            send(line("shown"))
+            assertNotNull(text("1 new line"))
+        }
+    }
+
+    @Test
     fun `pinned list follows new lines, scrolled up shows 3 new lines pill, clicking it scrolls to the end`() = onEdt {
         withScene {
             started()
@@ -405,5 +478,12 @@ class LogcatListTest {
         // Old keys coming back (a filter flip) never grow.
         live.observe(List(10) { entryLine(it.toLong()) })
         assertTrue(live.fresh.isEmpty())
+        // The -T backlog in small chunks: none of it grows.
+        val chunked = LiveRows { it.seq < 2000 }
+        chunked.observe(List(10) { entryLine(it.toLong()) })
+        for (end in 20..1990 step 10) {
+            chunked.observe(List(end) { entryLine(it.toLong()) })
+            assertTrue(chunked.fresh.isEmpty(), "chunk to $end")
+        }
     }
 }

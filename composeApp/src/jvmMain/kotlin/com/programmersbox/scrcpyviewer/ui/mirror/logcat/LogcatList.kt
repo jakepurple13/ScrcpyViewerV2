@@ -5,7 +5,13 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
+import androidx.compose.foundation.LocalScrollbarStyle
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.v2.ScrollbarAdapter
+import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -57,11 +63,30 @@ private const val MAX_GROW_BATCH = 50
 private const val STICK_MILLIS = 340L
 
 /**
- * Which rows arrived live, for the grow-in and the crash flash. [observe] is called with every new item list: line
- * keys newer than any seen before become [fresh], unless this is the first look at lines or the batch is a flood.
- * Rows revealed by a filter change are older than the newest key seen, so they never grow.
+ * Calls [action] for each line of this list newer than [after], newest first (lines are in key order; gaps are
+ * skipped), until [action] returns false.
  */
-internal class LiveRows {
+internal inline fun List<LogcatItem>.eachLineAfter(after: Long, action: (LogcatItem.Line) -> Boolean) {
+    for (i in indices.reversed()) {
+        val item = this[i] as? LogcatItem.Line ?: continue
+        if (item.key <= after || !action(item)) return
+    }
+}
+
+/** The newest line's key, or [Long.MIN_VALUE] with no lines. */
+internal fun List<LogcatItem>.newestLineKey(): Long {
+    var key = Long.MIN_VALUE
+    eachLineAfter(Long.MIN_VALUE) { key = it.key; false }
+    return key
+}
+
+/**
+ * Which rows arrived live, for the grow-in and the crash flash. [observe] is called with every new item list: line
+ * keys newer than any seen before become [fresh], except on the first look at lines, in a flood (over
+ * [MAX_GROW_BATCH] new lines), and for [backlog] entries (read back after Play or a resume). Rows revealed by a
+ * filter change are older than the newest key seen, so they never grow.
+ */
+internal class LiveRows(private val backlog: (com.programmersbox.scrcpyviewer.logcat.LogcatEntry) -> Boolean = { false }) {
     private var last: List<LogcatItem>? = null
     private var newest = Long.MIN_VALUE
     private val flashed = HashSet<Long>()
@@ -75,15 +100,14 @@ internal class LiveRows {
         last = items
         val first = newest == Long.MIN_VALUE
         val added = HashSet<Long>()
-        var top = newest
-        for (i in items.indices.reversed()) {
-            val item = items[i] as? LogcatItem.Line ?: continue
-            if (item.key <= newest) break
-            if (item.key > top) top = item.key
-            if (added.size <= MAX_GROW_BATCH) added += item.key
+        var flood = false
+        items.eachLineAfter(newest) {
+            if (!backlog(it.entry)) added += it.key
+            flood = added.size > MAX_GROW_BATCH
+            !flood
         }
-        newest = top
-        fresh = if (first || added.size > MAX_GROW_BATCH) emptySet() else added
+        newest = maxOf(newest, items.newestLineKey())
+        fresh = if (first || flood) emptySet() else added
     }
 
     /** True the first time it's asked about [key]. */
@@ -111,7 +135,20 @@ internal class LogcatFollow(val state: LazyListState) {
         }
     }
 
-    suspend fun run(items: () -> List<LogcatItem>, motion: Boolean) = coroutineScope {
+    /** The scrollbar: like [state]'s adapter, but dragging toward the top unpins like the wheel does. */
+    fun scrollbar(adapter: ScrollbarAdapter): ScrollbarAdapter = object : ScrollbarAdapter by adapter {
+        override suspend fun scrollTo(scrollOffset: Double) {
+            if (scrollOffset < adapter.scrollOffset && state.canScrollBackward) pinned = false
+            adapter.scrollTo(scrollOffset)
+        }
+    }
+
+    /**
+     * Follows [items] (everything received) and [visible] (what passes the filter). New lines are counted by
+     * arrival: lines in [visible] newer than the newest of [items] last time, so loosening the filter while scrolled
+     * up reveals older lines without counting them.
+     */
+    suspend fun run(items: () -> List<LogcatItem>, visible: () -> List<LogcatItem>, motion: Boolean) = coroutineScope {
         launch {
             snapshotFlow { state.canScrollForward }.collect { more ->
                 if (!more) {
@@ -120,8 +157,8 @@ internal class LogcatFollow(val state: LazyListState) {
                 }
             }
         }
-        snapshotFlow(items).collectLatest { v ->
-            val added = countNew(v)
+        snapshotFlow { items() to visible() }.collectLatest { (all, v) ->
+            val added = countNew(all, v)
             if (!pinned) {
                 unseen += added
                 return@collectLatest
@@ -164,17 +201,11 @@ internal class LogcatFollow(val state: LazyListState) {
         }
     }
 
-    private fun countNew(v: List<LogcatItem>): Int {
+    private fun countNew(all: List<LogcatItem>, v: List<LogcatItem>): Int {
         var n = 0
-        var top = newest
-        for (i in v.indices.reversed()) {
-            val item = v[i] as? LogcatItem.Line ?: continue
-            if (item.key <= newest) break
-            if (item.key > top) top = item.key
-            n++
-        }
+        v.eachLineAfter(newest) { n++; true }
         val counted = if (newest == Long.MIN_VALUE) 0 else n
-        newest = top
+        newest = maxOf(newest, all.newestLineKey())
         return counted
     }
 }
@@ -188,8 +219,10 @@ internal class LogcatFollow(val state: LazyListState) {
 @Composable
 fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
-    val live = remember { LiveRows() }
-    live.observe(controller.items)
+    val live = remember(controller) { LiveRows(controller::isBacklog) }
+    val items = controller.items
+    // Before the frame's layout composes the new rows, which read [LiveRows.fresh].
+    SideEffect { live.observe(items) }
     val visible = controller.visible
     val listState = rememberLazyListState()
     val follow = remember(listState) { LogcatFollow(listState) }
@@ -218,7 +251,15 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
             },
         )
     }
-    LaunchedEffect(follow, motion) { follow.run({ controller.visible }, motion) }
+    LaunchedEffect(follow, motion) { follow.run({ controller.items }, { controller.visible }, motion) }
+    val onSurface = scheme.onSurface
+    val barStyle = LocalScrollbarStyle.current.copy(
+        thickness = 10.dp,
+        unhoverColor = onSurface.copy(alpha = 0.38f),
+        hoverColor = onSurface.copy(alpha = 0.7f),
+    )
+    val barAdapter = rememberScrollbarAdapter(listState)
+    val scrollbar = remember(follow, barAdapter) { follow.scrollbar(barAdapter) }
 
     Column(modifier.background(scheme.surfaceContainerLowest)) {
         LogcatHeader(columns)
@@ -252,6 +293,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
                     }
                 }
             }
+            VerticalScrollbar(scrollbar, Modifier.align(Alignment.CenterEnd).fillMaxHeight(), style = barStyle)
             LogcatEmptyMessage(run != LogcatRun.NotStarted && controller.query.isNotBlank() && visible.none { it is LogcatItem.Line }, motion)
             LogcatPausedBanner(pausedBannerText(run, controller.pausedAt), motion, Modifier.align(Alignment.TopCenter))
             LogcatNewLinesPill(

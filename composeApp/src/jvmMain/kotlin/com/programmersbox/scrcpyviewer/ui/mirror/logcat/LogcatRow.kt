@@ -79,6 +79,9 @@ private const val GAP = 10 // dp between columns, counted in each column's width
 private const val PAD = 10 // dp row padding at each side
 private const val BADGE = 20 // dp badge column
 
+/** Room trace frames get before the indent steps in: about 65 monospace characters. */
+private val MIN_TRACE_WIDTH = 480.dp
+
 /**
  * Column widths for the header and every row. [ids] animates 1 → 0 as PID-TID and Package hide (compact view or a
  * sheet under 600 dp), [squeeze] 0 → 1 into compact view. Widths are read in layout, so their animation doesn't
@@ -99,10 +102,20 @@ internal class LogcatColumns(
     fun tag(): Dp = lerp(128f, 112f, squeeze.value) + GAP.dp
     fun pkg(): Dp = (150f + GAP).dp * ids.value
 
-    /** Where trace text starts (the mockup's indents): 386 dp, 224 dp in compact view, 10 dp under 600 dp. */
-    fun traceIndent(): Dp {
-        val wide = PAD.dp + time() + pid() + tag() + (20f + 20f * ids.value).dp
-        return wide + (PAD.dp - wide) * narrow.value
+    /**
+     * Where trace text starts in a row [rowWidth] wide. The mockup's indents (386 dp, 224 dp in compact view, 10 dp
+     * under 600 dp) when that leaves [MIN_TRACE_WIDTH] for the frames, else the Tag column, else the row's padding,
+     * so frames don't wrap mid-name.
+     */
+    fun traceIndent(rowWidth: Dp): Dp {
+        val mockup = PAD.dp + time() + pid() + tag() + (20f + 20f * ids.value).dp
+        val wide = mockup + (PAD.dp - mockup) * narrow.value
+        val atTag = PAD.dp + time() + pid()
+        return when {
+            rowWidth - wide >= MIN_TRACE_WIDTH -> wide
+            rowWidth - atTag >= MIN_TRACE_WIDTH -> minOf(atTag, wide)
+            else -> minOf(PAD.dp, wide)
+        }
     }
 
     private fun lerp(a: Float, b: Float, t: Float) = (a + (b - a) * t).dp
@@ -125,9 +138,10 @@ internal fun Modifier.widthBy(width: () -> Dp): Modifier = layout { measurable, 
     layout(w, p.height) { p.place(0, 0) }
 }.clipToBounds()
 
-/** Insets the element's start by [start] (read during layout). */
-private fun Modifier.startBy(start: () -> Dp): Modifier = layout { measurable, constraints ->
-    val s = start().roundToPx().coerceIn(0, if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE)
+/** Insets the element's start by [start] of the available width (read during layout). */
+private fun Modifier.startBy(start: (Dp) -> Dp): Modifier = layout { measurable, constraints ->
+    val available = if (constraints.hasBoundedWidth) constraints.maxWidth.toDp() else Dp.Infinity
+    val s = start(available).roundToPx().coerceIn(0, if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE)
     val inner = if (constraints.hasBoundedWidth) {
         constraints.copy(minWidth = (constraints.minWidth - s).coerceAtLeast(0), maxWidth = constraints.maxWidth - s)
     } else constraints
@@ -278,14 +292,18 @@ private fun MessageText(message: String, words: List<String>, color: Color, bold
 
 /** [message] with each case-insensitive occurrence of [words] on a [mark] background. */
 internal fun highlight(message: String, words: List<String>, mark: Color): AnnotatedString {
-    val lower = message.lowercase()
+    // Matched on the original text: lowercasing can change the length (İ) and shift indices.
     val ranges = mutableListOf<IntRange>()
     for (w in words) {
-        val lw = w.lowercase()
-        var i = lower.indexOf(lw)
-        while (i >= 0) {
-            ranges += i until i + lw.length
-            i = lower.indexOf(lw, i + lw.length)
+        if (w.isEmpty()) continue
+        var i = 0
+        while (i <= message.length - w.length) {
+            if (message.regionMatches(i, w, 0, w.length, ignoreCase = true)) {
+                ranges += i until i + w.length
+                i += w.length
+            } else {
+                i++
+            }
         }
     }
     return buildAnnotatedString {
@@ -304,9 +322,12 @@ private fun TraceToggle(lines: Int, expanded: Boolean, motion: Boolean, onClick:
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(14.dp).graphicsLayer { rotationZ = turn }, tint = primary)
-        Text("$lines lines", style = LogRowStyle.copy(fontSize = 11.5.sp), color = primary, maxLines = 1, softWrap = false)
+        Text(if (lines == 1) "1 line" else "$lines lines",style = LogRowStyle.copy(fontSize = 11.5.sp), color = primary, maxLines = 1, softWrap = false)
     }
 }
+
+/** True when the frame's `class.method` [at] is inside package [mine] (a package boundary, not a prefix). */
+internal fun isOwnFrame(at: String, mine: String): Boolean = at == mine || at.startsWith("$mine.")
 
 private val frame = Regex("""^\s*at\s+([\w$.<>\-]+)\((.*)\)\s*$""")
 private val fileLine = Regex("""^[\w$.\-]+:\d+$""")
@@ -332,7 +353,7 @@ private fun TraceText(trace: List<String>, mine: String?, onCopy: (String) -> Un
                 }
                 withStyle(SpanStyle(color = dim)) {
                     val loc = m.groups[2]!!
-                    if (mine != null && m.groupValues[1].startsWith(mine) && fileLine.matches(loc.value)) {
+                    if (mine != null && isOwnFrame(m.groupValues[1], mine) && fileLine.matches(loc.value)) {
                         append(l.substring(0, loc.range.first))
                         withLink(LinkAnnotation.Clickable(loc.value, link) { onCopy(loc.value) }) { append(loc.value) }
                         append(l.substring(loc.range.last + 1))
