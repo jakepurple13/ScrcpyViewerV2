@@ -43,9 +43,10 @@ class RailLabelsTest {
             try {
                 driver.frames(60)
                 assertEquals(60, railWidth)
-                // Without labels the items are centered in the rail; the first (Devices) sits near the top.
-                val point = Offset(30f, 60f)
+                // Without labels the items are centered in the rail; the first (Devices) sits at the top.
+                val point = Offset(30f, 30f)
                 driver.scene.sendPointerEvent(PointerEventType.Move, point, type = PointerType.Mouse)
+                driver.frame()
                 driver.scene.sendPointerEvent(PointerEventType.Press, point, type = PointerType.Mouse, button = PointerButton.Primary)
                 driver.frame()
                 driver.scene.sendPointerEvent(PointerEventType.Release, point, type = PointerType.Mouse, button = PointerButton.Primary)
