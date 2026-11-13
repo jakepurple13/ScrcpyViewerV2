@@ -72,6 +72,7 @@ import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.nativeFileDialogs
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.devices.DevicesScreen
+import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoViewModel
 import com.programmersbox.scrcpyviewer.ui.devices.DevicesViewModel
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.recordResultMessage
@@ -236,6 +237,7 @@ fun App(
     presetsPanes: ListDetailPanes = rememberListDetailPanes(),
     actionsPanes: ListDetailPanes = rememberListDetailPanes(),
     devicesViewModel: DevicesViewModel = koinViewModel(),
+    deviceInfoViewModel: DeviceInfoViewModel = koinViewModel(),
     presetsViewModel: PresetsViewModel = koinViewModel(),
     settingsViewModel: SettingsViewModel = koinViewModel(),
     updateViewModel: UpdateViewModel = koinViewModel(),
@@ -246,6 +248,8 @@ fun App(
     inbox: ActionInbox = koinInject(),
 ) {
     val update by updateViewModel.state.collectAsStateWithLifecycle()
+    val deviceInfo by deviceInfoViewModel.state.collectAsStateWithLifecycle()
+    val detailTab by deviceInfoViewModel.tab.collectAsStateWithLifecycle()
     // Read from the store, not the ViewModel's state, so the first frame already has the saved theme.
     val settings by appSettings.settings.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -288,7 +292,12 @@ fun App(
                             when (route) {
                                 TopLevelRoute.Devices -> DevicesScreen(
                                     devicesViewModel,
-                                    panes = devicesPanes
+                                    panes = devicesPanes,
+                                    detailTab = detailTab,
+                                    onDetailTab = deviceInfoViewModel::setTab,
+                                    info = deviceInfo,
+                                    onInfoActive = deviceInfoViewModel::setActive,
+                                    onInfoRetry = deviceInfoViewModel::retry,
                                 )
 
                                 TopLevelRoute.Presets -> PresetsScreen(

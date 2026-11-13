@@ -10,6 +10,7 @@ import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.adb.optionsKey
+import com.programmersbox.scrcpyviewer.info.DeviceInfoReader
 import com.programmersbox.scrcpyviewer.media.AudioPlayer
 import com.programmersbox.scrcpyviewer.media.DelayedVideoSink
 import com.programmersbox.scrcpyviewer.media.VideoDecoder
@@ -21,6 +22,7 @@ import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
+import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoReaderFactory
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
@@ -123,6 +125,11 @@ class AdbModule {
     @Singleton(binds = [SelectedDevice::class])
     fun deviceSelection(tracker: DeviceTracker, scope: AppScope): DeviceSelection =
         DeviceSelection(tracker.devices, tracker.connected, scope)
+
+    /** Readers for the Devices screen's Info tab, one per selected device. */
+    @Singleton
+    fun deviceInfoReaderFactory(client: AdbClient): DeviceInfoReaderFactory =
+        DeviceInfoReaderFactory { DeviceInfoReader(client, it) }
 
     @Singleton
     fun wirelessAdb(client: AdbClient, mirrors: Lazy<MirrorController>): WirelessAdb = WirelessAdb(
