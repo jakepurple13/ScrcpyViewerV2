@@ -52,6 +52,7 @@ fun SettingsScreen(
         onGlassOpacity = viewModel::setGlassOpacity,
         onDefaultPreset = viewModel::setDefaultPreset,
         onAnimateMirrorWindows = viewModel::setAnimateMirrorWindows,
+        onLaunchQuitAnimation = viewModel::setLaunchQuitAnimation,
         onUseBundledAdb = viewModel::useBundledAdb,
         onUseCustomAdb = viewModel::useCustomAdb,
         onBrowseAdb = { picker.launch(pickerScope) { files.chooseAdbFile()?.let { viewModel.useCustomAdb(it.toString()) } } },

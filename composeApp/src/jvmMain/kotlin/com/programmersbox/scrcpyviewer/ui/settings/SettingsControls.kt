@@ -135,3 +135,19 @@ internal fun animateMirrorToggle(b: SettingsBindings) = Modifier.toggleable(
 internal fun AnimateMirrorSwitch(b: SettingsBindings) {
     Switch(checked = b.state.settings.animateMirrorWindows, onCheckedChange = null)
 }
+
+/** Icon unfold, Screen on, or Off for the main window's launch and quit. */
+@Composable
+internal fun LaunchQuitAnimationControl(b: SettingsBindings) {
+    val current = com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation.fromName(b.state.settings.launchQuitAnimation)
+    val all = com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation.entries
+    SingleChoiceSegmentedButtonRow {
+        all.forEachIndexed { i, value ->
+            SegmentedButton(
+                selected = current == value,
+                onClick = { b.actions.onLaunchQuitAnimation(value) },
+                shape = styledSegmentShape(i, all.size),
+            ) { Text(value.label) }
+        }
+    }
+}
