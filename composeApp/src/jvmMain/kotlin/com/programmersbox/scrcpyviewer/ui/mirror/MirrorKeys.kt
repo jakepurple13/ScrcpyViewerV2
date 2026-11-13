@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isAltPressed
@@ -78,7 +79,14 @@ class MirrorKeys(
     private val keyboardDisabled: Boolean = false,
     /** `legacy-paste`: the text is typed (`InjectText` in 100-char chunks) instead of set as the clipboard. */
     private val legacyPaste: Boolean = false,
+    /**
+     * Following windows' typing: plain `InjectKeycode`/`InjectText` (Mixed mode, never UHID) for every key the window
+     * handles as device input, the paste, and focus-loss key releases. Zoom, capture and sheet keys never reach it.
+     */
+    private val followerSend: (List<ControlMessage>) -> Unit = {},
 ) {
+    /** Keys only (no geometry needed); its own state, as [InputMapper] is stateful and not thread-safe. */
+    private val followerMapper = InputMapper(frameSize = { null }, viewRect = { Rect.Zero }, keyMode = KeyInjectMode.Mixed)
     private val zoomKeys = ZoomKeyFilter(mac)
     private val pasteMask = if (mac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
     private var pasteDown = false
@@ -110,7 +118,9 @@ class MirrorKeys(
             scope.launch {
                 val text = clipboardText()
                 if (!text.isNullOrEmpty()) {
-                    send(if (legacyPaste) text.chunked(100).map { ControlMessage.InjectText(it) } else listOf(ControlMessage.SetClipboard(0, paste = true, text = text)))
+                    val msgs = if (legacyPaste) text.chunked(100).map { ControlMessage.InjectText(it) } else listOf(ControlMessage.SetClipboard(0, paste = true, text = text))
+                    send(msgs)
+                    followerSend(msgs)
                 }
             }
             return true
@@ -119,6 +129,9 @@ class MirrorKeys(
             if (ev.id == AwtKeyEvent.KEY_RELEASED) pasteDown = false
             return true
         }
+        // Followers always get plain keys, even when this window types through UHID.
+        val plain = followerMapper.awtKey(ev.id, ev.keyCode, ev.keyChar, ev.modifiersEx, ev.location)
+        if (plain.isNotEmpty()) followerSend(plain)
         if (hidKeyboard != null) {
             send(hidKeyboard.awtKey(ev.id, ev.keyCode, ev.location))
             return true // HID keys never become text
@@ -140,6 +153,7 @@ class MirrorKeys(
             captureFocus(false)
             hidKeyboard?.let { send(it.releaseAll()) }
             send(mapper.releaseButtons())
+            followerSend(followerMapper.releaseKey())
         }
     }
 

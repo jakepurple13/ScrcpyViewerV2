@@ -27,6 +27,7 @@ import kotlin.test.assertTrue
 @OptIn(InternalComposeUiApi::class)
 class MirrorKeysTest {
     private val sent = mutableListOf<ControlMessage>()
+    private val followerSent = mutableListOf<ControlMessage>()
     private val zooms = mutableListOf<ZoomCommand>()
     private val captureFocus = mutableListOf<Boolean>()
     private var sheetOpen = false
@@ -42,6 +43,7 @@ class MirrorKeysTest {
         mapper = mapper,
         hidKeyboard = hid,
         send = { sent += it },
+        followerSend = { followerSent += it },
         clipboardText = { clipboard },
         scope = CoroutineScope(Dispatchers.Unconfined),
         sheetOpen = { sheetOpen },
@@ -281,5 +283,52 @@ class MirrorKeysTest {
 
         keys.onFocusChanged(true)
         assertEquals(listOf(false, false, true), captureFocus)
+    }
+
+    // --- follower output ---
+
+    @Test
+    fun follower_mixedMode_getsSameKeycodeAsLeader() {
+        val k = keys()
+        k.onKey(down(Key.A))
+        k.onKey(up(Key.A))
+        assertEquals(sent, followerSent)
+        assertEquals(2, followerSent.size)
+        k.onKey(typed('!'))
+        assertEquals(ControlMessage.InjectText("!"), followerSent.last())
+    }
+
+    @Test
+    fun follower_uhidLeader_followerGetsPlainKeys() {
+        val k = keys(hid = HidKeyboard(lockState = { 0 }, forwardLockKeys = true))
+        k.onKey(down(Key.A))
+        k.onKey(typed('!'))
+        hidReports()
+        assertEquals(2, followerSent.size)
+        assertIs<ControlMessage.InjectKeycode>(followerSent[0])
+        assertEquals(ControlMessage.InjectText("!"), followerSent[1])
+    }
+
+    @Test
+    fun follower_paste_getsSetClipboard() {
+        clipboard = "hello"
+        keys().onKey(down(Key.V, meta = true))
+        assertEquals(listOf<ControlMessage>(ControlMessage.SetClipboard(0, paste = true, text = "hello")), followerSent)
+    }
+
+    @Test
+    fun follower_zoomKey_getsNothing() {
+        keys().onKey(down(Key.Equals, meta = true))
+        assertTrue(followerSent.isEmpty())
+    }
+
+    @Test
+    fun follower_focusLoss_releasesHeldKey() {
+        val k = keys()
+        k.onKey(down(Key.A))
+        followerSent.clear()
+        k.onFocusChanged(false)
+        val up = assertIs<ControlMessage.InjectKeycode>(followerSent.single())
+        assertEquals(InputMapper.KEY_ACTION_UP, up.action)
     }
 }

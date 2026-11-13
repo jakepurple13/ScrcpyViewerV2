@@ -59,6 +59,8 @@ class InputMapper(
     /** Device position of the last forwarded SDK mouse event, for [releaseButtons]. */
     private var lastPosition: Position? = null
     private var lastKeyDown = -1
+    private var lastKeyMods = 0
+    private var lastKeyLocation = AwtKeyEvent.KEY_LOCATION_STANDARD
     private var repeat = 0
     private val clickCounter = ClickCounter()
 
@@ -95,6 +97,13 @@ class InputMapper(
         hidMouse?.let { return listOf(it.click(0)) }
         val p = lastPosition ?: return emptyList()
         return listOf(touch(ACTION_UP, p, pressure = 0f, actionButton = released and -released))
+    }
+
+    /** The key UP for the key still held (focus lost: its real release goes elsewhere); empty when none is. */
+    fun releaseKey(): List<ControlMessage> {
+        val code = lastKeyDown
+        if (code == -1) return emptyList()
+        return keyEvent(false, code, lastKeyMods, lastKeyLocation)
     }
 
     /** Relative motion of a captured pointer (UHID mouse only). */
@@ -230,6 +239,8 @@ class InputMapper(
                 repeat = 0
             }
             lastKeyDown = keyCode
+            lastKeyMods = mods
+            lastKeyLocation = location
         } else {
             if (keyCode == lastKeyDown) lastKeyDown = -1
         }
