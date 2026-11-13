@@ -15,7 +15,7 @@ main window. The menu also opens the main window, Settings, and quits.
 - The icon is static: the same image file at all times. No device-count badge, no mirroring dot, no color changes.
 - Closing the main window quits the app, the same as today. The icon exists only while the app runs.
 - The icon is on by default. A setting turns it off.
-- On Linux, when the desktop has no tray support, the setting is hidden.
+- The setting shows on every OS. ComposeNativeTray 2.1.7 has no tray-support check, so it is never hidden.
 - The "Arrange mirror windows" entry comes later, with the window-arranging feature. The emulator section comes with
   the emulator launcher. Neither is in this feature.
 
@@ -60,9 +60,9 @@ Quit Scrcpy Vwr
 
 ## Setting
 
-Settings › General (or wherever app-level window behaviour lives): switch "Show icon in menu bar" (macOS) / "Show icon
+Settings › Appearance: switch "Show icon in menu bar" (macOS) / "Show icon
 in system tray" (Windows, Linux). Stored in `AppSettings` as `showTrayIcon: Boolean = true`. Turning it off removes
-the icon at once; on adds it at once. Hidden on Linux when tray support isn't available.
+the icon at once; on adds it at once. Shown on every OS.
 
 ## Motion
 
@@ -75,7 +75,7 @@ switch and row motion.
   ICO header valid.
 - `TrayMenuModelTest`: a pure function builds the menu model from devices + open mirrors: header text for 0/1/N
   devices, row label and dot per state, mirroring vs mirror action, disabled rows, order matches the Devices list.
-- Settings: the switch persists `showTrayIcon` and is hidden when tray support is false (screenshot test of the row).
+- Settings: the switch persists `showTrayIcon`.
 - Manual: macOS menu bar, Windows CI-only (the user checks the build), Linux CI-only.
 
 ## Out of scope
