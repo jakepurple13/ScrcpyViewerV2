@@ -2,6 +2,9 @@ package com.programmersbox.scrcpyviewer.ui.devices.info
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.BoundsTransform
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.expandVertically
@@ -30,7 +33,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -80,6 +82,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.layout.IntrinsicMeasurable
 import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.layout.MeasureResult
@@ -459,6 +462,7 @@ internal fun InfoCard(
 }
 
 /** A label on the left and its value on the right, as in the mockup's key/value lists. */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun KvRow(
     label: String,
@@ -476,17 +480,26 @@ private fun KvRow(
     val fill = if (pulse != null) Modifier.pulseFill(pulse) else Modifier
     val labelColor = if (hidden) Color.Transparent else MaterialTheme.colorScheme.onSurfaceVariant
     val valueColor = if (hidden) Color.Transparent else Color.Unspecified
-    Layout(
-        content = {
-            Text(label, style = style, color = labelColor, modifier = fill)
-            if (ticking && !hidden) {
-                TickingText(shown, style = style, fontFamily = family)
-            } else {
-                Text(shown, style = style.merge(TextStyle(fontFeatureSettings = "tnum")), color = valueColor, fontFamily = family, modifier = fill)
-            }
-        },
-        measurePolicy = KvRowPolicy,
-    )
+    val reduce = LocalInfoReduceMotion.current
+    LookaheadScope {
+        // A value that moves between beside the label and below it (the card got narrower or wider) slides and
+        // resizes to its new place. Ticking rows hold short values that never stack, and animate their own width.
+        val move = if (reduce || ticking) Modifier else Modifier.animateBounds(this, boundsTransform = ReflowBounds)
+        Layout(
+            content = {
+                Text(label, style = style, color = labelColor, modifier = move.then(fill))
+                if (ticking && !hidden) {
+                    TickingText(shown, style = style, fontFamily = family)
+                } else {
+                    Text(
+                        shown, style = style.merge(TextStyle(fontFeatureSettings = "tnum")), color = valueColor,
+                        fontFamily = family, modifier = move.then(fill),
+                    )
+                }
+            },
+            measurePolicy = KvRowPolicy,
+        )
+    }
 }
 
 /**
@@ -817,15 +830,50 @@ internal const val GRID_MAX_COLUMNS = 3
  * the modifier that sizes it.
  */
 @Composable
+@OptIn(ExperimentalSharedTransitionApi::class)
 internal fun InfoGrid(count: Int, modifier: Modifier = Modifier, item: @Composable (index: Int, Modifier) -> Unit) {
-    BoxWithConstraints(modifier.fillMaxWidth()) {
-        val columns = gridColumns(maxWidth)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(GridGap), verticalAlignment = Alignment.Top) {
-            repeat(columns) { column ->
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GridGap)) {
-                    masonryColumn(column, columns, count).forEach { index -> item(index, Modifier.fillMaxWidth()) }
-                }
-            }
+    val reduce = LocalInfoReduceMotion.current
+    LookaheadScope {
+        // Each card animates from where it was to where the lookahead pass puts it: a new column after a resize, a
+        // new width, or a new y when a card above it changes height. Nothing moves on first layout.
+        val bounds = if (reduce) Modifier else Modifier.animateBounds(this, boundsTransform = ReflowBounds)
+        Layout(
+            content = { repeat(count) { index -> item(index, bounds) } },
+            modifier = modifier.fillMaxWidth(),
+            measurePolicy = MasonryPolicy,
+        )
+    }
+}
+
+/** Resize reflow: position and size ease together on the standard curve (see [SizeEasing]). */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private val ReflowBounds = BoundsTransform { _, _ -> tween(REFLOW_MILLIS, easing = SizeEasing) }
+
+/** How long a card takes to move to its new column, width or height after the window resizes. */
+internal const val REFLOW_MILLIS = 350
+
+/**
+ * Masonry placement for [InfoGrid]: [gridColumns] equal columns [GridGap] apart; child `i` goes to column
+ * `i % columns` ([masonryColumn]) under the cards before it. All cards are children of this one layout, so a change
+ * of column count moves them without recomposing them in a new parent.
+ */
+private object MasonryPolicy : MeasurePolicy {
+    override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else (GridMinColumn * GRID_MAX_COLUMNS).roundToPx()
+        val gap = GridGap.roundToPx()
+        val columns = gridColumns(width.toDp())
+        val columnWidth = ((width - gap * (columns - 1)) / columns).coerceAtLeast(0)
+        val placeables = measurables.map { it.measure(Constraints.fixedWidth(columnWidth)) }
+        val tops = IntArray(columns)
+        val positions = placeables.mapIndexed { i, placeable ->
+            val column = i % columns
+            val at = column * (columnWidth + gap) to tops[column]
+            tops[column] += placeable.height + gap
+            at
+        }
+        val height = (tops.maxOrNull() ?: 0).let { if (placeables.isEmpty()) 0 else it - gap }.coerceAtLeast(0)
+        return layout(width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+            placeables.forEachIndexed { i, placeable -> placeable.placeRelative(positions[i].first, positions[i].second) }
         }
     }
 }
