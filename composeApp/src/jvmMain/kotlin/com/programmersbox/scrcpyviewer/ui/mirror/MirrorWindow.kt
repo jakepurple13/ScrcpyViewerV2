@@ -40,6 +40,16 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeWindow
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ARRANGE_LABEL
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeButton
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeMenu
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.rememberArrangeStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.ArrangePlace
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowEntry
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -209,8 +219,11 @@ import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -371,6 +384,10 @@ fun MirrorWindow(
     inbox: ActionInbox = koinInject(),
     /** The app-wide "Send input to…" link between mirror windows. */
     following: InputFollowing = koinInject(),
+    /** The open mirror windows the arranger moves; this window joins once it has its first frame and size. */
+    mirrorWindows: MirrorWindows = koinInject(),
+    /** Arrange mirror windows: the title bar's Arrange button applies layouts through it. */
+    arranger: WindowArranger = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -552,6 +569,10 @@ fun MirrorWindow(
     val readWake = remember(wake) { wake?.let { w -> { w.value } } }
     // True while the window's bounds animate: the first-frame sizing and the aspect lock wait.
     var zooming by remember { mutableStateOf(zoomFrom != null) }
+    // True while the arranger moves the window (Arrange mirror windows): the same effects wait, as for the zoom.
+    val arranging = remember { mutableStateOf(false) }
+    // The window's bounds are someone else's (its open / close animation, or the arranger): sizing and the lock wait.
+    val held = zooming || arranging.value
     var closing by remember { mutableStateOf(false) }
     // A growing window stays hidden until its content is composed, then shows at the button and grows at once.
     var shown by remember { mutableStateOf(zoomFrom == null) }
@@ -617,6 +638,7 @@ fun MirrorWindow(
         reduceMotion = reduceMotion,
         control = control,
     )
+    val arrangeStrip = rememberArrangeStrip(serial, arranger, controller.open, reduceMotion)
     val followRings = remember(session) { ClickIndicator(mapper::displayedRect) }
     FollowedTouchRings(serial, following, followRings, mapper::toView)
 
@@ -733,7 +755,7 @@ fun MirrorWindow(
         onPreviewKeyEvent = keys::onKey,
         titleBar = {
             // The overflow menu's Copy command shows its "Copied" message in the window's snackbar.
-            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, followStrip, applyZoom) }
+            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, followStrip, arrangeStrip, applyZoom) }
         },
     ) {
         // Every move, resize, focus and native call on the window goes through this.
@@ -744,9 +766,15 @@ fun MirrorWindow(
         if ("print-fps" in e) {
             LaunchedEffect(session) { session.fps.collect { if (it > 0) println("[$serial] %.1f fps".format(it)) } }
         }
+        // A window that gained focus but closed before registering must not stay the "last focused".
+        DisposableEffect(serial) { onDispose { mirrorWindows.clearFocused(serial) } }
         LaunchedEffect(session, handle) {
             windowHandle = handle
-            handle.focused.collect { windowFocused = it }
+            handle.focused.collect {
+                windowFocused = it
+                // The menu bar's "Focus the front window" arranges around the window focused last.
+                if (it) mirrorWindows.focused(serial)
+            }
         }
         // Every gain and loss, not the merged state: each loss releases what the device holds.
         LaunchedEffect(keys, handle) {
@@ -772,10 +800,15 @@ fun MirrorWindow(
         val lastFit = remember { BooleanArray(1) { fit } } // the same, for Fit
         // The stage's width (px) while the window grows or shrinks for the quick actions sheet (see the sheet effect).
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
+        // True for a moment after the sizing effect below resizes the window (a new frame size, Fit back on): the
+        // arranger must not take that resize for the user's.
+        val appResizing = remember { mutableStateOf(false) }
+        val appResizeHold = remember { arrayOfNulls<Job>(1) }
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
         // Keyed on the pin clearing too: a height the user dragged during a sheet animation is corrected once it ends.
-        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null, zooming) {
-            if (zooming) return@LaunchedEffect // sized once the window has grown (or not at all while it shrinks)
+        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null, held) {
+            // Sized once the window has grown or been arranged (or not at all while it shrinks).
+            if (held) return@LaunchedEffect
             val fs = displayedSize ?: return@LaunchedEffect
             if (stage == IntSize.Zero || windowState.placement != WindowPlacement.Floating) return@LaunchedEffect
             if (autoSized) {
@@ -836,6 +869,13 @@ fun MirrorWindow(
             if (target != null && (abs(target.width - stage.width) > 2 || abs(target.height - stage.height) > 2)) {
                 val dw = (target.width - stage.width) / density.density
                 val dh = (target.height - stage.height) / density.density
+                appResizing.value = true
+                appResizeHold[0]?.cancel()
+                // On uiScope: this effect restarts as soon as the stage takes the new size.
+                appResizeHold[0] = uiScope.launch {
+                    delay(APP_RESIZE_HOLD_MS)
+                    appResizing.value = false
+                }
                 windowState.size = DpSize(windowState.size.width + dw.dp, windowState.size.height + dh.dp)
             }
         }
@@ -845,9 +885,9 @@ fun MirrorWindow(
         // against a window of the same moment; cleared at once while the sheet animates, with Fit off, without the
         // lock option, or when not floating. The settle correction above still fits new frames and Fit coming back
         // on, and is the whole lock where there is no live one (Windows, Linux: it corrects once a resize settles).
-        LaunchedEffect(handle, stage, displayedSize, fit, aspectLock, pinnedStage == null, zooming, windowState.placement) {
+        LaunchedEffect(handle, stage, displayedSize, fit, aspectLock, pinnedStage == null, held, windowState.placement) {
             val fs = displayedSize
-            val wanted = fit && aspectLock && pinnedStage == null && !zooming && stage != IntSize.Zero &&
+            val wanted = fit && aspectLock && pinnedStage == null && !held && stage != IntSize.Zero &&
                 windowState.placement == WindowPlacement.Floating
             if (fs == null || !wanted) {
                 handle.lockAspect(null)
@@ -871,6 +911,44 @@ fun MirrorWindow(
             displayedSize != null && (autoSized || windowState.placement != WindowPlacement.Floating),
         )
         val downForWake by rememberUpdatedState(state.disconnected)
+
+        // Arrange mirror windows: the window joins the registry once it has its first frame and its size (or is not
+        // floating, where it is skipped anyway), and leaves as it closes.
+        val arrangeFrame by rememberUpdatedState(displayedSize)
+        LaunchedEffect(handle) {
+            // After the open animation too, so a Keep tiled re-apply finds the window where it will stay.
+            snapshotFlow { sizedForWake && stage != IntSize.Zero && !zooming }.first { it }
+            val appSizing = MutableStateFlow(false)
+            // The close animation (and any zoom) moves the window too: never the user's, so Keep tiled stays on.
+            launch {
+                snapshotFlow { pinnedStage != null || appResizing.value || closing || zooming }
+                    .collect { appSizing.value = it }
+            }
+            val entry = WindowEntry(
+                handle = handle,
+                info = {
+                    val outer = handle.size
+                    ArrangeWindow(
+                        serial,
+                        arrangeFrame ?: IntSize(outer.width, outer.height),
+                        chromeW = (outer.width - stage.width / density.density).roundToInt().coerceAtLeast(0),
+                        chromeH = (outer.height - stage.height / density.density).roundToInt().coerceAtLeast(0),
+                    )
+                },
+                floating = { windowState.placement == WindowPlacement.Floating },
+                minimized = { windowState.isMinimized },
+                showing = { shown && !zooming && !closing && handle.isShowing },
+                arranging = arranging,
+                appSizing = appSizing,
+                uiContext = uiScope.coroutineContext,
+            )
+            mirrorWindows.register(serial, entry)
+            try {
+                awaitCancellation()
+            } finally {
+                mirrorWindows.unregister(serial, entry)
+            }
+        }
         if (wake != null) {
             LaunchedEffect(Unit) {
                 if (zoomFrom != null && zoomTo != null) {
@@ -913,14 +991,17 @@ fun MirrorWindow(
         val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
         val sheetFromStage = remember { FloatArray(1) } // dp of the sheet's width the stage gave up (SheetSplit)
         val sheetShift = remember { IntArray(1) } // px the window moved left to keep the sheet on screen
+        // An arranged window's place is its own: closing the sheet must not move it back by a shift from before.
+        LaunchedEffect(arranging.value) { if (arranging.value) sheetShift[0] = 0 }
         val sheetOpen = state.quickActions.open
         val sheetTab = state.quickActions.tab
         val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
         val lastSheet = remember { SheetRun(false, sheetTab) }
-        LaunchedEffect(sheetOpen, sheetTab, sheetTarget, zooming) {
-            // While the window grows or shrinks its bounds are the zoom's: a base taken now would be pinned back on
-            // every frame below (the window jumped to where it sat before it was placed). Runs again once it ends.
-            if (zooming) return@LaunchedEffect
+        LaunchedEffect(sheetOpen, sheetTab, sheetTarget, held) {
+            // While the window grows, shrinks or is arranged its bounds are the animation's: a base taken now would be
+            // pinned back on every frame below (the window jumped to where it sat before it was placed). Runs again
+            // once it ends.
+            if (held) return@LaunchedEffect
             // Same open tab as the last run: only its width changed, by the drag bar.
             val resized = sheetOpen && lastSheet.open && lastSheet.tab == sheetTab
             lastSheet.open = sheetOpen
@@ -1050,6 +1131,9 @@ private val AtLeastAvailableWidth: Modifier = Modifier.layout { measurable, cons
 
 /** How long the stage size must hold still before the aspect ratio lock corrects the window. */
 private const val ASPECT_SETTLE_MS = 150L
+
+/** How long after the window resizes itself (new frame size, Fit) its bounds changes still count as the app's. */
+private const val APP_RESIZE_HOLD_MS = 500L
 
 /**
  * Heights (window units) on the screen [window] is on: the screen's height less the menu bar and the Dock or taskbar,
@@ -1297,24 +1381,33 @@ private object NoTitleBarScope : AppTitleBarScope {
  * it is transparent (the bar paints `surfaceContainer`) and as tall as the bar; its clickables are [interactive].
  *
  * With [follow]: the "Following" chip after the model while this window follows, and the "Send input to…" button
- * before the copy button while other mirror windows are open (never on a follower). Which parts show is [stripRoom];
+ * before the copy button while other mirror windows are open (never on a follower). With [arrange] (two or more mirror
+ * windows open): the Arrange button before the copy button, in the ⋮ menu when narrow. Which parts show is [stripRoom];
  * every part that comes or goes expands or shrinks with a fade ([stripEnter], [stripExit]), so starting or stopping
  * following, opening a second window or resizing never changes the bar in one frame.
  */
 @Composable
-internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip? = null, onZoom: (ZoomCommand) -> Unit) {
+internal fun AppTitleBarScope.TopStrip(
+    state: MirrorUiState,
+    follow: FollowStrip? = null,
+    arrange: ArrangeStrip? = null,
+    onZoom: (ZoomCommand) -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     val custom = chrome == WindowChrome.Custom
-    val reduce = follow?.reduceMotion == true
+    val reduce = (follow?.reduceMotion ?: arrange?.reduceMotion) == true
     val modelStyle = stripModelStyle()
     val chip = rememberChipWidths(state.model, modelStyle, follow)
     // The chip's widths while it leaves (following stopped, chip already null), so its width cap does not jump. A
     // plain holder.
     val lastChip = remember { arrayOfNulls<ChipWidths>(1) }
     if (chip != null) lastChip[0] = chip
+    // The same for the Arrange button while it shrinks away (the second window closed, arrange already null).
+    val lastArrange = remember { arrayOfNulls<ArrangeStrip>(1) }
+    if (arrange != null) lastArrange[0] = arrange
     BoxWithConstraints(Modifier.fillMaxWidth().background(if (custom) Color.Transparent else colors.surfaceContainer)) {
         val w = maxWidth
-        val room = stripRoom(w, STRIP_MINS, state.details.isNotEmpty(), follow, chip)
+        val room = stripRoom(w, STRIP_MINS, state.details.isNotEmpty(), follow, chip, arrange = arrange != null)
         val following = follow?.role is FollowRole.Follower
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (custom) 0.dp else 4.dp).heightIn(min = 40.dp),
@@ -1377,11 +1470,15 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip
                     )
                 }
             }
+            StripSlot(room.arrange == ArrangePlace.Strip, reduce) {
+                (arrange ?: lastArrange[0])?.let { ArrangeButton(it, Modifier.interactive("arrange")) }
+            }
             StripSlot(room.copy, reduce) { CopyButton(text = { state.command }, label = "Copy command", modifier = Modifier.interactive("copy")) }
             StripSlot(room.overflow, reduce) {
                 OverflowMenu(
                     state, onZoom, showZoom = room.zoom, showFit = room.fit, showCopy = room.copy,
                     follow = follow.takeIf { room.send == SendPlace.Overflow },
+                    arrange = arrange.takeIf { room.arrange == ArrangePlace.Overflow },
                 )
             }
         }
@@ -1469,14 +1566,22 @@ private fun AppTitleBarScope.OverflowMenu(
     showCopy: Boolean,
     /** "Send input to…" when the strip has no room for its button: the item opens its menu here. */
     follow: FollowStrip? = null,
+    /** "Arrange mirror windows" when the strip has no room for its button: the item opens its menu here. */
+    arrange: ArrangeStrip? = null,
 ) {
     var open by remember { mutableStateOf(false) }
     var sendOpen by remember { mutableStateOf(false) }
+    var arrangeOpen by remember { mutableStateOf(false) }
     val copy = rememberCopyAction()
     Box {
         if (follow != null) {
             SendInputMenu(sendOpen, { sendOpen = false }, follow.role, follow.others, follow.captureOn, follow.onChange)
         }
+        // Kept composed after the button moves back to the strip (the pick widened the window), so the menu still
+        // closes with its animation.
+        val lastArrange = remember { arrayOfNulls<ArrangeStrip>(1) }
+        if (arrange != null) lastArrange[0] = arrange
+        lastArrange[0]?.let { ArrangeMenu(arrangeOpen, { arrangeOpen = false }, it) }
         IconButton(onClick = { open = true }, Modifier.interactive("overflow").size(32.dp)) {
             Icon(Icons.Filled.MoreVert, contentDescription = "More")
         }
@@ -1501,6 +1606,9 @@ private fun AppTitleBarScope.OverflowMenu(
             }
             if (follow != null) {
                 item(sendInputLabel(follow.role)) { sendOpen = true }
+            }
+            if (arrange != null) {
+                item(ARRANGE_LABEL) { arrangeOpen = true }
             }
         }
     }

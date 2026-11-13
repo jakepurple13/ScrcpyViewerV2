@@ -7,6 +7,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeLayout
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeState
 import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
 
@@ -24,6 +26,9 @@ class TrayCommands(
     private val select: (serial: String) -> Unit,
     /** The same shutdown as closing the main window. */
     private val quit: () -> Unit,
+    /** Arranges the mirror windows; Focus around the most recently focused mirror window. */
+    private val arrange: (ArrangeLayout) -> Unit,
+    private val keepTiled: (Boolean) -> Unit,
 ) {
     fun dispatch(action: TrayAction, serial: String?) {
         when (action) {
@@ -32,6 +37,8 @@ class TrayCommands(
             TrayAction.OpenMain -> mainWindow.show()
             TrayAction.Settings -> mainWindow.show(TopLevelRoute.Settings)
             TrayAction.Quit -> quit()
+            is TrayAction.Arrange -> arrange(action.layout)
+            is TrayAction.KeepTiled -> keepTiled(action.on)
         }
     }
 
@@ -47,7 +54,8 @@ class TrayCommands(
 }
 
 /**
- * The menu bar (macOS) / system tray (Windows, Linux) icon: one row per device, then Open, Settings… and Quit.
+ * The menu bar (macOS) / system tray (Windows, Linux) icon: one row per device, the "Arrange mirror windows" submenu
+ * while two or more mirror windows are open ([arrange] is the arranger's state), then Open, Settings… and Quit.
  * [mirroring] holds the serials with an open mirror window.
  */
 @Composable
@@ -55,13 +63,14 @@ fun ScrcpyTray(
     icons: TrayIcons,
     devices: List<Device>,
     mirroring: Set<String>,
+    arrange: ArrangeState?,
     onAction: (TrayAction, serial: String?) -> Unit,
 ) {
     // The native menu is only rebuilt when its content hash changes, and the hash ignores click lambdas, so rows
     // (which carry the serials) are passed as an extra key. Items keep the lambdas of the last rebuild, so they read the
     // handler through this state to always call the current one.
     val currentOnAction by rememberUpdatedState(onAction)
-    val rows = remember(devices, mirroring) { trayMenu(devices, mirroring, ::deviceTitle) }
+    val rows = remember(devices, mirroring, arrange) { trayMenu(devices, mirroring, arrange, ::deviceTitle) }
     OffMainTray(
         iconPath = icons.png.toString(),
         windowsIconPath = icons.ico.toString(),

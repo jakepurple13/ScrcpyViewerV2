@@ -25,6 +25,8 @@ import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
 import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoReaderFactory
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.InputFollowing
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
@@ -212,6 +214,20 @@ class MirrorModule {
         // Lazy: InputFollowing is built on this controller's open sessions.
         clipboardMuted = { following.value.roleOf(it) is FollowRole.Follower },
     )
+
+    /** The open mirror windows (handles and layout info) for Arrange mirror windows; each window registers itself. */
+    @Singleton
+    fun mirrorWindows(): MirrorWindows = MirrorWindows()
+
+    /** Arrange mirror windows: moves the registered windows into a layout, and keeps them tiled. */
+    @Singleton
+    fun windowArranger(windows: MirrorWindows, screens: ScreenGeometry, settings: AppSettings, scope: AppScope): WindowArranger =
+        WindowArranger(
+            windows = windows,
+            screens = screens,
+            animateWindows = { settings.settings.value.animateMirrorWindows },
+            scope = scope,
+        )
 
     /** The app-wide follow link between mirror windows; pruned as mirrors close. */
     @Singleton

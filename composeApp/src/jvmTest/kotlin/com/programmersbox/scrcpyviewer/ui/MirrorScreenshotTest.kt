@@ -43,6 +43,10 @@ import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_LOGCAT_WIDTH
 import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_WIDTH
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickToggle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeLayout
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeMenu
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeState
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowCandidate
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowStrip
@@ -294,6 +298,66 @@ class MirrorScreenshotTest {
         renderFollowerWindow("mirror-follow-follower-layout-differs-dark.png", ThemeMode.Dark, differs)
         for (w in listOf(420, 560, 900, 1200)) renderFollowStrip("mirror-follow-follower-layout-differs-strip-$w.png", ThemeMode.Light, differs, width = 80 + w)
         renderFollowStrip("mirror-follow-follower-layout-differs-strip-320.png", ThemeMode.Light, differs, width = 80 + 320)
+    }
+
+    // --- Arrange mirror windows ------------------------------------------------------------------------------------
+
+    private fun arrangeStrip(state: ArrangeState = ArrangeState()) =
+        ArrangeStrip(state, onPick = {}, onKeepTiled = {})
+
+    /** The title bar with the Arrange button (and [follow]'s send button), as the custom bar paints it, at [width]. */
+    private fun renderArrangeStrip(name: String, mode: ThemeMode, follow: FollowStrip?, width: Int) {
+        val out = outDir.resolve(name)
+        renderToPng(width, 40, out, settleMillis = 600) {
+            ScrcpyViewerTheme(mode) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 80.dp)) {
+                    CustomBarScope.TopStrip(state, follow, arrangeStrip()) {}
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 1_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror arrange title bar`() {
+        val idle = followStrip(FollowRole.None)
+        renderArrangeStrip("mirror-arrange-strip-1100-light.png", ThemeMode.Light, idle, width = 1100)
+        renderArrangeStrip("mirror-arrange-strip-1100-dark.png", ThemeMode.Dark, idle, width = 1100)
+        renderArrangeStrip("mirror-arrange-strip-800.png", ThemeMode.Light, idle, width = 80 + 800)
+        // At the Fit cutoff (480 + 42): the send icon, Fit and Arrange still fit; 1 dp less and both go into ⋮.
+        renderArrangeStrip("mirror-arrange-strip-522.png", ThemeMode.Light, idle, width = 80 + 522)
+        renderArrangeStrip("mirror-arrange-strip-narrow-420.png", ThemeMode.Light, idle, width = 80 + 420)
+        // A no-control window (no send button) and a follower arrange too.
+        renderArrangeStrip("mirror-arrange-strip-no-send-700.png", ThemeMode.Light, null, width = 80 + 700)
+        renderArrangeStrip(
+            "mirror-arrange-strip-follower-900.png", ThemeMode.Light,
+            followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G"), width = 80 + 900,
+        )
+    }
+
+    private fun renderArrangeMenu(name: String, mode: ThemeMode, arrange: ArrangeStrip) {
+        val out = outDir.resolve(name)
+        renderToPng(440, 420, out, settleMillis = 600) {
+            ScrcpyViewerTheme(mode) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+                    ArrangeMenu(true, {}, arrange)
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 1_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror arrange menu`() {
+        // Grid checked, Keep tiled on.
+        val grid = arrangeStrip(ArrangeState(layout = ArrangeLayout.Grid, keepTiled = true))
+        renderArrangeMenu("mirror-arrange-menu-light.png", ThemeMode.Light, grid)
+        renderArrangeMenu("mirror-arrange-menu-dark.png", ThemeMode.Dark, grid)
+        // As placed: Keep tiled is disabled (no layout to keep).
+        renderArrangeMenu("mirror-arrange-menu-default.png", ThemeMode.Light, arrangeStrip())
+        // Wayland: positions don't take, so the layouts are disabled under the note.
+        renderArrangeMenu("mirror-arrange-menu-not-movable.png", ThemeMode.Light, arrangeStrip(ArrangeState(movable = false)))
+        renderArrangeMenu("mirror-arrange-menu-not-movable-dark.png", ThemeMode.Dark, arrangeStrip(ArrangeState(movable = false)))
     }
 
     @Test
