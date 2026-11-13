@@ -82,6 +82,7 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.layout.IntrinsicMeasurable
 import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
@@ -415,15 +416,52 @@ private fun lineExit(reduce: Boolean): ExitTransition {
 }
 
 /**
- * A [KvRow] that opens in when [value] appears and closes away when it goes. Its 4 dp gap is its own padding, so the
- * gap closes with it.
+ * A [row] that opens in when [value] appears and closes away when it goes. Its 4 dp gap is its own padding, so the
+ * gap closes with it. A row that is there from the start (or never changes presence) does not animate.
  */
 @Composable
-private fun ColumnScope.OptionalKvRow(label: String, value: String?, ticking: Boolean = false) {
+private fun ColumnScope.OptionalRow(value: String?, row: @Composable (String) -> Unit) {
     val reduce = LocalInfoReduceMotion.current
     val shown = rememberLast(value)
     AnimatedVisibility(value != null, enter = lineEnter(reduce), exit = lineExit(reduce)) {
-        if (shown != null) Box(Modifier.padding(vertical = 2.dp)) { KvRow(label, shown, ticking = ticking) }
+        if (shown != null) Box(Modifier.padding(vertical = 2.dp)) { row(shown) }
+    }
+}
+
+/** A [KvRow] that opens in when [value] appears and closes away when it goes (see [OptionalRow]). */
+@Composable
+private fun ColumnScope.OptionalKvRow(label: String, value: String?, ticking: Boolean = false, mono: Boolean = false) {
+    OptionalRow(value) { KvRow(label, it, mono = mono, ticking = ticking) }
+}
+
+/**
+ * A column of [OptionalRow]s, spaced 4 dp apart like a `spacedBy(4.dp)` column: each row carries 2 dp above and below,
+ * and this trims the 2 dp at the top and bottom edges so the card is as tall as its placeholder.
+ */
+@Composable
+private fun KvRows(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.layout { measurable, constraints ->
+            val edge = 2.dp.roundToPx()
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, (placeable.height - 2 * edge).coerceAtLeast(0)) { placeable.place(0, -edge) }
+        },
+        content = content,
+    )
+}
+
+/**
+ * A static card body that cross-fades between [content] for [value] and the muted [absent] line when [value] is null.
+ * Leaving content keeps showing the last value. Nothing animates on first composition or while presence holds.
+ */
+@Composable
+private fun <T : Any> PresentOrMuted(value: T?, absent: String, label: String, content: @Composable ColumnScope.(T) -> Unit) {
+    val reduce = LocalInfoReduceMotion.current
+    val shown = rememberLast(value)
+    AnimatedContent(value == null, transitionSpec = { crossFade(reduce) }, label = label) { none ->
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (none || shown == null) Muted(absent) else content(shown)
+        }
     }
 }
 
@@ -494,10 +532,18 @@ private fun KvRow(
                 if (ticking && !hidden) {
                     TickingText(shown, style = style, fontFamily = family)
                 } else {
-                    Text(
-                        shown, style = style.merge(TextStyle(fontFeatureSettings = "tnum")), color = valueColor,
-                        fontFamily = family, modifier = move.then(fill),
-                    )
+                    // A new value (from the quiet static re-read) cross-fades in place of the old one.
+                    AnimatedContent(
+                        shown,
+                        modifier = move.then(fill),
+                        transitionSpec = { crossFade(reduce) },
+                        label = "kvValue",
+                    ) { v ->
+                        Text(
+                            v, style = style.merge(TextStyle(fontFeatureSettings = "tnum")), color = valueColor,
+                            fontFamily = family,
+                        )
+                    }
                 }
             },
             measurePolicy = KvRowPolicy,
@@ -638,41 +684,44 @@ private fun BatteryBody(b: BatteryInfo) {
 @Composable
 internal fun StorageCard(storage: StorageInfo?, modifier: Modifier = Modifier) {
     InfoCard("Storage", Icons.Filled.Storage, modifier) {
-        if (storage == null || storage.totalBytes <= 0) {
-            Muted("Couldn't read storage")
-            return@InfoCard
+        PresentOrMuted(storage?.takeIf { it.totalBytes > 0 }, "Couldn't read storage", "storagePresent") {
+            StorageBody(it)
         }
-        AmountLine(InfoText.gb(storage.usedBytes), "of ${InfoText.gb(storage.totalBytes)} GB used")
-        val total = storage.totalBytes.toFloat()
-        // Apps, media and the rest of used: they sum to df's used bytes (see InfoText.storageParts).
-        val parts = InfoText.storageParts(storage)?.let { p ->
-            listOf(
-                Triple("Apps", p.apps, MaterialTheme.colorScheme.primary),
-                Triple("Media", p.media, MaterialTheme.colorScheme.tertiary),
-                Triple("Other", p.other, MaterialTheme.colorScheme.outline),
-            )
-        }.orEmpty()
-        // Zero parts stay in the list at width 0, so each part keeps its slot and color. A key that is no longer
-        // passed (for example "Used" when a breakdown arrives) shrinks away inside StackedBar.
-        val segments = if (parts.isNotEmpty()) {
-            parts.map { (name, bytes, color) -> BarSegment(name, bytes / total, color) }
-        } else {
-            listOf(BarSegment("Used", storage.usedBytes / total, MaterialTheme.colorScheme.primary))
-        }
-        StackedBar(segments)
-        val legend = parts.filter { it.second > 0 }
-        val reduce = LocalInfoReduceMotion.current
-        AnimatedContent(legend, transitionSpec = { crossFade(reduce) }, label = "storageLegend") { shownLegend ->
-            if (shownLegend.isNotEmpty()) WrapRow(horizontalGap = 12.dp, verticalGap = 4.dp) {
-                shownLegend.forEach { (name, bytes, color) ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Box(Modifier.size(8.dp).clip(styledCorner(2.dp)).background(color))
-                        Text(
-                            "$name ${InfoText.gb(bytes)} GB",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+    }
+}
+
+@Composable
+private fun StorageBody(storage: StorageInfo) {
+    AmountLine(InfoText.gb(storage.usedBytes), "of ${InfoText.gb(storage.totalBytes)} GB used")
+    val total = storage.totalBytes.toFloat()
+    // Apps, media and the rest of used: they sum to df's used bytes (see InfoText.storageParts).
+    val parts = InfoText.storageParts(storage)?.let { p ->
+        listOf(
+            Triple("Apps", p.apps, MaterialTheme.colorScheme.primary),
+            Triple("Media", p.media, MaterialTheme.colorScheme.tertiary),
+            Triple("Other", p.other, MaterialTheme.colorScheme.outline),
+        )
+    }.orEmpty()
+    // Zero parts stay in the list at width 0, so each part keeps its slot and color. A key that is no longer
+    // passed (for example "Used" when a breakdown arrives) shrinks away inside StackedBar.
+    val segments = if (parts.isNotEmpty()) {
+        parts.map { (name, bytes, color) -> BarSegment(name, bytes / total, color) }
+    } else {
+        listOf(BarSegment("Used", storage.usedBytes / total, MaterialTheme.colorScheme.primary))
+    }
+    StackedBar(segments)
+    val legend = parts.filter { it.second > 0 }
+    val reduce = LocalInfoReduceMotion.current
+    AnimatedContent(legend, transitionSpec = { crossFade(reduce) }, label = "storageLegend") { shownLegend ->
+        if (shownLegend.isNotEmpty()) WrapRow(horizontalGap = 12.dp, verticalGap = 4.dp) {
+            shownLegend.forEach { (name, bytes, color) ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.size(8.dp).clip(styledCorner(2.dp)).background(color))
+                    Text(
+                        "$name ${InfoText.gb(bytes)} GB",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -705,15 +754,13 @@ private fun MemoryBody(m: MemoryInfo) {
 @Composable
 internal fun DisplayCard(display: DisplayInfo?, modifier: Modifier = Modifier) {
     InfoCard("Display", Icons.Filled.Smartphone, modifier) {
-        if (display == null) {
-            Muted("Couldn't read the display")
-            return@InfoCard
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            KvRow("Resolution", InfoText.resolution(display), mono = true)
-            KvRow("Density", InfoText.density(display))
-            display.refreshHz?.let { KvRow("Refresh rate", InfoText.refresh(it)) }
-            KvRow("Smallest width", InfoText.smallestWidth(display))
+        PresentOrMuted(display, "Couldn't read the display", "displayPresent") { d ->
+            KvRows {
+                OptionalKvRow("Resolution", InfoText.resolution(d), mono = true)
+                OptionalKvRow("Density", InfoText.density(d))
+                OptionalKvRow("Refresh rate", d.refreshHz?.let(InfoText::refresh))
+                OptionalKvRow("Smallest width", InfoText.smallestWidth(d))
+            }
         }
     }
 }
@@ -721,14 +768,12 @@ internal fun DisplayCard(display: DisplayInfo?, modifier: Modifier = Modifier) {
 @Composable
 internal fun NetworkCard(network: NetworkInfo, modifier: Modifier = Modifier) {
     InfoCard("Network", Icons.Filled.Wifi, modifier) {
-        if (InfoText.offWifi(network)) {
-            Muted(InfoText.NOT_ON_WIFI)
-            return@InfoCard
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            network.ssid?.let { KvRow("Wi-Fi", it) }
-            network.ipAddress?.let { CopyableKvRow("IP address", it) }
-            network.linkMbps?.let { KvRow("Link speed", InfoText.linkSpeed(it)) }
+        PresentOrMuted(network.takeUnless(InfoText::offWifi), InfoText.NOT_ON_WIFI, "networkPresent") { n ->
+            KvRows {
+                OptionalKvRow("Wi-Fi", n.ssid)
+                OptionalRow(n.ipAddress) { CopyableKvRow("IP address", it) }
+                OptionalKvRow("Link speed", n.linkMbps?.let(InfoText::linkSpeed))
+            }
         }
     }
 }
@@ -759,11 +804,13 @@ private fun CopyableKvRow(label: String, value: String) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
-                value,
-                style = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFeatureSettings = "tnum")),
-                fontFamily = FontFamily.Monospace,
-            )
+            AnimatedContent(value, transitionSpec = { crossFade(reduce) }, label = "copyValue") { v ->
+                Text(
+                    v,
+                    style = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFeatureSettings = "tnum")),
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
             AnimatedContent(
                 copies > 0,
                 transitionSpec = {
@@ -787,20 +834,19 @@ private fun CopyableKvRow(label: String, value: String) {
 @Composable
 internal fun SoftwareCard(software: SoftwareInfo, modifier: Modifier = Modifier) {
     InfoCard("Software", Icons.Filled.Android, modifier) {
-        val rows = listOfNotNull(
-            InfoText.androidLine(software)?.let { Triple("Android", it, false) },
-            software.oneUiVersion?.let { Triple("One UI", it, false) },
-            software.securityPatch?.let { Triple("Security patch", it, false) },
-            software.buildId?.let { Triple("Build", it, true) },
-            software.abi?.let { Triple("ABI", it, false) },
-            software.kernel?.let { Triple("Kernel", it, true) },
+        val rows = listOf(
+            Triple("Android", InfoText.androidLine(software), false),
+            Triple("One UI", software.oneUiVersion, false),
+            Triple("Security patch", software.securityPatch, false),
+            Triple("Build", software.buildId, true),
+            Triple("ABI", software.abi, false),
+            Triple("Kernel", software.kernel, true),
         )
-        if (rows.isEmpty()) {
-            Muted("Couldn't read the software version")
-            return@InfoCard
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            rows.forEach { (label, value, mono) -> KvRow(label, value, mono) }
+        val present = rows.takeIf { r -> r.any { it.second != null } }
+        PresentOrMuted(present, "Couldn't read the software version", "softwarePresent") { shown ->
+            KvRows {
+                shown.forEach { (label, value, mono) -> key(label) { OptionalKvRow(label, value, mono = mono) } }
+            }
         }
     }
 }

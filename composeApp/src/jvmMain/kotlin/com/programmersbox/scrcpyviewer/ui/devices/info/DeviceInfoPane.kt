@@ -94,14 +94,22 @@ fun DeviceInfoPane(
     CompositionLocalProvider(LocalInfoReduceMotion provides reduceMotion) {
         val body = bodyOf(state)
         Column(modifier.fillMaxSize()) {
-            Text(
-                state.title ?: state.serial.orEmpty(),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            // The name can change when the quiet static re-read finds the marketing name: cross-fade it.
+            AnimatedContent(
+                targetState = state.title ?: state.serial.orEmpty(),
                 modifier = Modifier.padding(bottom = 12.dp),
-            )
+                transitionSpec = { crossFade(reduceMotion) },
+                contentAlignment = Alignment.CenterStart,
+                label = "infoTitle",
+            ) { title ->
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             AnimatedContent(
                 targetState = body,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
