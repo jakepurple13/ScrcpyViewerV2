@@ -3,7 +3,7 @@ package com.programmersbox.scrcpyviewer.ui.window.launch
 import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation.IconUnfold
 import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation.Off
 import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation.ScreenOn
-import com.programmersbox.scrcpyviewer.ui.mirror.gnomeAnimationsOff
+import com.programmersbox.scrcpyviewer.ui.common.gnomeAnimationsOff
 import com.programmersbox.scrcpyviewer.ui.window.launch.OverlayPlatform.LinuxWayland
 import com.programmersbox.scrcpyviewer.ui.window.launch.OverlayPlatform.LinuxX11
 import com.programmersbox.scrcpyviewer.ui.window.launch.OverlayPlatform.MacOS

@@ -154,6 +154,65 @@ class StyledFilterChipTest {
     }
 
     @Test
+    fun `a count that arrives grows the chip over frames and one that goes shrinks it`() = onEdt {
+        for (style in ThemeStyle.entries) {
+            var count by mutableStateOf<String?>(null)
+            withScene(style, content = {
+                FilterChip(false, {}, label = { Text("All") }, trailing = count?.let { c -> { Text(c) } }, motion = true)
+            }) {
+                frames(30)
+                val bare = chip().boundsInRoot.width
+                count = "142"
+                frames(5) // ~80 ms of 250
+                val early = chip().boundsInRoot.width
+                frames(30)
+                val full = chip().boundsInRoot.width
+                assertNotNull(tagged(FilterChipBadgeTag), "$style badge shown")
+                assertTrue(full > bare + 20f, "$style the badge widens the chip: $bare to $full")
+                assertTrue(early > bare && early < full, "$style mid-grow at ~80 ms: $bare < $early < $full")
+                count = null
+                frames(5) // ~80 ms of 200
+                val leaving = chip().boundsInRoot.width
+                assertTrue(leaving > bare && leaving < full, "$style shrinking: $bare < $leaving < $full")
+                assertNotNull(tagged(FilterChipBadgeTag), "$style the last count draws during the exit")
+                frames(30)
+                assertEquals(bare, chip().boundsInRoot.width, "$style back to the bare width")
+                assertNull(tagged(FilterChipBadgeTag), "$style badge gone")
+            }
+        }
+    }
+
+    @Test
+    fun `a count snaps in without motion`() = onEdt {
+        var count by mutableStateOf<String?>(null)
+        withScene(ThemeStyle.Glass, content = {
+            FilterChip(false, {}, label = { Text("All") }, trailing = count?.let { c -> { Text(c) } }, motion = false)
+        }) {
+            val bare = chip().boundsInRoot.width
+            count = "142"
+            frame()
+            val shown = chip().boundsInRoot.width
+            frames(30)
+            assertEquals(chip().boundsInRoot.width, shown, "full width on the first frame")
+            assertTrue(shown > bare)
+        }
+    }
+
+    @Test
+    fun `Soft's SemiBold label keeps its width, so only the check widens the chip`() = onEdt {
+        var on by mutableStateOf(false)
+        withScene(ThemeStyle.Soft, content = {
+            FilterChip(on, { on = !on }, label = { Text("Warnings and up") }, motion = false)
+        }) {
+            val off = chip().boundsInRoot.width
+            on = true
+            frames(3)
+            val grown = chip().boundsInRoot.width
+            assertEquals(off + checkWidth(), grown, "only the check (16 dp + 6 dp gap) adds width")
+        }
+    }
+
+    @Test
     fun `every style renders on and off, light and dark, enabled and not`() = onEdt {
         for (style in ThemeStyle.entries) for (mode in listOf(ThemeMode.Light, ThemeMode.Dark)) {
             withScene(style, mode, content = {

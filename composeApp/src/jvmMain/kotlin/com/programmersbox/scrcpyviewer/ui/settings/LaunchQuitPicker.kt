@@ -42,7 +42,7 @@ import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
 import com.programmersbox.scrcpyviewer.state.launchQuit
 import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchQuitPreview
 import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchPreview
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 
 /**
  * One tile per [LaunchQuitAnimation], laid out like the Style picker: a small desktop that loops the animation while

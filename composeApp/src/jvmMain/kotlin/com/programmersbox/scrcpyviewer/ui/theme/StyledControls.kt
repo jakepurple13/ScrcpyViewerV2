@@ -45,7 +45,9 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.ripple
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.innerShadow
 import androidx.compose.ui.geometry.Size
@@ -64,7 +66,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import androidx.compose.ui.graphics.luminance
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -544,7 +546,7 @@ fun FilterChip(
     trailing: (@Composable () -> Unit)? = null,
     motion: Boolean = remember { !systemReducesMotion() },
 ) {
-    val badge: (@Composable () -> Unit)? = trailing?.let { { ChipBadge(it) } }
+    val badge: @Composable () -> Unit = { ChipTrailingBadge(trailing, motion) }
     if (currentStyle == ThemeStyle.Material) {
         val scheme = MaterialTheme.colorScheme
         val spec = chipColorSpec(motion)
@@ -557,10 +559,7 @@ fun FilterChip(
             label = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     label()
-                    if (badge != null) {
-                        Spacer(Modifier.width(6.dp))
-                        badge()
-                    }
+                    badge()
                 }
             },
             modifier = modifier,
@@ -610,7 +609,8 @@ fun AssistChip(
                 selected = null, onClick = onClick, modifier = modifier, enabled = enabled, motion = motion,
                 pressDepth = 1f,
                 leading = leadingIcon?.let { icon -> { icon(); Spacer(Modifier.width(6.dp)) } },
-                label = label, trailing = trailingIcon,
+                label = label,
+                trailing = trailingIcon?.let { icon -> { Spacer(Modifier.width(6.dp)); icon() } },
             )
         }
     }
@@ -620,7 +620,7 @@ private fun chipColorSpec(motion: Boolean): AnimationSpec<Color> = if (motion) t
 
 /**
  * The Glass, Soft and Retro chip. [selected] null is an action chip (a button, never on). [pressDepth] is how far Soft
- * sinks while pressed (0..1). [leading] and [label] nudge with Retro's press; [trailing] follows after a 6 dp gap.
+ * sinks while pressed (0..1). [leading] and [label] nudge with Retro's press; [trailing] follows, bringing its own gap.
  */
 @Composable
 private fun StyledChip(
@@ -669,7 +669,8 @@ private fun StyledChip(
                     down -> Color.White.copy(alpha = if (t.dark) 0.14f else 0.45f)
                     else -> Color.White.copy(alpha = if (t.dark) 0.07f else 0.28f)
                 },
-                colorSpec,
+                // A press brightens quickly, so even a short click shows it.
+                if (motion && down) tween(110, easing = ChipEase) else colorSpec,
             )
             val edge by animateColorAsState(if (on) scheme.primary.copy(alpha = if (t.dark) 0.6f else 0.55f) else t.edge, colorSpec)
             val glow by animateFloatAsState(if (on && enabled) 1f else 0f, if (motion) tween(300, easing = ChipEase) else snap())
@@ -677,6 +678,8 @@ private fun StyledChip(
             Modifier
                 .dropShadow(shape) { radius = 14.dp.toPx(); color = glowColor; alpha = glow }
                 .background(fill, shape)
+                // A 1 dp light line along the top edge while on, fading with the glow.
+                .innerShadow(shape) { radius = 0f; offset = Offset(0f, 1.dp.toPx()); color = Color.White.copy(alpha = 0.35f); alpha = glow }
                 .border(1.dp, edge, shape)
         }
         ThemeStyle.Soft -> {
@@ -724,7 +727,8 @@ private fun StyledChip(
         Modifier.clickable(source, indication, enabled, role = Role.Button, onClick = onClick)
     }
     val type = if (retro) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge
-    val weight = if (style == ThemeStyle.Soft && on) FontWeight.SemiBold else type.fontWeight
+    val soft = style == ThemeStyle.Soft && selected != null
+    val weight = if (soft && on) FontWeight.SemiBold else type.fontWeight
     Row(
         modifier.then(decoration).clip(shape).then(click)
             .defaultMinSize(minHeight = if (retro) 26.dp else 32.dp)
@@ -740,12 +744,49 @@ private fun StyledChip(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 leading?.invoke()
-                label()
+                if (soft) {
+                    // Soft's label turns SemiBold when on. It is laid out at the SemiBold width either way (a
+                    // hidden bold copy sets the size), so the weight change never moves the chips beside it.
+                    Box(contentAlignment = Alignment.Center) {
+                        Box(Modifier.alpha(0f).clearAndSetSemantics {}) {
+                            CompositionLocalProvider(LocalTextStyle provides type.copy(fontWeight = FontWeight.SemiBold), content = label)
+                        }
+                        label()
+                    }
+                } else {
+                    label()
+                }
             }
-            if (trailing != null) {
-                Spacer(Modifier.width(6.dp))
-                trailing()
-            }
+            trailing?.invoke()
+        }
+    }
+}
+
+/**
+ * A filter chip's count badge after a 6 dp gap. It grows in from the end (250 ms) when [trailing] arrives and shrinks
+ * away when it goes (the last content is kept to draw the exit); it snaps without [motion].
+ */
+@Composable
+private fun ChipTrailingBadge(trailing: (@Composable () -> Unit)?, motion: Boolean) {
+    val last = remember { arrayOfNulls<@Composable () -> Unit>(1) }
+    if (trailing != null) last[0] = trailing
+    AnimatedVisibility(
+        visible = trailing != null,
+        enter = if (motion) {
+            expandHorizontally(tween(ChipMillis, easing = EmphasizedDecelerate), expandFrom = Alignment.Start) +
+                fadeIn(tween(200, delayMillis = 50))
+        } else {
+            EnterTransition.None
+        },
+        exit = if (motion) {
+            shrinkHorizontally(tween(200, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Start) + fadeOut(tween(120))
+        } else {
+            ExitTransition.None
+        },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.width(6.dp))
+            last[0]?.let { ChipBadge(it) }
         }
     }
 }
