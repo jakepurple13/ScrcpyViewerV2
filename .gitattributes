@@ -1,0 +1,3 @@
+# Device listing fixtures are captured adb shell output: keep them byte-for-byte (LF) on every OS, or the
+# parser's record split fails on a Windows checkout.
+composeApp/src/jvmTest/resources/listing/** text eol=lf

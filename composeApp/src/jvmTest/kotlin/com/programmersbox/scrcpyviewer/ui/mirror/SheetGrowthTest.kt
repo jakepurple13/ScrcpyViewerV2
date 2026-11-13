@@ -165,4 +165,9 @@ class SheetGrowthTest {
         // Near the edge it still only moves left, and takes the height the window has now.
         assertEquals(Rectangle(1520, 125, 400, 900), sheetFrameBounds(Rectangle(1700, 125, 200, 853), 200, screenRight, 900))
     }
+
+    @Test
+    fun `files tab grows the window by at least 440 dp`() {
+        assertEquals(SheetSplit(440.dp, 0.dp), sheetSplit(440.dp, SheetTab.Files, 400.dp, SheetSplit(), room = 100.dp))
+    }
 }
