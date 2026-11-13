@@ -141,6 +141,12 @@ class ListDetailPanes internal constructor(
 ) {
     /** The list pane's laid-out width in px in the two-pane layout, else null. */
     val listWidthPx: Int? get() = limits.laidOutFirstWidth
+
+    /**
+     * The list width the user dragged the divider to in [AdaptiveListDetail]'s two-pane layout, or null
+     * for the screen's preferred width. Replaces [expansion] once the last [ResizableListDetail] is gone.
+     */
+    var listWidth: Dp? by mutableStateOf(null)
 }
 
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
@@ -153,10 +159,10 @@ fun rememberListDetailPanes(): ListDetailPanes {
 }
 
 /** Space between the panes; the drag handle sits in it. */
-private val DividerWidth = 16.dp
+internal val DividerWidth = 16.dp
 
 /** How far Left/Right move the focused divider. */
-private val KeyboardStep = 24.dp
+internal val KeyboardStep = 24.dp
 
 /**
  * List-detail layout with a draggable divider. Both panes show side by side when the width fits
