@@ -35,6 +35,8 @@ data class Settings(
     val appsWidth: Int = 480,
     /** The sheet's width (dp) on the Files tab. */
     val filesWidth: Int = 440,
+    /** The sheet's width (dp) on the Logcat tab. */
+    val logcatWidth: Int = 560,
     /** How the Files tab sorts a folder: "name", "size" or "mtime". A string so an unknown value never corrupts the file. */
     val filesSort: String = "name",
     /** Whether the Files tab sorts descending. */

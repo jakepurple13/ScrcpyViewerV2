@@ -18,6 +18,7 @@ import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.actions.ToggleAction
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.apps.AppIconLoader
+import com.programmersbox.scrcpyviewer.apps.DeviceApp
 import com.programmersbox.scrcpyviewer.apps.DeviceApps
 import com.programmersbox.scrcpyviewer.di.DataDir
 import com.programmersbox.scrcpyviewer.tools.BundledTools
@@ -26,7 +27,10 @@ import com.programmersbox.scrcpyviewer.adb.ShellTimeoutException
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.logcat.LogcatSource
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesLocation
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatRun
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -164,7 +168,7 @@ open class DeviceQuickActions(
 }
 
 /** The sheet's tabs, in the order the segmented control shows them. */
-enum class SheetTab { Actions, Apps, Shell, Files }
+enum class SheetTab { Actions, Apps, Shell, Files, Logcat }
 
 /**
  * A run-once action waiting for the user: the variable prompt while [needsValues], then the confirm dialog while
@@ -295,6 +299,8 @@ class QuickActions internal constructor(
     private val saveWidth: (SheetTab, Dp) -> Unit = { _, _ -> },
     /** The Apps tab; it lists the apps the first time it shows. */
     private val apps: AppExplorer? = null,
+    /** The Logcat tab; null without adb. Its stream stops when the tab stops showing. */
+    val logcat: LogcatController? = null,
     private val notify: (String) -> Unit,
 ) {
     var open by mutableStateOf(false)
@@ -320,7 +326,7 @@ class QuickActions internal constructor(
     val uiState: QuickActionsUiState
         get() = QuickActionsUiState(
             open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages = packages,
-            widths = widths, apps = apps?.uiState ?: AppsUiState(),
+            widths = widths, apps = (apps?.uiState ?: AppsUiState()).copy(logcatPackage = logcat?.mine),
         )
 
     fun toggleSheet() {
@@ -329,14 +335,43 @@ class QuickActions internal constructor(
             open = true
             refresh()
             if (tab == SheetTab.Apps) apps?.ensureLoaded()
+            if (tab == SheetTab.Logcat) nudgeIfStopped()
         }
     }
 
-    /** Closes the sheet and any prompt and stops the console's command; Toast and None runs carry on. */
+    /** Closes the sheet and any prompt and stops the console's command and logcat; Toast and None runs carry on. */
     fun close() {
         open = false
         prompt = null
         console?.stop()
+        logcat?.stopForLeaving()
+    }
+
+    /** Follows the session: a disconnected or failed session disables the sheet and closes it. */
+    internal fun onSessionStatus(status: SessionStatus) {
+        connected = status != SessionStatus.Disconnected && status != SessionStatus.Failed
+        if (!connected) close()
+    }
+
+    /** Shows [to]: leaving Logcat stops its stream, and coming back to a stopped one pulses Play. */
+    private fun select(to: SheetTab) {
+        if (tab == SheetTab.Logcat && to != SheetTab.Logcat) logcat?.stopForLeaving()
+        tab = to
+        memory.tab = to
+        if (to == SheetTab.Apps) apps?.ensureLoaded()
+        if (to == SheetTab.Logcat) nudgeIfStopped()
+    }
+
+    private fun nudgeIfStopped() {
+        val l = logcat ?: return
+        if (l.run == LogcatRun.Paused || l.run == LogcatRun.StoppedByLeaving) l.requestNudge()
+    }
+
+    /** Picks [app] in Logcat (adding `package:mine`) and shows the tab. It never starts the stream: Play pulses. */
+    private fun showInLogcat(app: DeviceApp) {
+        logcat?.pick(app.packageName)
+        select(SheetTab.Logcat)
+        logcat?.let { if (it.run == LogcatRun.NotStarted) it.requestNudge() }
     }
 
     /** Follows the store: new and changed actions show at once; a prompt for a deleted or changed action closes. */
@@ -362,11 +397,7 @@ class QuickActions internal constructor(
                 }
             }
             QuickActionEvent.Close -> close()
-            is QuickActionEvent.SelectTab -> {
-                tab = event.tab
-                memory.tab = event.tab
-                if (event.tab == SheetTab.Apps) apps?.ensureLoaded()
-            }
+            is QuickActionEvent.SelectTab -> select(event.tab)
             is QuickActionEvent.CustomToggle -> setCustom(event.id, event.on)
             is QuickActionEvent.RunCustom -> startRun(event.id, event.fromChip)
             is QuickActionEvent.PromptValues -> prompt?.takeIf { it.needsValues }?.let { p ->
@@ -386,7 +417,10 @@ class QuickActions internal constructor(
                 widths = widths.with(tab, SheetWidths.default(tab))
                 saveWidth(tab, widths[tab])
             }
-            is QuickActionEvent.Apps -> apps?.onEvent(event.event)
+            is QuickActionEvent.Apps -> when (val e = event.event) {
+                is AppsEvent.ShowInLogcat -> showInLogcat(e.app)
+                else -> apps?.onEvent(e)
+            }
         }
     }
 
@@ -505,8 +539,7 @@ class QuickActions internal constructor(
                 notify(ShellConsole.BUSY_MESSAGE)
                 return
             }
-            tab = SheetTab.Shell
-            memory.tab = SheetTab.Shell
+            select(SheetTab.Shell)
             c.runAction(action.name, cmd)
             return
         }
@@ -598,7 +631,7 @@ fun rememberQuickActions(
             memory = memory,
             onManage = { id, new -> currentOnManage(id, new) },
             widths = settings.settings.value.let {
-                SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth, it.appsWidth, it.filesWidth)
+                SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth, it.appsWidth, it.filesWidth, it.logcatWidth)
             },
             // Only the tab that changed: another mirror window may have saved the others since this one opened.
             saveWidth = { tab, width ->
@@ -609,18 +642,17 @@ fun rememberQuickActions(
                         SheetTab.Apps -> it.copy(appsWidth = dp)
                         SheetTab.Shell -> it.copy(shellWidth = dp)
                         SheetTab.Files -> it.copy(filesWidth = dp)
+                        SheetTab.Logcat -> it.copy(logcatWidth = dp)
                     }
                 }
             },
             apps = apps,
+            logcat = adb?.let { LogcatController(LogcatSource(it, serial), scope, { msg -> currentNotify(msg) }) },
         ) { currentNotify(it) }
     }
     LaunchedEffect(actions) { actions.watchActions() }
     LaunchedEffect(actions, session) {
-        session.status.collect {
-            actions.connected = it != SessionStatus.Disconnected && it != SessionStatus.Failed
-            if (!actions.connected) actions.close()
-        }
+        session.status.collect { actions.onSessionStatus(it) }
     }
     return actions
 }

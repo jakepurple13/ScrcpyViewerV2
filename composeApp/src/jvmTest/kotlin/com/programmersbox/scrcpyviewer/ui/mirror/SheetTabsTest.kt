@@ -17,6 +17,8 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -27,12 +29,13 @@ import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.jetbrains.skia.Bitmap
 
-/** The sheet's four-segment tab control, its slide between tabs and the Files badge. */
+/** The sheet's five-segment tab control, its slide between tabs and the Files badge. */
 @OptIn(ExperimentalComposeUiApi::class)
 class SheetTabsTest {
     private fun SceneDriver.nodes(merged: Boolean = false): List<SemanticsNode> {
@@ -102,19 +105,19 @@ class SheetTabsTest {
     }
 
     @Test
-    fun `four tabs, Files selects, and the header follows the tab`() = onEdt {
+    fun `five tabs, Logcat selects, and the header follows the tab`() = onEdt {
         val events = mutableListOf<QuickActionEvent>()
         var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true))
         val driver = panel({ state }, events)
 
         val tabs = driver.nodes(merged = true).filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
         assertEquals(
-            listOf("Actions", "Apps", "Shell", "Files"),
+            listOf("Actions", "Apps", "Shell", "Files", "Logcat"),
             tabs.map { it.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text ?: error("tab without text") },
         )
         assertTrue("Runs adb shell on this device" in driver.texts())
 
-        driver.click(tabs.last())
+        driver.click(tabs[SheetTab.Files.ordinal])
         assertEquals(listOf<QuickActionEvent>(QuickActionEvent.SelectTab(SheetTab.Files)), events)
 
         state = state.copy(tab = SheetTab.Files)
@@ -123,6 +126,44 @@ class SheetTabsTest {
         assertNull(driver.texts()["Runs adb shell on this device"])
         // No Files tab content: there is no adb, and the tab says so instead of showing nothing.
         assertTrue("adb isn’t available" in driver.texts(), driver.texts().keys.toString())
+
+        events.clear()
+        driver.click(tabs[SheetTab.Logcat.ordinal])
+        assertEquals(listOf<QuickActionEvent>(QuickActionEvent.SelectTab(SheetTab.Logcat)), events)
+        state = state.copy(tab = SheetTab.Logcat)
+        driver.frames(40)
+        assertTrue("Live log from this device" in driver.texts())
+        assertNull(driver.texts()["Browse and move files on this device"])
+        // No logcat controller means no adb, said the same way.
+        assertTrue("adb isn’t available" in driver.texts(), driver.texts().keys.toString())
+    }
+
+    @Test
+    fun `segment labels fit at the Actions width`() = onEdt {
+        val driver = SceneDriver(ImageComposeScene(QUICK_ACTIONS_WIDTH.value.toInt(), 800, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize()) {
+                    QuickActionsPanel(QuickActionsUiState(open = true, enabled = true), {}, console = null)
+                }
+            }
+        })
+        driver.frames(5)
+        val tabs = driver.nodes().filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
+        assertEquals(SheetTab.entries.size, tabs.size)
+        for (tab in tabs) {
+            val label = tab.children.first { it.config.getOrNull(SemanticsProperties.Text) != null }
+            val name = label.config[SemanticsProperties.Text].first().text
+            val layouts = mutableListOf<TextLayoutResult>()
+            label.config[SemanticsActions.GetTextLayoutResult].action!!(layouts)
+            val layout = layouts.single()
+            // Not hasVisualOverflow: the semantics action lays the paragraph out at the full max width, so a label that
+            // fits still reports a width overflow. The label's natural width against the width it may take is exact.
+            val natural = layout.multiParagraph.intrinsics.maxIntrinsicWidth
+            val room = layout.layoutInput.constraints.maxWidth
+            assertTrue(natural <= room, "$name is $natural px wide in a $room px segment")
+            assertFalse(layout.didOverflowHeight, "$name is cut off")
+            assertEquals(1, layout.lineCount, "$name wraps")
+        }
     }
 
     @Test

@@ -95,6 +95,7 @@ class AppSettingsTest {
         Files.writeString(file, """{"themeMode":"Light"}""")
         val older = AppSettings(file).settings.value
         assertEquals(440, older.filesWidth)
+        assertEquals(560, older.logcatWidth)
         assertEquals("name", older.filesSort)
         assertFalse(older.filesSortDescending)
         assertFalse(older.filesShowHidden)

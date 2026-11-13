@@ -21,6 +21,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -83,6 +84,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.ui.mirror.files.AdbUnavailableState
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatTab
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
@@ -100,6 +103,9 @@ val QUICK_ACTIONS_APPS_WIDTH = 480.dp
 
 /** Default and minimum width of the open sheet on the Files tab, its drag bar included. */
 val QUICK_ACTIONS_FILES_WIDTH = 440.dp
+
+/** Default and minimum width of the open sheet on the Logcat tab, its drag bar included. */
+val QUICK_ACTIONS_LOGCAT_WIDTH = 560.dp
 
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
 private val SLIDE_OFFSET = 40.dp
@@ -179,15 +185,17 @@ fun rememberQuickActionsPanel(
     console: ShellConsole?,
     rowWidth: Dp?,
     filesTab: (@Composable () -> Unit)? = null,
+    logcat: LogcatController? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
     val currentConsole by rememberUpdatedState(console)
     val currentRowWidth by rememberUpdatedState(rowWidth)
     val currentFilesTab by rememberUpdatedState(filesTab)
+    val currentLogcat by rememberUpdatedState(logcat)
     return remember {
         movableContentOf { modifier: Modifier ->
-            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab)
+            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab, currentLogcat)
         }
     }
 }
@@ -197,7 +205,8 @@ fun rememberQuickActionsPanel(
  * [rowWidth] is the content row it shares with the stage and the side toolbar: the sheet leaves the stage
  * [STAGE_MIN_WIDTH] of it. Null (while the window grows or shrinks for the sheet, or unmeasured): only each tab's
  * minimum applies. A tab switch or reset animates the width with the tab switch's timing; a drag or a window resize
- * follows at once. [filesTab] is the Files tab's content (none without adb).
+ * follows at once. [filesTab] is the Files tab's content (none without adb), [logcat] the Logcat tab's controller (none
+ * without adb).
  */
 @Composable
 fun QuickActionsPanel(
@@ -207,6 +216,7 @@ fun QuickActionsPanel(
     rowWidth: Dp? = null,
     modifier: Modifier = Modifier,
     filesTab: (@Composable () -> Unit)? = null,
+    logcat: LogcatController? = null,
 ) {
     fun fit(width: Dp, tab: SheetTab) = if (rowWidth == null) {
         width.coerceAtLeast(SheetWidths.default(tab))
@@ -266,7 +276,7 @@ fun QuickActionsPanel(
                 onEvent(QuickActionEvent.ResetWidth)
             },
         )
-        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab)
+        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab, logcat, shown)
     }
 }
 
@@ -277,6 +287,8 @@ private fun RowScope.SheetContent(
     console: ShellConsole?,
     columns: Int,
     filesTab: (@Composable () -> Unit)?,
+    logcat: LogcatController?,
+    sheetWidth: Dp,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -286,7 +298,11 @@ private fun RowScope.SheetContent(
             Column(Modifier.weight(1f)) {
                 Text("Quick actions", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    if (state.tab == SheetTab.Files) "Browse and move files on this device" else "Runs adb shell on this device",
+                    when (state.tab) {
+                        SheetTab.Files -> "Browse and move files on this device"
+                        SheetTab.Logcat -> "Live log from this device"
+                        else -> "Runs adb shell on this device"
+                    },
                     style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
                 )
             }
@@ -324,6 +340,8 @@ private fun RowScope.SheetContent(
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
                 // No Files tab content means no adb: say so rather than show nothing.
                 SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
+                // No controller means no adb, said the same way.
+                SheetTab.Logcat -> if (logcat != null) LogcatTab(logcat, sheetWidth) else AdbUnavailableState()
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,
@@ -339,9 +357,12 @@ private fun RowScope.SheetContent(
 private val TrackShape = RoundedCornerShape(10.dp)
 private val SegmentShape = RoundedCornerShape(8.dp)
 
+/** Segments narrower than this use labelMedium for their labels instead of labelLarge. */
+private val SMALL_LABEL_UNDER = 60.dp
+
 /**
- * The Actions / Apps / Shell / Files segmented control. The highlight glides to the selected segment with the tab
- * switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of running
+ * The Actions / Apps / Shell / Files / Logcat segmented control. The highlight glides to the selected segment with the
+ * tab switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of running
  * transfers.
  */
 @Composable
@@ -360,7 +381,15 @@ private fun SheetTabs(
     SideEffect { previous[0] = tab }
     var lastCount by remember { mutableIntStateOf(filesRunning) } // stays readable while the badge scales out
     if (filesRunning > 0 && filesRunning != lastCount) lastCount = filesRunning
-    Box(modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest).padding(3.dp)) {
+    BoxWithConstraints(
+        modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest).padding(3.dp),
+    ) {
+        // Five labels fit the Actions tab's 280 dp only a size down.
+        val labelStyle = if (maxWidth / segments < SMALL_LABEL_UNDER) {
+            MaterialTheme.typography.labelMedium
+        } else {
+            MaterialTheme.typography.labelLarge
+        }
         Box(
             Modifier.fillMaxHeight()
                 .layout { measurable, constraints ->
@@ -384,7 +413,7 @@ private fun SheetTabs(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        segment.name, style = MaterialTheme.typography.labelLarge,
+                        segment.name, style = labelStyle, maxLines = 1,
                         color = if (selected) colors.onSurface else colors.onSurfaceVariant,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                     )
