@@ -27,6 +27,7 @@ import kotlin.test.assertTrue
 @OptIn(InternalComposeUiApi::class)
 class MirrorKeysTest {
     private val sent = mutableListOf<ControlMessage>()
+    private val followerSent = mutableListOf<ControlMessage>()
     private val zooms = mutableListOf<ZoomCommand>()
     private val captureFocus = mutableListOf<Boolean>()
     private var sheetOpen = false
@@ -38,10 +39,12 @@ class MirrorKeysTest {
     private fun keys(
         hid: HidKeyboard? = null,
         legacyPaste: Boolean = false,
+        followerKeyRepeat: Boolean = true,
     ) = MirrorKeys(
         mapper = mapper,
         hidKeyboard = hid,
         send = { sent += it },
+        followerSend = { followerSent += it },
         clipboardText = { clipboard },
         scope = CoroutineScope(Dispatchers.Unconfined),
         sheetOpen = { sheetOpen },
@@ -51,6 +54,7 @@ class MirrorKeysTest {
         captureFocus = { captureFocus += it },
         mac = true,
         legacyPaste = legacyPaste,
+        followerKeyRepeat = followerKeyRepeat,
     )
 
     private fun down(key: Key, meta: Boolean = false) = KeyEvent(key, KeyEventType.KeyDown, isMetaPressed = meta)
@@ -281,5 +285,89 @@ class MirrorKeysTest {
 
         keys.onFocusChanged(true)
         assertEquals(listOf(false, false, true), captureFocus)
+    }
+
+    // --- follower output ---
+
+    @Test
+    fun follower_mixedMode_getsSameKeycodeAsLeader() {
+        val k = keys()
+        k.onKey(down(Key.A))
+        k.onKey(up(Key.A))
+        assertEquals(sent, followerSent)
+        assertEquals(2, followerSent.size)
+        k.onKey(typed('!'))
+        assertEquals(ControlMessage.InjectText("!"), followerSent.last())
+    }
+
+    @Test
+    fun follower_uhidLeader_followerGetsPlainKeys() {
+        val k = keys(hid = HidKeyboard(lockState = { 0 }, forwardLockKeys = true))
+        k.onKey(down(Key.A))
+        k.onKey(typed('!'))
+        hidReports()
+        assertEquals(2, followerSent.size)
+        assertIs<ControlMessage.InjectKeycode>(followerSent[0])
+        assertEquals(ControlMessage.InjectText("!"), followerSent[1])
+    }
+
+    @Test
+    fun follower_paste_getsSetClipboard() {
+        clipboard = "hello"
+        keys().onKey(down(Key.V, meta = true))
+        assertEquals(listOf<ControlMessage>(ControlMessage.SetClipboard(0, paste = true, text = "hello")), followerSent)
+    }
+
+    @Test
+    fun follower_zoomKey_getsNothing() {
+        keys().onKey(down(Key.Equals, meta = true))
+        assertTrue(followerSent.isEmpty())
+    }
+
+    @Test
+    fun follower_sheetFocus_releasesHeldKey() {
+        val k = keys()
+        k.onKey(down(Key.A))
+        followerSent.clear()
+        k.onSheetFocusGained()
+        val up = assertIs<ControlMessage.InjectKeycode>(followerSent.single())
+        assertEquals(InputMapper.KEY_ACTION_UP, up.action)
+        assertTrue(k.followerHeldKeyUp().isEmpty(), "forgotten: nothing left to release")
+    }
+
+    @Test
+    fun follower_focusLoss_releasesHeldKey() {
+        val k = keys()
+        k.onKey(down(Key.A))
+        followerSent.clear()
+        k.onFocusChanged(false)
+        val up = assertIs<ControlMessage.InjectKeycode>(followerSent.single())
+        assertEquals(InputMapper.KEY_ACTION_UP, up.action)
+    }
+
+    @Test
+    fun follower_keyRepeat_followsTheLeadersOption() {
+        val repeating = keys()
+        repeat(3) { repeating.onKey(down(Key.A)) }
+        assertEquals(3, followerSent.size)
+        followerSent.clear()
+        val noRepeat = keys(followerKeyRepeat = false)
+        repeat(3) { noRepeat.onKey(down(Key.A)) }
+        assertEquals(1, followerSent.size, "no-key-repeat: only the first press reaches followers")
+    }
+
+    @Test
+    fun follower_heldKeyUp_releasesTheHeldKeyAndKeepsItHeld() {
+        val k = keys()
+        assertTrue(k.followerHeldKeyUp().isEmpty())
+        k.onKey(down(Key.ShiftLeft))
+        val up = assertIs<ControlMessage.InjectKeycode>(k.followerHeldKeyUp().single())
+        assertEquals(InputMapper.KEY_ACTION_UP, up.action)
+        // Still held for the followers that stay: asking again gives the same UP, and its real release still goes.
+        assertEquals(listOf<ControlMessage>(up), k.followerHeldKeyUp())
+        followerSent.clear()
+        k.onKey(up(Key.ShiftLeft))
+        assertEquals(InputMapper.KEY_ACTION_UP, assertIs<ControlMessage.InjectKeycode>(followerSent.single()).action)
+        assertTrue(k.followerHeldKeyUp().isEmpty())
     }
 }

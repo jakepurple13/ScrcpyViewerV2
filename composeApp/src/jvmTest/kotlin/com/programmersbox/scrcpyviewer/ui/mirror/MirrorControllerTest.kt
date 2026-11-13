@@ -112,6 +112,41 @@ class MirrorControllerTest {
     }
 
     @Test
+    fun `a following window's device clipboard never reaches the system clipboard`() = runBlocking<Unit> {
+        val following = setOf("A")
+        val muted = MirrorController(
+            scope, devices,
+            optionsFor = { options },
+            newSession = { serial, values ->
+                val launcher = LocalPairLauncher()
+                launchers.getOrPut(serial) { ArrayList() } += launcher
+                ScrcpySession(serial, values, launcher, { _, _ -> null }, { _, _ -> null }, scope)
+            },
+            setClipboard = { synchronized(clipboard) { clipboard += it } },
+            clipboardMuted = { it in following },
+        )
+        try {
+            muted.open("A")
+            muted.open("B")
+            fun sendClipboard(serial: String, text: String) {
+                val ends = runBlocking { launchers.getValue(serial).single().device.await() }
+                DataOutputStream(ends.control!!.getOutputStream()).apply {
+                    writeByte(0); val b = text.toByteArray(); writeInt(b.size); write(b); flush()
+                }
+            }
+            sendClipboard("A", "from follower")
+            sendClipboard("B", "from leader")
+            withTimeout(5_000) {
+                while (synchronized(clipboard) { clipboard.isEmpty() }) delay(10)
+            }
+            delay(300) // the follower's message had as long to arrive
+            assertEquals(listOf("from leader"), synchronized(clipboard) { clipboard.toList() })
+        } finally {
+            muted.closeAll()
+        }
+    }
+
+    @Test
     fun `a recording that ends after its window closed is still reported`() = runBlocking<Unit> {
         val file = Files.createTempFile("controller", ".mp4")
         options = OptionValues(mapOf("record" to file.toString()))
