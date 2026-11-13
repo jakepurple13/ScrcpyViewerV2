@@ -169,6 +169,17 @@ import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
 import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowedTouchRings
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowerChip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.InputFollowing
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendInputButton
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendInputMenu
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.followGlow
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberFollowStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberWindowFollow
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.sendInputLabel
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.LocalNeonGlow
@@ -344,6 +355,8 @@ fun MirrorWindow(
     pcClipboard: PcClipboard = koinInject(),
     /** Messages about action files AI tools dropped in the inbox show in every mirror window. */
     inbox: ActionInbox = koinInject(),
+    /** The app-wide "Send input to…" link between mirror windows. */
+    following: InputFollowing = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -571,6 +584,19 @@ fun MirrorWindow(
     val clickIndicator = remember(session) {
         if ("show-touches" in e && capture == null) ClickIndicator(mapper::displayedRect) else null
     }
+    // Send input to other windows: the leader tees its pointer (not with the UHID mouse), toolbar and key messages to
+    // its followers; a follower shows the chip, the glowing border and a click ring where each followed tap lands.
+    val follow = rememberWindowFollow(serial, following, controller.open)
+    val reduceMotion = remember { systemReducesMotion() }
+    val followStrip = rememberFollowStrip(
+        serial, following, controller.open, follow,
+        titleOf = { s -> devices.firstOrNull { it.serial == s }?.let(::deviceTitle) ?: s },
+        captureOn = capture != null,
+        ownFrame = frameSize,
+        reduceMotion = reduceMotion,
+    )
+    val followRings = remember(session) { ClickIndicator(mapper::displayedRect) }
+    FollowedTouchRings(serial, following, followRings, mapper::toView)
 
     // UHID devices live as long as the session: created first thing (the control queue holds them until the
     // socket is up), destroyed when the window lets go of the session.
@@ -668,6 +694,8 @@ fun MirrorWindow(
             noControl = "no-control" in e,
             keyboardDisabled = e["keyboard"] == "disabled",
             legacyPaste = "legacy-paste" in e,
+            followerSend = follow::send,
+            followerKeyRepeat = "no-key-repeat" !in e,
         )
     }
 
@@ -683,7 +711,7 @@ fun MirrorWindow(
         onPreviewKeyEvent = keys::onKey,
         titleBar = {
             // The overflow menu's Copy command shows its "Copied" message in the window's snackbar.
-            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, applyZoom) }
+            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, followStrip, applyZoom) }
         },
     ) {
         // Every move, resize, focus and native call on the window goes through this.
@@ -699,7 +727,12 @@ fun MirrorWindow(
             handle.focused.collect { windowFocused = it }
         }
         // Every gain and loss, not the merged state: each loss releases what the device holds.
-        LaunchedEffect(keys, handle) { handle.focusEvents.collect(keys::onFocusChanged) }
+        LaunchedEffect(keys, handle) {
+            handle.focusEvents.collect {
+                keys.onFocusChanged(it)
+                if (!it) follow.releaseAll() // a release in another window never reaches the followers either
+            }
+        }
         DisposableEffect(keys) {
             // Keys held for the device when focus moves into the sheet would never see their release: let them go.
             sheetFocus.onGained = keys::onSheetFocusGained
@@ -921,7 +954,7 @@ fun MirrorWindow(
 
         ScrcpyViewerTheme {
             // Drops anywhere on the window but the sheet install / push (COPY only, see fileDropTarget).
-            Box(Modifier.fillMaxSize().fileDropTarget(transfers, overSheet)) {
+            Box(Modifier.fillMaxSize().fileDropTarget(transfers, overSheet).followGlow(followStrip.role is FollowRole.Follower, reduceMotion)) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     CompositionLocalProvider(
                         LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus, LocalMirrorWindowHandle provides handle,
@@ -941,7 +974,7 @@ fun MirrorWindow(
                                 MirrorAction.InstallApk -> picker.launch(uiScope) { pickAndStart({ currentTransfers }) { transferDialogs.chooseApks() } }
                                 MirrorAction.PushFile -> picker.launch(uiScope) { pickAndStart({ currentTransfers }, transferDialogs::chooseFiles) }
                                 MirrorAction.QuickActions -> quickActions.toggleSheet()
-                                else -> send(action.messages())
+                                else -> action.messages().let { send(it); follow.send(it) }
                             }
                         },
                         onReconnect = { controller.reconnect(serial) },
@@ -951,7 +984,9 @@ fun MirrorWindow(
                                 capture != null -> capture.pointer(it, handle, viewSize, density.density, stageBounds, viewOrigin[0])
                                 else -> {
                                     clickIndicator?.onPointer(it, monotonicMillis())
-                                    send(mapper.pointer(it))
+                                    val msgs = mapper.pointer(it)
+                                    send(msgs)
+                                    follow.send(msgs)
                                 }
                             }
                         },
@@ -965,6 +1000,7 @@ fun MirrorWindow(
                         onStageBounds = { stageBounds = it },
                         onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
+                        followIndicator = followRings,
                         onSheetBounds = { sheetBounds[0] = it },
                     )
                     }
@@ -1106,6 +1142,8 @@ fun MirrorContent(
     filesTab: (@Composable () -> Unit)? = null,
     /** The quick actions sheet's bounds in root pixels while it shows, null once it is gone. */
     onSheetBounds: (Rect?) -> Unit = {},
+    /** Taps the leading window sent here: the same dot and click ring, at the spot they landed. */
+    followIndicator: ClickIndicator? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1134,7 +1172,7 @@ fun MirrorContent(
             }
         },
     ) {
-        if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom)
+        if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom = onZoom)
         HorizontalDivider(color = colors.outlineVariant)
         val density = LocalDensity.current
         var rowWidth by remember { mutableStateOf<Dp?>(null) }
@@ -1148,10 +1186,10 @@ fun MirrorContent(
             ) {
                 val disconnected = state.disconnected
                 if (wake == null) {
-                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin)
+                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator)
                 } else {
                     WakeStage(wake, standby = !disconnected) {
-                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin)
+                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator)
                     }
                 }
                 // While the screen is still asleep its standby line stands in for the skeleton.
@@ -1221,6 +1259,14 @@ private val COPY_MIN = 620.dp
 private val FIT_MIN = 480.dp
 private val ZOOM_MIN = 340.dp
 
+/** With following on: the "Send input to…" button keeps its words from here; the details and copy move up to make room. */
+private val SEND_WORDS_MIN = 760.dp
+private val SEND_ROOM = 150.dp
+private val SEND_ICON_ROOM = 60.dp
+private val CHIP_ROOM = 240.dp
+private const val MODEL_SHARE_FOLLOWING = 0.25f
+private val CHIP_EARLY = 120.dp
+
 /** [TopStrip] drawn inside the content (offscreen renders): nothing to mark for the window. */
 private object NoTitleBarScope : AppTitleBarScope {
     override val chrome get() = WindowChrome.System
@@ -1230,18 +1276,31 @@ private object NoTitleBarScope : AppTitleBarScope {
 /**
  * The status dot, model, details, zoom controls and overflow menu; the mirror window's title bar. In the custom bar
  * it is transparent (the bar paints `surfaceContainer`) and as tall as the bar; its clickables are [interactive].
+ *
+ * With [follow]: the "Following" chip after the model while this window follows, and the "Send input to…" button
+ * before the copy button (words dropped below [SEND_WORDS_MIN], in the overflow menu below [FIT_MIN] and while this
+ * window follows, where the chip takes its room). The copy button and the details give way to them first.
  */
 @Composable
-internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, onZoom: (ZoomCommand) -> Unit) {
+internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip? = null, onZoom: (ZoomCommand) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val custom = chrome == WindowChrome.Custom
     BoxWithConstraints(Modifier.fillMaxWidth().background(if (custom) Color.Transparent else colors.surfaceContainer)) {
         val w = maxWidth
-        val showDetails = state.details.isNotEmpty() && w >= DETAILS_MIN
-        val showCopy = w >= COPY_MIN
-        val showFit = w >= FIT_MIN
-        val showZoom = w >= ZOOM_MIN
-        val overflow = !showCopy || !showFit || !showZoom
+        val following = follow?.role is FollowRole.Follower
+        val detailsRoom = when {
+            follow == null -> 0.dp
+            following -> CHIP_ROOM
+            else -> SEND_ROOM
+        }
+        val showDetails = state.details.isNotEmpty() && w >= DETAILS_MIN + detailsRoom
+        val showCopy = w >= COPY_MIN + (if (follow != null) SEND_ICON_ROOM else 0.dp)
+        // The chip needs room too: Fit and zoom give way to it a little sooner.
+        val chipRoom = if (following) CHIP_EARLY else 0.dp
+        val showFit = w >= FIT_MIN + chipRoom
+        val showZoom = w >= ZOOM_MIN + chipRoom
+        val sendInStrip = follow != null && showFit && !following
+        val overflow = !showCopy || !showFit || !showZoom || (follow != null && !sendInStrip)
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (custom) 0.dp else 4.dp).heightIn(min = 40.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1258,13 +1317,21 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, onZoom: (ZoomComman
             Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     state.model,
-                    Modifier.weight(1f, fill = false),
+                    // While following, the model is measured first (at most a quarter of the strip) and the chip takes
+                    // the rest; otherwise the model takes the room the details leave.
+                    if (following) Modifier.widthIn(max = w * MODEL_SHARE_FOLLOWING) else Modifier.weight(1f, fill = false),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (follow != null) {
+                    FollowerChip(
+                        following, follow.leaderTitle, follow.layoutDiffers, follow.reduceMotion,
+                        if (following) Modifier.weight(1f, fill = false) else Modifier,
+                    )
+                }
                 if (showDetails) {
                     Text(
                         state.details,
@@ -1285,8 +1352,14 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, onZoom: (ZoomComman
                     modifier = Modifier.interactive("fit"),
                 )
             }
+            if (sendInStrip) {
+                SendInputButton(
+                    follow.role, follow.others, follow.captureOn, follow.onChange,
+                    compact = w < SEND_WORDS_MIN, modifier = Modifier.interactive("send-input"), reduceMotion = follow.reduceMotion,
+                )
+            }
             if (showCopy) CopyButton(text = { state.command }, label = "Copy command", modifier = Modifier.interactive("copy"))
-            if (overflow) OverflowMenu(state, onZoom, showZoom = showZoom, showFit = showFit, showCopy = showCopy)
+            if (overflow) OverflowMenu(state, onZoom, showZoom = showZoom, showFit = showFit, showCopy = showCopy, follow = follow.takeIf { !sendInStrip })
         }
     }
 }
@@ -1346,10 +1419,22 @@ private fun ZoomReadout(reading: ZoomReading) {
 
 /** The "⋮" menu holding what the top strip has no room for. */
 @Composable
-private fun AppTitleBarScope.OverflowMenu(state: MirrorUiState, onZoom: (ZoomCommand) -> Unit, showZoom: Boolean, showFit: Boolean, showCopy: Boolean) {
+private fun AppTitleBarScope.OverflowMenu(
+    state: MirrorUiState,
+    onZoom: (ZoomCommand) -> Unit,
+    showZoom: Boolean,
+    showFit: Boolean,
+    showCopy: Boolean,
+    /** "Send input to…" when the strip has no room for its button: the item opens its menu here. */
+    follow: FollowStrip? = null,
+) {
     var open by remember { mutableStateOf(false) }
+    var sendOpen by remember { mutableStateOf(false) }
     val copy = rememberCopyAction()
     Box {
+        if (follow != null) {
+            SendInputMenu(sendOpen, { sendOpen = false }, follow.role, follow.others, follow.captureOn, follow.onChange)
+        }
         IconButton(onClick = { open = true }, Modifier.interactive("overflow").size(32.dp)) {
             Icon(Icons.Filled.MoreVert, contentDescription = "More")
         }
@@ -1372,6 +1457,9 @@ private fun AppTitleBarScope.OverflowMenu(state: MirrorUiState, onZoom: (ZoomCom
             if (!showCopy) {
                 item("Copy command") { copy(state.command) }
             }
+            if (follow != null) {
+                item(sendInputLabel(follow.role)) { sendOpen = true }
+            }
         }
     }
 }
@@ -1391,22 +1479,24 @@ private fun Stage(
     onViewSize: (IntSize) -> Unit,
     clickIndicator: ClickIndicator?,
     onViewOrigin: (Offset) -> Unit = {},
+    followIndicator: ClickIndicator? = null,
 ) {
     val pointer by rememberUpdatedState(onPointer)
     // Redraws every frame while a click dot fades out.
     var now by remember { mutableLongStateOf(monotonicMillis()) }
     val releaseTime = clickIndicator?.releaseTime
-    LaunchedEffect(clickIndicator, releaseTime) {
-        if (clickIndicator == null) return@LaunchedEffect
+    val followReleaseTime = followIndicator?.releaseTime
+    LaunchedEffect(clickIndicator, releaseTime, followIndicator, followReleaseTime) {
+        if (clickIndicator == null && followIndicator == null) return@LaunchedEffect
         do {
             withFrameNanos { now = monotonicMillis() }
-        } while (clickIndicator.isFading(now))
+        } while (clickIndicator?.isFading(now) == true || followIndicator?.isFading(now) == true)
     }
     val dotColor = MaterialTheme.colorScheme.primary
     val dotRing = MaterialTheme.colorScheme.onPrimary
     val glow = LocalNeonGlow.current?.takeIf { it.strength > 0f }
-    fun DrawScope.drawClickDot() {
-        val dot = clickIndicator?.state(now) ?: return
+    fun DrawScope.drawClickDot(indicator: ClickIndicator? = clickIndicator) {
+        val dot = indicator?.state(now) ?: return
         dot.ring?.let { ring ->
             // The release ripple: grows out of the dot and fades.
             drawCircle(
@@ -1474,6 +1564,7 @@ private fun Stage(
                 InputMapper.contentRect(orientation.orientedSize(IntSize(f.width, f.height)), Rect(0f, 0f, size.width, size.height), state.stretch)
             }
             drawClickDot()
+            drawClickDot(followIndicator)
         }
     } else {
         // Zoomed: the canvas is the image at that scale (one frame pixel is `zoom` screen pixels), centred in the
@@ -1515,6 +1606,7 @@ private fun Stage(
                         val quality = if (zoom >= 1f) FilterQuality.None else FilterQuality.Low
                         drawLatestFrame(latestFrame, quality, orientation, greyColorFilter(motion.grey.value)) { Rect(0f, 0f, size.width, size.height) }
                         drawClickDot()
+                        drawClickDot(followIndicator)
                     }
                 }
             }

@@ -40,6 +40,14 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorUiState
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsUiState
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickToggle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowCandidate
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendInputMenu
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.followGlow
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import com.programmersbox.scrcpyviewer.ui.mirror.dropHint
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
@@ -182,6 +190,96 @@ class MirrorScreenshotTest {
     fun `mirror top strip in custom title bar`() {
         renderCustomStrip("mirror-strip-custom-light.png", ThemeMode.Light)
         renderCustomStrip("mirror-strip-custom-dark.png", ThemeMode.Dark)
+    }
+
+    // --- Send input to other windows ------------------------------------------------------------------------------
+
+    private val others = listOf(
+        FollowCandidate("P9", "Pixel 9 · emulator"),
+        FollowCandidate("TAB", "Pixel Tablet · emulator"),
+    )
+
+    private fun followStrip(role: FollowRole, leaderTitle: String? = null, layoutDiffers: Boolean = false, captureOn: Boolean = false) =
+        FollowStrip(role, others, captureOn, leaderTitle, layoutDiffers, onChange = {})
+
+    /** The title bar as the custom bar paints it, at [width] (an 80dp control inset first). */
+    private fun renderFollowStrip(name: String, mode: ThemeMode, follow: FollowStrip, width: Int) {
+        val out = outDir.resolve(name)
+        renderToPng(width, 40, out) {
+            ScrcpyViewerTheme(mode) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 80.dp)) {
+                    CustomBarScope.TopStrip(state, follow) {}
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 1_000, "$name should not be blank")
+    }
+
+    /** A whole follower window: its title bar, then the content, under the glowing border (at rest). */
+    private fun renderFollowerWindow(name: String, mode: ThemeMode, follow: FollowStrip, width: Int = 900, height: Int = 760) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        renderToPng(width, height, out) {
+            ScrcpyViewerTheme(mode) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    Column {
+                        Box(Modifier.fillMaxWidth().height(40.dp).background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 80.dp)) {
+                            CustomBarScope.TopStrip(state, follow) {}
+                        }
+                        // As the window draws it: the glow is on the content, under the title bar.
+                        Box(Modifier.followGlow(active = true, reduceMotion = false)) {
+                            MirrorContent(state, frame, {}, {}, {}, {}, {}, {}, showTopStrip = false)
+                        }
+                    }
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror follow leader idle`() {
+        renderFollowStrip("mirror-follow-leader-idle-light.png", ThemeMode.Light, followStrip(FollowRole.None), width = 900)
+        renderFollowStrip("mirror-follow-leader-idle-dark.png", ThemeMode.Dark, followStrip(FollowRole.None), width = 900)
+        // Below 620dp the words go; below 480dp it moves into the overflow menu.
+        renderFollowStrip("mirror-follow-leader-idle-compact.png", ThemeMode.Light, followStrip(FollowRole.None), width = 80 + 560)
+        renderFollowStrip("mirror-follow-leader-idle-700.png", ThemeMode.Light, followStrip(FollowRole.None), width = 80 + 700)
+        renderFollowStrip("mirror-follow-leader-idle-1100.png", ThemeMode.Light, followStrip(FollowRole.None), width = 1100)
+        renderFollowStrip("mirror-follow-leader-idle-narrow.png", ThemeMode.Light, followStrip(FollowRole.None), width = 80 + 420)
+    }
+
+    @Test
+    fun `mirror follow leader sending`() {
+        val sending = followStrip(FollowRole.Leader(setOf("P9", "TAB")))
+        renderFollowStrip("mirror-follow-leader-sending-light.png", ThemeMode.Light, sending, width = 900)
+        renderFollowStrip("mirror-follow-leader-sending-dark.png", ThemeMode.Dark, sending, width = 900)
+        renderFollowStrip("mirror-follow-leader-sending-compact.png", ThemeMode.Light, sending, width = 80 + 560)
+        // The menu as it opens under the button: two windows checked, the capture note at the bottom.
+        val out = outDir.resolve("mirror-follow-menu.png")
+        renderToPng(420, 300, out, settleMillis = 600) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+                    SendInputMenu(true, {}, FollowRole.Leader(setOf("P9")), others, captureOn = true, onChange = {})
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 1_000)
+    }
+
+    @Test
+    fun `mirror follow follower`() {
+        renderFollowerWindow("mirror-follow-follower-light.png", ThemeMode.Light, followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G"))
+        renderFollowerWindow("mirror-follow-follower-dark.png", ThemeMode.Dark, followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G"))
+    }
+
+    @Test
+    fun `mirror follow follower layout differs`() {
+        val differs = followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G", layoutDiffers = true)
+        renderFollowerWindow("mirror-follow-follower-layout-differs-light.png", ThemeMode.Light, differs)
+        renderFollowerWindow("mirror-follow-follower-layout-differs-dark.png", ThemeMode.Dark, differs)
+        renderFollowStrip("mirror-follow-follower-layout-differs-strip-560.png", ThemeMode.Light, differs, width = 80 + 560)
+        renderFollowStrip("mirror-follow-follower-layout-differs-strip-420.png", ThemeMode.Light, differs, width = 80 + 420)
+        renderFollowStrip("mirror-follow-follower-layout-differs-strip-1200.png", ThemeMode.Light, differs, width = 1200)
     }
 
     @Test

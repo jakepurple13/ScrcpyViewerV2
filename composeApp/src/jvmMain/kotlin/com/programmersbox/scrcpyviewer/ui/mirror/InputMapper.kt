@@ -211,6 +211,22 @@ class InputMapper(
         return Position(x, y, size.width, size.height)
     }
 
+    /** The view point where the frame pixel at [position] shows (its centre), or null before the first frame. */
+    fun toView(position: Position): Offset? {
+        val size = frameSize() ?: return null
+        if (size.width <= 0 || size.height <= 0) return null
+        val oriented = orientation.orientedSize(size)
+        val content = contentRect(oriented, viewRect(), stretch())
+        if (content.width <= 0f || content.height <= 0f) return null
+        // The position may be in another frame size (sent just before a rotation): scale it onto this one.
+        val fx = (position.x + 0.5) * size.width / position.screenWidth.coerceAtLeast(1)
+        val fy = (position.y + 0.5) * size.height / position.screenHeight.coerceAtLeast(1)
+        val w = oriented.width.toDouble()
+        val h = oriented.height.toDouble()
+        val (ox, oy) = orientation.toDisplayed(fx, fy, w, h)
+        return Offset((content.left + ox * content.width / w).toFloat(), (content.top + oy * content.height / h).toFloat())
+    }
+
     /** Maps a Compose key event through its AWT event. */
     fun key(event: KeyEvent): List<ControlMessage> {
         val awt = event.nativeKeyEvent as? AwtKeyEvent ?: return emptyList()

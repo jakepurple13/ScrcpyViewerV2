@@ -39,6 +39,7 @@ class MirrorKeysTest {
     private fun keys(
         hid: HidKeyboard? = null,
         legacyPaste: Boolean = false,
+        followerKeyRepeat: Boolean = true,
     ) = MirrorKeys(
         mapper = mapper,
         hidKeyboard = hid,
@@ -53,6 +54,7 @@ class MirrorKeysTest {
         captureFocus = { captureFocus += it },
         mac = true,
         legacyPaste = legacyPaste,
+        followerKeyRepeat = followerKeyRepeat,
     )
 
     private fun down(key: Key, meta: Boolean = false) = KeyEvent(key, KeyEventType.KeyDown, isMetaPressed = meta)
@@ -330,5 +332,16 @@ class MirrorKeysTest {
         k.onFocusChanged(false)
         val up = assertIs<ControlMessage.InjectKeycode>(followerSent.single())
         assertEquals(InputMapper.KEY_ACTION_UP, up.action)
+    }
+
+    @Test
+    fun follower_keyRepeat_followsTheLeadersOption() {
+        val repeating = keys()
+        repeat(3) { repeating.onKey(down(Key.A)) }
+        assertEquals(3, followerSent.size)
+        followerSent.clear()
+        val noRepeat = keys(followerKeyRepeat = false)
+        repeat(3) { noRepeat.onKey(down(Key.A)) }
+        assertEquals(1, followerSent.size, "no-key-repeat: only the first press reaches followers")
     }
 }

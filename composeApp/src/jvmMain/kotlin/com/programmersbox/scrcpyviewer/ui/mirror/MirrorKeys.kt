@@ -84,9 +84,13 @@ class MirrorKeys(
      * handles as device input, the paste, and focus-loss key releases. Zoom, capture and sheet keys never reach it.
      */
     private val followerSend: (List<ControlMessage>) -> Unit = {},
+    /** False with the leader's `no-key-repeat`: followers get no repeated presses either. */
+    followerKeyRepeat: Boolean = true,
 ) {
     /** Keys only (no geometry needed); its own state, as [InputMapper] is stateful and not thread-safe. */
-    private val followerMapper = InputMapper(frameSize = { null }, viewRect = { Rect.Zero }, keyMode = KeyInjectMode.Mixed)
+    private val followerMapper = InputMapper(
+        frameSize = { null }, viewRect = { Rect.Zero }, keyMode = KeyInjectMode.Mixed, forwardKeyRepeat = followerKeyRepeat,
+    )
     private val zoomKeys = ZoomKeyFilter(mac)
     private val pasteMask = if (mac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
     private var pasteDown = false
