@@ -13,6 +13,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -355,5 +356,69 @@ class LogcatControllerTest {
         advanceTimeBy(60)
         runCurrent()
         assertEquals(listOf("\tat a.B.c(B.kt:1)"), c.lines().single().entry.trace)
+    }
+
+    @Test
+    fun `a cancellation from the source that isn't ours ends in Paused`() = runTest {
+        val source = FakeSource()
+        val toasts = mutableListOf<String>()
+        val c = controller(source, toasts)
+        c.play()
+        runCurrent()
+        source.stream.trySend(line(message = "a"))
+        source.stream.close(CancellationException("stray"))
+        runCurrent()
+        assertEquals(LogcatRun.Paused, c.run)
+        assertEquals(listOf("a"), c.messages())
+        assertTrue(toasts.isEmpty())
+        c.play()
+        runCurrent()
+        assertEquals(LogcatRun.Running, c.run)
+        assertEquals(2, source.sinces.size)
+    }
+
+    @Test
+    fun `a missed pid is looked up again after 10 s`() = runTest {
+        val source = FakeSource()
+        val c = controller(source)
+        c.play()
+        runCurrent()
+        source.stream.trySend(line(message = "a", pid = 300))
+        runCurrent()
+        assertEquals(1, source.psCalls)
+        source.ps = mapOf(300 to "com.reused")
+        advanceTimeBy(5_000)
+        source.stream.trySend(line(message = "b", pid = 300))
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(1, source.psCalls)
+        assertNull(c.lines().last().pkg)
+        advanceTimeBy(4_000)
+        source.stream.trySend(line(message = "c", pid = 300))
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals(2, source.psCalls)
+        assertEquals("com.reused", c.lines().last().pkg)
+    }
+
+    @Test
+    fun `a continuation after resume leaves no trailing Gap`() = runTest {
+        val source = FakeSource()
+        val c = controller(source)
+        c.play()
+        runCurrent()
+        source.stream.trySend(line("10:00:00.000", "boom"))
+        runCurrent()
+        c.pause()
+        c.play()
+        runCurrent()
+        source.stream.trySend(line("10:00:00.500", "\tat a.B.c(B.kt:1)"))
+        runCurrent()
+        assertTrue(c.items.none { it is LogcatItem.Gap })
+        assertEquals(listOf("\tat a.B.c(B.kt:1)"), c.lines().single().entry.trace)
+        source.stream.trySend(line("10:00:01.000", "next"))
+        advanceTimeBy(60)
+        runCurrent()
+        assertEquals(listOf("Line", "Gap", "Line"), c.items.map { it::class.simpleName })
     }
 }

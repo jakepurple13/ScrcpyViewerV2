@@ -38,6 +38,9 @@ private const val DRAIN_MILLIS = 50L
 /** At most one `ps` per this long. */
 private const val LOOKUP_MILLIS = 1_000L
 
+/** A pid `ps` didn't list is asked about again after this long, in case Android reused it. */
+private const val MISSED_RETRY_MILLIS = 10_000L
+
 enum class LogcatRun { NotStarted, Running, Paused, StoppedByLeaving }
 
 /** A row of the Logcat list. */
@@ -167,7 +170,8 @@ class LogcatController(
     private var pendingGap: Pair<String, String>? = null
 
     private val unknownPids = HashSet<Int>()
-    private val missedPids = HashSet<Int>()
+    /** Pids `ps` didn't list, with when that was. */
+    private val missedPids = HashMap<Int, Long>()
     private var lookupJob: Job? = null
     private var lastLookupAt = Long.MIN_VALUE
 
@@ -188,13 +192,15 @@ class LogcatController(
         val buffer = Channel<LogcatLine>(Channel.UNLIMITED)
         streamJob = scope.launch {
             launch(io) {
+                // Always closed, so the drain loop ends even on a cancellation that isn't ours.
                 try {
                     src.lines(since).collect { buffer.send(it) }
-                    buffer.close()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     buffer.close(e)
+                } finally {
+                    buffer.close()
                 }
             }
             while (true) {
@@ -278,15 +284,20 @@ class LogcatController(
         for (line in batch) {
             if (dropAsReplay(line)) continue
             remember(line)
-            pendingGap?.let { (p, r) ->
-                out += LogcatItem.Gap(--gapKey, p, r)
-                pendingGap = null
-            }
             when (val f = folder.add(line, seq++, now)) {
                 is FoldResult.New -> {
+                    // Only before a new row: a continuation folds into a row above the Gap.
+                    pendingGap?.let { (p, r) ->
+                        out += LogcatItem.Gap(--gapKey, p, r)
+                        pendingGap = null
+                    }
                     val pid = f.entry.line.pid
                     val process = names[pid]
-                    if (process == null && pid !in missedPids) unknownPids += pid
+                    val missedAt = missedPids[pid]
+                    if (process == null && (missedAt == null || now - missedAt >= MISSED_RETRY_MILLIS)) {
+                        missedPids.remove(pid)
+                        unknownPids += pid
+                    }
                     out += LogcatItem.Line(f.entry, process?.let(::packageOf))
                 }
                 is FoldResult.Appended -> {
@@ -353,7 +364,8 @@ class LogcatController(
             }
             val names = processes + found
             processes = names
-            missedPids += asked.filter { it !in names }
+            val answeredAt = clock()
+            for (pid in asked) if (pid !in names) missedPids[pid] = answeredAt
             unknownPids.removeAll(names.keys)
             fillPackages(names)
             lookupJob = null
