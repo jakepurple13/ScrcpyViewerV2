@@ -11,6 +11,12 @@ enum class ShortcutProblem {
 
     /** The system or the app already owns it. */
     Reserved,
+
+    /** Ctrl+Alt arrived as AltGr (Windows/Linux): it types characters on international layouts. */
+    AltGr,
+
+    /** Meta is the Windows/Super key off macOS, which the OS claims. */
+    WinKey,
 }
 
 /** A key chord. [keyCode] is an AWT virtual key code (what Compose's `nativeKeyCode` gives under Tao). */
@@ -32,7 +38,7 @@ data class Shortcut(
 
     /** macOS: symbols in the order ⌃⌥⇧⌘ + key ("⌥⌘G"). Elsewhere "Ctrl+Alt+Shift+G". */
     fun label(mac: Boolean = Os.isMac): String {
-        val key = keyName(keyCode)
+        val key = keyName(keyCode, mac)
         return if (mac) {
             buildString {
                 if (ctrl) append('⌃')
@@ -46,7 +52,7 @@ data class Shortcut(
                 if (ctrl) add("Ctrl")
                 if (alt) add("Alt")
                 if (shift) add("Shift")
-                if (meta) add("Meta")
+                if (meta) add("Win")
                 add(key)
             }.joinToString("+")
         }
@@ -73,9 +79,37 @@ data class Shortcut(
     }
 }
 
-private fun keyName(code: Int): String = when (code) {
+private fun keyName(code: Int, mac: Boolean): String = when (code) {
     in AwtKeyEvent.VK_A..AwtKeyEvent.VK_Z, in AwtKeyEvent.VK_0..AwtKeyEvent.VK_9 -> code.toChar().toString()
-    AwtKeyEvent.VK_TAB -> "⇥"
+    AwtKeyEvent.VK_UP -> if (mac) "↑" else "Up"
+    AwtKeyEvent.VK_DOWN -> if (mac) "↓" else "Down"
+    AwtKeyEvent.VK_LEFT -> if (mac) "←" else "Left"
+    AwtKeyEvent.VK_RIGHT -> if (mac) "→" else "Right"
+    AwtKeyEvent.VK_SPACE -> "Space"
+    AwtKeyEvent.VK_ENTER -> if (mac) "↩" else "Enter"
+    AwtKeyEvent.VK_ESCAPE -> if (mac) "⎋" else "Esc"
+    AwtKeyEvent.VK_BACK_SPACE -> if (mac) "⌫" else "Backspace"
+    AwtKeyEvent.VK_DELETE -> if (mac) "⌦" else "Delete"
+    AwtKeyEvent.VK_TAB -> if (mac) "⇥" else "Tab"
+    AwtKeyEvent.VK_COMMA -> ","
+    AwtKeyEvent.VK_PERIOD -> "."
+    AwtKeyEvent.VK_SLASH -> "/"
+    AwtKeyEvent.VK_SEMICOLON -> ";"
+    AwtKeyEvent.VK_QUOTE -> "'"
+    AwtKeyEvent.VK_OPEN_BRACKET -> "["
+    AwtKeyEvent.VK_CLOSE_BRACKET -> "]"
+    AwtKeyEvent.VK_MINUS -> "-"
+    AwtKeyEvent.VK_EQUALS -> "="
+    AwtKeyEvent.VK_BACK_QUOTE -> "`"
+    AwtKeyEvent.VK_BACK_SLASH -> "\\"
+    in AwtKeyEvent.VK_NUMPAD0..AwtKeyEvent.VK_NUMPAD9 -> "Num ${code - AwtKeyEvent.VK_NUMPAD0}"
+    AwtKeyEvent.VK_ADD -> "Num +"
+    AwtKeyEvent.VK_SUBTRACT -> "Num -"
+    AwtKeyEvent.VK_MULTIPLY -> "Num *"
+    AwtKeyEvent.VK_DIVIDE -> "Num /"
+    AwtKeyEvent.VK_DECIMAL -> "Num ."
+    in AwtKeyEvent.VK_F1..AwtKeyEvent.VK_F12 -> "F${code - AwtKeyEvent.VK_F1 + 1}"
+    in AwtKeyEvent.VK_F13..AwtKeyEvent.VK_F24 -> "F${code - AwtKeyEvent.VK_F13 + 13}"
     else -> AwtKeyEvent.getKeyText(code)
 }
 
@@ -87,7 +121,7 @@ private val modifierKeys = setOf(
 private val macReserved = setOf(
     AwtKeyEvent.VK_Q, AwtKeyEvent.VK_W, AwtKeyEvent.VK_H, AwtKeyEvent.VK_M, AwtKeyEvent.VK_COMMA,
     AwtKeyEvent.VK_TAB, AwtKeyEvent.VK_V,
-).map { Shortcut(it, meta = true) }.toSet()
+).map { Shortcut(it, meta = true) }.toSet() + Shortcut(AwtKeyEvent.VK_Q, shift = true, meta = true)
 
 private val otherReserved = setOf(
     Shortcut(AwtKeyEvent.VK_F4, alt = true),
@@ -97,14 +131,18 @@ private val otherReserved = setOf(
 
 /**
  * Why [s] cannot be a shortcut, or null. Needs Cmd, Option or Ctrl on macOS (Ctrl or Alt elsewhere); refuses system
- * chords, the zoom keys, and any of [extraReserved] (callers add anything dynamic, e.g. the mouse-capture release key).
+ * chords, the zoom keys, AltGr ([altGr]: `modifiersEx and ALT_GRAPH_DOWN_MASK != 0`), the Windows key off macOS, and any of [extraReserved] (callers add anything dynamic, e.g. the mouse-capture release key).
  */
 fun validate(
     s: Shortcut,
     mac: Boolean = Os.isMac,
     extraReserved: Set<Shortcut> = emptySet(),
+    altGr: Boolean = false,
 ): ShortcutProblem? {
     if (s.keyCode in modifierKeys) return ShortcutProblem.NeedsModifier
+    if (!mac && s.meta) return ShortcutProblem.WinKey
+    // AWT reports AltGr as Ctrl+Alt plus ALT_GRAPH_DOWN_MASK: pass `altGr` from the event's modifiersEx.
+    if (!mac && (altGr)) return ShortcutProblem.AltGr
     val hasMod = if (mac) s.ctrl || s.alt || s.meta else s.ctrl || s.alt
     if (!hasMod) return ShortcutProblem.NeedsModifier
     if (s in (if (mac) macReserved else otherReserved)) return ShortcutProblem.Reserved
