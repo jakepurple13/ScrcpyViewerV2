@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.state
 
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
@@ -47,6 +48,8 @@ data class Settings(
     val aiSkillFolders: List<String> = emptyList(),
     /** Whether the Devices screen shows the full options pane instead of the simple one (preset, Mirror, Wi-Fi). */
     val advancedDeviceOptions: Boolean = false,
+    /** The Devices screen's detail tab, a [DetailTab] name; unknown or missing names fall back to Options. */
+    val deviceDetailTab: String = DetailTab.Options.name,
     /** A [ThemePalette] name; unknown or missing names fall back to Teal. A string so a removed palette never corrupts the file. */
     val themePalette: String = ThemePalette.Teal.name,
     /** Black backgrounds in dark mode. */
@@ -69,6 +72,8 @@ data class Settings(
     val animateMirrorWindows: Boolean = true,
     /** A [LaunchQuitAnimation] name; unknown or missing names fall back to IconUnfold. */
     val launchQuitAnimation: String = LaunchQuitAnimation.IconUnfold.name,
+    /** A newer release downloads in the background as soon as it is found, then waits for a restart. */
+    val autoDownloadUpdates: Boolean = false,
 )
 
 /** Everything the theme reads from [Settings]. */

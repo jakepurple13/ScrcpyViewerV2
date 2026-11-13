@@ -191,4 +191,13 @@ class AppSettingsTest {
         Files.writeString(file, """{"themeMode":"Light"}""")
         assertEquals(LaunchQuitAnimation.IconUnfold, AppSettings(file).settings.value.launchQuit)
     }
+
+    @Test
+    fun `deviceDetailTab defaults to Options and round-trips`() {
+        assertEquals("Options", Settings().deviceDetailTab)
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertEquals("Options", AppSettings(file).settings.value.deviceDetailTab)
+        AppSettings(file).update { it.copy(deviceDetailTab = "Info") }
+        assertEquals("Info", AppSettings(file).settings.value.deviceDetailTab)
+    }
 }

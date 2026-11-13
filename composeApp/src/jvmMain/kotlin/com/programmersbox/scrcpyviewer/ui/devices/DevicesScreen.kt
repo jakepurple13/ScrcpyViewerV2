@@ -109,12 +109,21 @@ import org.koin.compose.viewmodel.koinViewModel
 import com.programmersbox.scrcpyviewer.ui.common.OptionRow
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import com.programmersbox.scrcpyviewer.ui.theme.selectedRow
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTabRow
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailPane
+import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoUiState
 
 @Composable
 fun DevicesScreen(
     viewModel: DevicesViewModel,
     modifier: Modifier = Modifier,
     panes: ListDetailPanes = rememberListDetailPanes(),
+    detailTab: DetailTab = DetailTab.Options,
+    onDetailTab: (DetailTab) -> Unit = {},
+    info: DeviceInfoUiState = DeviceInfoUiState(),
+    onInfoActive: (Boolean) -> Unit = {},
+    onInfoRetry: () -> Unit = {},
 ) {
     val pageState by viewModel.state.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
@@ -179,6 +188,11 @@ fun DevicesScreen(
         restartSucceeded = pageState.restartSucceeded,
         pairAnchor = pairAnchor,
         onAdvanced = viewModel::setAdvanced,
+        detailTab = detailTab,
+        onDetailTab = onDetailTab,
+        info = info,
+        onInfoActive = onInfoActive,
+        onInfoRetry = onInfoRetry,
     )
     state.restartConfirm?.let { impact ->
         RestartAdbDialog(impact, onConfirm = viewModel::confirmRestartAdb, onDismiss = viewModel::cancelRestartAdb)
@@ -225,6 +239,13 @@ fun DevicesContent(
     pairAnchor: PairDialogAnchor? = null,
     /** Switches the detail pane between the simple view (false) and every option (true). */
     onAdvanced: (Boolean) -> Unit = {},
+    /** The detail pane's Options | Info tab. */
+    detailTab: DetailTab = DetailTab.Options,
+    onDetailTab: (DetailTab) -> Unit = {},
+    info: DeviceInfoUiState = DeviceInfoUiState(),
+    /** True while the Info tab is on screen; the Info view model polls only then. */
+    onInfoActive: (Boolean) -> Unit = {},
+    onInfoRetry: () -> Unit = {},
 ) {
     val rowActions = RowActions(onOpen = onOpen, onConnectWifi = onConnectWifi, onDisconnect = onDisconnect, canMirror = canMirror)
     Column(modifier.fillMaxSize()) {
@@ -249,29 +270,35 @@ fun DevicesContent(
             },
             detail = { onBack ->
                 Column(Modifier.fillMaxSize()) {
-                    if (state.selectedSerial == null) {
-                        if (onBack != null) DetailBackButton(onBack, Modifier.padding(start = 6.dp, top = 6.dp))
-                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("Select a device to choose its options", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    } else {
-                        ViewSwitch(state.advanced, Modifier.weight(1f)) { advanced, motion ->
+                    // The back button lives in the tab row, so the panes below get none of their own.
+                    DetailTabRow(state.selectedSerial != null, detailTab, onDetailTab, onBack)
+                    // Each device's content (and none) animates in and out as a whole; `shown` is that device's state.
+                    DetailPane(
+                        state, { it.selectedSerial }, state.devices.map { it.serial }, detailTab, info, onInfoActive, onInfoRetry,
+                        Modifier.weight(1f).fillMaxWidth(),
+                        empty = { emptyModifier ->
+                            Box(emptyModifier, contentAlignment = Alignment.Center) {
+                                Text("Select a device to choose its options", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                    ) { shown, tabModifier ->
+                        ViewSwitch(shown.advanced, tabModifier) { advanced, motion ->
                             if (advanced) {
                                 Box(Modifier.fillMaxSize()) {
                                     ViewSwitchContainer(motion, isPane = true, Modifier.matchParentSize())
                                     Column(Modifier.fillMaxSize()) {
                                         OptionsPane(
-                                            state, onQuery, onGroup, onToggle, onValue, onBack,
+                                            shown, onQuery, onGroup, onToggle, onValue, onBack = null,
                                             onSimple = { onAdvanced(false) },
                                             modifier = Modifier.weight(1f).advancedContentMotion(motion),
                                         )
-                                        Footer(state, onSave, onSaveAsNew, onMirror, onPreset, presetMenuOpen, onConnectWifi, motion)
+                                        Footer(shown, onSave, onSaveAsNew, onMirror, onPreset, presetMenuOpen, onConnectWifi, motion)
                                     }
                                 }
                             } else {
                                 SimpleDevicePane(
-                                    state, onPreset, onMirror, onConnectWifi,
-                                    onAdvanced = { onAdvanced(true) }, onBack = onBack, presetMenuOpen = presetMenuOpen,
+                                    shown, onPreset, onMirror, onConnectWifi,
+                                    onAdvanced = { onAdvanced(true) }, onBack = null, presetMenuOpen = presetMenuOpen,
                                     motion = motion,
                                 )
                             }

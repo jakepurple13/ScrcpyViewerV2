@@ -1,0 +1,1003 @@
+package com.programmersbox.scrcpyviewer.ui.devices.info
+
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.BoundsTransform
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.layout.IntrinsicMeasurable
+import androidx.compose.ui.layout.IntrinsicMeasureScope
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.programmersbox.scrcpyviewer.info.BatteryInfo
+import com.programmersbox.scrcpyviewer.info.ChargeStatus
+import com.programmersbox.scrcpyviewer.info.DisplayInfo
+import com.programmersbox.scrcpyviewer.info.LiveInfo
+import com.programmersbox.scrcpyviewer.info.MemoryInfo
+import com.programmersbox.scrcpyviewer.info.NetworkInfo
+import com.programmersbox.scrcpyviewer.info.SoftwareInfo
+import com.programmersbox.scrcpyviewer.info.StorageInfo
+import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.COPY_CONFIRM_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
+import com.programmersbox.scrcpyviewer.ui.theme.styleRaised
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import kotlinx.coroutines.delay
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Motion numbers (spec "Motion" table)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The battery ring's sweep from 0 (and between values). */
+internal const val RING_MILLIS = 800
+
+/** Every bar segment's growth from 0 (and between values). */
+internal const val BAR_MILLIS = 700
+
+/** A changing number: the old one slides up and out, the new one comes up from below. */
+internal const val TICK_MILLIS = 200
+
+/** One full placeholder pulse: dim to bright and back. */
+internal const val PULSE_MILLIS = 1_200
+
+/** Placeholders and cards cross-fade over this. */
+internal const val CROSSFADE_MILLIS = 300
+
+/** With reduced motion, a change that isn't instant is this fade. */
+internal const val REDUCED_FADE_MILLIS = 150
+
+/**
+ * Easing for height and size changes. The emphasized curves move almost half the distance in the first frame, which
+ * reads as a jump for a card or pane resizing, so sizes use the standard curve and only fades use the emphasized ones.
+ */
+internal val SizeEasing = FastOutSlowInEasing
+
+/** True when the OS asks for less motion: the pane's changes become instant swaps or [REDUCED_FADE_MILLIS] fades. */
+internal val LocalInfoReduceMotion = staticCompositionLocalOf { false }
+
+/** The footer's clock (epoch millis); screenshots pin it so "Updated N s ago" is steady. */
+internal val LocalInfoNow = staticCompositionLocalOf<() -> Long> { System::currentTimeMillis }
+
+/** The ring's color for a healthy charge: the green dot device rows use for Ready (the theme's primary). */
+@Composable
+internal fun readyColor(): Color = MaterialTheme.colorScheme.primary
+
+private val GridMinColumn = 220.dp
+private val GridGap = 12.dp
+private val RingSize = 64.dp
+private val RingStroke = 7.dp
+private val BarHeight = 10.dp
+
+/** The headline number in a card (battery percent, GB used). */
+@Composable
+private fun bigNumberStyle(): TextStyle = MaterialTheme.typography.headlineMedium.copy(
+    fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp, lineHeight = 30.sp,
+)
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Building blocks
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * A value that grows from 0 to [target] the first time it shows and eases between values after that, over [millis]
+ * with [EmphasizedDecelerate]. With reduced motion it jumps.
+ */
+@Composable
+private fun animateGrow(target: Float, millis: Int): Animatable<Float, AnimationVector1D> {
+    val reduce = LocalInfoReduceMotion.current
+    val value = remember { Animatable(if (reduce) target else 0f) }
+    LaunchedEffect(target, reduce) {
+        if (reduce) value.snapTo(target) else value.animateTo(target, tween(millis, easing = EmphasizedDecelerate))
+    }
+    return value
+}
+
+/** The last value [load] had while ready, so content that is leaving keeps showing what it showed. */
+@Composable
+internal fun <T> rememberLastReady(load: Load<T>): T? {
+    val last = remember { mutableStateOf<T?>(null) }
+    val current = (load as? Load.Ready)?.value
+    SideEffect { if (current != null) last.value = current }
+    return current ?: last.value
+}
+
+/**
+ * Text whose changes tick: the old value slides up and fades while the new one rises from below over [TICK_MILLIS].
+ * Tabular figures keep the width from jumping as digits change.
+ */
+@Composable
+internal fun TickingText(
+    value: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = MaterialTheme.typography.bodyMedium,
+    color: Color = Color.Unspecified,
+    fontFamily: FontFamily? = null,
+    textAlign: TextAlign? = null,
+) {
+    val reduce = LocalInfoReduceMotion.current
+    val tabular = style.merge(TextStyle(fontFeatureSettings = "tnum"))
+    AnimatedContent(
+        targetState = value,
+        modifier = modifier,
+        transitionSpec = {
+            if (reduce) {
+                fadeIn(tween(REDUCED_FADE_MILLIS)) togetherWith fadeOut(tween(REDUCED_FADE_MILLIS))
+            } else {
+                (slideInVertically(tween(TICK_MILLIS, easing = EmphasizedDecelerate)) { it } +
+                    fadeIn(tween(TICK_MILLIS, easing = EmphasizedDecelerate))) togetherWith
+                    (slideOutVertically(tween(TICK_MILLIS, easing = EmphasizedAccelerate)) { -it } +
+                        fadeOut(tween(TICK_MILLIS, easing = EmphasizedAccelerate))) using
+                    SizeTransform(clip = false) { _, _ -> tween(TICK_MILLIS, easing = EmphasizedDecelerate) }
+            }
+        },
+        contentAlignment = if (textAlign == TextAlign.End) Alignment.CenterEnd else Alignment.CenterStart,
+        label = "tick",
+    ) {
+        Text(it, style = tabular, color = color, fontFamily = fontFamily, textAlign = textAlign)
+    }
+}
+
+/** A cross-fade of [CROSSFADE_MILLIS] (or the reduced fade) for content keyed on its kind, not its values. */
+internal fun crossFade(reduce: Boolean): ContentTransform {
+    val millis = if (reduce) REDUCED_FADE_MILLIS else CROSSFADE_MILLIS
+    return ContentTransform(
+        targetContentEnter = fadeIn(tween(millis, easing = EmphasizedDecelerate)),
+        initialContentExit = fadeOut(tween(millis, easing = EmphasizedAccelerate)),
+        sizeTransform = SizeTransform(clip = false) { _, _ -> tween(millis, easing = SizeEasing) },
+    )
+}
+
+/** The battery ring: a [RingSize] arc from 12 o'clock that sweeps to [fraction] and eases its [color]. */
+@Composable
+internal fun BatteryRing(fraction: Float, color: Color, modifier: Modifier = Modifier) {
+    val sweep = animateGrow(fraction.coerceIn(0f, 1f), RING_MILLIS)
+    val tint by animateColorAsState(color, tween(400), label = "ringColor")
+    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    Canvas(modifier.size(RingSize)) {
+        val stroke = RingStroke.toPx()
+        val topLeft = Offset(stroke / 2, stroke / 2)
+        val arcSize = Size(size.width - stroke, size.height - stroke)
+        drawArc(track, 0f, 360f, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(stroke))
+        // Read in the draw phase, so each frame only redraws.
+        val degrees = 360f * sweep.value
+        if (degrees > 0.5f) {
+            drawArc(tint, -90f, degrees, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+        }
+    }
+}
+
+/** One part of a [StackedBar], named by [key]: [fraction] of the bar's whole width. */
+internal data class BarSegment(val key: String, val fraction: Float, val color: Color)
+
+/**
+ * A [BarHeight] bar with [segments] laid end to end. Each segment is tracked by its key: it grows from 0 over
+ * [BAR_MILLIS], eases between values and colors, and a segment that is no longer passed shrinks to 0 in its slot.
+ */
+@Composable
+internal fun StackedBar(segments: List<BarSegment>, modifier: Modifier = Modifier) {
+    // Every key seen so far, in first-seen order, with its last color: a missing key keeps its slot at width 0.
+    val known = remember { LinkedHashMap<String, Color>() }
+    segments.forEach { known[it.key] = it.color }
+    val byKey = segments.associateBy { it.key }
+    val reduce = LocalInfoReduceMotion.current
+    val drawn = known.map { (k, color) ->
+        key(k) {
+            val width = animateGrow((byKey[k]?.fraction ?: 0f).coerceIn(0f, 1f), BAR_MILLIS)
+            val tint = animateColorAsState(color, tween(if (reduce) 0 else 400), label = "barColor")
+            width to tint
+        }
+    }
+    val shape = styledCorner(BarHeight / 2)
+    Canvas(
+        modifier.fillMaxWidth().height(BarHeight).clip(shape).background(MaterialTheme.colorScheme.surfaceContainerHighest),
+    ) {
+        var x = 0f
+        drawn.forEach { (w, tint) ->
+            val width = (size.width * w.value).coerceAtMost(size.width - x)
+            if (width > 0f) drawRect(tint.value, topLeft = Offset(x, 0f), size = Size(width, size.height))
+            x += width
+        }
+    }
+}
+
+/** A soft pulse of the surface color for placeholders, one loop per [PULSE_MILLIS]; steady with reduced motion. */
+@Composable
+internal fun rememberPulse(): State<Float> {
+    if (LocalInfoReduceMotion.current) return remember { mutableStateOf(0.7f) }
+    val transition = rememberInfiniteTransition(label = "pulse")
+    return transition.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(PULSE_MILLIS / 2), RepeatMode.Reverse),
+        label = "pulseAlpha",
+    )
+}
+
+/** A rounded block of the pulsing placeholder color. */
+@Composable
+private fun PulseBlock(pulse: State<Float>, width: Dp?, height: Dp, modifier: Modifier = Modifier, round: Boolean = false) {
+    val color = MaterialTheme.colorScheme.surfaceContainerHighest
+    val shape = if (round) CircleShape else styledCorner(6.dp)
+    Box(
+        modifier
+            .then(if (width == null) Modifier.fillMaxWidth() else Modifier.width(width))
+            .height(height)
+            .clip(shape)
+            // The alpha is read while drawing, so the pulse never recomposes.
+            .drawBehind { drawRect(color.copy(alpha = color.alpha * pulse.value)) },
+    )
+}
+
+/** The height one line of [style] takes. */
+@Composable
+private fun lineHeight(style: TextStyle): Dp = with(LocalDensity.current) { style.lineHeight.toDp() }
+
+/** A pulsing block centered in one text line of [line] height, so a placeholder line is as tall as the real one. */
+@Composable
+private fun PulseLine(pulse: State<Float>, line: Dp, width: Dp? = null, block: Dp = 12.dp) {
+    Box(
+        (if (width == null) Modifier.fillMaxWidth() else Modifier.width(width)).height(line),
+        contentAlignment = Alignment.CenterStart,
+    ) { PulseBlock(pulse, width, block.coerceAtMost(line)) }
+}
+
+/** [count] key/value placeholder lines, spaced like [KvRow]s. */
+@Composable
+private fun PulseKvLines(pulse: State<Float>, count: Int) {
+    val line = lineHeight(MaterialTheme.typography.bodySmall)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { repeat(count) { PulseLine(pulse, line) } }
+}
+
+/**
+ * Pulsing blocks shaped like card [index]'s body (Battery … Software) line for line, so a placeholder is as tall as
+ * the card it turns into. Software lays out typical values with the real row layout, so long values stack and wrap
+ * the same way.
+ */
+@Composable
+private fun PlaceholderBody(index: Int, pulse: State<Float>) {
+    val big = lineHeight(bigNumberStyle())
+    val small = lineHeight(MaterialTheme.typography.bodySmall)
+    val label = lineHeight(MaterialTheme.typography.labelSmall)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when (index) {
+            0 -> {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    PulseBlock(pulse, width = RingSize, height = RingSize, round = true)
+                    Column {
+                        PulseLine(pulse, big, width = 64.dp, block = 26.dp)
+                        PulseLine(pulse, small, width = 96.dp)
+                    }
+                }
+                PulseKvLines(pulse, 3)
+            }
+            1 -> {
+                PulseLine(pulse, big, width = 140.dp, block = 26.dp)
+                PulseBlock(pulse, width = null, height = BarHeight)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    PulseLine(pulse, label, width = 160.dp, block = 10.dp)
+                    PulseLine(pulse, label, width = 100.dp, block = 10.dp)
+                }
+            }
+            2 -> {
+                PulseLine(pulse, big, width = 140.dp, block = 26.dp)
+                PulseBlock(pulse, width = null, height = BarHeight)
+                PulseLine(pulse, label, width = 120.dp, block = 10.dp)
+            }
+            3 -> PulseKvLines(pulse, 4)
+            4 -> PulseKvLines(pulse, 3)
+            else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SoftwareSample.forEach { (label, value, mono) -> KvRow(label, value, mono, pulse = pulse) }
+            }
+        }
+    }
+}
+
+/** Typical Software rows (the Galaxy A15's), laid out invisibly by the placeholder so its height matches the card. */
+private val SoftwareSample = listOf(
+    Triple("Android", "16 (API 36)", false),
+    Triple("One UI", "8.5", false),
+    Triple("Security patch", "2026-07-05", false),
+    Triple("Build", "BP4A.251205.006.A156U1UESCEZG1", true),
+    Triple("ABI", "arm64-v8a", false),
+    Triple("Kernel", "5.15.189-android13-8-33641424", true),
+)
+
+/** The last non-null [value], so content that is leaving keeps showing what it showed. */
+@Composable
+private fun <T : Any> rememberLast(value: T?): T? {
+    val last = remember { mutableStateOf(value) }
+    SideEffect { if (value != null) last.value = value }
+    return value ?: last.value
+}
+
+/** A line that comes into a card: its space opens while it fades in. */
+private fun lineEnter(reduce: Boolean): EnterTransition {
+    val millis = if (reduce) REDUCED_FADE_MILLIS else CROSSFADE_MILLIS
+    return expandVertically(tween(millis, easing = SizeEasing)) + fadeIn(tween(millis, easing = EmphasizedDecelerate))
+}
+
+/** A line that leaves a card: it fades while its space closes. */
+private fun lineExit(reduce: Boolean): ExitTransition {
+    val millis = if (reduce) REDUCED_FADE_MILLIS else CLOSE_MILLIS
+    return shrinkVertically(tween(millis, easing = SizeEasing)) + fadeOut(tween(millis, easing = EmphasizedAccelerate))
+}
+
+/**
+ * A [row] that opens in when [value] appears and closes away when it goes. Its 4 dp gap is its own padding, so the
+ * gap closes with it. A row that is there from the start (or never changes presence) does not animate.
+ */
+@Composable
+private fun ColumnScope.OptionalRow(value: String?, row: @Composable (String) -> Unit) {
+    val reduce = LocalInfoReduceMotion.current
+    val shown = rememberLast(value)
+    AnimatedVisibility(value != null, enter = lineEnter(reduce), exit = lineExit(reduce)) {
+        if (shown != null) Box(Modifier.padding(vertical = 2.dp)) { row(shown) }
+    }
+}
+
+/** A [KvRow] that opens in when [value] appears and closes away when it goes (see [OptionalRow]). */
+@Composable
+private fun ColumnScope.OptionalKvRow(label: String, value: String?, ticking: Boolean = false, mono: Boolean = false) {
+    OptionalRow(value) { KvRow(label, it, mono = mono, ticking = ticking) }
+}
+
+/**
+ * A column of [OptionalRow]s, spaced 4 dp apart like a `spacedBy(4.dp)` column: each row carries 2 dp above and below,
+ * and this trims the 2 dp at the top and bottom edges so the card is as tall as its placeholder.
+ */
+@Composable
+private fun KvRows(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        Modifier.layout { measurable, constraints ->
+            val edge = 2.dp.roundToPx()
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, (placeable.height - 2 * edge).coerceAtLeast(0)) { placeable.place(0, -edge) }
+        },
+        content = content,
+    )
+}
+
+/**
+ * A static card body that cross-fades between [content] for [value] and the muted [absent] line when [value] is null.
+ * Leaving content keeps showing the last value. Nothing animates on first composition or while presence holds.
+ */
+@Composable
+private fun <T : Any> PresentOrMuted(value: T?, absent: String, label: String, content: @Composable ColumnScope.(T) -> Unit) {
+    val reduce = LocalInfoReduceMotion.current
+    val shown = rememberLast(value)
+    AnimatedContent(value == null, transitionSpec = { crossFade(reduce) }, label = label) { none ->
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (none || shown == null) Muted(absent) else content(shown)
+        }
+    }
+}
+
+/** The frame every card shares: a filled card with a small uppercase title and icon. */
+@Composable
+internal fun InfoCard(
+    title: String,
+    icon: ImageVector?,
+    modifier: Modifier = Modifier,
+    titleContent: (@Composable () -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val shape = styledCorner(14.dp)
+    Surface(
+        modifier = modifier.styleRaised(shape),
+        shape = shape,
+        color = colors.surfaceContainerLow,
+        contentColor = colors.onSurface,
+        border = if (currentStyle == ThemeStyle.Material) BorderStroke(1.dp, colors.outlineVariant) else null,
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (titleContent != null) {
+                titleContent()
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (icon != null) Icon(icon, contentDescription = null, tint = colors.onSurfaceVariant, modifier = Modifier.size(14.dp))
+                    Text(
+                        title.uppercase(),
+                        style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.6.sp),
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.onSurfaceVariant,
+                    )
+                }
+            }
+            content()
+        }
+    }
+}
+
+/** A label on the left and its value on the right, as in the mockup's key/value lists. */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+private fun KvRow(
+    label: String,
+    value: String,
+    mono: Boolean = false,
+    ticking: Boolean = false,
+    /** Draws the row as a pulsing placeholder with the same layout (for the Software placeholder). */
+    pulse: State<Float>? = null,
+) {
+    val style = MaterialTheme.typography.bodySmall
+    val family = if (mono) FontFamily.Monospace else null
+    // Mono values (build id, kernel) may only wrap between their parts.
+    val shown = if (mono) InfoText.breakable(value) else value
+    val hidden = pulse != null
+    val fill = if (pulse != null) Modifier.pulseFill(pulse) else Modifier
+    val labelColor = if (hidden) Color.Transparent else MaterialTheme.colorScheme.onSurfaceVariant
+    val valueColor = if (hidden) Color.Transparent else Color.Unspecified
+    val reduce = LocalInfoReduceMotion.current
+    LookaheadScope {
+        // A value that moves between beside the label and below it (the card got narrower or wider) slides and
+        // resizes to its new place. Ticking rows hold short values that never stack, and animate their own width.
+        val move = if (reduce || ticking) Modifier else Modifier.animateBounds(this, boundsTransform = ReflowBounds)
+        Layout(
+            content = {
+                Text(label, style = style, color = labelColor, modifier = move.then(fill))
+                if (ticking && !hidden) {
+                    TickingText(shown, style = style, fontFamily = family)
+                } else {
+                    // A new value (from the quiet static re-read) cross-fades in place of the old one.
+                    AnimatedContent(
+                        shown,
+                        modifier = move.then(fill),
+                        transitionSpec = { crossFade(reduce) },
+                        label = "kvValue",
+                    ) { v ->
+                        Text(
+                            v, style = style.merge(TextStyle(fontFeatureSettings = "tnum")), color = valueColor,
+                            fontFamily = family,
+                        )
+                    }
+                }
+            },
+            measurePolicy = KvRowPolicy,
+        )
+    }
+}
+
+/**
+ * Lays out a [KvRow]: label left and value right-aligned on one line when the value fits beside the label without
+ * wrapping; otherwise the label on its own line and the value below it at full width, left-aligned.
+ */
+private object KvRowPolicy : MeasurePolicy {
+    private val gap = 12.dp
+
+    override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val (labelM, valueM) = measurables
+        val width = constraints.maxWidth
+        val label = labelM.measure(Constraints(maxWidth = width))
+        val gapPx = gap.roundToPx()
+        val inline = !constraints.hasBoundedWidth || label.width + gapPx + valueM.maxIntrinsicWidth(Constraints.Infinity) <= width
+        return if (inline) {
+            val value = valueM.measure(Constraints(maxWidth = if (constraints.hasBoundedWidth) width - label.width - gapPx else Constraints.Infinity))
+            val rowWidth = if (constraints.hasBoundedWidth) width else label.width + gapPx + value.width
+            layout(rowWidth, maxOf(label.height, value.height)) {
+                label.placeRelative(0, 0)
+                value.placeRelative(rowWidth - value.width, 0)
+            }
+        } else {
+            val value = valueM.measure(Constraints(maxWidth = width))
+            layout(width, label.height + value.height) {
+                label.placeRelative(0, 0)
+                value.placeRelative(0, label.height)
+            }
+        }
+    }
+}
+
+/** Fills the element with the pulsing placeholder color, inset to a text line's block height. */
+@Composable
+private fun Modifier.pulseFill(pulse: State<Float>): Modifier {
+    val color = MaterialTheme.colorScheme.surfaceContainerHighest
+    val radius = if (currentStyle == ThemeStyle.Retro) 0.dp else 6.dp
+    return drawBehind {
+        val inset = 2.dp.toPx()
+        drawRoundRect(
+            color.copy(alpha = color.alpha * pulse.value),
+            topLeft = Offset(0f, inset),
+            size = Size(size.width, (size.height - 2 * inset).coerceAtLeast(0f)),
+            cornerRadius = CornerRadius(radius.toPx()),
+        )
+    }
+}
+
+/** A muted line for a card with nothing to show ("No battery", "Not on Wi-Fi"). */
+@Composable
+private fun Muted(text: String) {
+    Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** "18.6" big, then " of 113.2 GB used" muted, on one baseline. */
+@Composable
+private fun AmountLine(amount: String, rest: String) {
+    Row(verticalAlignment = Alignment.Bottom) {
+        TickingText(amount, style = bigNumberStyle(), modifier = Modifier.alignByBaseline())
+        Text(
+            " $rest",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.alignByBaseline(),
+        )
+    }
+}
+
+/** What a card fed by live polling shows: its values, a placeholder until the first poll, or the read error. */
+private enum class LiveKind { Loading, Failed, Ready }
+
+/** Cross-fades a live card between its placeholder, its error and its values (keyed on the kind, not the values). */
+@Composable
+private fun LiveSection(live: Load<LiveInfo>, placeholderIndex: Int, content: @Composable (LiveInfo) -> Unit) {
+    val last = rememberLastReady(live)
+    val kind = when {
+        live is Load.Ready || last != null -> LiveKind.Ready
+        live is Load.Failed -> LiveKind.Failed
+        else -> LiveKind.Loading
+    }
+    val reduce = LocalInfoReduceMotion.current
+    AnimatedContent(kind, transitionSpec = { crossFade(reduce) }, label = "liveSection") { k ->
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            when (k) {
+                LiveKind.Loading -> PlaceholderBody(placeholderIndex, rememberPulse())
+                LiveKind.Failed -> Muted("Couldn't read: ${(live as? Load.Failed)?.message ?: "no answer"}")
+                LiveKind.Ready -> last?.let { content(it) }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The six cards
+// ---------------------------------------------------------------------------------------------------------------------
+
+@Composable
+internal fun BatteryCard(live: Load<LiveInfo>, modifier: Modifier = Modifier) {
+    InfoCard("Battery", Icons.Filled.BatteryFull, modifier) {
+        LiveSection(live, placeholderIndex = 0) { info ->
+            val battery = rememberLast(info.battery)
+            val reduce = LocalInfoReduceMotion.current
+            AnimatedContent(info.battery == null, transitionSpec = { crossFade(reduce) }, label = "batteryPresent") { none ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (none || battery == null) Muted(InfoText.NO_BATTERY) else BatteryBody(battery)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatteryBody(b: BatteryInfo) {
+    val plugged = b.status == ChargeStatus.Charging || b.status == ChargeStatus.Full
+    val low = b.level < 20 && !plugged
+    val reduce = LocalInfoReduceMotion.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        BatteryRing(b.level / 100f, if (low) MaterialTheme.colorScheme.error else readyColor())
+        Column {
+            TickingText("${b.level}%", style = bigNumberStyle())
+            AnimatedContent(InfoText.batteryState(b), transitionSpec = { crossFade(reduce) }, label = "batteryState") {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+    Column {
+        OptionalKvRow("Temperature", b.temperatureC?.let(InfoText::temperature), ticking = true)
+        OptionalKvRow("Health", InfoText.health(b.health), ticking = true)
+        OptionalKvRow("Voltage", b.voltageMv?.let(InfoText::voltage), ticking = true)
+    }
+}
+
+@Composable
+internal fun StorageCard(storage: StorageInfo?, modifier: Modifier = Modifier) {
+    InfoCard("Storage", Icons.Filled.Storage, modifier) {
+        PresentOrMuted(storage?.takeIf { it.totalBytes > 0 }, "Couldn't read storage", "storagePresent") {
+            StorageBody(it)
+        }
+    }
+}
+
+@Composable
+private fun StorageBody(storage: StorageInfo) {
+    AmountLine(InfoText.gb(storage.usedBytes), "of ${InfoText.gb(storage.totalBytes)} GB used")
+    val total = storage.totalBytes.toFloat()
+    // Apps, media and the rest of used: they sum to df's used bytes (see InfoText.storageParts).
+    val parts = InfoText.storageParts(storage)?.let { p ->
+        listOf(
+            Triple("Apps", p.apps, MaterialTheme.colorScheme.primary),
+            Triple("Media", p.media, MaterialTheme.colorScheme.tertiary),
+            Triple("Other", p.other, MaterialTheme.colorScheme.outline),
+        )
+    }.orEmpty()
+    // Zero parts stay in the list at width 0, so each part keeps its slot and color. A key that is no longer
+    // passed (for example "Used" when a breakdown arrives) shrinks away inside StackedBar.
+    val segments = if (parts.isNotEmpty()) {
+        parts.map { (name, bytes, color) -> BarSegment(name, bytes / total, color) }
+    } else {
+        listOf(BarSegment("Used", storage.usedBytes / total, MaterialTheme.colorScheme.primary))
+    }
+    StackedBar(segments)
+    val legend = parts.filter { it.second > 0 }
+    val reduce = LocalInfoReduceMotion.current
+    AnimatedContent(legend, transitionSpec = { crossFade(reduce) }, label = "storageLegend") { shownLegend ->
+        if (shownLegend.isNotEmpty()) WrapRow(horizontalGap = 12.dp, verticalGap = 4.dp) {
+            shownLegend.forEach { (name, bytes, color) ->
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.size(8.dp).clip(styledCorner(2.dp)).background(color))
+                    Text(
+                        "$name ${InfoText.gb(bytes)} GB",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun MemoryCard(live: Load<LiveInfo>, modifier: Modifier = Modifier) {
+    InfoCard("Memory", Icons.Filled.Memory, modifier) {
+        LiveSection(live, placeholderIndex = 2) { info ->
+            val usable = info.memory?.takeIf { it.totalKb > 0 }
+            val memory = rememberLast(usable)
+            val reduce = LocalInfoReduceMotion.current
+            AnimatedContent(usable == null, transitionSpec = { crossFade(reduce) }, label = "memoryPresent") { none ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (none || memory == null) Muted("Couldn't read memory") else MemoryBody(memory)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemoryBody(m: MemoryInfo) {
+    AmountLine(InfoText.gbFromKb(m.usedKb), "of ${InfoText.gbFromKb(m.totalKb)} GB in use")
+    StackedBar(listOf(BarSegment("Used", m.usedKb.toFloat() / m.totalKb, MaterialTheme.colorScheme.primary)))
+    Text("Refreshes every 5 s", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+internal fun DisplayCard(display: DisplayInfo?, modifier: Modifier = Modifier) {
+    InfoCard("Display", Icons.Filled.Smartphone, modifier) {
+        PresentOrMuted(display, "Couldn't read the display", "displayPresent") { d ->
+            KvRows {
+                OptionalKvRow("Resolution", InfoText.resolution(d), mono = true)
+                OptionalKvRow("Density", InfoText.density(d))
+                OptionalKvRow("Refresh rate", d.refreshHz?.let(InfoText::refresh))
+                OptionalKvRow("Smallest width", InfoText.smallestWidth(d))
+            }
+        }
+    }
+}
+
+@Composable
+internal fun NetworkCard(network: NetworkInfo, modifier: Modifier = Modifier) {
+    InfoCard("Network", Icons.Filled.Wifi, modifier) {
+        PresentOrMuted(network.takeUnless(InfoText::offWifi), InfoText.NOT_ON_WIFI, "networkPresent") { n ->
+            KvRows {
+                OptionalKvRow("Wi-Fi", n.ssid)
+                OptionalRow(n.ipAddress) { CopyableKvRow("IP address", it) }
+                OptionalKvRow("Link speed", n.linkMbps?.let(InfoText::linkSpeed))
+            }
+        }
+    }
+}
+
+/** A key/value row whose value copies on click; the trailing copy icon morphs into a check while "Copied" shows. */
+@Composable
+private fun CopyableKvRow(label: String, value: String) {
+    val copy = rememberCopyAction()
+    var copies by remember { mutableIntStateOf(0) }
+    LaunchedEffect(copies) {
+        if (copies == 0) return@LaunchedEffect
+        delay(COPY_CONFIRM_MILLIS)
+        copies = 0
+    }
+    val reduce = LocalInfoReduceMotion.current
+    val tint by animateColorAsState(
+        if (copies > 0) readyColor() else MaterialTheme.colorScheme.onSurfaceVariant, tween(260), label = "ipCopyTint",
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.weight(1f))
+        Row(
+            Modifier
+                .clip(styledCorner(4.dp))
+                .clickable(onClickLabel = "Copy $label") { copy(value); copies++ }
+                .pointerHoverIcon(PointerIcon.Hand)
+                .padding(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            AnimatedContent(value, transitionSpec = { crossFade(reduce) }, label = "copyValue") { v ->
+                Text(
+                    v,
+                    style = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFeatureSettings = "tnum")),
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+            AnimatedContent(
+                copies > 0,
+                transitionSpec = {
+                    val millis = if (reduce) REDUCED_FADE_MILLIS else 300
+                    (fadeIn(tween(millis, easing = EmphasizedDecelerate)) + scaleIn(tween(millis, easing = EmphasizedDecelerate), initialScale = if (reduce) 1f else 0.3f)) togetherWith
+                        (fadeOut(tween(millis, easing = EmphasizedAccelerate)) + scaleOut(tween(millis, easing = EmphasizedAccelerate), targetScale = if (reduce) 1f else 0.3f))
+                },
+                label = "ipCopyIcon",
+            ) { copied ->
+                Icon(
+                    if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SoftwareCard(software: SoftwareInfo, modifier: Modifier = Modifier) {
+    InfoCard("Software", Icons.Filled.Android, modifier) {
+        val rows = listOf(
+            Triple("Android", InfoText.androidLine(software), false),
+            Triple("One UI", software.oneUiVersion, false),
+            Triple("Security patch", software.securityPatch, false),
+            Triple("Build", software.buildId, true),
+            Triple("ABI", software.abi, false),
+            Triple("Kernel", software.kernel, true),
+        )
+        val present = rows.takeIf { r -> r.any { it.second != null } }
+        PresentOrMuted(present, "Couldn't read the software version", "softwarePresent") { shown ->
+            KvRows {
+                shown.forEach { (label, value, mono) -> key(label) { OptionalKvRow(label, value, mono = mono) } }
+            }
+        }
+    }
+}
+
+/** A card-sized placeholder for card [index] (Battery … Software): its title and pulsing lines shaped like its body. */
+@Composable
+internal fun PlaceholderCard(index: Int, pulse: State<Float>, modifier: Modifier = Modifier) {
+    InfoCard(
+        title = "",
+        icon = null,
+        modifier = modifier,
+        // As tall as the real title line (labelMedium text beside a 14 dp icon).
+        titleContent = { PulseLine(pulse, lineHeight(MaterialTheme.typography.labelMedium).coerceAtLeast(14.dp), width = 72.dp) },
+    ) {
+        PlaceholderBody(index, pulse)
+    }
+}
+
+/** Number of cards (and placeholders): Battery, Storage, Memory, Display, Network, Software. */
+internal const val CARD_COUNT = 6
+
+/** The grid never uses more columns than this, so six cards fill it evenly (two per column). */
+internal const val GRID_MAX_COLUMNS = 3
+
+/**
+ * A masonry grid: as many columns of at least [GridMinColumn] as fit (at most [GRID_MAX_COLUMNS]), [GridGap] apart.
+ * Cards go to columns by index, round-robin, and each column stacks its cards [GridGap] apart at their own heights,
+ * so a card that changes animates its own height and only the cards below it in its column follow. Assignment by
+ * index (not by shortest column) keeps a card in its column while heights animate. [item] gets each card's index and
+ * the modifier that sizes it.
+ */
+@Composable
+@OptIn(ExperimentalSharedTransitionApi::class)
+internal fun InfoGrid(count: Int, modifier: Modifier = Modifier, item: @Composable (index: Int, Modifier) -> Unit) {
+    val reduce = LocalInfoReduceMotion.current
+    LookaheadScope {
+        // Each card animates from where it was to where the lookahead pass puts it: a new column after a resize, a
+        // new width, or a new y when a card above it changes height. Nothing moves on first layout.
+        val bounds = if (reduce) Modifier else Modifier.animateBounds(this, boundsTransform = ReflowBounds)
+        Layout(
+            content = { repeat(count) { index -> item(index, bounds) } },
+            modifier = modifier.fillMaxWidth(),
+            measurePolicy = MasonryPolicy,
+        )
+    }
+}
+
+/** Resize reflow: position and size ease together on the standard curve (see [SizeEasing]). */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private val ReflowBounds = BoundsTransform { _, _ -> tween(REFLOW_MILLIS, easing = SizeEasing) }
+
+/** How long a card takes to move to its new column, width or height after the window resizes. */
+internal const val REFLOW_MILLIS = 350
+
+/**
+ * Masonry placement for [InfoGrid]: [gridColumns] equal columns [GridGap] apart; child `i` goes to column
+ * `i % columns` ([masonryColumn]) under the cards before it. All cards are children of this one layout, so a change
+ * of column count moves them without recomposing them in a new parent.
+ */
+private object MasonryPolicy : MeasurePolicy {
+    override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else (GridMinColumn * GRID_MAX_COLUMNS).roundToPx()
+        val gap = GridGap.roundToPx()
+        val columns = gridColumns(width.toDp())
+        val columnWidth = ((width - gap * (columns - 1)) / columns).coerceAtLeast(0)
+        val placeables = measurables.map { it.measure(Constraints.fixedWidth(columnWidth)) }
+        val tops = IntArray(columns)
+        val positions = placeables.mapIndexed { i, placeable ->
+            val column = i % columns
+            val at = column * (columnWidth + gap) to tops[column]
+            tops[column] += placeable.height + gap
+            at
+        }
+        val height = (tops.maxOrNull() ?: 0).let { if (placeables.isEmpty()) 0 else it - gap }.coerceAtLeast(0)
+        return layout(width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+            placeables.forEachIndexed { i, placeable -> placeable.placeRelative(positions[i].first, positions[i].second) }
+        }
+    }
+}
+
+/** How many [GridMinColumn] columns fit in [width], at least 1 and at most [GRID_MAX_COLUMNS]. */
+internal fun gridColumns(width: Dp): Int =
+    ((width + GridGap) / (GridMinColumn + GridGap)).toInt().coerceIn(1, GRID_MAX_COLUMNS)
+
+/** The card indexes in [column] of [columns]: round-robin, so cards read left to right, then down. */
+internal fun masonryColumn(column: Int, columns: Int, count: Int): List<Int> = (column until count step columns).toList()
+
+/**
+ * Children left to right, wrapping to a new line when the next one doesn't fit. Unlike `FlowRow` it reports its
+ * wrapped height as its intrinsic height, so it measures correctly wherever intrinsics are asked for.
+ */
+@Composable
+private fun WrapRow(horizontalGap: Dp, verticalGap: Dp, content: @Composable () -> Unit) {
+    Layout(content, measurePolicy = remember(horizontalGap, verticalGap) { WrapPolicy(horizontalGap, verticalGap) })
+}
+
+private class WrapPolicy(private val hGap: Dp, private val vGap: Dp) : MeasurePolicy {
+    override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val placeables = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+        val maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
+        val lines = wrap(placeables.map { it.width }, maxWidth, hGap.roundToPx())
+        val gapY = vGap.roundToPx()
+        val lineHeights = lines.map { line -> line.maxOf { placeables[it].height } }
+        val height = lineHeights.sum() + gapY * (lines.size - 1).coerceAtLeast(0)
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else lines.maxOfOrNull { line -> line.sumOf { placeables[it].width } } ?: 0
+        return layout(width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+            var y = 0
+            lines.forEachIndexed { li, line ->
+                var x = 0
+                line.forEach { i ->
+                    placeables[i].placeRelative(x, y)
+                    x += placeables[i].width + hGap.roundToPx()
+                }
+                y += lineHeights[li] + gapY
+            }
+        }
+    }
+
+    private fun IntrinsicMeasureScope.wrappedHeight(measurables: List<IntrinsicMeasurable>, width: Int): Int {
+        val widths = measurables.map { it.maxIntrinsicWidth(Int.MAX_VALUE) }
+        val lines = wrap(widths, width, hGap.roundToPx())
+        return lines.sumOf { line -> line.maxOf { measurables[it].minIntrinsicHeight(widths[it]) } } +
+            vGap.roundToPx() * (lines.size - 1).coerceAtLeast(0)
+    }
+
+    override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
+        wrappedHeight(measurables, width)
+
+    override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) =
+        wrappedHeight(measurables, width)
+
+    override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
+        measurables.maxOfOrNull { it.minIntrinsicWidth(height) } ?: 0
+
+    override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) =
+        measurables.sumOf { it.maxIntrinsicWidth(height) } + hGap.roundToPx() * (measurables.size - 1).coerceAtLeast(0)
+}
+
+/** Splits item [widths] into lines no wider than [maxWidth] with [gap] between items; each line has at least one item. */
+private fun wrap(widths: List<Int>, maxWidth: Int, gap: Int): List<List<Int>> {
+    val lines = mutableListOf<MutableList<Int>>()
+    var used = 0
+    widths.forEachIndexed { i, w ->
+        val line = lines.lastOrNull()
+        if (line != null && used + gap + w <= maxWidth) {
+            line += i
+            used += gap + w
+        } else {
+            lines += mutableListOf(i)
+            used = w
+        }
+    }
+    return lines
+}
