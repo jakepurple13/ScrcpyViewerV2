@@ -11,17 +11,19 @@ settings")
 1. **Arrange mirror windows.** Every mirror window's title bar gets an Arrange button that opens a menu: As placed,
    Grid, Side by side, Focus this window, Cascade, plus "Keep tiled as windows open and close". The same entries are in
    the menu bar icon's menu. Windows animate to their new bounds and keep their device's shape.
-2. **Settings › Keyboard shortcuts.** A new settings page where the user records shortcuts. Nothing has a shortcut by
+2. ~~**Settings › Keyboard shortcuts.**~~ **DROPPED 2026-11-13, not built.** ~~A new settings page where the user records shortcuts. Nothing has a shortcut by
    default. Actions: "Send input to other windows" (multi-device follow on/off) and each Arrange layout. Arrange menu
-   items show their shortcut once set.
+   items show their shortcut once set.~~
 
 ## Decisions already made with the user
 
 - Default layout is As placed, with Keep tiled off. Picking a layout tiles once; Keep tiled re-tiles when mirror
   windows open or close. Dragging or resizing a window by hand turns Keep tiled off.
 - Layouts use the screen the main window is on.
-- No default shortcuts; the user sets them in the new page.
+- ~~No default shortcuts; the user sets them in the new page.~~ (Dropped with the shortcuts.)
 - Every state change animates; nothing snaps.
+- Keep tiled is disabled while the layout is As placed (there is no layout to keep). Cascade raises the windows in
+  its order once they have moved, then gives the focus back to the window that had it.
 
 ## Arrange
 
@@ -123,12 +125,12 @@ New category "Keyboard shortcuts" (after Mirroring). Rows grouped as above, each
 |---|---|
 | Arrange button appears/collapses | same `StripSlot` expand/shrink + fade 200 ms as the multi-device button |
 | Picking a layout | check mark scale-in 300 ms, menu closes, windows animate 380 ms with 35 ms stagger (instant with reduced motion or "Animate mirror windows" off) |
-| Recorder start | box width grows (FastOutSlowIn 400 ms), outline pulse |
-| Keys captured | each key pops in (scale .7→1 + fade, 320 ms, 60 ms stagger) |
-| Invalid / reserved | shake 400 ms + hint expand 300 ms |
-| Conflict | strip expand 400 ms; Replace flashes the other row 700 ms |
-| Clear | key boxes fade out, "Not set" fades in; × scales out |
-| Search | rows fold (height + fade 220–320 ms) |
+| ~~Recorder start~~ (dropped) | ~~box width grows (FastOutSlowIn 400 ms), outline pulse~~ |
+| ~~Keys captured~~ (dropped) | ~~each key pops in (scale .7→1 + fade, 320 ms, 60 ms stagger)~~ |
+| ~~Invalid / reserved~~ (dropped) | ~~shake 400 ms + hint expand 300 ms~~ |
+| ~~Conflict~~ (dropped) | ~~strip expand 400 ms; Replace flashes the other row 700 ms~~ |
+| ~~Clear~~ (dropped) | ~~key boxes fade out, "Not set" fades in; × scales out~~ |
+| ~~Search~~ (dropped) | ~~rows fold (height + fade 220–320 ms)~~ |
 
 ## Tests
 
@@ -136,13 +138,13 @@ New category "Keyboard shortcuts" (after Mirroring). Rows grouped as above, each
   gaps, small work areas.
 - Arranger: skips non-floating/minimized/hidden windows, remembers As placed bounds, Keep tiled re-applies on
   open/close, a manual move turns Keep tiled off, position-not-taking disables layouts.
-- Shortcuts: encode/decode, display text per OS, modifier rule, reserved list, conflict detection, matcher
-  consumes the whole chord (no stray key-up or typed char reaches the device).
-- Dispatch: follow toggle from a mirror window and from the main window; arrange actions.
-- Screenshots: title bar with the Arrange button and its menu; the Keyboard shortcuts page idle, recording,
-  conflict, invalid.
-- Manual: macOS with 3+ mirror windows: each layout, Keep tiled, drag to turn it off, shortcuts in mirror and main
-  windows.
+- ~~Shortcuts: encode/decode, display text per OS, modifier rule, reserved list, conflict detection, matcher
+  consumes the whole chord (no stray key-up or typed char reaches the device).~~ (Dropped.)
+- ~~Dispatch: follow toggle from a mirror window and from the main window; arrange actions.~~ (Dropped.)
+- Screenshots: title bar with the Arrange button and its menu. ~~The Keyboard shortcuts page idle, recording,
+  conflict, invalid.~~ (Dropped.)
+- Manual: macOS with 3+ mirror windows: each layout, Keep tiled, drag to turn it off. ~~Shortcuts in mirror and main
+  windows.~~ (Dropped.)
 
 ## Out of scope
 
