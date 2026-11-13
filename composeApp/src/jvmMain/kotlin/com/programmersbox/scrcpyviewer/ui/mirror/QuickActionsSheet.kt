@@ -709,23 +709,30 @@ private fun SegmentName(
     }
 }
 
-/** The segment's name as a hover tooltip while [show] (segments show icons); nothing otherwise. */
+/**
+ * The segment's name as a hover tooltip while [show] (segments show icons); in name mode there is no tooltip area at
+ * all. The content is moved, not rebuilt, between the two wrappers (both a Box with [modifier]), so a mode change
+ * keeps its state and does not shift the layout.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SegmentTooltip(name: String, show: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val showing by rememberUpdatedState(show)
-    TooltipArea(
-        tooltip = {
-            if (showing) {
+    val current by rememberUpdatedState(content)
+    val body = remember { movableContentOf { current() } }
+    if (show) {
+        TooltipArea(
+            tooltip = {
                 Surface(shape = RoundedCornerShape(4.dp), color = colors.inverseSurface) {
                     Text(
                         name, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.bodySmall, color = colors.inverseOnSurface,
                     )
                 }
-            }
-        },
-        modifier = modifier,
-    ) { content() }
+            },
+            modifier = modifier,
+        ) { body() }
+    } else {
+        Box(modifier) { body() }
+    }
 }
