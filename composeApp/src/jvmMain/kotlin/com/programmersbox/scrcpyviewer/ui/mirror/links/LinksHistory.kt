@@ -146,6 +146,9 @@ internal fun HistorySection(links: LinksState, onEvent: (LinksEvent) -> Unit, mo
     val items = historyItems(history)
     val holder = remember { Slots<HistoryItem>() }
     var pruned by remember { mutableIntStateOf(0) }
+    // Merged during composition on purpose: the rows drawn this frame must already include the leaving ones. Only
+    // [holder], a plain object no one else reads, is written (never snapshot state), and the merge is idempotent for the
+    // same [items], so a repeated pass changes nothing.
     val shown = remember(items, pruned) {
         val (merged, reordered) = mergeSlots(holder.shown, items, HistoryItem::key, animateNew = holder.started)
         holder.shown = merged

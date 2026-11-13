@@ -221,7 +221,7 @@ fun LinksTabContent(
             value = links.text,
             onChange = { onEvent(LinksEvent.SetText(it)) },
             description = "Link or intent",
-            onEnter = { onEvent(LinksEvent.Open) },
+            onEnter = { if (enabled) onEvent(LinksEvent.Open) },
             modifier = Modifier.testTag(FIELD_TAG),
             flash = { flashStrength(flash.value) },
             leading = {
@@ -341,6 +341,8 @@ private fun LinkTextField(
     // Text set from elsewhere shows from its start (a long link reads from its scheme), or with the cursor at its end
     // while the field is being typed in.
     var field by remember { mutableStateOf(TextFieldValue(value, TextRange.Zero)) }
+    // Written during composition on purpose: a LaunchedEffect would show one frame of the old text. It converges at once
+    // (the next pass finds field.text == value), and only state local to this field is written.
     if (field.text != value) field = TextFieldValue(value, TextRange(if (focused) value.length else 0))
     val ring by animateDpAsState(if (focused) 2.dp else 1.dp, tween(150))
     val ringColor by animateColorAsState(if (focused) colors.primary else colors.outlineVariant, tween(150))

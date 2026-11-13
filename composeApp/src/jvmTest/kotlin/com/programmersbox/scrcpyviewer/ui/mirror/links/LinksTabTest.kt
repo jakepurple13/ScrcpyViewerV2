@@ -240,6 +240,79 @@ class LinksTabTest {
     }
 
     @Test
+    fun `a second identical failure shakes the strip again`() = onEdt {
+        store.clear("d1")
+        val l = links(FakeRunner(unresolved))
+        l.onEvent(LinksEvent.SetText("myapp://x"))
+        val d = scene(l)
+        l.onEvent(LinksEvent.Open)
+        d.frames(60)
+        assertEquals(1, l.runs)
+        val rest = 16f
+        assertEquals(rest, checkNotNull(d.tagged(RESULT_TAG)).positionInRoot.x, 0.5f, "settled")
+        val lefts = mutableListOf<Float>()
+        l.onEvent(LinksEvent.Open)
+        repeat(40) {
+            d.frame()
+            d.tagged(RESULT_TAG)?.positionInRoot?.x?.let(lefts::add)
+        }
+        assertEquals(2, l.runs)
+        assertTrue(lefts.any { abs(it - rest) >= 2f }, "the repeat failure shakes: $lefts")
+        assertEquals(rest, lefts.last(), 0.5f, "and settles: $lefts")
+        d.scene.close()
+    }
+
+    @Test
+    fun `Enter in the field does not open while the tab is disabled`() = onEdt {
+        val runner = FakeRunner(ok)
+        val l = links(runner)
+        l.onEvent(LinksEvent.SetText("https://example.com"))
+        val d = SceneDriver(ImageComposeScene(400, 1100, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize()) {
+                    LinksTabContent(l, AppsUiState(apps = apps), enabled = false, onEvent = l::onEvent, motion = true, now = { NOW })
+                }
+            }
+        }).also { it.frames(10) }
+        // A disabled field takes no focus, so send Enter through the state's own path: the tab's onEnter is gated.
+        d.click(checkNotNull(d.described("Link or intent")).boundsInRoot.center)
+        d.frames(3)
+        d.scene.sendKeyEvent(key(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_ENTER))
+        d.scene.sendKeyEvent(key(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_ENTER))
+        d.frames(10)
+        assertEquals(0, l.runs)
+        assertFalse(l.running)
+        d.scene.close()
+    }
+
+    @Test
+    fun `Esc with no field focused still closes the sheet`() = onEdt {
+        val l = links()
+        val events = mutableListOf<QuickActionEvent>()
+        val d = SceneDriver(ImageComposeScene(500, 900, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize()) {
+                    QuickActionsPanel(
+                        QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Links), { events += it }, console = null, links = l,
+                    )
+                }
+            }
+        }).also { it.frames(20) }
+        assertNotNull(d.text("Open a link or intent on this device"))
+        // Focus sits in the sheet but not in the field: Tab from the field moves it on to the next control.
+        d.click(checkNotNull(d.described("Link or intent")).boundsInRoot.center)
+        d.frames(3)
+        d.scene.sendKeyEvent(key(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_TAB))
+        d.scene.sendKeyEvent(key(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_TAB))
+        d.frames(3)
+        assertFalse(checkNotNull(d.described("Link or intent")).config.getOrNull(SemanticsProperties.Focused) == true, "left the field")
+        d.scene.sendKeyEvent(key(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_ESCAPE))
+        d.scene.sendKeyEvent(key(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_ESCAPE))
+        d.frames(5)
+        assertTrue(QuickActionEvent.Close in events, "Esc closes the sheet: $events")
+    }
+
+    @Test
     fun `a new history row expands in and the rows below move down with it`() = onEdt {
         for (motion in listOf(true, false)) {
             store.clear("d1")

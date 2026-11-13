@@ -185,8 +185,11 @@ class LinksState(
             } catch (e: Exception) {
                 LinkOutcome(LaunchResult(ok = false, errorLine = e.message), COULD_NOT_OPEN, e.message ?: e.toString())
             }
-            outcome = found
-            runs++
+            // The text changed mid-run: the outcome belongs to another link, so it is not shown (history still records it).
+            if (text.trim() == req.link) {
+                outcome = found
+                runs++
+            }
             running = false
             val opened = found.result.packageName
             store.record(

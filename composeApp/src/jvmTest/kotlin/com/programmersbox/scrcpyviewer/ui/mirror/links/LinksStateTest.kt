@@ -105,6 +105,22 @@ class LinksStateTest {
     }
 
     @Test
+    fun `an outcome for a link the field no longer holds is dropped but still recorded`() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val s = state(FakeRunner { gate.await(); unresolved }, this)
+        s.onEvent(LinksEvent.SetText("myapp://x"))
+        s.onEvent(LinksEvent.Open)
+        runCurrent()
+        s.onEvent(LinksEvent.SetText("myapp://y"))
+        gate.complete(Unit)
+        runCurrent()
+        assertNull(s.outcome)
+        assertEquals(0, s.runs)
+        assertFalse(s.running)
+        assertEquals("myapp://x", s.history.recent.single().link)
+    }
+
+    @Test
     fun `failure without a chosen app has no with suffix`() = runTest {
         val (s, _) = opened("myapp://x", unresolved)
         assertEquals("No app on this device opens this link", s.outcome!!.headline)
@@ -167,7 +183,7 @@ class LinksStateTest {
             LinkRequest("https://example.com", action = LinksState.DEFAULT_ACTION, category = LinksState.DEFAULT_CATEGORY, extra = Extra(ExtraType.String, "source", "qa")),
             s.request,
         )
-        assertEquals("adb -s 'd1' shell " + com.programmersbox.scrcpyviewer.apps.DeviceApps.quote(deviceCommand(s.request)), s.preview)
+        assertEquals("adb -s d1 shell \"" + deviceCommand(s.request) + "\"", s.preview)
         assertTrue("android.intent.category.BROWSABLE" in s.preview, s.preview)
     }
 
@@ -254,7 +270,7 @@ class LinksStateTest {
         assertFalse(action.confirm)
         assertEquals(emptyList(), CommandTemplate.variables(action.command))
         assertEquals(deviceCommand(s.request), CommandTemplate.substitute(action.command, emptyMap()))
-        assertTrue(action.command.startsWith("am force-stop 'com.android.chrome' && am start -W"), action.command)
+        assertTrue(action.command.startsWith("am force-stop com.android.chrome && am start -W"), action.command)
     }
 
     @Test

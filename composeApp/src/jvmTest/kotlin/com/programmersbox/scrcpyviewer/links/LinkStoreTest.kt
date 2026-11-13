@@ -76,6 +76,16 @@ class LinkStoreTest {
     }
 
     @Test
+    fun `recording after an unreadable file updates memory and leaves the file alone`() {
+        Files.createDirectories(file)
+        val s = LinkStore(file)
+        assertNotNull(s.error.value)
+        s.record("d", entry("a"))
+        assertEquals(listOf("a"), s.state.value.history["d"]!!.map { it.link })
+        assertTrue(Files.isDirectory(file), "the unreadable file is not overwritten")
+    }
+
+    @Test
     fun `persists across instances`() {
         val s = LinkStore(file)
         s.record("d", entry("a", "p"))
