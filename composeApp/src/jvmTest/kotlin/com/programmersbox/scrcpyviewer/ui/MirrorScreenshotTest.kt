@@ -40,6 +40,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorUiState
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsUiState
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsPanel
 import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_LOGCAT_WIDTH
+import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_WIDTH
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickToggle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.dropHint
@@ -625,6 +626,15 @@ class MirrorScreenshotTest {
                 scope.cancel()
             }
             assertTrue(Files.size(out) > 5_000, "$name should not be blank")
+            // At the Actions width the Logcat segment shows the window icon with the live badge instead of its label.
+            val narrow = outDir.resolve("mirror-logcat-own-window-narrow-${mode.name.lowercase()}.png")
+            renderToPng(QUICK_ACTIONS_WIDTH.value.toInt(), 160, narrow, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize()) {
+                        QuickActionsPanel(state.copy(tab = SheetTab.Actions), {}, console = null)
+                    }
+                }
+            }
         }
     }
 

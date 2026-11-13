@@ -138,26 +138,28 @@ class SheetTabsTest {
         assertTrue("adb isn’t available" in driver.texts(), driver.texts().keys.toString())
     }
 
+    private fun busy(tab: SheetTab, logcatPopped: Boolean) = QuickActionsUiState(
+        open = true, enabled = true, tab = tab, consoleRunning = true, filesTransfersRunning = 2,
+        logcatPopped = logcatPopped, logcatLive = logcatPopped,
+    )
+
     @Test
     fun `segment labels fit at the Actions width, with the Shell dot and the Files badge`() = onEdt {
-        assertSegmentsFit(
-            QUICK_ACTIONS_WIDTH.value.toInt(),
-            QuickActionsUiState(open = true, enabled = true, consoleRunning = true, filesTransfersRunning = 2),
-        )
+        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Actions, logcatPopped = false))
     }
 
     @Test
-    fun `segment labels fit at the Logcat width, with the Logcat window icon and live dot too`() = onEdt {
-        assertSegmentsFit(
-            QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(),
-            QuickActionsUiState(
-                open = true, enabled = true, tab = SheetTab.Logcat, consoleRunning = true, filesTransfersRunning = 2,
-                logcatPopped = true, logcatLive = true,
-            ),
-        )
+    fun `at the Actions and Shell widths a popped Logcat segment shows the window icon with the live badge instead`() = onEdt {
+        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Actions, logcatPopped = true), logcatIconOnly = true)
+        assertSegmentsFit(QUICK_ACTIONS_SHELL_WIDTH.value.toInt(), busy(SheetTab.Shell, logcatPopped = true), logcatIconOnly = true)
     }
 
-    private fun assertSegmentsFit(width: Int, state: QuickActionsUiState) {
+    @Test
+    fun `segment labels fit at the Logcat width, with the Logcat window icon and live dot beside the label`() = onEdt {
+        assertSegmentsFit(QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(), busy(SheetTab.Logcat, logcatPopped = true))
+    }
+
+    private fun assertSegmentsFit(width: Int, state: QuickActionsUiState, logcatIconOnly: Boolean = false) {
         val driver = SceneDriver(ImageComposeScene(width, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null) }
@@ -166,7 +168,27 @@ class SheetTabsTest {
         driver.frames(60) // the Files badge has scaled in
         val tabs = driver.nodes().filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
         assertEquals(SheetTab.entries.size, tabs.size)
+        fun descendants(n: SemanticsNode): List<SemanticsNode> = n.children.flatMap { listOf(it) + descendants(it) }
+        fun SemanticsNode.description() = config.getOrNull(SemanticsProperties.ContentDescription)?.first()
         for (tab in tabs) {
+            if (logcatIconOnly && tab === tabs[SheetTab.Logcat.ordinal]) {
+                // The label gave way to the window icon, which names the segment; the dot is a badge on its corner.
+                val nodes = descendants(tab)
+                assertTrue(nodes.none { it.config.getOrNull(SemanticsProperties.Text) != null }, "the hidden label is not read out")
+                assertTrue(nodes.none { it.description() == "In its own window" }, "no icon beside the label")
+                val icon = checkNotNull(nodes.firstOrNull { it.description() == "Logcat, open in its own window" }) { "the window icon" }
+                val dot = checkNotNull(nodes.firstOrNull { it.description() == "Logcat running" }) { "the live badge" }
+                assertEquals(14f, icon.boundsInRoot.width)
+                assertTrue(dot.boundsInRoot.width >= 6f, "the badge is squeezed to ${dot.boundsInRoot.width} px")
+                for (n in listOf(icon, dot)) {
+                    val b = n.boundsInRoot
+                    assertTrue(b.left >= tab.boundsInRoot.left && b.right <= tab.boundsInRoot.right, "${n.description()} spills out at $width")
+                    assertTrue(b.top >= tab.boundsInRoot.top, "${n.description()} spills over the top at $width")
+                }
+                val i = icon.boundsInRoot
+                assertTrue(dot.boundsInRoot.center.x > i.center.x && dot.boundsInRoot.center.y < i.center.y, "the badge sits on the top-end corner")
+                continue
+            }
             val label = tab.children.first { it.config.getOrNull(SemanticsProperties.Text) != null }
             val name = label.config[SemanticsProperties.Text].first().text
             val layouts = mutableListOf<TextLayoutResult>()
@@ -180,7 +202,6 @@ class SheetTabsTest {
             assertFalse(layout.didOverflowHeight, "$name is cut off")
             // The dot and the badge keep their full size and stay inside the segment, after the label.
             // The badge sits under its AnimatedVisibility's own node: search the segment, not just its children.
-            fun descendants(n: SemanticsNode): List<SemanticsNode> = n.children.flatMap { listOf(it) + descendants(it) }
             val extras = descendants(tab).filter { it.config.getOrNull(SemanticsProperties.ContentDescription) != null }
             for (extra in extras) {
                 val what = extra.config[SemanticsProperties.ContentDescription].first()
@@ -252,8 +273,32 @@ class SheetTabsTest {
     }
 
     @Test
+    fun `a narrow popped Logcat segment cross-fades its label to the icon, and back as the sheet widens`() = onEdt {
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true)) // Actions: 280 dp
+        val driver = panel({ state }, mutableListOf())
+        state = state.copy(logcatPopped = true, logcatLive = true)
+        driver.frames(3)
+        // Mid-fade, the icon is already the segment's name (decided at once, from the width), the label is going.
+        assertNotNull(driver.described("Logcat, open in its own window"))
+        driver.frames(60)
+        assertNotNull(driver.described("Logcat, open in its own window"))
+        assertNotNull(driver.described("Logcat running"))
+        assertNull(driver.described("In its own window"))
+
+        // To the Logcat tab (560 dp): from the first frame of the sheet's growth, the label comes back with the marks
+        // beside it, rather than snapping when the width gets there.
+        state = state.copy(tab = SheetTab.Logcat)
+        driver.frames(2)
+        assertNull(driver.described("Logcat, open in its own window"))
+        assertNotNull(driver.described("In its own window"))
+        driver.frames(60)
+        assertNotNull(driver.described("Logcat running"))
+        assertEquals(14f, checkNotNull(driver.described("In its own window")).boundsInRoot.width)
+    }
+
+    @Test
     fun `segment shows the window icon, and the live dot only while running`() = onEdt {
-        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true))
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat))
         val driver = panel({ state }, mutableListOf())
         assertNull(driver.described("In its own window"))
         assertNull(driver.described("Logcat running"))

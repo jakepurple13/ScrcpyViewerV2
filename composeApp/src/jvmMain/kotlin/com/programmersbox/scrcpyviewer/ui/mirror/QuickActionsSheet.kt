@@ -15,6 +15,9 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.rememberTextMeasurer
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatColors
 import androidx.compose.animation.core.tween
@@ -414,6 +417,20 @@ private fun SheetTabs(
     )
     // Between a label and the Shell dot or Files badge: "Files" plus its badge needs the narrower gap at 280 dp.
     val gap = lerp(6.dp, 4.dp, toCompact)
+    // While Logcat is in its own window, its segment swaps the label for the window icon when the label, dot and icon
+    // don't fit side by side: decided, like the label size, from the width the sheet settles on, in the settled style.
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val logcatIconOnly = logcatPopped && run {
+        val settled = if (compact) {
+            typography.labelMedium.copy(letterSpacing = 0.sp)
+        } else {
+            typography.labelLarge
+        }
+        val label = measurer.measure(SheetTab.Logcat.name, settled.copy(fontWeight = FontWeight.SemiBold), maxLines = 1).size.width
+        val settledGap = if (compact) 4.dp else 6.dp
+        with(density) { label.toDp() } + settledGap * 2 + LIVE_DOT_SIZE + WINDOW_ICON_SIZE > track / segments
+    }
     Box(
         modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest)
             .padding(TRACK_PADDING),
@@ -440,11 +457,22 @@ private fun SheetTabs(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        segment.name, style = labelStyle, maxLines = 1,
-                        color = if (selected) colors.onSurface else colors.onSurfaceVariant,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    )
+                    val label = @Composable { labelModifier: Modifier ->
+                        Text(
+                            segment.name, labelModifier, style = labelStyle, maxLines = 1,
+                            color = if (selected) colors.onSurface else colors.onSurfaceVariant,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    }
+                    if (segment == SheetTab.Logcat) {
+                        LogcatSegmentLabel(
+                            label, logcatIconOnly, logcatLive,
+                            ring = if (selected) colors.surface else colors.surfaceContainerHighest,
+                            tint = if (selected) colors.onSurface else colors.onSurfaceVariant,
+                        )
+                    } else {
+                        label(Modifier)
+                    }
                     if (segment == SheetTab.Shell && consoleRunning) {
                         Box(
                             Modifier.padding(start = gap).size(6.dp).background(colors.error, CircleShape)
@@ -468,7 +496,9 @@ private fun SheetTabs(
                             }
                         }
                     }
-                    if (segment == SheetTab.Logcat) LogcatSegmentMarks(logcatPopped, logcatLive, gap)
+                    if (segment == SheetTab.Logcat) {
+                        LogcatSegmentMarks(logcatPopped && !logcatIconOnly, logcatLive && !logcatIconOnly, gap)
+                    }
                 }
             }
         }
@@ -479,32 +509,44 @@ private fun SheetTabs(
 private const val LIVE_BLINK_MILLIS = 1_600
 private const val LIVE_BLINK_LOW = 0.35f
 
+private val LIVE_DOT_SIZE = 6.dp
+private val WINDOW_ICON_SIZE = 14.dp
+
+/** The label ⇄ window icon cross-fade of a narrow Logcat segment: 280 ms, eased like the segment's other changes. */
+private const val LABEL_SWAP_MILLIS = 280
+
+/** The green live dot; it blinks unless the OS reduces motion. */
+@Composable
+private fun LiveDot(modifier: Modifier = Modifier) {
+    val blinks = remember { !systemReducesMotion() }
+    val blink = if (blinks) {
+        rememberInfiniteTransition(label = "logcat live").animateFloat(
+            1f, LIVE_BLINK_LOW,
+            infiniteRepeatable(tween(LIVE_BLINK_MILLIS / 2, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        )
+    } else {
+        null
+    }
+    Box(
+        modifier.size(LIVE_DOT_SIZE)
+            .graphicsLayer { alpha = blink?.value ?: 1f }
+            .background(LogcatColors.level(LogLevel.Info).first, CircleShape)
+            .semantics { contentDescription = "Logcat running" },
+    )
+}
+
 /**
- * After the Logcat label: the live dot ([live], scales in) and the window icon ([popped], grows from 0 to 14 dp wide),
- * each [gap] after what comes before it. The dot blinks unless the OS reduces motion.
+ * After the Logcat label, where they fit: the live dot ([live], scales in) and the window icon ([popped], grows from 0
+ * to 14 dp wide), each [gap] after what comes before it.
  */
 @Composable
 private fun LogcatSegmentMarks(popped: Boolean, live: Boolean, gap: Dp) {
-    val blinks = remember { !systemReducesMotion() }
     AnimatedVisibility(
         visible = live,
         enter = scaleIn(growSpec(true)) + expandHorizontally(growSpec(true)),
         exit = scaleOut(growSpec(false)) + shrinkHorizontally(growSpec(false)),
     ) {
-        val blink = if (blinks) {
-            rememberInfiniteTransition(label = "logcat live").animateFloat(
-                1f, LIVE_BLINK_LOW,
-                infiniteRepeatable(tween(LIVE_BLINK_MILLIS / 2, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            )
-        } else {
-            null
-        }
-        Box(
-            Modifier.padding(start = gap).size(6.dp)
-                .graphicsLayer { alpha = blink?.value ?: 1f }
-                .background(LogcatColors.level(LogLevel.Info).first, CircleShape)
-                .semantics { contentDescription = "Logcat running" },
-        )
+        LiveDot(Modifier.padding(start = gap))
     }
     AnimatedVisibility(
         visible = popped,
@@ -513,7 +555,50 @@ private fun LogcatSegmentMarks(popped: Boolean, live: Boolean, gap: Dp) {
     ) {
         Icon(
             Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "In its own window",
-            Modifier.padding(start = gap).size(14.dp),
+            Modifier.padding(start = gap).size(WINDOW_ICON_SIZE),
         )
+    }
+}
+
+/**
+ * The Logcat segment's [label], or, when [iconOnly] (Logcat is in its own window and the segment is too narrow for the
+ * label and its marks), the window icon in its place, the two cross-fading over [LABEL_SWAP_MILLIS]. The icon carries
+ * the segment's name for accessibility; while [live] the green dot sits on its top-end corner as a badge, ringed in the
+ * segment's background ([ring]).
+ */
+@Composable
+private fun LogcatSegmentLabel(
+    label: @Composable (Modifier) -> Unit,
+    iconOnly: Boolean,
+    live: Boolean,
+    ring: androidx.compose.ui.graphics.Color,
+    tint: androidx.compose.ui.graphics.Color,
+) {
+    val easing = if (iconOnly) EmphasizedAccelerate else EmphasizedDecelerate
+    val toIcon by animateFloatAsState(if (iconOnly) 1f else 0f, tween(LABEL_SWAP_MILLIS, easing = easing))
+    Box(contentAlignment = Alignment.Center) {
+        // Hidden behind the icon, the label keeps the segment's width and leaves the name to the icon.
+        label(
+            Modifier.graphicsLayer { alpha = 1f - toIcon }
+                .then(if (iconOnly) Modifier.clearAndSetSemantics { } else Modifier),
+        )
+        if (iconOnly || toIcon > 0f) {
+            Box(Modifier.size(WINDOW_ICON_SIZE).graphicsLayer { alpha = toIcon }) {
+                Icon(
+                    Icons.AutoMirrored.Filled.OpenInNew,
+                    contentDescription = if (iconOnly) "Logcat, open in its own window" else null,
+                    Modifier.fillMaxSize(),
+                    tint = tint,
+                )
+                AnimatedVisibility(
+                    visible = live && iconOnly,
+                    modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp),
+                    enter = scaleIn(growSpec(true)),
+                    exit = scaleOut(growSpec(false)),
+                ) {
+                    LiveDot(Modifier.background(ring, CircleShape).padding(1.5.dp))
+                }
+            }
+        }
     }
 }
