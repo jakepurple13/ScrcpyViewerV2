@@ -176,6 +176,15 @@ class LogcatToolbarTest {
         frames(5)
     }
 
+    /** Whether the focused node, or a node inside it, carries [label] as its description or text. */
+    private fun SceneDriver.focusedMentions(label: String): Boolean {
+        fun SemanticsNode.mentions(): Boolean =
+            config.getOrNull(SemanticsProperties.ContentDescription)?.contains(label) == true ||
+                config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == label } ||
+                children.any { it.mentions() }
+        return nodes().any { it.config.getOrNull(SemanticsProperties.Focused) == true && it.mentions() }
+    }
+
     private fun SceneDriver.fieldFocused(): Boolean = field().config.getOrNull(SemanticsProperties.Focused) == true
 
     private fun SceneDriver.fieldSelection(): TextRange? = field().config.getOrNull(SemanticsProperties.TextSelectionRange)
@@ -403,10 +412,63 @@ class LogcatToolbarTest {
             press(AwtKeyEvent.VK_TAB)
             frames(5)
             assertFalse(fieldFocused(), "Tab left the field")
+            assertTrue(focusedMentions("Start logcat"), "the Play button has focus")
             space()
             assertEquals(LogcatRun.Running, controller.run)
+            frames(30)
+            assertTrue(focusedMentions("Pause logcat"), "the Play button keeps focus")
             space()
             assertEquals(LogcatRun.Paused, controller.run)
+        }
+    }
+
+    @Test
+    fun `holding Space toggles once per press`() = onEdt {
+        withScene {
+            controller.play()
+            settle()
+            frames(30)
+            clickList()
+            repeat(4) { scene.sendKeyEvent(key(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_SPACE, ' ')) } // auto-repeat
+            frames(5)
+            assertEquals(LogcatRun.Paused, controller.run, "one toggle for the held key")
+            scene.sendKeyEvent(key(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_SPACE, ' '))
+            frames(5)
+            assertEquals(LogcatRun.Paused, controller.run, "the release doesn't toggle")
+            space()
+            assertEquals(LogcatRun.Running, controller.run, "the next press toggles again")
+        }
+    }
+
+    @Test
+    fun `Space on a focused chip activates the chip, not play`() = onEdt {
+        withScene {
+            click(field())
+            press(AwtKeyEvent.VK_ESCAPE)
+            press(AwtKeyEvent.VK_TAB) // Play
+            press(AwtKeyEvent.VK_TAB) // Picked app
+            frames(5)
+            assertTrue(focusedMentions("Picked app"), "the chip has focus")
+            space()
+            assertEquals("package:mine", controller.query, "Space clicked the chip")
+            assertEquals(LogcatRun.NotStarted, controller.run, "and didn't play")
+        }
+    }
+
+    @Test
+    fun `off macOS Ctrl+K and Ctrl+F type no control character into the filter`() = onEdt {
+        withScene(isMac = false) {
+            click(field())
+            press(AwtKeyEvent.VK_ESCAPE)
+            for ((code, char) in listOf(AwtKeyEvent.VK_K to '\u000b', AwtKeyEvent.VK_F to '\u0006')) {
+                val ctrl = AwtKeyEvent.CTRL_DOWN_MASK
+                scene.sendKeyEvent(key(AwtKeyEvent.KEY_PRESSED, code, char, ctrl))
+                scene.sendKeyEvent(key(AwtKeyEvent.KEY_TYPED, code, char, ctrl))
+                scene.sendKeyEvent(key(AwtKeyEvent.KEY_RELEASED, code, char, ctrl))
+                frames(5)
+            }
+            assertEquals("", controller.query)
+            assertTrue(fieldFocused())
         }
     }
 

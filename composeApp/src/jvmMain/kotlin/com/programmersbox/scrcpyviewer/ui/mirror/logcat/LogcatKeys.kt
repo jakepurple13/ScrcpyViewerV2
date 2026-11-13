@@ -14,25 +14,21 @@ import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.key.utf16CodePoint
 
 /** What a key does in the Logcat tab (the spec's Keys). */
 enum class LogcatKey { TogglePlay, FocusFilter, Clear }
 
 /**
  * The Logcat tab's action for [event], or null when it is not one of the tab's keys. ⌘ on macOS ([isMac]) and Ctrl
- * elsewhere is the command modifier; the other platform's modifier never stands in for it. Plain Space is
- * [LogcatKey.TogglePlay] on every event it makes (press, typed, release, so a focused button never clicks too), except
- * while focus is in the filter field ([inField]), where it types. ⌘F and ⌘K act on the press, from the field too.
+ * elsewhere is the command modifier; the other platform's modifier never stands in for it. A plain Space press or
+ * release is [LogcatKey.TogglePlay], except while focus is in the filter field ([inField]), where it types. ⌘F and ⌘K
+ * act on the press, from the field too.
  */
 fun logcatKeyAction(event: KeyEvent, isMac: Boolean, inField: Boolean): LogcatKey? {
     val ctrl = event.isCtrlPressed
     val meta = event.isMetaPressed
     val plain = !ctrl && !meta && !event.isAltPressed && !event.isShiftPressed
-    val space = when (event.type) {
-        KeyEventType.KeyDown, KeyEventType.KeyUp -> event.key == Key.Spacebar
-        else -> event.utf16CodePoint == ' '.code
-    }
+    val space = event.type != KeyEventType.Unknown && event.key == Key.Spacebar
     if (space) return LogcatKey.TogglePlay.takeIf { plain && !inField }
     if (event.type != KeyEventType.KeyDown) return null
     val cmd = if (isMac) meta && !ctrl else ctrl && !meta

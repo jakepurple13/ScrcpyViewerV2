@@ -57,6 +57,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.SemanticsPropertyKey
@@ -90,7 +92,7 @@ private const val PULSE_MILLIS = 900
  * list and the status bar. [motion] is false under the OS's reduce motion.
  *
  * Keys, with focus anywhere in the tab ([logcatKeyAction]; ⌘ on macOS per [isMac], Ctrl elsewhere): Space plays or
- * pauses (outside the filter field), ⌘F focuses the filter with its text selected, ⌘K clears the list. The sheet
+ * pauses (once per press; not in the filter field or on a control that takes Space itself), ⌘F focuses the filter with its text selected, ⌘K clears the list. The sheet
  * holds focus, so none of them reach the device.
  */
 @Composable
@@ -101,19 +103,34 @@ fun LogcatTab(
     isMac: Boolean = Os.isMac,
 ) {
     val filterFocus = remember { LogcatFilterFocus() }
+    // True from a Space press that toggled until its release: the key's auto-repeat presses don't toggle again.
+    val spaceHeld = remember { BooleanArray(1) }
     Column(
-        Modifier.fillMaxSize().onPreviewKeyEvent { event ->
-            val key = logcatKeyAction(event, isMac, inField = filterFocus.focused) ?: return@onPreviewKeyEvent false
-            // Space's typed and release events are consumed too, so a focused button doesn't click as well.
-            if (event.type == KeyEventType.KeyDown) {
-                when (key) {
-                    LogcatKey.TogglePlay -> controller.toggle()
+        Modifier.fillMaxSize()
+            .onFocusChanged { if (!it.hasFocus) spaceHeld[0] = false }
+            // ⌘F and ⌘K before anything in the tab, the filter field included.
+            .onPreviewKeyEvent { event ->
+                when (logcatKeyAction(event, isMac, inField = filterFocus.focused)) {
                     LogcatKey.FocusFilter -> filterFocus.focusAndSelectAll()
                     LogcatKey.Clear -> controller.clear()
+                    LogcatKey.TogglePlay, null -> return@onPreviewKeyEvent false
                 }
+                true
             }
-            true
-        },
+            // Space after the focused control: a chip, toggle or button that takes Space keeps it (the Play
+            // button's own click toggles); the list and the tab's plain areas get play and pause.
+            .onKeyEvent { event ->
+                if (logcatKeyAction(event, isMac, inField = filterFocus.focused) != LogcatKey.TogglePlay) {
+                    return@onKeyEvent false
+                }
+                if (event.type == KeyEventType.KeyDown) {
+                    if (!spaceHeld[0]) controller.toggle()
+                    spaceHeld[0] = true
+                } else {
+                    spaceHeld[0] = false
+                }
+                true
+            },
     ) {
         Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top) {
