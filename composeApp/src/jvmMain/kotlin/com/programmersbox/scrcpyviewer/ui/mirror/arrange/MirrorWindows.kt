@@ -15,8 +15,10 @@ import kotlin.coroutines.EmptyCoroutineContext
  *
  * [info] is its frame and chrome now; [floating] false while maximized or fullscreen; [showing] false while it is not
  * on screen yet, or grows or shrinks (open and close animations). [arranging] is set by the arranger while it moves the
- * window: the window's own sizing and aspect effects wait meanwhile. [uiContext] is where the window's native calls
- * and animation frames run (its composition's context; any Job in it is ignored).
+ * window: the window's own sizing and aspect effects wait meanwhile. [appSizing] is true while the app itself moves or
+ * resizes the window (the quick actions sheet growing it, the size following a new frame size or Fit): such changes are
+ * never the user's. [uiContext] is where the window's native calls and animation frames run (its composition's
+ * context; any Job in it is ignored).
  */
 class WindowEntry(
     val handle: MirrorWindowHandle,
@@ -25,6 +27,7 @@ class WindowEntry(
     val minimized: () -> Boolean,
     val showing: () -> Boolean,
     val arranging: MutableState<Boolean>,
+    val appSizing: StateFlow<Boolean> = MutableStateFlow(false),
     val uiContext: CoroutineContext = EmptyCoroutineContext,
 )
 

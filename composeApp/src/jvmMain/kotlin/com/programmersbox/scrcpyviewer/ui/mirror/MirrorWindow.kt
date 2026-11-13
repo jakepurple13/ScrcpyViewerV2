@@ -212,7 +212,9 @@ import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
@@ -782,6 +784,10 @@ fun MirrorWindow(
         val lastFit = remember { BooleanArray(1) { fit } } // the same, for Fit
         // The stage's width (px) while the window grows or shrinks for the quick actions sheet (see the sheet effect).
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
+        // True for a moment after the sizing effect below resizes the window (a new frame size, Fit back on): the
+        // arranger must not take that resize for the user's.
+        val appResizing = remember { mutableStateOf(false) }
+        val appResizeHold = remember { arrayOfNulls<Job>(1) }
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
         // Keyed on the pin clearing too: a height the user dragged during a sheet animation is corrected once it ends.
         LaunchedEffect(stage, displayedSize, fit, pinnedStage == null, held) {
@@ -847,6 +853,13 @@ fun MirrorWindow(
             if (target != null && (abs(target.width - stage.width) > 2 || abs(target.height - stage.height) > 2)) {
                 val dw = (target.width - stage.width) / density.density
                 val dh = (target.height - stage.height) / density.density
+                appResizing.value = true
+                appResizeHold[0]?.cancel()
+                // On uiScope: this effect restarts as soon as the stage takes the new size.
+                appResizeHold[0] = uiScope.launch {
+                    delay(APP_RESIZE_HOLD_MS)
+                    appResizing.value = false
+                }
                 windowState.size = DpSize(windowState.size.width + dw.dp, windowState.size.height + dh.dp)
             }
         }
@@ -887,7 +900,10 @@ fun MirrorWindow(
         // floating, where it is skipped anyway), and leaves as it closes.
         val arrangeFrame by rememberUpdatedState(displayedSize)
         LaunchedEffect(handle) {
-            snapshotFlow { sizedForWake && stage != IntSize.Zero }.first { it }
+            // After the open animation too, so a Keep tiled re-apply finds the window where it will stay.
+            snapshotFlow { sizedForWake && stage != IntSize.Zero && !zooming }.first { it }
+            val appSizing = MutableStateFlow(false)
+            launch { snapshotFlow { pinnedStage != null || appResizing.value }.collect { appSizing.value = it } }
             val entry = WindowEntry(
                 handle = handle,
                 info = {
@@ -903,6 +919,7 @@ fun MirrorWindow(
                 minimized = { windowState.isMinimized },
                 showing = { shown && !zooming && !closing && handle.isShowing },
                 arranging = arranging,
+                appSizing = appSizing,
                 uiContext = uiScope.coroutineContext,
             )
             mirrorWindows.register(serial, entry)
@@ -954,6 +971,8 @@ fun MirrorWindow(
         val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
         val sheetFromStage = remember { FloatArray(1) } // dp of the sheet's width the stage gave up (SheetSplit)
         val sheetShift = remember { IntArray(1) } // px the window moved left to keep the sheet on screen
+        // An arranged window's place is its own: closing the sheet must not move it back by a shift from before.
+        LaunchedEffect(arranging.value) { if (arranging.value) sheetShift[0] = 0 }
         val sheetOpen = state.quickActions.open
         val sheetTab = state.quickActions.tab
         val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
@@ -1092,6 +1111,9 @@ private val AtLeastAvailableWidth: Modifier = Modifier.layout { measurable, cons
 
 /** How long the stage size must hold still before the aspect ratio lock corrects the window. */
 private const val ASPECT_SETTLE_MS = 150L
+
+/** How long after the window resizes itself (new frame size, Fit) its bounds changes still count as the app's. */
+private const val APP_RESIZE_HOLD_MS = 500L
 
 /**
  * Heights (window units) on the screen [window] is on: the screen's height less the menu bar and the Dock or taskbar,
