@@ -101,6 +101,10 @@ class LinksState(
     var fills by mutableIntStateOf(0)
         private set
 
+    /** Goes up each time a run ends with its outcome, so a failure can shake the result even when it came at once. */
+    var runs by mutableIntStateOf(0)
+        private set
+
     private var data by mutableStateOf(store.state.value)
 
     val result: LaunchResult? get() = outcome?.result
@@ -108,14 +112,17 @@ class LinksState(
     /** The detected kind and its chip label. */
     val kind: Pair<LinkKind, String> get() = linkKind(text)
 
-    /** What [open] runs, as fields stand. Category and the extra are used only while Intent details is open. */
+    /**
+     * What [open] runs, as fields stand. Intent details' fields (action, category, the extra) are used only while it is
+     * open: closed, the action is the default [DEFAULT_ACTION] and there is no category or extra.
+     */
     val request: LinkRequest
         get() = LinkRequest(
             link = text.trim(),
             packageName = packageName,
             // Force-stop needs an app; a stale choice after "Let Android choose" means nothing.
             before = if (before == Before.ForceStop && packageName == null) Before.None else before,
-            action = action,
+            action = if (detailsOpen) action else DEFAULT_ACTION,
             category = if (detailsOpen) category else null,
             extra = if (detailsOpen) extra.takeIf { it.key.isNotBlank() } else null,
         )
@@ -140,7 +147,7 @@ class LinksState(
 
     fun onEvent(event: LinksEvent) {
         when (event) {
-            is LinksEvent.SetText -> text = event.text
+            is LinksEvent.SetText -> changeText(event.text)
             is LinksEvent.SetPackage -> packageName = event.packageName?.takeIf { it.isNotBlank() }
             is LinksEvent.SetBefore -> before = event.before
             LinksEvent.ToggleDetails -> detailsOpen = !detailsOpen
@@ -161,8 +168,10 @@ class LinksState(
         val r = runner ?: return
         if (!canOpen) return
         val req = request
-        val chosenLabel = req.packageName?.let(::label)
         val isIntent = kind.first == LinkKind.Intent
+        // An intent URI names its own app: "Open with" is ignored for it, so it is neither named nor recorded.
+        val chosenPackage = if (isIntent) null else req.packageName
+        val chosenLabel = chosenPackage?.let(::label)
         running = true
         scope.launch {
             val found = try {
@@ -177,13 +186,14 @@ class LinksState(
                 LinkOutcome(LaunchResult(ok = false, errorLine = e.message), COULD_NOT_OPEN, e.message ?: e.toString())
             }
             outcome = found
+            runs++
             running = false
             val opened = found.result.packageName
             store.record(
                 serial,
                 LinkEntry(
                     link = req.link,
-                    packageName = req.packageName,
+                    packageName = chosenPackage,
                     appLabel = if (found.result.ok) opened?.let(::label) ?: chosenLabel else null,
                     ok = found.result.ok,
                     detail = if (found.result.ok) found.headline else found.raw ?: found.headline,
@@ -202,9 +212,15 @@ class LinksState(
     }
 
     fun fill(entry: LinkEntry) {
-        text = entry.link
+        changeText(entry.link)
         packageName = entry.packageName
         fills++
+    }
+
+    /** A different link makes the last result stale: it goes (the result strip folds away). */
+    private fun changeText(value: String) {
+        if (value != text) outcome = null
+        text = value
     }
 
     fun toggleStar(entry: LinkEntry) {

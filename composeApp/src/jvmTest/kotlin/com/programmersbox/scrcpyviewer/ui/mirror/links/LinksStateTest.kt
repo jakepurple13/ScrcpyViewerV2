@@ -278,4 +278,40 @@ class LinksStateTest {
         qa.onEvent(com.programmersbox.scrcpyviewer.ui.mirror.QuickActionEvent.Links(LinksEvent.Save))
         assertEquals(listOf("Open example.com"), opened.map { it.name })
     }
+
+    @Test
+    fun `a changed action is used only while Intent details is open`() = runTest {
+        val s = state(null, this)
+        s.onEvent(LinksEvent.SetText("https://example.com"))
+        s.onEvent(LinksEvent.ToggleDetails)
+        s.onEvent(LinksEvent.SetAction("android.intent.action.SEND"))
+        assertEquals("android.intent.action.SEND", s.request.action)
+        s.onEvent(LinksEvent.ToggleDetails)
+        assertEquals(LinksState.DEFAULT_ACTION, s.request.action)
+        assertEquals("android.intent.action.SEND", s.action, "the field keeps what was typed")
+    }
+
+    @Test
+    fun `editing the link clears the last result, and filling a different link does too`() = runTest {
+        val (s, _) = opened("myapp://x", unresolved)
+        assertNotNull(s.outcome)
+        s.onEvent(LinksEvent.SetText("myapp://x"))
+        assertNotNull(s.outcome, "the same text keeps it")
+        s.onEvent(LinksEvent.SetText("myapp://xy"))
+        assertNull(s.outcome)
+        s.onEvent(LinksEvent.Open)
+        runCurrent()
+        assertNotNull(s.outcome)
+        s.onEvent(LinksEvent.Fill(s.history.recent.last()))
+        assertNull(s.outcome)
+    }
+
+    @Test
+    fun `an intent URI is recorded without the Open with app it ignores`() = runTest {
+        val intent = "intent://scan/#Intent;scheme=zxing;package=com.google.zxing.client.android;end"
+        val (s, _) = opened(intent, coldChrome, pkg = "com.google.android.youtube")
+        val entry = s.history.recent.single()
+        assertNull(entry.packageName)
+        assertEquals("Chrome", entry.appLabel)
+    }
 }

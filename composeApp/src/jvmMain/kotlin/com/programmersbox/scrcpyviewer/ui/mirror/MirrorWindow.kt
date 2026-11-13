@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.CropSquare
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
 import com.programmersbox.scrcpyviewer.ui.mirror.files.rememberFilesBrowser
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatWindow
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
@@ -1020,6 +1021,7 @@ fun MirrorWindow(
                         shellConsole = quickActions.console,
                         filesTab = filesTab,
                         logcat = quickActions.logcat,
+                        links = quickActions.links,
                         onStageBounds = { stageBounds = it },
                         onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
@@ -1167,6 +1169,8 @@ fun MirrorContent(
     filesTab: (@Composable () -> Unit)? = null,
     /** The quick actions sheet's Logcat tab; null (no adb) says adb isn't available. */
     logcat: LogcatController? = null,
+    /** The quick actions sheet's Links tab; null (no adb) says adb isn't available. */
+    links: LinksState? = null,
     /** The quick actions sheet's bounds in root pixels while it shows, null once it is gone. */
     onSheetBounds: (Rect?) -> Unit = {},
     /** Taps the leading window sent here: the same dot and click ring, at the spot they landed. */
@@ -1257,6 +1261,7 @@ fun MirrorContent(
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
             val panel = rememberQuickActionsPanel(
                 state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
+                links,
             )
             // Where the sheet is, so the window's file drop leaves it to the sheet (the Files tab takes drops there).
             val currentSheetBounds by rememberUpdatedState(onSheetBounds)

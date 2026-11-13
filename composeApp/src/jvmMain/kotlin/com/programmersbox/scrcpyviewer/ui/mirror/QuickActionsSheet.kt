@@ -11,6 +11,16 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.material3.Surface
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -95,6 +105,8 @@ import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.ui.mirror.files.AdbUnavailableState
+import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState
+import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksTabContent
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatSheetTab
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
@@ -201,6 +213,7 @@ fun rememberQuickActionsPanel(
     rowWidth: Dp?,
     filesTab: (@Composable () -> Unit)? = null,
     logcat: LogcatController? = null,
+    links: LinksState? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
@@ -208,9 +221,13 @@ fun rememberQuickActionsPanel(
     val currentRowWidth by rememberUpdatedState(rowWidth)
     val currentFilesTab by rememberUpdatedState(filesTab)
     val currentLogcat by rememberUpdatedState(logcat)
+    val currentLinks by rememberUpdatedState(links)
     return remember {
         movableContentOf { modifier: Modifier ->
-            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab, currentLogcat)
+            QuickActionsPanel(
+                currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab, currentLogcat,
+                links = currentLinks,
+            )
         }
     }
 }
@@ -234,6 +251,8 @@ fun QuickActionsPanel(
     logcat: LogcatController? = null,
     /** False under the OS's reduce motion: the Logcat segment's marks and label swap snap. */
     motion: Boolean = remember { !systemReducesMotion() },
+    /** The Links tab's state; null (no adb) says adb isn't available. */
+    links: LinksState? = null,
 ) {
     fun fit(width: Dp, tab: SheetTab) = if (rowWidth == null) {
         width.coerceAtLeast(SheetWidths.default(tab))
@@ -293,7 +312,7 @@ fun QuickActionsPanel(
                 onEvent(QuickActionEvent.ResetWidth)
             },
         )
-        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab, logcat, shown, motion)
+        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab, logcat, shown, motion, links)
     }
 }
 
@@ -307,6 +326,7 @@ private fun RowScope.SheetContent(
     logcat: LogcatController?,
     sheetWidth: Dp,
     motion: Boolean,
+    links: LinksState?,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -319,6 +339,7 @@ private fun RowScope.SheetContent(
                     when (state.tab) {
                         SheetTab.Files -> "Browse and move files on this device"
                         SheetTab.Logcat -> "Live log from this device"
+                        SheetTab.Links -> "Open a link or intent on this device"
                         else -> "Runs adb shell on this device"
                     },
                     style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
@@ -359,8 +380,12 @@ private fun RowScope.SheetContent(
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
                 // No Files tab content means no adb: say so rather than show nothing.
                 SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
-                // The Links tab's content comes with Task 4 of the link launcher; until then, an empty panel.
-                SheetTab.Links -> Box(Modifier.fillMaxSize())
+                // No Links state means no adb, said the same way.
+                SheetTab.Links -> if (links != null) {
+                    LinksTabContent(links, state.apps, state.enabled, { onEvent(QuickActionEvent.Links(it)) }, motion = motion)
+                } else {
+                    AdbUnavailableState()
+                }
                 // No controller means no adb, said the same way.
                 SheetTab.Logcat -> if (logcat != null) LogcatSheetTab(logcat, sheetWidth, motion) else AdbUnavailableState()
                 SheetTab.Shell -> if (console != null) {
@@ -385,10 +410,32 @@ private val SMALL_LABEL_UNDER = 60.dp
 private val TABS_SIDE_PADDING = 12.dp
 private val TRACK_PADDING = 3.dp
 
+/** Segments narrower than this show their icons instead of their names (six names don't fit the narrowest sheet). */
+internal val ICON_SEGMENT_UNDER = 56.dp
+
+/** The names ⇄ icons cross-fade as the sheet is resized across [ICON_SEGMENT_UNDER]. */
+internal const val SEGMENT_ICONS_MILLIS = 200
+
+/** Segment icons, and the gap after one to the Shell dot or Files badge (smaller than a name's: segments are narrow). */
+private val SEGMENT_ICON_SIZE = 16.dp
+private val ICON_GAP = 2.dp
+
+/** Each tab's icon in the icon-only tab bar. */
+internal fun SheetTab.icon(): ImageVector = when (this) {
+    SheetTab.Actions -> Icons.Filled.Bolt
+    SheetTab.Apps -> Icons.Filled.Apps
+    SheetTab.Shell -> Icons.Filled.Terminal
+    SheetTab.Files -> Icons.Filled.Folder
+    SheetTab.Links -> Icons.Filled.Link
+    SheetTab.Logcat -> Icons.AutoMirrored.Filled.List
+}
+
 /**
- * The Actions / Apps / Shell / Files / Logcat segmented control. The highlight glides to the selected segment with the
- * tab switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of running
- * transfers, the Logcat one a window icon while Logcat is in its own window (plus a green dot while it runs there).
+ * The Actions / Apps / Shell / Files / Links / Logcat segmented control. The highlight glides to the selected segment
+ * with the tab switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of
+ * running transfers, the Logcat one a window icon while Logcat is in its own window (plus a green dot while it runs
+ * there). When a segment would be narrower than [ICON_SEGMENT_UNDER] every segment shows its icon instead of its name,
+ * with the name as a tooltip, the two cross-fading over [SEGMENT_ICONS_MILLIS]; the dot, badge and window icon stay.
  */
 @Composable
 private fun SheetTabs(
@@ -419,19 +466,26 @@ private fun SheetTabs(
     // never snaps the labels halfway through the sheet's resize.
     val track = sheetWidth - SHEET_DRAG_BAR_WIDTH - TABS_SIDE_PADDING * 2 - TRACK_PADDING * 2
     val compact = track / segments < SMALL_LABEL_UNDER
-    val toCompact by animateFloatAsState(if (compact) 1f else 0f, growSpec(!compact)) // larger labels as the sheet grows
+    val toCompact by animateFloatAsState(if (compact) 1f else 0f, segmentSpec(!compact, motion)) // larger labels as the sheet grows
     val typography = MaterialTheme.typography
     val labelStyle = typography.labelLarge.copy(
         fontSize = lerp(typography.labelLarge.fontSize, typography.labelSmall.fontSize, toCompact),
         letterSpacing = lerp(typography.labelLarge.letterSpacing.takeIf { it.isSp } ?: 0.sp, 0.sp, toCompact),
     )
-    // Between a label and the Shell dot or Files badge: "Files" plus its badge needs the narrower gap at 280 dp.
-    val gap = lerp(6.dp, 4.dp, toCompact)
+    // Six names don't fit the narrowest sheets: under 56 dp a segment, icons replace them (decided, like the label size,
+    // from the width the sheet settles on, so a tab switch cross-fades from its first frame).
+    val iconMode = track / segments < ICON_SEGMENT_UNDER
+    val toIconState = animateFloatAsState(if (iconMode) 1f else 0f, if (motion) tween(SEGMENT_ICONS_MILLIS) else snap())
+    val toIcon by toIconState
+    // Between a label and the Shell dot or Files badge: "Files" plus its badge needs the narrower gap at small sizes,
+    // and an icon the narrowest (a segment is then about 40 dp).
+    val gap = lerp(lerp(6.dp, 4.dp, toCompact), ICON_GAP, toIcon)
     // While Logcat is in its own window, its segment swaps the label for the window icon when the label, dot and icon
     // don't fit side by side: decided, like the label size, from the width the sheet settles on, in the settled style.
+    // With icons for names, the window icon (badged with the live dot) stands for Logcat.
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    val logcatIconOnly = logcatPopped && run {
+    val logcatIconOnly = logcatPopped && iconMode || logcatPopped && run {
         val settled = if (compact) {
             typography.labelSmall.copy(letterSpacing = 0.sp)
         } else {
@@ -461,54 +515,61 @@ private fun SheetTabs(
         Row(Modifier.fillMaxSize().selectableGroup()) {
             SheetTab.entries.forEach { segment ->
                 val selected = segment == tab
-                Row(
-                    Modifier.weight(1f).fillMaxHeight().clip(SegmentShape)
-                        .selectable(selected, role = Role.Tab) { onSelect(segment) },
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val label = @Composable { labelModifier: Modifier ->
-                        Text(
-                            segment.name, labelModifier, style = labelStyle, maxLines = 1,
-                            color = if (selected) colors.onSurface else colors.onSurfaceVariant,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                        )
-                    }
-                    if (segment == SheetTab.Logcat) {
-                        LogcatSegmentLabel(
-                            label, logcatIconOnly, logcatLive,
-                            ring = if (selected) colors.surface else colors.surfaceContainerHighest,
-                            tint = if (selected) colors.onSurface else colors.onSurfaceVariant,
-                            motion = motion,
-                        )
-                    } else {
-                        label(Modifier)
-                    }
-                    if (segment == SheetTab.Shell && consoleRunning) {
-                        Box(
-                            Modifier.padding(start = gap).size(6.dp).background(colors.error, CircleShape)
-                                .semantics { contentDescription = "Command running" },
-                        )
-                    }
-                    if (segment == SheetTab.Files) {
-                        AnimatedVisibility(
-                            visible = filesRunning > 0,
-                            enter = scaleIn(growSpec(true)),
-                            exit = scaleOut(growSpec(false)),
-                        ) {
-                            val count = lastCount
-                            Box(
-                                Modifier.padding(start = gap).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
-                                    .semantics { contentDescription = if (count == 1) "1 transfer running" else "$count transfers running" }
-                                    .background(colors.primary, CircleShape).padding(horizontal = 4.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(count.toString(), style = MaterialTheme.typography.labelSmall, color = colors.onPrimary)
+                SegmentTooltip(segment.name, show = iconMode, Modifier.weight(1f).fillMaxHeight()) {
+                    Row(
+                        Modifier.fillMaxSize().clip(SegmentShape)
+                            .selectable(selected, role = Role.Tab) { onSelect(segment) },
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val tint = if (selected) colors.onSurface else colors.onSurfaceVariant
+                        val label = @Composable { labelModifier: Modifier ->
+                            SegmentName(
+                                segment.name, segment.icon(), iconMode, { toIconState.value }, labelModifier, tint,
+                            ) { wordModifier ->
+                                Text(
+                                    segment.name, wordModifier, style = labelStyle, maxLines = 1, softWrap = false,
+                                    color = tint,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
                             }
                         }
-                    }
-                    if (segment == SheetTab.Logcat) {
-                        LogcatSegmentMarks(logcatPopped && !logcatIconOnly, logcatLive && !logcatIconOnly, gap, motion)
+                        if (segment == SheetTab.Logcat) {
+                            LogcatSegmentLabel(
+                                label, logcatIconOnly, logcatLive,
+                                ring = if (selected) colors.surface else colors.surfaceContainerHighest,
+                                tint = if (selected) colors.onSurface else colors.onSurfaceVariant,
+                                motion = motion,
+                            )
+                        } else {
+                            label(Modifier)
+                        }
+                        if (segment == SheetTab.Shell && consoleRunning) {
+                            Box(
+                                Modifier.padding(start = gap).size(6.dp).background(colors.error, CircleShape)
+                                    .semantics { contentDescription = "Command running" },
+                            )
+                        }
+                        if (segment == SheetTab.Files) {
+                            AnimatedVisibility(
+                                visible = filesRunning > 0,
+                                enter = scaleIn(growSpec(true)),
+                                exit = scaleOut(growSpec(false)),
+                            ) {
+                                val count = lastCount
+                                Box(
+                                    Modifier.padding(start = gap).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                        .semantics { contentDescription = if (count == 1) "1 transfer running" else "$count transfers running" }
+                                        .background(colors.primary, CircleShape).padding(horizontal = 4.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(count.toString(), style = MaterialTheme.typography.labelSmall, color = colors.onPrimary)
+                                }
+                            }
+                        }
+                        if (segment == SheetTab.Logcat) {
+                            LogcatSegmentMarks(logcatPopped && !logcatIconOnly, logcatLive && !logcatIconOnly, gap, motion)
+                        }
                     }
                 }
             }
@@ -605,4 +666,66 @@ private fun LogcatSegmentLabel(
             }
         }
     }
+}
+
+/**
+ * A segment's name: [word] (the label) or, in [iconMode], [icon], cross-fading by [toIcon] (0 the word, 1 the icon).
+ * The width eases between the two, so the Shell dot and Files badge after it slide along rather than jump. In icon mode
+ * the icon carries the name for accessibility and the hidden word is not read out.
+ */
+@Composable
+private fun SegmentName(
+    name: String,
+    icon: ImageVector,
+    iconMode: Boolean,
+    toIcon: () -> Float,
+    modifier: Modifier,
+    tint: androidx.compose.ui.graphics.Color,
+    word: @Composable (Modifier) -> Unit,
+) {
+    Layout(
+        content = {
+            word(
+                Modifier.graphicsLayer { alpha = 1f - toIcon() }
+                    .then(if (iconMode) Modifier.clearAndSetSemantics { } else Modifier),
+            )
+            Icon(
+                icon, contentDescription = if (iconMode) name else null,
+                Modifier.size(SEGMENT_ICON_SIZE).graphicsLayer { alpha = toIcon() }, tint = tint,
+            )
+        },
+        modifier = modifier,
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val wordPlaceable = measurables[0].measure(loose)
+        val iconPlaceable = measurables[1].measure(loose)
+        val t = toIcon()
+        val width = constraints.constrainWidth((wordPlaceable.width + (iconPlaceable.width - wordPlaceable.width) * t).roundToInt())
+        val height = maxOf(wordPlaceable.height, iconPlaceable.height)
+        layout(width, height) {
+            wordPlaceable.placeRelative((width - wordPlaceable.width) / 2, (height - wordPlaceable.height) / 2)
+            iconPlaceable.placeRelative((width - iconPlaceable.width) / 2, (height - iconPlaceable.height) / 2)
+        }
+    }
+}
+
+/** The segment's name as a hover tooltip while [show] (segments show icons); nothing otherwise. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SegmentTooltip(name: String, show: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val showing by rememberUpdatedState(show)
+    TooltipArea(
+        tooltip = {
+            if (showing) {
+                Surface(shape = RoundedCornerShape(4.dp), color = colors.inverseSurface) {
+                    Text(
+                        name, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall, color = colors.inverseOnSurface,
+                    )
+                }
+            }
+        },
+        modifier = modifier,
+    ) { content() }
 }
