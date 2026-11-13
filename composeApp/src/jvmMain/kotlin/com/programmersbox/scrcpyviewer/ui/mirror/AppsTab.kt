@@ -55,6 +55,10 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -81,6 +85,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -239,10 +245,41 @@ private class AppActions(
     val uninstall: (DeviceApp) -> Unit,
 )
 
-/** The pill-shaped search field. Esc clears it first; an Esc on an empty field goes on to close the sheet. */
+/**
+ * The pill-shaped search field. Esc clears it first; an Esc on an empty field goes on to close the sheet.
+ *
+ * The field owns its text ([rememberTextFieldState]) and reports changes outward. [query] comes back through the view
+ * model, the sheet's uiState and a movable panel, which lags typing by a frame or more: feeding it straight into
+ * the field reset every keystroke to a stale value (the cursor jumped back and characters were lost). So a
+ * [query] that is one this field sent is ignored; any other is an outside change (the view model's) and replaces the text.
+ */
 @Composable
-private fun SearchField(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun SearchField(query: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
+    val text = rememberTextFieldState(query)
+    val onChangeNow by rememberUpdatedState(onChange)
+    // What this field has sent that [query] has not yet echoed, oldest first. Plain holders, not state.
+    val sent = remember { ArrayDeque<String>() }
+    val last = remember { arrayOf(query) }
+    LaunchedEffect(text) {
+        snapshotFlow { text.text.toString() }.collect {
+            if (it != last[0]) {
+                last[0] = it
+                sent.addLast(it)
+                onChangeNow(it)
+            }
+        }
+    }
+    LaunchedEffect(query) {
+        val echoed = sent.indexOf(query)
+        if (echoed >= 0) {
+            repeat(echoed + 1) { sent.removeFirst() }
+        } else if (text.text.toString() != query) {
+            sent.clear()
+            last[0] = query
+            text.setTextAndPlaceCursorAtEnd(query)
+        }
+    }
     var focused by remember { mutableStateOf(false) }
     val ring by animateDpAsState(if (focused) 2.dp else 0.dp, tween(150))
     val container by animateColorAsState(if (focused) colors.surfaceBright else colors.surfaceContainerHighest, tween(150))
@@ -253,21 +290,20 @@ private fun SearchField(query: String, onChange: (String) -> Unit, modifier: Mod
     ) {
         Icon(Icons.Filled.Search, contentDescription = null, Modifier.size(18.dp), tint = colors.onSurfaceVariant)
         Box(Modifier.weight(1f).padding(start = 10.dp), contentAlignment = Alignment.CenterStart) {
-            if (query.isEmpty()) {
+            if (text.text.isEmpty()) {
                 Text("Search apps or packages", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
             }
             BasicTextField(
-                value = query,
-                onValueChange = onChange,
-                singleLine = true,
+                state = text,
+                lineLimits = TextFieldLineLimits.SingleLine,
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface),
                 cursorBrush = SolidColor(colors.primary),
                 modifier = Modifier.fillMaxWidth()
                     .onFocusChanged { focused = it.isFocused }
                     .semantics { contentDescription = "Search apps by name or package" }
                     .onPreviewKeyEvent { event ->
-                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && query.isNotEmpty()) {
-                            onChange("")
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.Escape && text.text.isNotEmpty()) {
+                            text.clearText()
                             true
                         } else {
                             false
@@ -276,11 +312,11 @@ private fun SearchField(query: String, onChange: (String) -> Unit, modifier: Mod
             )
         }
         AnimatedVisibility(
-            visible = query.isNotEmpty(),
+            visible = text.text.isNotEmpty(),
             enter = fadeIn(tween(150)) + scaleIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate), initialScale = 0.6f),
             exit = fadeOut(tween(150)) + scaleOut(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate), targetScale = 0.6f),
         ) {
-            IconButton(onClick = { onChange("") }, Modifier.size(36.dp)) {
+            IconButton(onClick = { text.clearText() }, Modifier.size(36.dp)) {
                 Icon(Icons.Filled.Close, contentDescription = "Clear search", Modifier.size(18.dp))
             }
         }
