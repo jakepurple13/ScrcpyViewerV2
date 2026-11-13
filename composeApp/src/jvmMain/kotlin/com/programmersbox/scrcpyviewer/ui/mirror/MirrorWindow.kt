@@ -919,7 +919,11 @@ fun MirrorWindow(
             // After the open animation too, so a Keep tiled re-apply finds the window where it will stay.
             snapshotFlow { sizedForWake && stage != IntSize.Zero && !zooming }.first { it }
             val appSizing = MutableStateFlow(false)
-            launch { snapshotFlow { pinnedStage != null || appResizing.value }.collect { appSizing.value = it } }
+            // The close animation (and any zoom) moves the window too: never the user's, so Keep tiled stays on.
+            launch {
+                snapshotFlow { pinnedStage != null || appResizing.value || closing || zooming }
+                    .collect { appSizing.value = it }
+            }
             val entry = WindowEntry(
                 handle = handle,
                 info = {

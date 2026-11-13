@@ -207,7 +207,8 @@ class WindowArranger(
         if (entry.appSizing.value || serial in appSettling) return
         val expected = settled[serial] ?: return
         scope.launch(entry.uiContext.withoutJob()) {
-            if (busy || entry.appSizing.value || serial in appSettling) return@launch
+            // A window that is not showing (closing, say) is moved by its own animation, not the user.
+            if (busy || entry.appSizing.value || serial in appSettling || !entry.showing()) return@launch
             if (!near(entry.handle.bounds, expected)) _state.update { it.copy(keepTiled = false) }
         }
     }

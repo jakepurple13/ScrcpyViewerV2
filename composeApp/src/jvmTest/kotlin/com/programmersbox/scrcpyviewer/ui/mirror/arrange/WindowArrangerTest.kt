@@ -83,10 +83,14 @@ class WindowArrangerTest {
         override val boundsChanges: SharedFlow<Unit> = changes
         override val size: IntSize get() = IntSize(rect.width, rect.height)
         override val isShowing: Boolean = true
-        override val focused: StateFlow<Boolean> = MutableStateFlow(false)
+        val hasFocus = MutableStateFlow(false)
+        override val focused: StateFlow<Boolean> = hasFocus
+
+        /** Called on every [toFront]. */
+        var onFront: () -> Unit = {}
         override val focusEvents: SharedFlow<Boolean> = MutableSharedFlow()
         override val nsWindow: Pointer? = null
-        override fun toFront() = Unit
+        override fun toFront() = onFront()
         override fun screen(): ScreenArea? = null
         override fun contentOrigin(): IntOffset = IntOffset(rect.x, rect.y)
     }
@@ -104,12 +108,13 @@ class WindowArrangerTest {
         chromeW: () -> Int = { 0 },
         appSizing: MutableStateFlow<Boolean> = MutableStateFlow(false),
         uiContext: CoroutineContext = EmptyCoroutineContext,
+        showing: () -> Boolean = { true },
     ) = WindowEntry(
         handle = handle,
         info = { ArrangeWindow(serial, IntSize(1080, 2400), chromeW(), 40) },
         floating = { floating },
         minimized = minimized,
-        showing = { true },
+        showing = showing,
         arranging = mutableStateOf(false),
         appSizing = appSizing,
         uiContext = uiContext,
@@ -253,6 +258,42 @@ class WindowArrangerTest {
         settle()
         assertEquals(twoUp, a.bounds)
         assertTrue(r.arranger.state.value.keepTiled)
+    }
+
+    @Test
+    fun aWindowsOwnCloseAnimationKeepsTheOthersTiled() = runTest {
+        val r = rig()
+        val a = FakeHandle(Rectangle(10, 10, 300, 600))
+        val b = FakeHandle(Rectangle(20, 20, 300, 600))
+        r.windows.register("a", entry("a", a))
+        r.windows.register("b", entry("b", b))
+        r.arranger.apply(ArrangeLayout.SideBySide, focus = null)
+        r.arranger.setKeepTiled(true)
+        settle()
+        val twoUp = a.bounds
+
+        var closing = false
+        val c = FakeHandle(Rectangle(30, 30, 300, 600))
+        val ec = entry("c", c, showing = { !closing })
+        r.windows.register("c", ec)
+        settle()
+        assertNotEquals(twoUp, a.bounds)
+
+        // c closes: it stops showing and shrinks toward its Mirror button, reporting each frame, then unregisters.
+        closing = true
+        val from = c.bounds
+        for (i in 1..4) {
+            c.appResize(
+                Rectangle(from.x + 40 * i, from.y + 60 * i, from.width - from.width * i / 5, from.height - from.height * i / 5),
+            )
+            advanceTimeBy(60)
+        }
+        runCurrent()
+        assertTrue(r.arranger.state.value.keepTiled, "a closing window's animation is not the user's")
+        r.windows.unregister("c", ec)
+        settle()
+        assertTrue(r.arranger.state.value.keepTiled)
+        assertEquals(twoUp, a.bounds, "the others are tiled again")
     }
 
     @Test
