@@ -487,7 +487,9 @@ class SheetTabsTest {
                 val steps = path.zipWithNext { a, b -> b - a }
                 assertTrue(steps.all { it >= -0.5f }, "the dot moves one way: $path")
                 assertTrue(steps.max() < (end - start) * 0.35f, "no frame jumps most of the way: $path")
-                assertTrue(path.count { it > start + 1f && it < end - 1f } >= 5, "several frames in between: $path")
+                // A margin relative to the distance: with Windows' fonts the dot moves only about 5 px in all.
+                val margin = (end - start) * 0.05f
+                assertTrue(path.count { it > start + margin && it < end - margin } >= 5, "several frames in between: $path")
             } else {
                 assertEquals(end, path[2], 0.5f, "without motion the names are back at once: $path")
             }
