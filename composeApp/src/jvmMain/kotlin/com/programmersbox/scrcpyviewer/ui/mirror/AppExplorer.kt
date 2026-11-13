@@ -29,6 +29,8 @@ data class AppsUiState(
     val icons: Map<String, ImageBitmap> = emptyMap(),
     /** Packages with a launch, force stop or uninstall running. */
     val busy: Set<String> = emptySet(),
+    /** The app picked in the Logcat tab (its card shows a "Logcat" badge); null when none is. */
+    val logcatPackage: String? = null,
 ) {
     /** The apps the grid shows: [query] and [filter] applied. */
     val visible: List<DeviceApp> get() = apps.orEmpty().matching(query, filter)
@@ -51,6 +53,9 @@ sealed interface AppsEvent {
 
     /** The package name was put on the clipboard. */
     data class Copied(val app: DeviceApp) : AppsEvent
+
+    /** Pick [app] in the Logcat tab and switch to it; [QuickActions] handles it. */
+    data class ShowInLogcat(val app: DeviceApp) : AppsEvent
 }
 
 /**
@@ -94,6 +99,7 @@ class AppExplorer(
                 apps = apps?.filterNot { it.packageName == app.packageName }
             }
             is AppsEvent.Copied -> notify("Copied ${event.app.packageName}")
+            is AppsEvent.ShowInLogcat -> Unit // the sheet's, not this tab's
         }
     }
 
