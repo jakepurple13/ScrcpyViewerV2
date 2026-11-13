@@ -356,7 +356,7 @@ private fun RowScope.SheetContent(
                 // No Files tab content means no adb: say so rather than show nothing.
                 SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
                 // No controller means no adb, said the same way.
-                SheetTab.Logcat -> if (logcat != null) LogcatSheetTab(logcat, sheetWidth) else AdbUnavailableState()
+                SheetTab.Logcat -> if (logcat != null) LogcatSheetTab(logcat, sheetWidth, motion) else AdbUnavailableState()
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,
@@ -372,7 +372,7 @@ private fun RowScope.SheetContent(
 private val TrackShape = RoundedCornerShape(10.dp)
 private val SegmentShape = RoundedCornerShape(8.dp)
 
-/** Segments narrower than this use labelMedium for their labels instead of labelLarge. */
+/** Segments narrower than this use labelSmall for their labels instead of labelLarge (Linux fonts run wider). */
 private val SMALL_LABEL_UNDER = 60.dp
 
 /** Space left and right of the segmented control, and inside its track around the segments. */
@@ -408,7 +408,7 @@ private fun SheetTabs(
     SideEffect { previous[0] = tab }
     var lastCount by remember { mutableIntStateOf(filesRunning) } // stays readable while the badge scales out
     if (filesRunning > 0 && filesRunning != lastCount) lastCount = filesRunning
-    // Five labels fit the Actions tab's 280 dp only a size down (and without tracking, for the Shell dot and Files
+    // Five labels fit the Actions tab's 280 dp only two sizes down (and without tracking, for the Shell dot and Files
     // badge). Picked from the width the sheet settles on and eased with the width's own timing, so a tab switch
     // never snaps the labels halfway through the sheet's resize.
     val track = sheetWidth - SHEET_DRAG_BAR_WIDTH - TABS_SIDE_PADDING * 2 - TRACK_PADDING * 2
@@ -416,7 +416,7 @@ private fun SheetTabs(
     val toCompact by animateFloatAsState(if (compact) 1f else 0f, growSpec(!compact)) // larger labels as the sheet grows
     val typography = MaterialTheme.typography
     val labelStyle = typography.labelLarge.copy(
-        fontSize = lerp(typography.labelLarge.fontSize, typography.labelMedium.fontSize, toCompact),
+        fontSize = lerp(typography.labelLarge.fontSize, typography.labelSmall.fontSize, toCompact),
         letterSpacing = lerp(typography.labelLarge.letterSpacing.takeIf { it.isSp } ?: 0.sp, 0.sp, toCompact),
     )
     // Between a label and the Shell dot or Files badge: "Files" plus its badge needs the narrower gap at 280 dp.
@@ -427,7 +427,7 @@ private fun SheetTabs(
     val density = LocalDensity.current
     val logcatIconOnly = logcatPopped && run {
         val settled = if (compact) {
-            typography.labelMedium.copy(letterSpacing = 0.sp)
+            typography.labelSmall.copy(letterSpacing = 0.sp)
         } else {
             typography.labelLarge
         }

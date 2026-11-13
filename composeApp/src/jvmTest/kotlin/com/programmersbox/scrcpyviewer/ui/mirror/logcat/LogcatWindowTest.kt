@@ -97,7 +97,7 @@ class LogcatWindowTest {
     @Test
     fun `Logcat tab shows the own-window card with Show window and Move back here while popped`() = onEdt {
         val driver = scene(600) {
-            QuickActionsPanel(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat), {}, console = null, logcat = controller)
+            QuickActionsPanel(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat), {}, console = null, logcat = controller, motion = true)
         }
         assertNull(driver.text("Logcat is open in its own window"))
         assertNotNull(driver.described("Open in new window"))
