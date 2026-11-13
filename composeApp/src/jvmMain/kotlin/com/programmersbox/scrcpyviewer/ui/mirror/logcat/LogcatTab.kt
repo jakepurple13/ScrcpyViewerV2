@@ -29,8 +29,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -98,34 +96,8 @@ fun LogcatTab(controller: LogcatController, sheetWidth: Dp, motion: Boolean = re
             }
             ChipsRow(controller, motion)
         }
-        LogcatList(controller, sheetWidth, Modifier.weight(1f).fillMaxWidth())
+        LogcatList(controller, sheetWidth, motion, Modifier.weight(1f).fillMaxWidth())
         LogcatStatusBar(controller, motion)
-    }
-}
-
-/** The log itself. A plain list of messages until the colored list replaces it. */
-@Composable
-fun LogcatList(controller: LogcatController, sheetWidth: Dp, modifier: Modifier = Modifier) {
-    val scheme = MaterialTheme.colorScheme
-    LazyColumn(modifier.background(scheme.surfaceContainerLowest)) {
-        items(controller.visible, key = { it.key }) { item ->
-            when (item) {
-                is LogcatItem.Line -> Text(
-                    item.entry.line.message,
-                    Modifier.padding(horizontal = 12.dp, vertical = 1.dp),
-                    style = LogcatMono.copy(fontSize = 12.sp),
-                    color = LogcatColors.message(item.entry.line.level),
-                    maxLines = if (controller.wrap) Int.MAX_VALUE else 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                is LogcatItem.Gap -> Text(
-                    "Paused ${item.pausedAt} – ${item.resumedAt}",
-                    Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = scheme.onSurfaceVariant,
-                )
-            }
-        }
     }
 }
 

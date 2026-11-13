@@ -271,6 +271,9 @@ class LogcatController(
         nudge++
     }
 
+    /** Shows [message] as a toast, for the list's clicks. */
+    internal fun toast(message: String) = notify(message)
+
     /** Tags (with line counts), packages and processes seen in the list, for autocomplete. */
     fun suggestionContext(): SuggestionContext {
         val lines = items.filterIsInstance<LogcatItem.Line>()
