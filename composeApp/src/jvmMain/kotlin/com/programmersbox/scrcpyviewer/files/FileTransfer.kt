@@ -285,18 +285,22 @@ class FileTransferQueue(
 
     init {
         scope.launch {
-            try {
-                for (id in queue) run(id)
-            } finally {
-                _progress.value = null
-                // The window went away: nothing left will run, and tracked transfers are told to stop.
-                val owners = synchronized(lock) {
-                    _jobs.value = _jobs.value.map { if (it.active) it.copy(state = JobState.Cancelled) else it }
-                    trackedCancels.values.toList().also { trackedCancels.clear() }
-                }
-                owners.forEach { runCatching(it) }
-            }
-        }.invokeOnCompletion { queue.cancel() }
+            for (id in queue) run(id)
+        }.invokeOnCompletion {
+            // Here, not in a finally: a scope cancelled before the loop started never runs the loop's body.
+            queue.cancel()
+            stopAll()
+        }
+    }
+
+    /** The window went away: nothing left will run, and tracked transfers are told to stop. */
+    private fun stopAll() {
+        _progress.value = null
+        val owners = synchronized(lock) {
+            _jobs.value = _jobs.value.map { if (it.active) it.copy(state = JobState.Cancelled) else it }
+            trackedCancels.values.toList().also { trackedCancels.clear() }
+        }
+        owners.forEach { runCatching(it) }
     }
 
     /** Queues [requests] and returns their job ids; empty (and a [TransferResult.Refused]) when the device is not connected. */

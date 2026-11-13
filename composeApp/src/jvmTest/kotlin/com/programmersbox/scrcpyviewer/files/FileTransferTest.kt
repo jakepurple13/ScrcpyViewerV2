@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -640,11 +641,17 @@ class FileTransferTest {
 
     @Test
     fun `the window closing cancels tracked jobs and tells their owners`() = runBlocking<Unit> {
-        val own = CoroutineScope(Job() + Dispatchers.Default)
+        // The queue's thread is busy until after the cancel: its loop never starts, as when a window closes at once.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val hold = java.util.concurrent.CountDownLatch(1)
+        executor.execute { hold.await() }
+        val own = CoroutineScope(Job() + executor.asCoroutineDispatcher())
         val q = FileTransferQueue("SER", FakeAdb(), DEFAULT_PUSH_TARGET, { true }, {}, own, tempRoot = tmp.resolve("scrcpy-vwr"))
         val told = CompletableDeferred<Unit>()
         q.track(streamed("a.mp4")) { told.complete(Unit) }!!
         own.cancel()
+        hold.countDown()
+        executor.shutdown()
         withTimeout(5_000) { told.await() }
         withTimeout(5_000) { q.jobs.first { list -> list.single().state == JobState.Cancelled } }
     }
