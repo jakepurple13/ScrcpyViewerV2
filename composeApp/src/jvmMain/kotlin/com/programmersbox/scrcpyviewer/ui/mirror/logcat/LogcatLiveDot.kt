@@ -16,7 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 
 /** One blink of a live dot: down to [LIVE_BLINK_LOW] opacity and back, the mockup's 1.6 s. */
 internal const val LIVE_BLINK_MILLIS = 1_600

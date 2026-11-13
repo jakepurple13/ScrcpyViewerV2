@@ -1,6 +1,19 @@
 package com.programmersbox.scrcpyviewer.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.theme.AssistChip
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -101,6 +114,35 @@ class StylesScreenshotTest {
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
     }
 
+    /** The styled chips: Logcat's toggles, the Apps filter with counts, and a row of assist chips. */
+    private fun chips(style: ThemeStyle, mode: ThemeMode) {
+        val name = "styles-chips-${style.name.lowercase()}-${mode.name.lowercase()}.png"
+        val out = outDir.resolve(name)
+        renderToPng(720, 230, out, settleMillis = 1_000) {
+            shell(settings(style, mode, retroPalette = false)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(true, {}, label = { Text("Picked app") })
+                        FilterChip(false, {}, label = { Text("Warnings and up") })
+                        FilterChip(false, {}, label = { Text("Crashes") })
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(true, {}, label = { Text("All") }, trailing = { Text("142") })
+                        FilterChip(false, {}, label = { Text("User") }, trailing = { Text("38") })
+                        FilterChip(false, {}, label = { Text("System") }, trailing = { Text("104") })
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AssistChip({}, label = { Text("Grant permission") }, leadingIcon = { Icon(Icons.Filled.Lock, null, Modifier.size(18.dp)) })
+                        AssistChip({}, label = { Text("Set as default") })
+                        AssistChip({}, label = { Text("Preset: QA default") }, trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(18.dp)) })
+                        AssistChip({}, label = { Text("Disabled") }, enabled = false)
+                    }
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 5_000, "$name should not be blank")
+    }
+
     @Test fun `glass devices light`() = devices(ThemeStyle.Glass, ThemeMode.Light)
     @Test fun `glass devices dark`() = devices(ThemeStyle.Glass, ThemeMode.Dark)
     @Test fun `glass devices advanced dark`() = devices(ThemeStyle.Glass, ThemeMode.Dark, advanced = true)
@@ -116,4 +158,12 @@ class StylesScreenshotTest {
     @Test fun `soft settings light`() = appearance(ThemeStyle.Soft, ThemeMode.Light)
     @Test fun `retro settings light`() = appearance(ThemeStyle.Retro, ThemeMode.Light)
     @Test fun `material settings dark`() = appearance(ThemeStyle.Material, ThemeMode.Dark)
+    @Test fun `material chips light`() = chips(ThemeStyle.Material, ThemeMode.Light)
+    @Test fun `material chips dark`() = chips(ThemeStyle.Material, ThemeMode.Dark)
+    @Test fun `glass chips light`() = chips(ThemeStyle.Glass, ThemeMode.Light)
+    @Test fun `glass chips dark`() = chips(ThemeStyle.Glass, ThemeMode.Dark)
+    @Test fun `soft chips light`() = chips(ThemeStyle.Soft, ThemeMode.Light)
+    @Test fun `soft chips dark`() = chips(ThemeStyle.Soft, ThemeMode.Dark)
+    @Test fun `retro chips light`() = chips(ThemeStyle.Retro, ThemeMode.Light)
+    @Test fun `retro chips dark`() = chips(ThemeStyle.Retro, ThemeMode.Dark)
 }

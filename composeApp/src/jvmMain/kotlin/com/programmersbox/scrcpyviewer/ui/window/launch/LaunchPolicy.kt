@@ -5,7 +5,7 @@ import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
 import com.programmersbox.scrcpyviewer.state.Settings
 import com.programmersbox.scrcpyviewer.state.appTheme
 import com.programmersbox.scrcpyviewer.state.launchQuit
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 
 /** Where the launch overlay would run. Linux is split by session: Wayland needs the overlay on an XWayland surface. */

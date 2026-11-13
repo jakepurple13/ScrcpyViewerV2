@@ -146,7 +146,7 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
 import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import kotlinx.coroutines.launch
 import java.time.ZoneId

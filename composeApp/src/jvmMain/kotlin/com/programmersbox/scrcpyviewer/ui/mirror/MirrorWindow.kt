@@ -61,10 +61,10 @@ import com.programmersbox.scrcpyviewer.ui.mirror.files.rememberFilesBrowser
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatWindow
 import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -215,6 +215,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 
 /** Side toolbar buttons; [keycode] buttons send that Android key down and up. */
 enum class MirrorAction(val label: String, val keycode: Int? = null) {

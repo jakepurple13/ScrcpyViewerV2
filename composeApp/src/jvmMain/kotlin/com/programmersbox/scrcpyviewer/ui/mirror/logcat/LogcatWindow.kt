@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -47,7 +48,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.bringToFront
@@ -80,8 +81,6 @@ fun LogcatWindow(controller: LogcatController, deviceName: String, theme: AppThe
     val state = rememberWindowState(size = LOGCAT_WINDOW_SIZE)
     // Hidden until it is see-through, so the fade-in starts from nothing.
     var shown by remember { mutableStateOf(!motion) }
-    val snackbar = remember { SnackbarHostState() }
-    val snackScope = rememberCoroutineScope()
     LocalNucleusApplicationScope.current.AppWindow(
         onCloseRequest = controller::dock,
         title = "Logcat · $deviceName",
@@ -108,20 +107,43 @@ fun LogcatWindow(controller: LogcatController, deviceName: String, theme: AppThe
                 up = false
             }
         }
-        LaunchedEffect(window) {
-            snapshotFlow { controller.raiseRequests }.drop(1).collect { bringToFront(window) }
-        }
-        DisposableEffect(controller) {
-            controller.windowToast = { message -> snackScope.launch { snackbar.showSnackbar(message) } }
-            onDispose { controller.windowToast = null }
-        }
-        val focus = remember { FocusRequester() }
-        LaunchedEffect(focus) { focus.requestFocus() }
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-            BoxWithConstraints(Modifier.fillMaxSize().padding(top = 4.dp)) {
-                LogcatTab(controller, maxWidth, motion, inWindow = true, focusRequester = focus)
-                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 44.dp))
+        LogcatWindowContent(controller, motion, shown, onRaise = { bringToFront(window) })
+    }
+}
+
+/**
+ * What [LogcatWindow] shows inside its window: the panel ([LogcatTab]) with a snackbar for the controller's toasts
+ * while [LogcatController.popped], [onRaise] once for each [LogcatController.raise] after it composes, and the panel
+ * focused once the window is [shown], so its keys work from the start.
+ */
+@Composable
+fun LogcatWindowContent(controller: LogcatController, motion: Boolean, shown: Boolean, onRaise: () -> Unit) {
+    val snackbar = remember { SnackbarHostState() }
+    val snackScope = rememberCoroutineScope()
+    val raise by rememberUpdatedState(onRaise)
+    LaunchedEffect(controller) {
+        // A count from before this composition is not a request to this window.
+        snapshotFlow { controller.raiseRequests }.drop(1).collect { raise() }
+    }
+    val popped = controller.popped
+    DisposableEffect(controller, popped) {
+        // Toasts go back to the sheet as soon as the panel docks, not only once the closing fade has run.
+        if (popped) controller.windowToast = { message -> snackScope.launch { snackbar.showSnackbar(message) } }
+        onDispose { if (popped) controller.windowToast = null }
+    }
+    val focus = remember { FocusRequester() }
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(top = 4.dp)) {
+            LogcatTab(controller, maxWidth, motion, inWindow = true, focusRequester = focus)
+            // Here, in the same subcomposition as the tab: BoxWithConstraints composes its content only at layout,
+            // and a hidden window lays nothing out, so an effect outside it ran before the tab's requester attached.
+            // After a frame of the shown window, its focus owner has the tab.
+            LaunchedEffect(focus, shown) {
+                if (!shown) return@LaunchedEffect
+                withFrameNanos { }
+                focus.requestFocus()
             }
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 44.dp))
         }
     }
 }

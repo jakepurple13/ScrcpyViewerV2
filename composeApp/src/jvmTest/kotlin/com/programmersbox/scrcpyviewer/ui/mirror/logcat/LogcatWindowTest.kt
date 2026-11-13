@@ -3,8 +3,15 @@ package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
+import androidx.compose.ui.InternalComposeUiApi
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -25,6 +32,8 @@ import com.programmersbox.scrcpyviewer.ui.mirror.SheetTab
 import com.programmersbox.scrcpyviewer.ui.onEdt
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import java.io.ByteArrayOutputStream
+import java.io.PrintStream
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -156,5 +165,103 @@ class LogcatWindowTest {
         driver.click(checkNotNull(driver.described("Always on top")))
         assertFalse(controller.alwaysOnTop)
         assertEquals("Logcat window no longer stays on top", toasts.last())
+    }
+
+    @Test
+    fun `the window's toasts show in its snackbar while popped and go back to the sheet once it docks`() = onEdt {
+        controller.popOut()
+        var composed by mutableStateOf(true)
+        val driver = scene { if (composed) LogcatWindowContent(controller, motion = false, shown = true, onRaise = {}) }
+        controller.toast("Copied 3 lines")
+        driver.frames(10)
+        assertNotNull(driver.text("Copied 3 lines"))
+        assertEquals(emptyList(), toasts)
+
+        // Docked, the window stays composed while it fades out; its toasts already go to the sheet.
+        controller.dock()
+        driver.frames(2)
+        assertNull(controller.windowToast)
+        controller.toast("Cleared")
+        driver.frames(5)
+        assertEquals(listOf("Cleared"), toasts)
+        assertNull(driver.text("Cleared"))
+
+        // Popped out again in the same window: back to its snackbar. Gone: back to the sheet.
+        controller.popOut()
+        driver.frames(2)
+        assertNotNull(controller.windowToast)
+        composed = false
+        driver.frames(2)
+        assertNull(controller.windowToast)
+    }
+
+    @Test
+    fun `raise requests reach the window once each and an old count is not replayed when it composes again`() = onEdt {
+        controller.popOut()
+        controller.raise() // before the window composes: not for it
+        var raised = 0
+        var composed by mutableStateOf(true)
+        val driver = scene { if (composed) LogcatWindowContent(controller, motion = false, shown = true, onRaise = { raised++ }) }
+        driver.frames(5)
+        assertEquals(0, raised)
+
+        controller.raise()
+        driver.frames(3)
+        assertEquals(1, raised)
+        driver.frames(10)
+        assertEquals(1, raised) // once per increment, not per frame
+        controller.raise()
+        driver.frames(3)
+        assertEquals(2, raised)
+
+        composed = false
+        driver.frames(3)
+        composed = true
+        driver.frames(5)
+        assertEquals(2, raised) // the count from before is not replayed
+        controller.raise()
+        driver.frames(3)
+        assertEquals(3, raised)
+    }
+
+    @OptIn(InternalComposeUiApi::class)
+    private fun SceneDriver.press(key: Key) {
+        for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
+            scene.sendKeyEvent(KeyEvent(key = key, type = type))
+            frame()
+        }
+    }
+
+    /** What [block] prints to stdout, where Compose prints its focus warnings, and still echoes it. */
+    private fun printed(block: () -> Unit): String {
+        val original = System.out
+        val captured = ByteArrayOutputStream()
+        System.setOut(PrintStream(captured, true))
+        try {
+            block()
+        } finally {
+            System.setOut(original)
+        }
+        return captured.toString().also { original.print(it) }
+    }
+
+    @Test
+    fun `the panel takes focus once the window shows, with no focus warning, so Space plays at once`() = onEdt {
+        controller.popOut()
+        var shown by mutableStateOf(false)
+        lateinit var driver: SceneDriver
+        val out = printed {
+            driver = scene { LogcatWindowContent(controller, motion = true, shown = shown, onRaise = {}) }
+            driver.frames(5)
+            shown = true
+            driver.frames(5)
+        }
+        assertFalse("FocusRequester is not initialized" in out, "focus requested before its requester attached:\n$out")
+
+        assertEquals(LogcatRun.NotStarted, controller.run)
+        driver.press(Key.Spacebar)
+        assertEquals(LogcatRun.Running, controller.run)
+        driver.press(Key.Spacebar)
+        assertEquals(LogcatRun.Paused, controller.run)
     }
 }

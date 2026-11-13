@@ -49,7 +49,7 @@ import com.programmersbox.scrcpyviewer.ui.common.CopyButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import kotlinx.coroutines.delay

@@ -102,6 +102,7 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import kotlin.math.roundToInt
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 
 /** Default and minimum width of the open sheet on the Actions tab, its drag bar included. */
 val QUICK_ACTIONS_WIDTH = 280.dp

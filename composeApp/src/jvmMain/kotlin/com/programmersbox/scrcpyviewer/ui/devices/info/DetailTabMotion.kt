@@ -41,7 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 import kotlin.math.roundToInt
 
