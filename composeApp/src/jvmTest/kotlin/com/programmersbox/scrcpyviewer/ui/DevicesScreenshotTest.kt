@@ -32,6 +32,10 @@ import com.programmersbox.scrcpyviewer.adb.MdnsType
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.info.*
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
+import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoUiState
+import com.programmersbox.scrcpyviewer.ui.devices.info.Load
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.test.Test
@@ -103,6 +107,74 @@ class DevicesScreenshotTest {
 
     @Test
     fun `devices dark narrow detail`() = render("devices-dark-narrow-detail.png", ThemeMode.Dark, width = 760, detailOpen = true)
+
+    private val samsungStatic = StaticInfo(
+        software = SoftwareInfo(
+            androidVersion = "16", sdk = 36, securityPatch = "2026-07-05", buildId = "BP4A.251205.006.A156U1UESCEZG1",
+            abi = "arm64-v8a", manufacturer = "samsung", model = "SM-A156U1", oneUiVersion = "8.5",
+            kernel = "5.15.189-android13-8-33641424",
+        ),
+        display = DisplayInfo(1080, 2340, 450, null, null, null, 90.0),
+        storage = StorageInfo(
+            110534640L * 1024, 18165728L * 1024,
+            StorageBreakdown(10329260032 + 4519657306, 8888320 + 773464064, 24251482112, 1679273984),
+        ),
+        network = NetworkInfo("Office-5G", "192.168.1.36", 351),
+    )
+
+    private val samsungLive = LiveInfo(
+        BatteryInfo(100, ChargeStatus.Full, PowerSource.Usb, 29.2, 4334, BatteryHealth.Good),
+        MemoryInfo(3644192, 931408),
+    )
+
+    private fun infoState(
+        static: Load<StaticInfo> = Load.Ready(samsungStatic),
+        live: Load<LiveInfo> = Load.Ready(samsungLive),
+        notReady: String? = null,
+    ) = DeviceInfoUiState(
+        serial = "R5CX12GDWPZ", title = "Galaxy A15 5G", notReady = notReady, static = static, live = live,
+        liveUpdatedAt = if (live is Load.Ready) System.currentTimeMillis() - 12_000 else null,
+    )
+
+    private fun renderInfo(name: String, mode: ThemeMode, info: DeviceInfoUiState) {
+        val out = outDir.resolve(name)
+        val samsung = Device("R5CX12GDWPZ", DeviceState.Device, "device", "SM_A156U1", null, 1, false, DeviceInfo("Galaxy A15 5G", "16", 36))
+        val infoDevices = DevicesUiState(devices = listOf(samsung), selectedSerial = "R5CX12GDWPZ", adbConnected = true, canMirror = true)
+        renderToPng(1280, 800, out, settleMillis = 3_000) {
+            ScrcpyViewerTheme(mode) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        infoDevices, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        panes = screenshotPanes(null, false),
+                        detailTab = DetailTab.Info, info = info,
+                    )
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `devices info light`() = renderInfo("devices-info-light.png", ThemeMode.Light, infoState())
+
+    @Test
+    fun `devices info dark`() = renderInfo("devices-info-dark.png", ThemeMode.Dark, infoState())
+
+    @Test
+    fun `devices info loading`() =
+        renderInfo("devices-info-loading.png", ThemeMode.Light, infoState(Load.Loading, Load.Loading))
+
+    @Test
+    fun `devices info failed`() = renderInfo(
+        "devices-info-failed.png", ThemeMode.Dark,
+        infoState(Load.Failed("Couldn't reach the device"), Load.Failed("Couldn't reach the device")),
+    )
+
+    @Test
+    fun `devices info not ready`() = renderInfo(
+        "devices-info-not-ready.png", ThemeMode.Light,
+        infoState(Load.Loading, Load.Loading, notReady = "Device is offline. Reconnect it to see its info."),
+    )
 
     @Test
     fun `devices light`() = render("devices-light.png", ThemeMode.Light)
