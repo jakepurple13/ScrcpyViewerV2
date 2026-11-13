@@ -1,6 +1,5 @@
 package com.programmersbox.scrcpyviewer.ui.update
 
-import androidx.compose.ui.platform.UriHandler
 import com.programmersbox.scrcpyviewer.update.FakeUpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateManager
 import com.programmersbox.scrcpyviewer.update.UpdateState
@@ -124,25 +123,5 @@ class UpdateViewModelTest {
             "https://github.com/jakepurple13/ScrcpyViewerV2/releases/tag/v1.6.0",
             vm.checkAndAwaitAvailable().releasePageUrl,
         )
-    }
-
-    @Test
-    fun `openSafely swallows a failing uri handler`() {
-        val handler = object : UriHandler {
-            override fun openUri(uri: String) = error("no browser")
-        }
-        handler.openSafely("https://example.invalid")
-    }
-
-    @Test
-    fun `openSafely passes the url on`() {
-        val opened = mutableListOf<String>()
-        val handler = object : UriHandler {
-            override fun openUri(uri: String) {
-                opened += uri
-            }
-        }
-        handler.openSafely("https://example.invalid/a")
-        assertEquals(listOf("https://example.invalid/a"), opened)
     }
 }

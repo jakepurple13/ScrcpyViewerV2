@@ -53,7 +53,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalUriHandler
+import com.programmersbox.scrcpyviewer.ui.common.openWebUrl
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -86,12 +86,13 @@ fun UpdateDialog(
     onLater: () -> Unit,
     onUpdate: () -> Unit,
     onCancel: () -> Unit,
+    openUrl: (String) -> Boolean = ::openWebUrl,
 ) {
     when (val state = ui.state) {
         is UpdateState.Available ->
-            OfferDialog(state.release, ui.previousFailure?.let { "Last update failed: $it" }, ui, onLater, onUpdate)
+            OfferDialog(state.release, ui.previousFailure?.let { "Last update failed: $it" }, ui, onLater, onUpdate, openUrl)
         is UpdateState.Failed -> (state.release ?: ui.available)?.let {
-            OfferDialog(it, state.message, ui, onLater, onUpdate)
+            OfferDialog(it, state.message, ui, onLater, onUpdate, openUrl)
         }
         // One call site for both, so the same dialog plays the download-finished animation instead of reopening.
         is UpdateState.Downloading, is UpdateState.Installing -> ProgressDialog(state, onCancel)
@@ -118,8 +119,8 @@ private fun OfferDialog(
     ui: UpdateUiState,
     onLater: () -> Unit,
     onUpdate: () -> Unit,
+    openUrl: (String) -> Boolean,
 ) {
-    val uriHandler = LocalUriHandler.current
     Dialog(onDismissRequest = onLater) {
         DialogCard {
             Text("Update available", style = MaterialTheme.typography.headlineSmall)
@@ -157,11 +158,11 @@ private fun OfferDialog(
                 // The release page, for notes that could not be fetched or are cut off above. Without self-update the
                 // main button already opens it.
                 if (ui.canSelfUpdate) {
-                    TextButton(onClick = { uriHandler.openSafely(ui.releasePageUrl) }) { Text("Release notes") }
+                    TextButton(onClick = { openUrl(ui.releasePageUrl) }) { Text("Release notes") }
                     Spacer(Modifier.weight(1f))
                 }
                 TextButton(onClick = onLater) { Text("Later") }
-                Button(onClick = if (ui.canSelfUpdate) onUpdate else ({ uriHandler.openSafely(ui.releasePageUrl) })) {
+                Button(onClick = if (ui.canSelfUpdate) onUpdate else ({ openUrl(ui.releasePageUrl); Unit })) {
                     Text(if (ui.canSelfUpdate) "Update now" else "Download from GitHub")
                 }
             }
