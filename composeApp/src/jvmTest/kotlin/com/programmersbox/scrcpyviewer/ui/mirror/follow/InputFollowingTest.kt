@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.follow
 
+import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.scrcpy.LocalPairLauncher
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
@@ -92,5 +93,19 @@ class InputFollowingTest {
         following.setFollowers("A", setOf("B"))
         following.stop()
         assertEquals(FollowState(), following.state.value)
+    }
+
+    @Test
+    fun `quick action runners are the leader's followers with control on`() {
+        val adb = AdbClient(adbPath = { error("no real adb in tests") })
+        val noControl = ScrcpySession(
+            "C", OptionValues(mapOf("no-control" to "")), LocalPairLauncher(), { _, _ -> null }, { _, _ -> null }, sessionScope,
+        )
+        val sessions = sessions("A", "B") + ("C" to noControl)
+        val state = FollowState("A", setOf("B", "C", "gone"))
+
+        assertEquals(listOf("Title B" to "B"), followRunners("A", state, sessions, adb) { "Title $it" }.map { it.title to it.serial })
+        assertEquals(emptyList(), followRunners("B", state, sessions, adb) { it }) // not the leader
+        assertEquals(emptyList(), followRunners("A", state, sessions, null) { it }) // no adb
     }
 }

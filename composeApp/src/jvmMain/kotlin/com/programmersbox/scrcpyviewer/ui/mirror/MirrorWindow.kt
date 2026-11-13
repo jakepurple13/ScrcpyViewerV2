@@ -177,6 +177,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.follow.InputFollowing
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendInputButton
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendInputMenu
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.followGlow
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.followRunners
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberFollowStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberWindowFollow
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.sendInputLabel
@@ -466,7 +467,14 @@ fun MirrorWindow(
     // Read when a picker closes: a Reconnect meanwhile replaces the transfers (pickAndStart).
     val currentTransfers by rememberUpdatedState(transfers)
     val picker = rememberPickerGuard()
-    val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
+    val quickActions = rememberQuickActions(
+        serial, session, adb, ::notify, onManage = actionsNavigation::open, title = model,
+        followers = {
+            followRunners(serial, following.state.value, controller.open.value, adb) { s ->
+                devices.firstOrNull { it.serial == s }?.let(::deviceTitle) ?: s
+            }
+        },
+    )
     // Made the first time the Files tab shows, so a window that never opens it never lists a folder. A plain holder.
     val filesWanted = remember { BooleanArray(1) }
     quickActions.uiState.let { if (it.open && it.tab == SheetTab.Files) filesWanted[0] = true }

@@ -9,7 +9,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
+import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.Device
+import com.programmersbox.scrcpyviewer.adb.ShellRunner
+import com.programmersbox.scrcpyviewer.ui.mirror.FollowRunner
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
 import com.programmersbox.scrcpyviewer.scrcpy.Position
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
@@ -79,6 +82,22 @@ class WindowFollow(
 
     /** Lifts every press still held on a follower (focus lost, window closing). */
     fun releaseAll() = sender.release(serials())
+}
+
+/**
+ * Where [serial]'s quick actions also run while it leads: one shell runner per follower, titled by [titleOf]. A
+ * follower whose options turn control off is not driven, so it is left out; so is one whose session is gone.
+ */
+fun followRunners(
+    serial: String,
+    state: FollowState,
+    open: Map<String, ScrcpySession>,
+    adb: AdbClient?,
+    titleOf: (String) -> String,
+): List<FollowRunner> {
+    if (adb == null || state.leader != serial) return emptyList()
+    return state.followers.filter { s -> open[s]?.let { followerFlags(it.values).control } == true }
+        .map { s -> FollowRunner(titleOf(s), ShellRunner(adb, s), s) }
 }
 
 /**

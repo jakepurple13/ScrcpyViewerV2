@@ -115,10 +115,11 @@ class QuickActionsCustomTest {
         memory: QuickActionsMemory = QuickActionsMemory(),
         managed: MutableList<Pair<String?, Boolean>> = mutableListOf(),
         readTimeoutMs: Long = 30_000,
+        followers: List<FollowRunner> = emptyList(),
     ): QuickActions {
         val qa = QuickActions(
             DeviceQuickActions(adb, "SER", readTimeoutMs), eager, serial = "SER", store = store, runner = runner, console = console,
-            memory = memory, onManage = { id, new -> managed += id to new },
+            memory = memory, onManage = { id, new -> managed += id to new }, title = { "Galaxy A15" }, followers = { followers },
         ) { messages += it }
         eager.launch { qa.watchActions() }
         return qa
@@ -466,5 +467,127 @@ class QuickActionsCustomTest {
         qa.onEvent(QuickActionEvent.MoveToYours("plain"))
         assertEquals(listOf(ActionSource.User, ActionSource.User), qa.uiState.custom.map { it.source })
         assertEquals(listOf("plain", "stay"), qa.uiState.custom.map { it.id })
+    }
+
+    private val pixel9 = ScriptedRunner()
+    private val tablet = ScriptedRunner()
+    private val two = listOf(FollowRunner("Pixel 9", pixel9, "P9"), FollowRunner("Pixel Tablet", tablet, "TAB"))
+
+    @Test
+    fun `followers run the leader's command with the values entered on the leader`() {
+        store.upsert(RunOnceAction(id = "c", name = "Clear", command = "pm clear {pkg}", confirm = true, output = OutputTarget.None,
+            variables = mapOf("pkg" to Variable("Package", default = "com.example"))))
+        val memory = QuickActionsMemory()
+        val qa = quickActions(memory = memory, followers = two)
+
+        qa.onEvent(QuickActionEvent.RunCustom("c"))
+        qa.onEvent(QuickActionEvent.PromptValues(mapOf("pkg" to "com.other")))
+        assertTrue(pixel9.runs.isEmpty() && tablet.runs.isEmpty()) // nothing runs before the confirm
+        qa.onEvent(QuickActionEvent.PromptConfirm)
+
+        assertEquals(listOf("pm clear com.other"), runner.runs)
+        assertEquals(listOf("pm clear com.other"), pixel9.runs)
+        assertEquals(listOf("pm clear com.other"), tablet.runs)
+        assertEquals(listOf("Ran on 3 devices"), messages)
+        assertNull(memory.value("P9", "c", "pkg")) // followers never prompt, so nothing is remembered for them
+    }
+
+    @Test
+    fun `a failing follower does not stop the others and is named in the result`() {
+        store.upsert(RunOnceAction(id = "n", name = "Quiet", command = "x", output = OutputTarget.None))
+        pixel9.result = { throw IOException("device offline") }
+        val qa = quickActions(followers = two)
+
+        qa.onEvent(QuickActionEvent.RunCustom("n"))
+
+        assertEquals(listOf("x"), runner.runs)
+        assertEquals(listOf("x"), tablet.runs)
+        assertEquals(listOf("Ran on 2 of 3 devices · Pixel 9 failed: device offline"), messages)
+        assertTrue(qa.uiState.customPending.isEmpty())
+    }
+
+    @Test
+    fun `a leader failure counts against the total and the followers still run`() {
+        store.upsert(RunOnceAction(id = "n", name = "Quiet", command = "x", output = OutputTarget.None))
+        runner.result = { ShellResult("sh: x: not found", 127, 2) }
+        tablet.result = { ShellResult("denied", 1, 2) }
+        val qa = quickActions(followers = two)
+
+        qa.onEvent(QuickActionEvent.RunCustom("n"))
+
+        assertEquals(listOf("x"), pixel9.runs)
+        assertEquals(listOf("Ran on 1 of 3 devices · Galaxy A15 failed: sh: x: not found and 1 more"), messages)
+    }
+
+    @Test
+    fun `a toast action shows the leader's output with the result`() {
+        store.upsert(RunOnceAction(id = "r", name = "Props", command = "getprop ro.product.model"))
+        runner.result = { ShellResult("SM-A156U1\n", 0, 2) }
+        val qa = quickActions(followers = two)
+
+        qa.onEvent(QuickActionEvent.RunCustom("r"))
+
+        assertEquals(listOf("SM-A156U1 · Ran on 3 devices"), messages)
+    }
+
+    @Test
+    fun `shell tab runs stay on the leader`() {
+        store.upsert(RunOnceAction(id = "s", name = "Logcat", command = "logcat", output = OutputTarget.Shell))
+        val qa = quickActions(followers = two)
+
+        qa.onEvent(QuickActionEvent.RunCustom("s"))
+
+        assertEquals(listOf("logcat"), runner.streams)
+        assertTrue(pixel9.runs.isEmpty() && pixel9.streams.isEmpty())
+    }
+
+    @Test
+    fun `custom toggles set followers to the leader's new state`() {
+        store.upsert(noRead)
+        val memory = QuickActionsMemory()
+        pixel9.result = { throw IOException("device offline") }
+        val qa = quickActions(memory = memory, followers = two)
+
+        qa.onEvent(QuickActionEvent.CustomToggle("plain", true))
+
+        assertEquals(listOf("echo {on}"), tablet.runs)
+        assertEquals(listOf("echo {on}"), pixel9.runs)
+        assertEquals(true, memory.toggle("TAB", "plain"))
+        assertNull(memory.toggle("P9", "plain")) // failed: its state stays unknown
+        assertEquals(listOf("Ran on 2 of 3 devices · Pixel 9 failed: device offline"), messages)
+    }
+
+    @Test
+    fun `followers are not driven when the leader's toggle fails`() {
+        store.upsert(stayAwake)
+        runner.result = { ShellResult("Error: denied\n", 255, 3) }
+        val qa = quickActions(followers = two)
+
+        qa.onEvent(QuickActionEvent.CustomToggle("stay", true))
+
+        assertTrue(pixel9.runs.isEmpty() && tablet.runs.isEmpty())
+        assertEquals(listOf("Could not turn Stay awake on: Error: denied"), messages)
+    }
+
+    @Test
+    fun `without followers a run reads as before, with no result line`() {
+        store.upsert(RunOnceAction(id = "n", name = "Quiet", command = "x", output = OutputTarget.None))
+        store.upsert(RunOnceAction(id = "r", name = "Run", command = "true"))
+        val qa = quickActions(followers = emptyList())
+
+        qa.onEvent(QuickActionEvent.RunCustom("n"))
+        qa.onEvent(QuickActionEvent.RunCustom("r"))
+
+        assertEquals(listOf("Done"), messages)
+    }
+
+    @Test
+    fun `result line copy`() {
+        assertEquals("Ran on 3 devices", followResult(3, emptyList()))
+        assertEquals("Ran on 2 of 3 devices · Pixel 9 failed: device offline", followResult(3, listOf("Pixel 9" to "device offline")))
+        assertEquals(
+            "Ran on 1 of 4 devices · Pixel 9 failed: device offline and 2 more",
+            followResult(4, listOf("Pixel 9" to "device offline", "A" to "x", "B" to "y")),
+        )
     }
 }
