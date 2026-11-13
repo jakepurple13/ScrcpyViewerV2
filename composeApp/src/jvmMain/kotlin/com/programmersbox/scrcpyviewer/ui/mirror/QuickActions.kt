@@ -232,6 +232,10 @@ data class QuickActionsUiState(
     val packages: List<String>? = null,
     /** Each tab's sheet width, as the user dragged it. */
     val widths: SheetWidths = SheetWidths(),
+    /** Logcat is in its own window (the Logcat segment shows a window icon). */
+    val logcatPopped: Boolean = false,
+    /** Logcat is in its own window and running (the segment adds a blinking green dot). */
+    val logcatLive: Boolean = false,
     /** The Apps tab. */
     val apps: AppsUiState = AppsUiState(),
 )
@@ -299,7 +303,7 @@ class QuickActions internal constructor(
     private val saveWidth: (SheetTab, Dp) -> Unit = { _, _ -> },
     /** The Apps tab; it lists the apps the first time it shows. */
     private val apps: AppExplorer? = null,
-    /** The Logcat tab; null without adb. Its stream stops when the tab stops showing. */
+    /** The Logcat tab; null without adb. Its stream stops when the tab stops showing, unless it is in its own window. */
     val logcat: LogcatController? = null,
     private val notify: (String) -> Unit,
 ) {
@@ -323,10 +327,16 @@ class QuickActions internal constructor(
 
     val enabled: Boolean get() = device != null && connected
 
+    init {
+        logcat?.onDock = ::showLogcatTab
+    }
+
     val uiState: QuickActionsUiState
         get() = QuickActionsUiState(
             open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages = packages,
             widths = widths, apps = (apps?.uiState ?: AppsUiState()).copy(logcatPackage = logcat?.mine),
+            logcatPopped = logcat?.popped == true,
+            logcatLive = logcat?.let { it.popped && it.run == LogcatRun.Running } == true,
         )
 
     fun toggleSheet() {
@@ -339,24 +349,36 @@ class QuickActions internal constructor(
         }
     }
 
-    /** Closes the sheet and any prompt and stops the console's command and logcat; Toast and None runs carry on. */
+    /**
+     * Closes the sheet and any prompt and stops the console's command and logcat; Toast and None runs carry on.
+     * Logcat in its own window keeps running.
+     */
     fun close() {
         open = false
         prompt = null
         console?.stop()
-        logcat?.stopForLeaving()
+        logcat?.takeUnless { it.popped }?.stopForLeaving()
     }
 
-    /** Follows the session: a disconnected or failed session disables the sheet and closes it. */
+    /**
+     * Follows the session: a disconnected or failed session disables the sheet and closes it. Logcat in its own window
+     * pauses there.
+     */
     internal fun onSessionStatus(status: SessionStatus) {
         connected = status != SessionStatus.Disconnected && status != SessionStatus.Failed
-        if (!connected) close()
+        if (!connected) {
+            logcat?.takeIf { it.popped }?.pause()
+            close()
+        }
     }
 
-    /** Shows [to]: leaving Logcat stops its stream, and coming back to a stopped one pulses Play. */
+    /**
+     * Shows [to]: leaving Logcat stops its stream, and coming back to a stopped one pulses Play. Not while Logcat is in
+     * its own window: it keeps running there, and its Play is there.
+     */
     private fun select(to: SheetTab) {
         val from = tab
-        if (from == SheetTab.Logcat && to != SheetTab.Logcat) logcat?.stopForLeaving()
+        if (from == SheetTab.Logcat && to != SheetTab.Logcat) logcat?.takeUnless { it.popped }?.stopForLeaving()
         tab = to
         memory.tab = to
         if (to == SheetTab.Apps) apps?.ensureLoaded()
@@ -364,15 +386,32 @@ class QuickActions internal constructor(
     }
 
     private fun nudgeIfStopped() {
-        val l = logcat ?: return
+        val l = logcat?.takeUnless { it.popped } ?: return
         if (l.run == LogcatRun.Paused || l.run == LogcatRun.StoppedByLeaving) l.requestNudge()
     }
 
-    /** Picks [app] in Logcat (adding `package:mine`) and shows the tab. It never starts the stream: Play pulses. */
+    /**
+     * Logcat came back from its own window ([LogcatController.dock]): shows its tab as it is, opening the sheet when it
+     * can. Nothing stops and Play doesn't pulse.
+     */
+    private fun showLogcatTab() {
+        tab = SheetTab.Logcat
+        memory.tab = SheetTab.Logcat
+        if (!open && enabled) {
+            open = true
+            refresh()
+        }
+    }
+
+    /**
+     * Picks [app] in Logcat (adding `package:mine`) and shows the tab or, while Logcat is in its own window, brings
+     * that window forward and leaves the tab as it is. It never starts the stream: Play pulses.
+     */
     private fun showInLogcat(app: DeviceApp) {
-        logcat?.pick(app.packageName)
-        select(SheetTab.Logcat)
-        logcat?.let { if (it.run == LogcatRun.NotStarted) it.requestNudge() }
+        val l = logcat
+        l?.pick(app.packageName)
+        if (l?.popped == true) l.raise() else select(SheetTab.Logcat)
+        l?.let { if (it.run == LogcatRun.NotStarted) it.requestNudge() }
     }
 
     /** Follows the store: new and changed actions show at once; a prompt for a deleted or changed action closes. */

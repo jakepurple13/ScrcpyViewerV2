@@ -28,7 +28,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -231,8 +230,8 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val mine = controller.mine
     val wrap = controller.wrap
     val run = controller.run
-    // Entries whose fold the user flipped from the default (crashes unfolded, others folded).
-    val flipped = remember { mutableStateMapOf<Long, Boolean>() }
+    // Entries whose fold the user flipped from the default; kept by the controller, so they move with the panel.
+    val flipped = controller.traceFlips
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val actions = remember(controller, clipboard, scope) {
@@ -242,7 +241,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
                 controller.query = withTerm(controller.query, "${if (exclude) "-" else ""}$key:$v", true)
                 controller.toast(if (exclude) "Hiding $value" else "Filtering to $value")
             },
-            toggle = { key -> flipped[key] = flipped[key] != true },
+            toggle = controller::flipTrace,
             copyFrame = { loc ->
                 scope.launch {
                     runCatching { clipboard.setClipEntry(ClipEntry(StringSelection(loc))) }

@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.CropSquare
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
 import com.programmersbox.scrcpyviewer.ui.mirror.files.rememberFilesBrowser
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatWindow
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -975,6 +976,8 @@ fun MirrorWindow(
             }
         }
     }
+    // Logcat's own window, while it is out: part of this window's composition, so it closes with it.
+    quickActions.logcat?.let { LogcatWindow(it, model, theme) }
 }
 
 /** What the window's sheet-growth effect last ran for; a plain holder, read and written only in that effect. */

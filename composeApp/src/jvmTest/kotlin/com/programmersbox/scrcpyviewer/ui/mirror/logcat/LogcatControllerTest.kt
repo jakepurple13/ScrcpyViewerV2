@@ -421,4 +421,85 @@ class LogcatControllerTest {
         runCurrent()
         assertEquals(listOf("Line", "Gap", "Line"), c.items.map { it::class.simpleName })
     }
+
+    @Test
+    fun `popOut keeps lines, query and run state, and dock keeps them too`() = runTest {
+        val source = FakeSource()
+        val c = controller(source)
+        var docked = 0
+        c.onDock = { docked++ }
+        c.query = "tag:Tag"
+        c.compact = true
+        c.play()
+        runCurrent()
+        source.stream.trySend(line(message = "one"))
+        advanceTimeBy(60)
+        runCurrent()
+        val key = c.lines().single().key
+        c.flipTrace(key)
+
+        c.popOut()
+        assertTrue(c.popped)
+        assertEquals(LogcatRun.Running, c.run)
+        assertEquals(listOf("one"), c.messages())
+        assertEquals("tag:Tag", c.query)
+        assertTrue(c.compact)
+        assertEquals(true, c.traceFlips[key])
+        assertEquals(1, source.streams.size) // the same stream, not restarted
+
+        c.dock()
+        assertEquals(false, c.popped)
+        assertEquals(LogcatRun.Running, c.run)
+        assertEquals(listOf("one"), c.messages())
+        assertEquals(true, c.traceFlips[key])
+        assertEquals(1, docked)
+
+        // Paused stays paused through both moves.
+        c.pause()
+        c.popOut()
+        assertEquals(LogcatRun.Paused, c.run)
+        c.dock()
+        assertEquals(LogcatRun.Paused, c.run)
+        assertEquals(1, source.streams.size)
+        assertEquals(2, docked)
+        // Docking what isn't out does nothing.
+        c.dock()
+        assertEquals(2, docked)
+    }
+
+    @Test
+    fun `alwaysOnTop starts off on every popOut and toggles with a toast`() = runTest {
+        val toasts = mutableListOf<String>()
+        val c = controller(toasts = toasts)
+        c.popOut()
+        assertEquals(false, c.alwaysOnTop)
+        c.toggleAlwaysOnTop()
+        assertTrue(c.alwaysOnTop)
+        assertEquals(listOf("Logcat window stays on top"), toasts)
+        c.toggleAlwaysOnTop()
+        assertEquals(false, c.alwaysOnTop)
+        assertEquals(listOf("Logcat window stays on top", "Logcat window no longer stays on top"), toasts)
+        c.toggleAlwaysOnTop()
+        c.dock()
+        c.popOut()
+        assertEquals(false, c.alwaysOnTop)
+    }
+
+    @Test
+    fun `raise asks the window to come forward`() = runTest {
+        val c = controller()
+        c.popOut()
+        val before = c.raiseRequests
+        c.raise()
+        assertEquals(before + 1, c.raiseRequests)
+    }
+
+    @Test
+    fun `flipTrace flips and flips back`() = runTest {
+        val c = controller()
+        c.flipTrace(7)
+        assertEquals(true, c.traceFlips[7])
+        c.flipTrace(7)
+        assertEquals(false, c.traceFlips[7])
+    }
 }

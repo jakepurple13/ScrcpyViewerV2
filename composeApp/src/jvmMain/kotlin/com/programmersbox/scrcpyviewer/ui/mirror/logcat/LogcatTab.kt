@@ -16,7 +16,18 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.material.icons.automirrored.filled.Input
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material3.Surface
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -93,7 +104,7 @@ private const val PULSE_MILLIS = 900
  *
  * Keys, with focus anywhere in the tab ([logcatKeyAction]; ⌘ on macOS per [isMac], Ctrl elsewhere): Space plays or
  * pauses (once per press; not in the filter field or on a control that takes Space itself), ⌘F focuses the filter with its text selected, ⌘K clears the list. The sheet
- * holds focus, so none of them reach the device.
+ * holds focus, so none of them reach the device; Logcat's own window sends nothing to the device at all.
  */
 @Composable
 fun LogcatTab(
@@ -101,6 +112,10 @@ fun LogcatTab(
     sheetWidth: Dp,
     motion: Boolean = remember { !systemReducesMotion() },
     isMac: Boolean = Os.isMac,
+    /** In Logcat's own window: the pop-out button moves it back to the sheet instead. */
+    inWindow: Boolean = false,
+    /** Makes the tab itself focusable through this, inside its key handlers (the own window focuses it on open). */
+    focusRequester: FocusRequester? = null,
 ) {
     val filterFocus = remember { LogcatFilterFocus() }
     // True from a Space press that toggled until its release: the key's auto-repeat presses don't toggle again.
@@ -130,13 +145,16 @@ fun LogcatTab(
                     spaceHeld[0] = false
                 }
                 true
-            },
+            }
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester).focusable() else Modifier),
     ) {
         Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 LogcatFilterField(controller, motion, Modifier.weight(1f), filterFocus)
                 Spacer(Modifier.width(6.dp))
                 PlayPauseButton(controller, motion)
+                Spacer(Modifier.width(2.dp))
+                PopOutButton(controller, inWindow, motion)
             }
             ChipsRow(controller, motion)
         }
@@ -222,6 +240,64 @@ private fun PlayPauseIcon(running: Boolean, motion: Boolean) {
                 alpha = p
             },
         )
+    }
+}
+
+/**
+ * "Open in new window" in the sheet, "Move back to the sheet" in the own window ([inWindow]). Right after a move the
+ * icon swaps in from the other place's (open ⇄ dock, scale and fade, 280 ms).
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PopOutButton(controller: LogcatController, inWindow: Boolean, motion: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    val target = if (inWindow) 1f else 0f
+    // 0 shows open-in-new, 1 the dock icon.
+    val p = remember {
+        // Taken by the first button composed after the move: the one in the panel's new place.
+        val swap = controller.moved && motion
+        controller.moved = false
+        Animatable(if (swap) 1f - target else target)
+    }
+    LaunchedEffect(target) { p.animateTo(target, if (motion) tween(280, easing = EmphasizedDecelerate) else snap()) }
+    val label = if (inWindow) "Move back to the sheet" else "Open in new window"
+    TooltipArea(
+        tooltip = {
+            Surface(shape = RoundedCornerShape(4.dp), color = scheme.inverseSurface) {
+                Text(
+                    label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall, color = scheme.inverseOnSurface,
+                )
+            }
+        },
+    ) {
+        Box(
+            Modifier.size(36.dp).clip(ButtonShape)
+                .clickable(role = Role.Button) { if (inWindow) controller.dock() else controller.popOut() }
+                .semantics { contentDescription = label },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null,
+                Modifier.size(18.dp).graphicsLayer {
+                    val s = 1f - 0.6f * p.value
+                    scaleX = s
+                    scaleY = s
+                    alpha = 1f - p.value
+                },
+                tint = scheme.onSurfaceVariant,
+            )
+            Icon(
+                Icons.AutoMirrored.Filled.Input, contentDescription = null,
+                Modifier.size(18.dp).graphicsLayer {
+                    val s = 0.4f + 0.6f * p.value
+                    scaleX = s
+                    scaleY = s
+                    alpha = p.value
+                },
+                tint = scheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

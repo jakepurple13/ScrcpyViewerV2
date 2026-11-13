@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.programmersbox.scrcpyviewer.logcat.EntryInfo
@@ -108,6 +109,63 @@ class LogcatController(
 
     var wrap by mutableStateOf(false)
     var compact by mutableStateOf(false)
+
+    /** True while the panel is in its own window (see [popOut]); the sheet's tab then shows a card. */
+    var popped by mutableStateOf(false)
+        private set
+
+    /** The own window stays above other windows. Off on every [popOut]. */
+    var alwaysOnTop by mutableStateOf(false)
+        private set
+
+    /** Increments to ask the own window to come to the front. */
+    var raiseRequests by mutableIntStateOf(0)
+        private set
+
+    /** Runs after every [dock]; the sheet sets it to show the Logcat tab again. */
+    internal var onDock: () -> Unit = {}
+
+    /**
+     * Entries whose stack-trace fold the user flipped from the default (crashes unfolded, others folded), by entry
+     * key. Here, not in the list, so folds survive the panel moving between the sheet and its own window.
+     */
+    internal val traceFlips = mutableStateMapOf<Long, Boolean>()
+
+    /** Flips the fold of the trace on the entry [key]. */
+    fun flipTrace(key: Long) {
+        traceFlips[key] = traceFlips[key] != true
+    }
+
+    /** Moves the panel into its own window: lines, filter and run state stay as they are; [alwaysOnTop] starts off. */
+    fun popOut() {
+        alwaysOnTop = false
+        popped = true
+        moved = true
+    }
+
+    /** Moves the panel back into the sheet ([onDock] shows its tab). Never changes [run]. */
+    fun dock() {
+        if (!popped) return
+        popped = false
+        moved = true
+        onDock()
+    }
+
+    /**
+     * True from a [popOut] or [dock] until the panel's pop-out button next shows: that one swaps its icon in from the
+     * other place's, the ones shown later just show theirs. Not state.
+     */
+    internal var moved = false
+
+    /** Asks the own window to come to the front. */
+    fun raise() {
+        raiseRequests++
+    }
+
+    fun toggleAlwaysOnTop() {
+        alwaysOnTop = !alwaysOnTop
+        toast(if (alwaysOnTop) "Logcat window stays on top" else "Logcat window no longer stays on top")
+    }
 
     /** Increments to ask the UI to pulse Play. */
     var nudge by mutableIntStateOf(0)
@@ -254,7 +312,7 @@ class LogcatController(
         streamJob = null
         run = LogcatRun.Paused
         pausedAt = hostTime(clock())
-        if (error != null) notify("Logcat stopped: ${error.message ?: error}")
+        if (error != null) toast("Logcat stopped: ${error.message ?: error}")
     }
 
     /** Empties the list; the run state and query stay. */
@@ -265,7 +323,8 @@ class LogcatController(
         replayTs = null
         pendingGap = null
         folder = TraceFolder()
-        notify("Cleared. Older lines stay on the device buffer.")
+        traceFlips.clear()
+        toast("Cleared. Older lines stay on the device buffer.")
     }
 
     /** Makes [pkg] the picked app and adds `package:mine` to the query if missing. */
@@ -287,8 +346,11 @@ class LogcatController(
      */
     internal fun isBacklog(entry: LogcatEntry): Boolean = entry.receivedAtMillis < backlogUntil
 
-    /** Shows [message] as a toast, for the list's clicks. */
-    internal fun toast(message: String) = notify(message)
+    /** Shows [message] as a toast: in the own window while it is up ([windowToast]), else through `notify`. */
+    internal fun toast(message: String) = (windowToast ?: notify)(message)
+
+    /** The own window's snackbar while that window is up; it shows the panel's toasts there. */
+    internal var windowToast: ((String) -> Unit)? = null
 
     /** Tags (with line counts), packages and processes seen in the list, for autocomplete. */
     fun suggestionContext(): SuggestionContext {

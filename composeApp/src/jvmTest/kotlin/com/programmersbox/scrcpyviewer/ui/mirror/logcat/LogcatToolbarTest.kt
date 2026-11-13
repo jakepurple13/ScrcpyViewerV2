@@ -446,11 +446,27 @@ class LogcatToolbarTest {
             click(field())
             press(AwtKeyEvent.VK_ESCAPE)
             press(AwtKeyEvent.VK_TAB) // Play
+            press(AwtKeyEvent.VK_TAB) // Open in new window
             press(AwtKeyEvent.VK_TAB) // Picked app
             frames(5)
             assertTrue(focusedMentions("Picked app"), "the chip has focus")
             space()
             assertEquals("package:mine", controller.query, "Space clicked the chip")
+            assertEquals(LogcatRun.NotStarted, controller.run, "and didn't play")
+        }
+    }
+
+    @Test
+    fun `Space on the focused pop-out button pops out, not play`() = onEdt {
+        withScene {
+            click(field())
+            press(AwtKeyEvent.VK_ESCAPE)
+            press(AwtKeyEvent.VK_TAB) // Play
+            press(AwtKeyEvent.VK_TAB) // Open in new window
+            frames(5)
+            assertTrue(focusedMentions("Open in new window"), "the pop-out button has focus")
+            space()
+            assertTrue(controller.popped, "Space clicked the button")
             assertEquals(LogcatRun.NotStarted, controller.run, "and didn't play")
         }
     }

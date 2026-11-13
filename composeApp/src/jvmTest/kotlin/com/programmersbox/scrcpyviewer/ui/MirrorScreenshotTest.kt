@@ -38,6 +38,8 @@ import androidx.compose.ui.geometry.Rect
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorContent
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorUiState
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsUiState
+import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsPanel
+import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_LOGCAT_WIDTH
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickToggle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.dropHint
@@ -596,6 +598,33 @@ class MirrorScreenshotTest {
                 it.pause()
             }
             renderLogcat("mirror-logcat-start-$m.png", mode) {}
+        }
+    }
+
+    @Test
+    fun `mirror logcat own window card`() {
+        for (mode in listOf(ThemeMode.Light, ThemeMode.Dark)) {
+            val name = "mirror-logcat-own-window-${mode.name.lowercase()}.png"
+            val out = outDir.resolve(name)
+            val scope = CoroutineScope(Dispatchers.Unconfined + kotlinx.coroutines.Job())
+            val controller = LogcatController(LogcatShotSource(logcatShot), scope, {}, io = kotlin.coroutines.EmptyCoroutineContext)
+            controller.play()
+            controller.popOut()
+            val state = QuickActionsUiState(
+                open = true, enabled = true, tab = SheetTab.Logcat, logcatPopped = true, logcatLive = true,
+            )
+            try {
+                renderToPng(QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(), 640, out, settleMillis = 1_000) {
+                    ScrcpyViewerTheme(AppTheme(mode)) {
+                        Surface(Modifier.fillMaxSize()) {
+                            QuickActionsPanel(state, {}, console = null, logcat = controller)
+                        }
+                    }
+                }
+            } finally {
+                scope.cancel()
+            }
+            assertTrue(Files.size(out) > 5_000, "$name should not be blank")
         }
     }
 

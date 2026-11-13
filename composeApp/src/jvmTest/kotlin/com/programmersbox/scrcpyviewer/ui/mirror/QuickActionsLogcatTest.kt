@@ -156,6 +156,99 @@ class QuickActionsLogcatTest {
         assertEquals(SheetTab.Logcat, f.qa.uiState.tab)
     }
 
+    private fun openDevice() = object : DeviceQuickActions(object : AdbClient(adbPath = { error("no adb") }) {}, "SER") {
+        override suspend fun read(custom: List<ToggleAction>) = ToggleStates(emptyMap(), emptyMap())
+    }
+
+    @Test
+    fun `while popped, leaving the tab and closing the sheet don't stop logcat but disconnect still pauses it`() = runTest {
+        val f = fixture()
+        playOnLogcat(f)
+        f.logcat.popOut()
+        f.qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Files))
+        assertEquals(LogcatRun.Running, f.logcat.run)
+        f.qa.onEvent(QuickActionEvent.Close)
+        assertEquals(LogcatRun.Running, f.logcat.run)
+        assertEquals(1, f.source.starts)
+        // Back on the tab while popped: no pulse, the window has Play.
+        f.qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Logcat))
+        assertEquals(0, f.logcat.nudge)
+
+        f.qa.onSessionStatus(SessionStatus.Disconnected)
+        assertEquals(LogcatRun.Paused, f.logcat.run)
+        assertEquals(true, f.logcat.popped)
+    }
+
+    @Test
+    fun `the sheet state shows the window icon and the live dot`() = runTest {
+        val f = fixture()
+        assertEquals(false, f.qa.uiState.logcatPopped)
+        f.logcat.popOut()
+        assertEquals(true, f.qa.uiState.logcatPopped)
+        assertEquals(false, f.qa.uiState.logcatLive)
+        f.logcat.play()
+        runCurrent()
+        assertEquals(true, f.qa.uiState.logcatLive)
+        f.logcat.dock()
+        assertEquals(false, f.qa.uiState.logcatPopped)
+        assertEquals(false, f.qa.uiState.logcatLive) // live only while out
+    }
+
+    @Test
+    fun `dock with the sheet closed opens it on the Logcat tab`() = runTest {
+        val source = OpenSource()
+        val logcat = LogcatController(source, backgroundScope, {}, io = kotlin.coroutines.EmptyCoroutineContext)
+        val memory = QuickActionsMemory()
+        val qa = QuickActions(device = openDevice(), scope = backgroundScope, memory = memory, logcat = logcat) {}
+        qa.toggleSheet()
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Logcat))
+        logcat.play()
+        runCurrent()
+        logcat.popOut()
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Files))
+        qa.toggleSheet() // closes
+        assertEquals(false, qa.open)
+        val nudge = logcat.nudge
+
+        logcat.dock()
+        assertEquals(true, qa.open)
+        assertEquals(SheetTab.Logcat, qa.uiState.tab)
+        assertEquals(SheetTab.Logcat, memory.tab)
+        assertEquals(LogcatRun.Running, logcat.run)
+        assertEquals(nudge, logcat.nudge)
+
+        // Open on another tab, paused: switches to Logcat without stopping or pulsing.
+        logcat.pause()
+        logcat.popOut()
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Apps))
+        logcat.dock()
+        assertEquals(SheetTab.Logcat, qa.uiState.tab)
+        assertEquals(LogcatRun.Paused, logcat.run)
+        assertEquals(nudge, logcat.nudge)
+    }
+
+    @Test
+    fun `dock while disconnected selects Logcat but leaves the sheet closed`() = runTest {
+        val f = fixture() // no device: never enabled
+        f.logcat.popOut()
+        f.logcat.dock()
+        assertEquals(false, f.qa.open)
+        assertEquals(SheetTab.Logcat, f.memory.tab)
+    }
+
+    @Test
+    fun `ShowInLogcat while popped raises the window and doesn't change the tab`() = runTest {
+        val f = fixture()
+        f.qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Apps))
+        f.logcat.popOut()
+        val raises = f.logcat.raiseRequests
+        f.qa.onEvent(QuickActionEvent.Apps(AppsEvent.ShowInLogcat(CHROME)))
+        assertEquals("com.android.chrome", f.logcat.mine)
+        assertEquals(listOf("package:mine"), queryTerms(f.logcat.query))
+        assertEquals(SheetTab.Apps, f.qa.uiState.tab)
+        assertEquals(raises + 1, f.logcat.raiseRequests)
+    }
+
     @Test
     fun `without logcat the Apps state has no picked package and the tab still selects`() = runTest {
         val qa = QuickActions(device = null, scope = backgroundScope) {}

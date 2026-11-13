@@ -140,8 +140,25 @@ class SheetTabsTest {
 
     @Test
     fun `segment labels fit at the Actions width, with the Shell dot and the Files badge`() = onEdt {
-        val state = QuickActionsUiState(open = true, enabled = true, consoleRunning = true, filesTransfersRunning = 2)
-        val driver = SceneDriver(ImageComposeScene(QUICK_ACTIONS_WIDTH.value.toInt(), 800, Density(1f)) {
+        assertSegmentsFit(
+            QUICK_ACTIONS_WIDTH.value.toInt(),
+            QuickActionsUiState(open = true, enabled = true, consoleRunning = true, filesTransfersRunning = 2),
+        )
+    }
+
+    @Test
+    fun `segment labels fit at the Logcat width, with the Logcat window icon and live dot too`() = onEdt {
+        assertSegmentsFit(
+            QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(),
+            QuickActionsUiState(
+                open = true, enabled = true, tab = SheetTab.Logcat, consoleRunning = true, filesTransfersRunning = 2,
+                logcatPopped = true, logcatLive = true,
+            ),
+        )
+    }
+
+    private fun assertSegmentsFit(width: Int, state: QuickActionsUiState) {
+        val driver = SceneDriver(ImageComposeScene(width, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null) }
             }
@@ -167,7 +184,7 @@ class SheetTabsTest {
             val extras = descendants(tab).filter { it.config.getOrNull(SemanticsProperties.ContentDescription) != null }
             for (extra in extras) {
                 val what = extra.config[SemanticsProperties.ContentDescription].first()
-                val minWidth = if (what == "Command running") 6f else 16f
+                val minWidth = when (what) { "Command running", "Logcat running" -> 6f; "In its own window" -> 14f; else -> 16f }
                 assertTrue(extra.boundsInRoot.width >= minWidth, "$what in $name is squeezed to ${extra.boundsInRoot.width} px")
                 assertTrue(extra.boundsInRoot.right <= tab.boundsInRoot.right, "$what spills out of $name")
                 assertTrue(extra.boundsInRoot.left >= label.boundsInRoot.right, "$what overlaps the $name label")
@@ -175,6 +192,9 @@ class SheetTabsTest {
             when (name) {
                 "Shell" -> assertEquals(listOf("Command running"), extras.map { it.config[SemanticsProperties.ContentDescription].first() })
                 "Files" -> assertEquals(listOf("2 transfers running"), extras.map { it.config[SemanticsProperties.ContentDescription].first() })
+                "Logcat" -> if (state.logcatPopped) {
+                    assertEquals(listOf("Logcat running", "In its own window"), extras.map { it.config[SemanticsProperties.ContentDescription].first() })
+                }
             }
         }
     }
@@ -229,6 +249,36 @@ class SheetTabsTest {
     fun `the Shell dot still shows while a command runs`() = onEdt {
         val driver = panel({ QuickActionsUiState(open = true, enabled = true, consoleRunning = true) }, mutableListOf())
         assertNotNull(driver.described("Command running"))
+    }
+
+    @Test
+    fun `segment shows the window icon, and the live dot only while running`() = onEdt {
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true))
+        val driver = panel({ state }, mutableListOf())
+        assertNull(driver.described("In its own window"))
+        assertNull(driver.described("Logcat running"))
+
+        state = state.copy(logcatPopped = true)
+        driver.frames(3)
+        // Mid-way, the icon is still growing from 0 to 14 dp.
+        val growing = checkNotNull(driver.described("In its own window")).boundsInRoot.width
+        assertTrue(growing < 14f, "the icon grows in, $growing px after 3 frames")
+        driver.frames(60)
+        assertEquals(14f, checkNotNull(driver.described("In its own window")).boundsInRoot.width)
+        assertNull(driver.described("Logcat running"))
+
+        state = state.copy(logcatLive = true)
+        driver.frames(60)
+        assertNotNull(driver.described("Logcat running"))
+
+        state = state.copy(logcatLive = false)
+        driver.frames(60)
+        assertNull(driver.described("Logcat running"))
+        assertNotNull(driver.described("In its own window"))
+
+        state = state.copy(logcatPopped = false)
+        driver.frames(60)
+        assertNull(driver.described("In its own window"))
     }
 
     @Test

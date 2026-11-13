@@ -8,6 +8,15 @@ import androidx.compose.animation.core.TweenSpec
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.ui.graphics.graphicsLayer
+import com.programmersbox.scrcpyviewer.logcat.LogLevel
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatColors
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -86,7 +95,7 @@ import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.ui.mirror.files.AdbUnavailableState
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
-import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatTab
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatSheetTab
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
@@ -324,7 +333,7 @@ private fun RowScope.SheetContent(
             }
         }
         SheetTabs(
-            state.tab, state.consoleRunning, state.filesTransfersRunning, sheetWidth,
+            state.tab, state.consoleRunning, state.filesTransfersRunning, state.logcatPopped, state.logcatLive, sheetWidth,
             onSelect = { if (it != state.tab) onEvent(QuickActionEvent.SelectTab(it)) },
             Modifier.padding(start = TABS_SIDE_PADDING, end = TABS_SIDE_PADDING, top = 8.dp),
         )
@@ -342,7 +351,7 @@ private fun RowScope.SheetContent(
                 // No Files tab content means no adb: say so rather than show nothing.
                 SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
                 // No controller means no adb, said the same way.
-                SheetTab.Logcat -> if (logcat != null) LogcatTab(logcat, sheetWidth) else AdbUnavailableState()
+                SheetTab.Logcat -> if (logcat != null) LogcatSheetTab(logcat, sheetWidth) else AdbUnavailableState()
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,
@@ -368,13 +377,17 @@ private val TRACK_PADDING = 3.dp
 /**
  * The Actions / Apps / Shell / Files / Logcat segmented control. The highlight glides to the selected segment with the
  * tab switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of running
- * transfers.
+ * transfers, the Logcat one a window icon while Logcat is in its own window (plus a green dot while it runs there).
  */
 @Composable
 private fun SheetTabs(
     tab: SheetTab,
     consoleRunning: Boolean,
     filesRunning: Int,
+    /** Logcat is in its own window: its segment shows a window icon. */
+    logcatPopped: Boolean,
+    /** ...and running: a blinking green dot as well. */
+    logcatLive: Boolean,
     /** The width the sheet is settling on (the selected tab's), not the animating one: the label size follows it. */
     sheetWidth: Dp,
     onSelect: (SheetTab) -> Unit,
@@ -455,8 +468,52 @@ private fun SheetTabs(
                             }
                         }
                     }
+                    if (segment == SheetTab.Logcat) LogcatSegmentMarks(logcatPopped, logcatLive, gap)
                 }
             }
         }
+    }
+}
+
+/** Blink of the Logcat segment's live dot: down to this opacity and back, every [LIVE_BLINK_MILLIS]. */
+private const val LIVE_BLINK_MILLIS = 1_600
+private const val LIVE_BLINK_LOW = 0.35f
+
+/**
+ * After the Logcat label: the live dot ([live], scales in) and the window icon ([popped], grows from 0 to 14 dp wide),
+ * each [gap] after what comes before it. The dot blinks unless the OS reduces motion.
+ */
+@Composable
+private fun LogcatSegmentMarks(popped: Boolean, live: Boolean, gap: Dp) {
+    val blinks = remember { !systemReducesMotion() }
+    AnimatedVisibility(
+        visible = live,
+        enter = scaleIn(growSpec(true)) + expandHorizontally(growSpec(true)),
+        exit = scaleOut(growSpec(false)) + shrinkHorizontally(growSpec(false)),
+    ) {
+        val blink = if (blinks) {
+            rememberInfiniteTransition(label = "logcat live").animateFloat(
+                1f, LIVE_BLINK_LOW,
+                infiniteRepeatable(tween(LIVE_BLINK_MILLIS / 2, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            )
+        } else {
+            null
+        }
+        Box(
+            Modifier.padding(start = gap).size(6.dp)
+                .graphicsLayer { alpha = blink?.value ?: 1f }
+                .background(LogcatColors.level(LogLevel.Info).first, CircleShape)
+                .semantics { contentDescription = "Logcat running" },
+        )
+    }
+    AnimatedVisibility(
+        visible = popped,
+        enter = expandHorizontally(growSpec(true)) + fadeIn(growSpec(true)),
+        exit = shrinkHorizontally(growSpec(false)) + fadeOut(growSpec(false)),
+    ) {
+        Icon(
+            Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "In its own window",
+            Modifier.padding(start = gap).size(14.dp),
+        )
     }
 }
