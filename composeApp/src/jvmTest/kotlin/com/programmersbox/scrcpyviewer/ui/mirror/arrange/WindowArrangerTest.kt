@@ -297,6 +297,28 @@ class WindowArrangerTest {
     }
 
     @Test
+    fun cascadeRaisesTheWindowsInOrderAndGivesTheFocusBack() = runTest {
+        val r = rig()
+        val fronts = mutableListOf<String>()
+        val handles = listOf("a", "b", "c").associateWith { s ->
+            FakeHandle(Rectangle(10 * s[0].code % 200, 20, 300, 600)).also { it.onFront = { fronts += s } }
+        }
+        handles.forEach { (s, h) -> r.windows.register(s, entry(s, h)) }
+        handles.getValue("b").hasFocus.value = true
+
+        r.arranger.apply(ArrangeLayout.Grid, focus = null)
+        settle()
+        assertEquals(emptyList(), fronts, "only Cascade raises")
+
+        r.arranger.apply(ArrangeLayout.Cascade, focus = null)
+        advanceTimeBy(ARRANGE_MILLIS.toLong())
+        runCurrent()
+        assertEquals(emptyList(), fronts, "not before the moves end")
+        settle()
+        assertEquals(listOf("a", "b", "c", "b"), fronts, "in layout order, then the focus back to b")
+    }
+
+    @Test
     fun aManualMoveAfterSettleTurnsKeepTiledOff() = runTest {
         val r = rig()
         val a = FakeHandle(Rectangle(10, 10, 300, 600))

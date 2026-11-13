@@ -90,6 +90,8 @@ fun interface WindowAnimator {
  * own sizing effects do not correct it mid-move. A move ends early when its window closes, and gives up
  * [MOVE_GRACE_MS] after it should have ended.
  *
+ * Cascade raises the windows in its order once they have moved, so none hides under an earlier one.
+ *
  * Leaving As placed remembers each window's bounds; As placed puts them back. With Keep tiled, the current layout is
  * applied again whenever a window opens or closes, or the app resizes one out of its tile (the quick actions sheet); a
  * move or resize that neither the arranger nor the app caused turns Keep tiled off. When positions do not take
@@ -322,6 +324,7 @@ class WindowArranger(
                     }
                 }
             }
+            if (layout == ArrangeLayout.Cascade) raiseInOrder(ui, moving, targets.keys)
             delay(POSITION_CHECK_MS)
             val open = windows.entries.value
             val stuck = withContext(ui) {
@@ -357,6 +360,19 @@ class WindowArranger(
             for ((serial, entry) in moving) if (open[serial] === entry) settled[serial] = entry.handle.bounds
         }
     }
+
+    /**
+     * Cascade: raises the windows still open in [order] (the layout's), so none hides under one before it, then gives
+     * the keyboard focus back to the window that had it.
+     */
+    private suspend fun raiseInOrder(ui: CoroutineContext, moving: Map<String, WindowEntry>, order: Collection<String>) =
+        withContext(ui) {
+            val open = windows.entries.value
+            val raised = order.mapNotNull { serial -> moving[serial]?.takeIf { open[serial] === it } }
+            val hadFocus = raised.firstOrNull { it.handle.focused.value }
+            raised.forEach { it.handle.toFront() }
+            if (hadFocus != null && hadFocus !== raised.last()) hadFocus.handle.toFront()
+        }
 
     /** The work area of the main window's screen; with no screens, the main window's bounds. */
     private fun workArea(): Rectangle? {
