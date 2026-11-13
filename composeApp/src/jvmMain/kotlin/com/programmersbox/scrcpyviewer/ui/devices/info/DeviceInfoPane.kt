@@ -7,6 +7,8 @@ import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,6 +18,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -204,28 +207,43 @@ private fun CenteredMessage(content: @Composable () -> Unit) {
     }
 }
 
-/** "Updated N s ago" (or "Last updated …" in the warning color after a failed poll) and "Copy as text". */
+/**
+ * "Updated N s ago" (or "Last updated …" in the warning color after a failed poll) and "Copy as text".
+ *
+ * The footer opens and closes its height while it fades (in step with the not-ready change, [NOT_READY_MILLIS]), so
+ * the cards area above, which takes the rest of the pane, resizes smoothly instead of stepping by the footer's height.
+ */
 @Composable
-private fun Footer(state: DeviceInfoUiState, showing: Boolean) {
+private fun ColumnScope.Footer(state: DeviceInfoUiState, showing: Boolean) {
     val reduce = LocalInfoReduceMotion.current
-    val fade = if (reduce) REDUCED_FADE_MILLIS else CROSSFADE_MILLIS
+    val millis = if (reduce) REDUCED_FADE_MILLIS else NOT_READY_MILLIS
+    AnimatedVisibility(
+        visible = showing,
+        enter = expandVertically(tween(millis, easing = SizeEasing), expandFrom = Alignment.Top) +
+            fadeIn(tween(millis, easing = EmphasizedDecelerate)),
+        exit = shrinkVertically(tween(millis, easing = SizeEasing), shrinkTowards = Alignment.Top) +
+            fadeOut(tween(millis, easing = EmphasizedAccelerate)),
+    ) {
+        FooterRow(state, millis)
+    }
+}
+
+@Composable
+private fun FooterRow(state: DeviceInfoUiState, millis: Int) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         val updatedAt = state.liveUpdatedAt
+        // Fade only: it sits in a row whose height the Copy button sets, and the spacer absorbs its width.
         AnimatedVisibility(
-            visible = showing && updatedAt != null,
-            enter = fadeIn(tween(fade, easing = EmphasizedDecelerate)),
-            exit = fadeOut(tween(fade, easing = EmphasizedAccelerate)),
+            visible = updatedAt != null,
+            enter = fadeIn(tween(millis, easing = EmphasizedDecelerate)),
+            exit = fadeOut(tween(millis, easing = EmphasizedAccelerate)),
         ) {
             // Holds the last time while fading out.
             val at = rememberLastNonNull(updatedAt)
             if (at != null) UpdatedAge(at, state.liveStale)
         }
         Spacer(Modifier.weight(1f))
-        AnimatedVisibility(
-            visible = showing,
-            enter = fadeIn(tween(fade, easing = EmphasizedDecelerate)),
-            exit = fadeOut(tween(fade, easing = EmphasizedAccelerate)),
-        ) {
+        Box {
             CopyButton(
                 text = {
                     InfoText.report(
