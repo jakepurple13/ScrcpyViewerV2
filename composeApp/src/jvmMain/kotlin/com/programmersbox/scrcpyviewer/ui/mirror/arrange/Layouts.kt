@@ -28,26 +28,41 @@ fun layout(
     cascadeDx: Int = 34,
     cascadeDy: Int = 30,
 ): Map<String, Rectangle> {
-    if (windows.isEmpty()) return emptyMap()
+    if (windows.isEmpty() || work.width <= 0 || work.height <= 0) return emptyMap()
     return when (layout) {
         ArrangeLayout.AsPlaced -> emptyMap()
         ArrangeLayout.Grid -> grid(windows, work, gapPx, null)
         ArrangeLayout.SideBySide -> grid(windows, work, gapPx, windows.size)
         ArrangeLayout.Focus -> focus(windows, work, focus, gapPx)
         ArrangeLayout.Cascade -> cascade(windows, work, cascadeDx, cascadeDy)
-    }
+    }.mapValues { (_, r) -> r.insideOf(work) }
 }
 
-/** Largest size of [w] (whole units, rounded down) inside a [cw] x [ch] box, keeping the device aspect. */
+/** Shrinks to the [work] size if needed and moves inside it, so no result ever leaves the work area. */
+private fun Rectangle.insideOf(work: Rectangle): Rectangle {
+    val w = width.coerceIn(1, work.width)
+    val h = height.coerceIn(1, work.height)
+    return Rectangle(x.coerceIn(work.x, work.x + work.width - w), y.coerceIn(work.y, work.y + work.height - h), w, h)
+}
+
+/**
+ * Largest size of [w] (whole units, rounded down) inside a [cw] x [ch] box, keeping the device aspect. Degenerate
+ * frame sizes count as 1 and a box smaller than the chrome shrinks the window to the box (aspect is given up).
+ */
 private fun fit(w: ArrangeWindow, cw: Double, ch: Double): Pair<Int, Int> {
-    val lock = AspectLock(w.frame.width, w.frame.height, w.chromeW.toDouble(), w.chromeH.toDouble())
-    var width = floor(cw).coerceAtLeast(w.chromeW + 1.0)
-    if (lock.outerHeight(width) > ch) {
-        width = w.chromeW + (ch - w.chromeH).coerceAtLeast(1.0) * w.frame.width / w.frame.height
+    val fw = w.frame.width.coerceAtLeast(1)
+    val fh = w.frame.height.coerceAtLeast(1)
+    val lock = AspectLock(fw, fh, w.chromeW.toDouble(), w.chromeH.toDouble())
+    val boxW = floor(cw).coerceAtLeast(1.0)
+    val boxH = floor(ch).coerceAtLeast(1.0)
+    var width = boxW.coerceAtLeast(w.chromeW + 1.0)
+    if (lock.outerHeight(width) > boxH) {
+        width = w.chromeW + (boxH - w.chromeH).coerceAtLeast(1.0) * fw / fh
     }
-    val wi = floor(width).toInt()
+    width = width.coerceAtMost(boxW)
+    val wi = floor(width).toInt().coerceAtLeast(1)
     // Height comes from the integer width so the aspect holds to within a unit.
-    val hi = floor(lock.outerHeight(wi.toDouble())).toInt()
+    val hi = floor(lock.outerHeight(wi.toDouble())).coerceAtMost(boxH).toInt().coerceAtLeast(1)
     return wi to hi
 }
 
@@ -94,10 +109,21 @@ private fun focus(windows: List<ArrangeWindow>, work: Rectangle, focus: String?,
     return out
 }
 
-private fun cascade(windows: List<ArrangeWindow>, work: Rectangle, dx: Int, dy: Int): Map<String, Rectangle> =
-    windows.mapIndexed { i, w ->
+private fun cascade(windows: List<ArrangeWindow>, work: Rectangle, dx: Int, dy: Int): Map<String, Rectangle> {
+    var wrap = 0
+    var step = 0
+    return windows.associate { w ->
         val (fw, fh) = fit(w, work.width * CASCADE_W, work.height * CASCADE_H)
-        val x = (work.x + i * dx).coerceAtMost(work.x + work.width - fw)
-        val y = (work.y + i * dy).coerceAtMost(work.y + work.height - fh)
+        var x = work.x + wrap * (dx / 4 + 1) + step * dx
+        var y = work.y + wrap * (dy / 4 + 1) + step * dy
+        if (step > 0 && (x + fw > work.x + work.width || y + fh > work.y + work.height)) {
+            // Past the edge: start again at the top-left, nudged a little more each restart so no window lands on another.
+            wrap++
+            step = 0
+            x = work.x + wrap * (dx / 4 + 1)
+            y = work.y + wrap * (dy / 4 + 1)
+        }
+        step++
         w.serial to Rectangle(x, y, fw, fh)
-    }.toMap()
+    }
+}

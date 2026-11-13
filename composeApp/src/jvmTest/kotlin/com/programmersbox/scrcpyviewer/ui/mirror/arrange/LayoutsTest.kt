@@ -112,4 +112,44 @@ class LayoutsTest {
             assertSane(ws, layout(it, ws, area, "c", gap), area)
         }
     }
+
+    @Test fun degenerateFrameSizesStaySane() {
+        val ws = listOf(ArrangeWindow("z", IntSize(0, 0), 56, 40), ArrangeWindow("n", IntSize(-5, 100), 56, 40))
+        ArrangeLayout.entries.filter { it != ArrangeLayout.AsPlaced }.forEach { l ->
+            val out = layout(l, ws, work, "z", gap)
+            assertEquals(setOf("z", "n"), out.keys)
+            out.values.forEach { assertTrue(it.width >= 1 && it.height >= 1 && work.contains(it), "$l $it") }
+        }
+    }
+
+    @Test fun chromeLargerThanCellStaysInside() {
+        val area = Rectangle(10, 20, 100, 100)
+        val ws = listOf(ArrangeWindow("a", IntSize(1080, 2400), 200, 150), ArrangeWindow("b", IntSize(1080, 2400), 200, 150))
+        ArrangeLayout.entries.filter { it != ArrangeLayout.AsPlaced }.forEach { l ->
+            layout(l, ws, area, "a", gap).values.forEach { assertTrue(area.contains(it), "$l $it") }
+        }
+    }
+
+    @Test fun twelveWindowsInSmallAreaStayInside() {
+        val area = Rectangle(0, 0, 800, 600)
+        val ws = (1..12).map { phone("p$it") }
+        ArrangeLayout.entries.filter { it != ArrangeLayout.AsPlaced }.forEach { l ->
+            val out = layout(l, ws, area, "p3", gap)
+            assertEquals(12, out.size)
+            out.values.forEach { assertTrue(area.contains(it), "$l $it") }
+        }
+    }
+
+    @Test fun cascadeWrapsInsteadOfStacking() {
+        val ws = (1..15).map { phone("p$it") }
+        val out = layout(ArrangeLayout.Cascade, ws, work, null, gap)
+        out.values.forEach { assertTrue(work.contains(it), "$it") }
+        assertTrue(out.values.map { it.x to it.y }.distinct().size == 15, "positions must be distinct")
+    }
+
+    @Test fun unknownFocusFallsBackToFirst() {
+        val ws = listOf(tablet("a"), tablet("b"))
+        val out = layout(ArrangeLayout.Focus, ws, work, "nope", gap)
+        assertTrue(out.getValue("a").width > out.getValue("b").width)
+    }
 }
