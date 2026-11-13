@@ -57,14 +57,16 @@ fun ScrcpyTray(
     mirroring: Set<String>,
     onAction: (TrayAction, serial: String?) -> Unit,
 ) {
-    // The native menu is only rebuilt when its content hash changes, and the hash ignores click lambdas, so its
-    // items keep the lambdas of the last rebuild. They read the handler through this state to always call the current one.
+    // The native menu is only rebuilt when its content hash changes, and the hash ignores click lambdas, so rows
+    // (which carry the serials) are passed as an extra key. Items keep the lambdas of the last rebuild, so they read the
+    // handler through this state to always call the current one.
     val currentOnAction by rememberUpdatedState(onAction)
     val rows = remember(devices, mirroring) { trayMenu(devices, mirroring, ::deviceTitle) }
     OffMainTray(
         iconPath = icons.png.toString(),
         windowsIconPath = icons.ico.toString(),
         tooltip = "Scrcpy Vwr",
+        key = rows,
     ) {
         render(rows) { action, serial -> currentOnAction(action, serial) }
     }

@@ -29,13 +29,15 @@ fun OffMainTray(
     iconPath: String,
     windowsIconPath: String,
     tooltip: String,
+    /** Changes whenever the menu's click targets change, since the library's hash ignores them. */
+    key: Any?,
     menuContent: TrayMenuBuilder.() -> Unit,
 ) {
     val tray = remember { NativeTray() }
     // The library's own change key for menu content: a lambda is new on every recomposition.
     val menuHash = MenuContentHash.calculateMenuHash(menuContent)
 
-    LaunchedEffect(tray, iconPath, windowsIconPath, tooltip, menuHash) {
+    LaunchedEffect(tray, iconPath, windowsIconPath, tooltip, menuHash, key) {
         withContext(trayDispatcher) {
             tray.update(iconPath, windowsIconPath, tooltip, null, menuContent, null)
         }
