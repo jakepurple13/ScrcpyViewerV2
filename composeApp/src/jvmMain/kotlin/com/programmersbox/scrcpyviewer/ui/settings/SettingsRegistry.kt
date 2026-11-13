@@ -11,7 +11,9 @@ import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
+import com.programmersbox.scrcpyviewer.ui.update.AutoDownloadSwitch
 import com.programmersbox.scrcpyviewer.ui.update.UpdatesContent
+import com.programmersbox.scrcpyviewer.ui.update.autoDownloadToggle
 
 enum class SettingsCategoryId { Appearance, Mirroring, Adb, Ai, Updates, Help }
 
@@ -48,6 +50,8 @@ class SettingsActions(
     val onCheckUpdates: () -> Unit = {},
     val onUpdate: () -> Unit = {},
     val onCancelUpdate: () -> Unit = {},
+    val onRestartToUpdate: () -> Unit = {},
+    val onAutoDownloadUpdates: (Boolean) -> Unit = {},
     val onOpenAiSkill: () -> Unit = {},
     val onInstallAiSkill: (List<SkillTarget>) -> Unit = {},
     val onChooseAiSkillFolder: () -> Unit = {},
@@ -166,10 +170,24 @@ val settingsCategories: List<SettingsCategory> = listOf(
         SettingsCategoryId.Updates, "Updates",
         listOf(
             SettingEntry(
+                "auto-download-updates", "Download updates automatically",
+                "New versions download in the background. You choose when to restart.",
+                keywords = listOf("auto", "automatic", "background", "update", "download", "install"),
+                rowModifier = {
+                    autoDownloadToggle(it.updates.canInstall, it.state.settings.autoDownloadUpdates, it.actions.onAutoDownloadUpdates)
+                },
+                content = { AutoDownloadSwitch(it.updates.canInstall, it.state.settings.autoDownloadUpdates) },
+            ),
+            SettingEntry(
                 "updates", "App updates", "Check for new versions and download them.",
                 keywords = listOf("version", "upgrade", "release", "download", "github"),
                 layout = EntryLayout.Block,
-                content = { UpdatesContent(it.updates, it.actions.onCheckUpdates, it.actions.onUpdate, it.actions.onCancelUpdate) },
+                content = {
+                    UpdatesContent(
+                        it.updates, it.actions.onCheckUpdates, it.actions.onUpdate, it.actions.onCancelUpdate,
+                        onRestart = it.actions.onRestartToUpdate,
+                    )
+                },
             ),
         ),
     ),

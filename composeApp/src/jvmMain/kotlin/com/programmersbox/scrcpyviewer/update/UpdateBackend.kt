@@ -55,6 +55,9 @@ interface UpdateBackend {
     /** Starts Nucleus' detached install script and exits the JVM. Does not return when the script starts. */
     fun installAndRestart(file: File)
 
+    /** Starts Nucleus' detached install script and exits the JVM, without reopening the app afterwards. */
+    fun installAndQuit(file: File)
+
     /** The `old -> new` marker Nucleus writes before installing, removed once read. */
     fun consumeUpdateEvent(): UpdateEvent?
 }
@@ -120,6 +123,8 @@ class NucleusUpdateBackend(
     override fun download(info: UpdateInfo): Flow<DownloadProgress> = installer.downloadUpdate(info)
 
     override fun installAndRestart(file: File) = installer.installAndRestart(file)
+
+    override fun installAndQuit(file: File) = installer.installAndQuit(file)
 
     override fun consumeUpdateEvent(): UpdateEvent? = installer.consumeUpdateEvent()
 

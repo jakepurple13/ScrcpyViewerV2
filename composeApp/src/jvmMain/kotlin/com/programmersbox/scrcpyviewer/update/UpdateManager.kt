@@ -34,7 +34,18 @@ sealed interface UpdateState {
     data object Checking : UpdateState
     data object UpToDate : UpdateState
     data class Available(val release: Release) : UpdateState
-    data class Downloading(val release: Release, val read: Long, val total: Long) : UpdateState
+    /** [background]: started by "Download updates automatically", so no dialog shows it; it ends in [Ready]. */
+    data class Downloading(
+        val release: Release,
+        val read: Long,
+        val total: Long,
+        val background: Boolean = false,
+    ) : UpdateState
+    /**
+     * Downloaded in the background and verified. Waits for [UpdateManager.restart]; quitting the app instead installs
+     * it without reopening.
+     */
+    data class Ready(val release: Release) : UpdateState
     /** Downloaded and verified; the app should quit, then `main()` calls [UpdateManager.installPending]. */
     data class Installing(val release: Release) : UpdateState
     data class Failed(val message: String, val release: Release?) : UpdateState
@@ -56,6 +67,8 @@ class UpdateManager(
     private val now: () -> Instant = Instant::now,
     /** How long the check waits for release notes before showing the release without them. */
     private val notesTimeoutMs: Long = 10_000,
+    /** The "Download updates automatically" setting. Turning it on while a release is offered downloads it. */
+    private val autoDownload: StateFlow<Boolean> = MutableStateFlow(false),
 ) {
     // Guards every state change, so a check or update started while another is running is ignored.
     private val lock = Any()
@@ -80,7 +93,11 @@ class UpdateManager(
     val popupDismissed: StateFlow<Boolean> = _popupDismissed.asStateFlow()
 
     /** Whether this copy can install updates at all; see [canSelfUpdate] for a given release. */
-    private val canInstall: Boolean = backend.canInstall && !macNotInApplications
+    val canInstall: Boolean = backend.canInstall && !macNotInApplications
+
+    init {
+        scope.launch { autoDownload.collect { if (it) synchronized(lock) { startDownload(background = true) } } }
+    }
 
     /**
      * Whether "Update now" is offered for [release]; otherwise the UI offers "Download from GitHub". False when the
@@ -123,7 +140,9 @@ class UpdateManager(
     fun check(userInitiated: Boolean) {
         val previous = synchronized(lock) {
             val current = _state.value
-            if (current is UpdateState.Checking || current is UpdateState.Downloading || current is UpdateState.Installing) {
+            if (current is UpdateState.Checking || current is UpdateState.Downloading ||
+                current is UpdateState.Ready || current is UpdateState.Installing
+            ) {
                 return
             }
             _state.value = UpdateState.Checking
@@ -150,6 +169,7 @@ class UpdateManager(
                     _available.value = release
                     _lastChecked.value = now()
                     _state.value = release?.let(UpdateState::Available) ?: UpdateState.UpToDate
+                    if (autoDownload.value) startDownload(background = true)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -168,27 +188,40 @@ class UpdateManager(
 
     /** Downloads the release shown in [UpdateState.Available] (or a failed one); Installing once verified. */
     fun startUpdate() {
+        synchronized(lock) { startDownload(background = false) }
+    }
+
+    /** Call holding [lock]. Does nothing unless a release this copy can install is offered. */
+    private fun startDownload(background: Boolean) {
+        val release = when (val current = _state.value) {
+            is UpdateState.Available -> current.release
+            // A background download that failed waits for the user, so the error stays in the popup.
+            is UpdateState.Failed -> current.release.takeIf { !background }
+            else -> null
+        } ?: return
+        if (!canInstall) return
+        val info = pendingInfo?.takeIf { it.version == release.version } ?: return
+        _state.value = UpdateState.Downloading(release, 0, info.currentFile.size, background)
+        downloadJob = scope.launch { download(release, info, background) }
+    }
+
+    /** Installs the update downloaded in the background: [UpdateState.Ready] becomes Installing, so the app quits. */
+    fun restart() {
         synchronized(lock) {
-            val release = when (val current = _state.value) {
-                is UpdateState.Available -> current.release
-                is UpdateState.Failed -> current.release
-                else -> null
-            } ?: return
-            if (!canInstall) return
-            val info = pendingInfo?.takeIf { it.version == release.version } ?: return
-            _state.value = UpdateState.Downloading(release, 0, info.currentFile.size)
-            downloadJob = scope.launch { download(release, info) }
+            val current = _state.value as? UpdateState.Ready ?: return
+            _state.value = UpdateState.Installing(current.release)
         }
     }
 
-    private suspend fun download(release: Release, info: UpdateInfo) {
+    private suspend fun download(release: Release, info: UpdateInfo, background: Boolean) {
         val job = currentCoroutineContext().job
         try {
             var file: File? = null
             backend.download(info).collect { progress ->
                 synchronized(lock) {
                     if (job.isActive) {
-                        _state.value = UpdateState.Downloading(release, progress.bytesDownloaded, progress.totalBytes)
+                        _state.value =
+                            UpdateState.Downloading(release, progress.bytesDownloaded, progress.totalBytes, background)
                     }
                 }
                 progress.file?.let { file = it }
@@ -197,7 +230,7 @@ class UpdateManager(
             synchronized(lock) {
                 job.ensureActive()
                 pendingFile = downloaded
-                _state.value = UpdateState.Installing(release)
+                _state.value = if (background) UpdateState.Ready(release) else UpdateState.Installing(release)
             }
         } catch (e: CancellationException) {
             throw e
@@ -208,12 +241,16 @@ class UpdateManager(
         }
     }
 
-    /** Stops the download and goes back to [UpdateState.Available]. */
+    /**
+     * Stops the download and goes back to [UpdateState.Available]. Cancelling a background download (from Settings)
+     * also closes the popup, which would otherwise offer the release right away.
+     */
     fun cancel() {
         synchronized(lock) {
             val current = _state.value as? UpdateState.Downloading ?: return
             downloadJob?.cancel()
             downloadJob = null
+            if (current.background) _popupDismissed.value = true
             _state.value = UpdateState.Available(current.release)
         }
     }
@@ -221,10 +258,12 @@ class UpdateManager(
     /**
      * Called by `main()` once the windows have closed and the sessions have ended; returns at once when nothing was
      * downloaded. Stops the app's own adb server (a running adb inside the install folder would block the Windows
-     * installer), then hands off to Nucleus, which starts its install script and exits the JVM.
+     * installer), then hands off to Nucleus, which starts its install script and exits the JVM. A quit while the
+     * update waits in [UpdateState.Ready] installs it without reopening the app.
      */
     fun installPending() {
-        val file = synchronized(lock) { pendingFile } ?: return
+        val (file, reopen) = synchronized(lock) { pendingFile to (_state.value !is UpdateState.Ready) }
+        if (file == null) return
         bundledAdbInUse()?.let { adb ->
             runCatching {
                 ProcessBuilder(adb.toString(), "kill-server")
@@ -234,7 +273,7 @@ class UpdateManager(
                     .waitFor(5, TimeUnit.SECONDS)
             }.onFailure { log.log(System.Logger.Level.WARNING, "adb kill-server failed; installing anyway", it) }
         }
-        runCatching { backend.installAndRestart(file) }
+        runCatching { if (reopen) backend.installAndRestart(file) else backend.installAndQuit(file) }
             .onFailure { log.log(System.Logger.Level.ERROR, "Could not start the update installer", it) }
     }
 

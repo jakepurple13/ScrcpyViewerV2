@@ -130,7 +130,8 @@ class SettingsScreenshotTest {
     fun `settings update badge`() =
         render("settings-update-badge.png", SettingsNav(), updates = updatesUi(UpdateState.Available(release), release))
 
-    private fun renderUpdates(name: String, ui: UpdateUiState) = render(name, SettingsNav(selected = SettingsCategoryId.Updates), updates = ui)
+    private fun renderUpdates(name: String, ui: UpdateUiState, state: SettingsUiState = this.state) =
+        render(name, SettingsNav(selected = SettingsCategoryId.Updates), state = state, updates = ui)
 
     @Test
     fun `updates available`() =
@@ -139,6 +140,13 @@ class SettingsScreenshotTest {
     @Test
     fun `updates downloading`() =
         renderUpdates("settings-updates-downloading.png", updatesUi(UpdateState.Downloading(release, 20_000_000, 50_000_000), release))
+
+    @Test
+    fun `updates ready to restart`() = renderUpdates(
+        "settings-updates-ready.png",
+        updatesUi(UpdateState.Ready(release), release).copy(canInstall = true),
+        state.copy(settings = state.settings.copy(autoDownloadUpdates = true)),
+    )
 
     @Test
     fun `updates up to date`() = renderUpdates("settings-updates-uptodate.png", updatesUi(UpdateState.UpToDate))

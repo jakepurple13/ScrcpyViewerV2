@@ -38,6 +38,23 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.runtime.State
+import androidx.compose.ui.graphics.graphicsLayer
+import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.OvershootEasing
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -102,8 +119,36 @@ private val TopLevelRoute.icon: ImageVector
  * The navigation rail. Its selection pill is one shape drawn behind all items ([RailIndicator]) rather than each
  * item's own indicator, so it travels between destinations: the edge facing the move leads, the other follows.
  */
+/** The Settings badge: pops in and out with [visible], and breathes while [pulse] (a background download). */
 @Composable
-private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean) {
+private fun SettingsBadge(visible: Boolean, pulse: Boolean) {
+    // The infinite transition runs only while pulsing.
+    val pulseScale: State<Float>? = if (pulse) {
+        rememberInfiniteTransition(label = "badgePulse").animateFloat(
+            1f, 1.35f, infiniteRepeatable(tween(BADGE_PULSE_MILLIS, easing = EmphasizedDecelerate), RepeatMode.Reverse),
+            label = "badgeScale",
+        )
+    } else {
+        null
+    }
+    AnimatedVisibility(
+        visible,
+        enter = scaleIn(tween(OPEN_MILLIS, easing = OvershootEasing)) + fadeIn(),
+        exit = scaleOut(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) + fadeOut(),
+    ) {
+        // Read in the layer only, so the pulse redraws without recomposing.
+        Badge(Modifier.graphicsLayer {
+            val s = pulseScale?.value ?: 1f
+            scaleX = s
+            scaleY = s
+        })
+    }
+}
+
+private const val BADGE_PULSE_MILLIS = 700
+
+@Composable
+private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean, settingsBadgePulse: Boolean = false) {
     val indicator = remember { RailIndicator() }
     val selected = navigator.current
     val selectedCenter = indicator.centers[selected]
@@ -157,8 +202,10 @@ private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean) {
                     selected = route == selected,
                     onClick = { navigator.select(route) },
                     icon = {
-                        if (route == TopLevelRoute.Settings && settingsBadge) {
-                            BadgedBox(badge = { Badge() }) { Icon(route.icon, contentDescription = route.label, modifier = icon) }
+                        if (route == TopLevelRoute.Settings) {
+                            BadgedBox(badge = { SettingsBadge(settingsBadge, settingsBadgePulse) }) {
+                                Icon(route.icon, contentDescription = route.label, modifier = icon)
+                            }
                         } else {
                             Icon(route.icon, contentDescription = route.label, modifier = icon)
                         }
@@ -230,7 +277,12 @@ fun App(
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             CompositionLocalProvider(LocalSnackbarHostState provides snackbar) {
                 Row(Modifier.fillMaxSize()) {
-                    Rail(navigator, settingsBadge = update.available != null)
+                    Rail(
+                        navigator,
+                        settingsBadge = update.available != null,
+                        // A background download breathes the badge until it is Ready.
+                        settingsBadgePulse = (update.state as? UpdateState.Downloading)?.background == true,
+                    )
                     Box(Modifier.fillMaxSize()) {
                         TopLevelNavDisplay(navigator) { route ->
                             when (route) {
@@ -267,13 +319,23 @@ fun App(
                     }
                 }
                 // Downloading and Installing show it even after "Later", since the user started them.
-                val inProgress = update.state is UpdateState.Downloading || update.state is UpdateState.Installing
+                val inProgress = (update.state as? UpdateState.Downloading)?.background == false ||
+                    update.state is UpdateState.Installing
                 if ((update.showPopup && settings.onboardingSeen) || inProgress) {
                     UpdateDialog(
                         ui = update,
-                        onLater = updateViewModel::later,
+                        onLater = {
+                            val ready = update.state as? UpdateState.Ready
+                            updateViewModel.later()
+                            if (ready != null) {
+                                scope.launch {
+                                    snackbar.showSnackbar("${ready.release.version} installs the next time you quit Scrcpy Vwr.")
+                                }
+                            }
+                        },
                         onUpdate = updateViewModel::update,
                         onCancel = updateViewModel::cancel,
+                        onRestart = updateViewModel::restart,
                     )
                 }
                 if (!settings.onboardingSeen) {

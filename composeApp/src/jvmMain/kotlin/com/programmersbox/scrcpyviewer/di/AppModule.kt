@@ -33,6 +33,9 @@ import com.programmersbox.scrcpyviewer.update.UpdateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.koin.core.Koin
 import org.koin.core.annotation.ComponentScan
@@ -213,6 +216,8 @@ class UpdateModule {
             scope = scope,
             // Stop the adb server before installing only when it is the app's own adb.
             bundledAdbInUse = { if (settings.settings.value.adbPathOverride == null) tools.adbExecutable() else null },
+            autoDownload = settings.settings.map { it.autoDownloadUpdates }
+                .stateIn(scope, SharingStarted.Eagerly, settings.settings.value.autoDownloadUpdates),
         )
     }
 
