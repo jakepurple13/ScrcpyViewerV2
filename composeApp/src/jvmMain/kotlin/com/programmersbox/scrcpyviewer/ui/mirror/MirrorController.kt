@@ -44,7 +44,8 @@ fun recordResultMessage(result: RecordResult): String = when (result) {
  * in the `device` state again, which enables the window's Reconnect button.
  *
  * A [DeviceMessage.Clipboard] from a device is passed to [setClipboard] unless the session has
- * `no-clipboard-autosync`.
+ * `no-clipboard-autosync` or [clipboardMuted] says so for its serial at the time (a window following another one: the
+ * leader's paste lands on its device, and the computer clipboard is the leader's to sync).
  *
  * Every session's [ScrcpySession.recordingResults] is relayed to [recordingResults] for as long as the session
  * lives, so a recording that ends after its window closed (or across a Reconnect) is still reported.
@@ -56,6 +57,7 @@ class MirrorController(
     private val optionsFor: (serial: String) -> OptionValues,
     private val newSession: (serial: String, values: OptionValues) -> ScrcpySession,
     private val setClipboard: (String) -> Unit = {},
+    private val clipboardMuted: (serial: String) -> Boolean = { false },
 ) {
     private val lock = Any()
     private val _open = MutableStateFlow<Map<String, ScrcpySession>>(emptyMap())
@@ -140,7 +142,7 @@ class MirrorController(
             // UNDISPATCHED: subscribed before this returns, so no early clipboard message is missed.
             clipboardJobs[session] = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                 session.deviceMessages.collect { msg ->
-                    if (msg is DeviceMessage.Clipboard) runCatching { setClipboard(msg.text) }
+                    if (msg is DeviceMessage.Clipboard && !clipboardMuted(serial)) runCatching { setClipboard(msg.text) }
                 }
             }
         }
