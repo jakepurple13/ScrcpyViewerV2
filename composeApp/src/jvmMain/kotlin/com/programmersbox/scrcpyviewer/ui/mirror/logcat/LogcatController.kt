@@ -51,8 +51,11 @@ enum class LogcatRun { NotStarted, Running, Paused, StoppedByLeaving }
 sealed interface LogcatItem {
     val key: Long
 
-    /** A log entry; [pkg] is its app package, null while (or when) the pid is unknown. */
-    data class Line(val entry: LogcatEntry, val pkg: String?) : LogcatItem {
+    /**
+     * A log entry; [process] is its process name from `ps` and [pkg] its app package, null while (or when) the pid
+     * is unknown. Kept on the line, so a line keeps them after its process exits and `ps` no longer lists the pid.
+     */
+    data class Line(val entry: LogcatEntry, val pkg: String?, val process: String? = null) : LogcatItem {
         override val key: Long get() = entry.seq
     }
 
@@ -201,15 +204,15 @@ class LogcatController(
         itemWrites++
     }
 
-    private var processes by mutableStateOf<Map<Int, String>>(emptyMap())
+    /** The last `ps` table, pid to process name. Lines copy their names from it; not state. */
+    private var processes: Map<Int, String> = emptyMap()
 
     private val visibleState = derivedStateOf {
         val q = parsed
         val m = mine
-        val names = processes
         val now = clock()
         itemsState.filter { item ->
-            item !is LogcatItem.Line || q.matches(item.entry, EntryInfo(item.pkg, names[item.entry.line.pid]), m, now)
+            item !is LogcatItem.Line || q.matches(item.entry, EntryInfo(item.pkg, item.process), m, now)
         }
     }
 
@@ -365,11 +368,10 @@ class LogcatController(
     /** Tags (with line counts), packages and processes seen in the list, for autocomplete. */
     fun suggestionContext(): SuggestionContext {
         val lines = items.filterIsInstance<LogcatItem.Line>()
-        val names = processes
         return SuggestionContext(
             tags = lines.groupingBy { it.entry.line.tag }.eachCount(),
             packages = lines.mapNotNullTo(HashSet()) { it.pkg },
-            processes = lines.mapNotNullTo(HashSet()) { names[it.entry.line.pid] },
+            processes = lines.mapNotNullTo(HashSet()) { it.process },
             mine = mine,
         )
     }
@@ -395,7 +397,7 @@ class LogcatController(
                         missedPids.remove(pid)
                         unknownPids += pid
                     }
-                    out += LogcatItem.Line(f.entry, process?.let(::packageOf))
+                    out += LogcatItem.Line(f.entry, process?.let(::packageOf), process)
                 }
                 is FoldResult.Appended -> {
                     val i = out.indexOfLast { it is LogcatItem.Line && it.entry.seq == f.entry.seq }
@@ -452,29 +454,43 @@ class LogcatController(
             lastLookupAt = clock()
             val asked = HashSet(unknownPids)
             unknownPids.clear()
-            val found = try {
+            // A `ps` answer is the whole table: it replaces the map, so a reused pid gets its new process. A failed
+            // read keeps the old one.
+            val names = try {
                 src.processes()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                emptyMap()
+                processes
             }
-            val names = processes + found
-            processes = names
             val answeredAt = clock()
             for (pid in asked) if (pid !in names) missedPids[pid] = answeredAt
             unknownPids.removeAll(names.keys)
-            fillPackages(names)
+            if (names != processes) {
+                processes = names
+                fillPackages(names)
+            }
             lookupJob = null
             if (unknownPids.isNotEmpty()) requestLookup()
         }
     }
 
+    /**
+     * Gives each line the process (and package) [names] has for its pid when that differs from the one it shows:
+     * unknown ones get theirs, and a reused pid's lines follow its new process. A pid [names] doesn't list (its
+     * process exited) keeps what it shows.
+     */
     private fun fillPackages(names: Map<Int, String>) {
         var changed = false
         val out = items.map { item ->
-            if (item is LogcatItem.Line && item.pkg == null) {
-                names[item.entry.line.pid]?.let { changed = true; item.copy(pkg = packageOf(it)) } ?: item
+            if (item is LogcatItem.Line) {
+                val process = names[item.entry.line.pid]
+                if (process != null && process != item.process) {
+                    changed = true
+                    item.copy(pkg = packageOf(process), process = process)
+                } else {
+                    item
+                }
             } else {
                 item
             }

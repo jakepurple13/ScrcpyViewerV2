@@ -85,6 +85,22 @@ class LogcatQueryTest {
     fun `message also searches trace lines`() = assertEquals(listOf(2L), run("message:IllegalState"))
 
     @Test
+    fun `message equals matches the message line or any one trace line`() {
+        assertEquals(listOf(2L), run("message=:\"FATAL EXCEPTION: main\""))
+        assertEquals(listOf(2L), run("message=:\"Process: com.example.notes\""))
+        assertEquals(listOf(2L), run("message=:\"java.lang.IllegalStateException: boom\""))
+        assertEquals(emptyList(), run("message=:boom"))
+        assertEquals(listOf(1L, 3, 4), run("-message=:\"Process: com.example.notes\""))
+    }
+
+    @Test
+    fun `message regex is tried on each trace line on its own`() {
+        assertEquals(listOf(2L), run("message~:^java\\.lang\\."))
+        assertEquals(listOf(2L), run("message~:boom$"))
+        assertEquals(listOf(3L), run("message~:^skipped"))
+    }
+
+    @Test
     fun `bare word matches tag or message`() {
         assertEquals(listOf(1L), run("okhttp"))
         assertEquals(listOf(3L), run("frames"))

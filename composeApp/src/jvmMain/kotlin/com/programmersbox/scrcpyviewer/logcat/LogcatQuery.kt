@@ -50,29 +50,29 @@ class LogcatQuery private constructor(
 
     private fun termOk(t: Term, e: LogcatEntry, info: EntryInfo, mine: String?, nowMillis: Long): Boolean {
         val ok = when {
-            t.key == "text" -> {
-                val v = t.value.lowercase()
-                e.line.tag.lowercase().contains(v) || e.line.message.lowercase().contains(v)
-            }
+            t.key == "text" -> e.line.tag.contains(t.value, ignoreCase = true) || e.line.message.contains(t.value, ignoreCase = true)
             t.key == "level" -> e.line.level >= t.level!!
             t.key == "age" -> nowMillis - e.receivedAtMillis <= t.ageMillis!!
             t.key == "is" -> if ("crash".startsWith(t.value)) e.isCrash else e.hasTrace
             t.key == "package" && t.value == "mine" && t.op == "" -> mine != null && info.pkg == mine
-            else -> {
-                val f = when (t.key) {
+            // The message line, then each trace line, on its own: no joined copy per entry and check.
+            t.key == "message" -> fieldOk(t, e.line.message) || e.trace.any { fieldOk(t, it) }
+            else -> fieldOk(
+                t,
+                when (t.key) {
                     "tag" -> e.line.tag
                     "package" -> info.pkg.orEmpty()
-                    "process" -> info.process.orEmpty()
-                    else -> (listOf(e.line.message) + e.trace).joinToString("\n")
-                }
-                when (t.op) {
-                    "~" -> t.regex!!.containsMatchIn(f)
-                    "=" -> f == t.value
-                    else -> f.contains(t.value, ignoreCase = true)
-                }
-            }
+                    else -> info.process.orEmpty()
+                },
+            )
         }
         return if (t.neg) !ok else ok
+    }
+
+    private fun fieldOk(t: Term, f: String): Boolean = when (t.op) {
+        "~" -> t.regex!!.containsMatchIn(f)
+        "=" -> f == t.value
+        else -> f.contains(t.value, ignoreCase = true)
     }
 
     companion object {

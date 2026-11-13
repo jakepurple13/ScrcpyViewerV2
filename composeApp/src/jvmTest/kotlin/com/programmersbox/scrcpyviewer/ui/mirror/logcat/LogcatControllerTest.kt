@@ -495,6 +495,96 @@ class LogcatControllerTest {
     }
 
     @Test
+    fun `a reused pid takes the process from the newest ps, not the old one`() = runTest {
+        val source = FakeSource()
+        source.ps = mapOf(100 to "com.a")
+        val c = controller(source)
+        c.play()
+        runCurrent()
+        source.stream.trySend(line(message = "a1", pid = 100))
+        runCurrent()
+        assertEquals("com.a", c.lines().single().pkg)
+        assertEquals(1, source.psCalls)
+
+        // com.a exits, Android hands pid 100 to com.b; a line from an unknown pid brings the next ps.
+        source.ps = mapOf(100 to "com.b", 200 to "com.c")
+        source.stream.trySend(line(message = "c1", pid = 200))
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals(1, source.psCalls) // at most one ps a second
+        advanceTimeBy(1_000)
+        runCurrent()
+        assertEquals(2, source.psCalls)
+        source.stream.trySend(line(message = "b1", pid = 100))
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals("com.b", c.lines().last().pkg)
+        assertEquals("com.b", c.lines().last().process)
+        assertEquals(listOf("com.b", "com.c", "com.b"), c.lines().map { it.pkg })
+        assertEquals(2, source.psCalls)
+        c.query = "package=:com.b"
+        assertEquals(listOf("a1", "b1"), c.visible.map { (it as LogcatItem.Line).entry.line.message })
+
+        // A ps that no longer lists a pid (its process exited) leaves that pid's lines as they are.
+        source.ps = mapOf(300 to "com.d")
+        source.stream.trySend(line(message = "d1", pid = 300))
+        advanceTimeBy(1_100)
+        runCurrent()
+        assertEquals(3, source.psCalls)
+        assertEquals(listOf("com.b", "com.c", "com.b", "com.d"), c.lines().map { it.pkg })
+        assertEquals(setOf("com.b", "com.c", "com.d"), c.suggestionContext().processes)
+    }
+
+    @Test
+    fun `refiltering 20k entries after a 100-line batch stays within budget`() = runTest {
+        val source = FakeSource()
+        source.ps = (1..40).associate { it to "com.app$it" }
+        val c = controller(source)
+        c.play()
+        runCurrent()
+        val tags = listOf("OkHttp", "SyncManager", "Choreographer", "ActivityManager", "AndroidRuntime", "OkHttpClient")
+        var n = 0
+        fun batch(size: Int) {
+            repeat(size) {
+                val i = n++
+                val tag = tags[i % tags.size]
+                val pid = 1 + i % 40
+                if (i % 50 == 0) {
+                    // An entry with a 3-line trace.
+                    source.stream.trySend(line(message = "java.lang.IllegalStateException: retry $i", pid = pid, tid = pid, tag = "W", level = LogLevel.Warn))
+                    source.stream.trySend(line(message = "    at com.example.Foo.bar(Foo.kt:$i)", pid = pid, tid = pid, tag = "W", level = LogLevel.Warn))
+                    source.stream.trySend(line(message = "    at com.example.Foo.baz(Foo.kt:$i)", pid = pid, tid = pid, tag = "W", level = LogLevel.Warn))
+                } else {
+                    val level = LogLevel.entries[i % LogLevel.entries.size]
+                    source.stream.trySend(line(message = "request $i ${if (i % 3 == 0) "retry" else "ok"} to host", pid = pid, tag = tag, level = level))
+                }
+            }
+            advanceTimeBy(60)
+            runCurrent()
+        }
+        batch(LOGCAT_MAX_ENTRIES)
+        assertEquals(LOGCAT_MAX_ENTRIES, c.totalLines)
+        c.query = "tag~:^(Ok|Sync) retry"
+        assertTrue(c.visible.isNotEmpty())
+
+        val times = mutableListOf<Long>()
+        repeat(40) { round ->
+            batch(100)
+            val t0 = System.nanoTime()
+            val visible = c.visible
+            val counts = c.levelCounts
+            val took = System.nanoTime() - t0
+            assertTrue(visible.isNotEmpty() && counts.isNotEmpty())
+            if (round >= 10) times += took // the first 10 warm up the JIT
+        }
+        assertEquals(LOGCAT_MAX_ENTRIES, c.totalLines)
+        val median = times.sorted()[times.size / 2] / 1_000_000.0
+        println("Logcat refilter of $LOGCAT_MAX_ENTRIES entries: median %.2f ms over ${times.size} rounds".format(median))
+        // Budget is 8 ms on a dev machine; the assert is generous so a slow CI box doesn't flake.
+        assertTrue(median < 25.0, "median refilter took $median ms")
+    }
+
+    @Test
     fun `flipTrace flips and flips back`() = runTest {
         val c = controller()
         c.flipTrace(7)
