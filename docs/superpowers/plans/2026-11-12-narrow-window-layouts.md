@@ -485,7 +485,8 @@ Changes:
   - `ui/settings/SettingsDetailPane.kt:70-91` (`SettingRow`)
   - `ui/settings/SettingsControls.kt`: Theme at 43, folder at 84, adb at 111–124, preset button at 136
   - `ui/settings/PalettePicker.kt`: header rows at 306/366, slider rows at 418, swatches at 270
-  - `ui/settings/StylePicker.kt`: 91, 117, 220
+  - `ui/settings/StylePicker.kt`: 71, 91, 117, 220
+  - `ui/settings/LaunchQuitPicker.kt` (tile width and reflow motion)
   - `ui/App.kt`: hoist the Settings `ListDetailPanes` like the others
 - Delete: `ResizableListDetail`, `DetailBackButton` and the `ListDetailPaneScaffold` use in `ui/common/ListDetailPanes.kt`.
 - Delete or replace: `ui/common/ResizableListDetailTest.kt` (covered by `AdaptiveListDetailTest`).
@@ -516,6 +517,9 @@ Changes:
   - Slider rows: the label goes above the slider when the slider would get < 120 dp. Use `AdaptiveRow` with the label as `text` and `textMin` set so the slider keeps 120 dp, or a dedicated two-line layout (builder's call).
   - Role swatches: labels `maxLines = 1` + ellipsis.
 - **StylePicker:** Retro colors row, Glass opacity row and blur row → `AdaptiveRow`.
+- **Tile pickers (spec rule 5, added 2026-11-13):** `LaunchQuitPicker.kt` and `StylePicker.kt:71`.
+  - Launch & quit tiles: `.width(200.dp)` → `min(200 dp, row width)`.
+  - Both `FlowRow`s sit in a `LookaheadScope`; each tile gets `animateBounds` with `layoutSpring()`, skipped when `LocalReduceMotion` is true. Pattern: `DevicesScreen.kt:534, 640` (`optionMotion`).
 - **Review Focus 5** is covered in the tests.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -524,6 +528,8 @@ Changes:
   - At 360: Theme shows the menu button "System".
   - In list view at 600, typing "dark" in search keeps list view and shows Appearance.
   - Clicking Appearance opens item view.
+  - Launch & quit at 1000: the three tiles share one top. At 360: every tile's right edge ≤ the picker's right edge, and each tile is ≤ 200 dp wide.
+  - Launch & quit reflow animates: resize 1000 → 600 with the clock paused; one frame in, a wrapped tile sits between its old and new position.
 - [ ] **Step 2: Run them.** Expected: FAIL.
 - [ ] **Step 3: Implement, then delete the old pane code.**
 - [ ] **Step 4: Run them, `SettingsScreenshotTest`, `StylesScreenshotTest`, `AppNavigationTest` and the full suite.** Expected: PASS.

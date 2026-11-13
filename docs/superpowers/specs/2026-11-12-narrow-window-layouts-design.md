@@ -178,6 +178,13 @@ straight from full to menu. Applies to:
   - Devices option columns, under 560 dp of pane.
   - Preset flag grid, under 520 dp.
   - Palette role swatches, 5 columns, wrap or shrink labels (builder's call).
+- **Tile pickers wrap, and the wrap animates** (added 2026-11-13, after main gained the Launch & quit picker):
+  - Launch & quit animation (`LaunchQuitPicker.kt`): 3 tiles, 200 dp each, in a `FlowRow`. 200 dp becomes a
+    maximum: a tile is `min(200 dp, row width)` wide, so a single column never clips.
+  - Style (`StylePicker.kt:71`): 124 dp tiles in a `FlowRow`, same wrap motion (*my call*, for consistency).
+  - When the window narrows or widens and a tile changes row, it glides to its new slot and the picker's
+    height springs, both ways. Same spring and `LookaheadScope` + `animateBounds` as rule 2. The tile's
+    looping preview keeps playing while it moves. Reduced motion: tiles jump.
 - **Side-by-side pairs stack:**
   - Preset edit Name + Description, under 480 dp.
   - Action variable card, under 440 dp.
