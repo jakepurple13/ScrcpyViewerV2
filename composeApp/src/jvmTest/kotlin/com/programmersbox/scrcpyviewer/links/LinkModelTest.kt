@@ -23,7 +23,7 @@ class LinkModelTest {
     @Test
     fun plainCommand() {
         assertEquals(
-            "am start -W -d 'https://example.com'",
+            "am start -W -d https://example.com",
             deviceCommand(LinkRequest(link = "https://example.com")),
         )
     }
@@ -38,8 +38,8 @@ class LinkModelTest {
             extra = Extra(ExtraType.String, "k", "v"),
         )
         assertEquals(
-            "am start -W -a 'android.intent.action.VIEW' -c 'android.intent.category.BROWSABLE' " +
-                "-d 'https://example.com' --es 'k' 'v' 'com.android.chrome'",
+            "am start -W -a android.intent.action.VIEW -c android.intent.category.BROWSABLE " +
+                "-d https://example.com --es k v com.android.chrome",
             deviceCommand(r),
         )
     }
@@ -47,23 +47,23 @@ class LinkModelTest {
     @Test
     fun extraTypes() {
         fun cmd(t: ExtraType) = deviceCommand(LinkRequest("a://b", extra = Extra(t, "k", "1")))
-        assertTrue(" --es 'k' '1'" in cmd(ExtraType.String))
-        assertTrue(" --ei 'k' '1'" in cmd(ExtraType.Int))
-        assertTrue(" --ez 'k' '1'" in cmd(ExtraType.Bool))
+        assertTrue(" --es k 1" in cmd(ExtraType.String))
+        assertTrue(" --ei k 1" in cmd(ExtraType.Int))
+        assertTrue(" --ez k 1" in cmd(ExtraType.Bool))
     }
 
     @Test
     fun clearTaskAndForceStop() {
         val clear = deviceCommand(LinkRequest("a://b", packageName = "p.q", before = Before.ClearTask))
-        assertEquals("am start -W -d 'a://b' --activity-clear-task 'p.q'", clear)
+        assertEquals("am start -W -d a://b --activity-clear-task p.q", clear)
         val stop = deviceCommand(LinkRequest("a://b", packageName = "p.q", before = Before.ForceStop))
-        assertEquals("am force-stop 'p.q' && am start -W -d 'a://b' 'p.q'", stop)
+        assertEquals("am force-stop p.q && am start -W -d a://b p.q", stop)
     }
 
     @Test
     fun forceStopNeedsPackage() {
         assertEquals(
-            "am start -W -d 'a://b'",
+            "am start -W -d a://b",
             deviceCommand(LinkRequest("a://b", before = Before.ForceStop)),
         )
     }
@@ -82,7 +82,7 @@ class LinkModelTest {
     fun intentUriIsPositionalAndIgnoresPackage() {
         val uri = "intent://www.example.com/#Intent;scheme=https;package=com.android.chrome;end"
         val r = LinkRequest(uri, packageName = "other.app", before = Before.ForceStop, extra = Extra(ExtraType.Bool, "k", "true"))
-        assertEquals("am start -W --ez 'k' 'true' '$uri'", deviceCommand(r))
+        assertEquals("am start -W --ez k true '$uri'", deviceCommand(r))
         assertEquals(
             "am start -W --activity-clear-task '$uri'",
             deviceCommand(LinkRequest(uri, before = Before.ClearTask)),
@@ -126,14 +126,39 @@ class LinkModelTest {
     @Test
     fun hostilePackageIsQuoted() {
         val cmd = deviceCommand(LinkRequest("a://b", packageName = "p;reboot", before = Before.ForceStop))
-        assertEquals("am force-stop 'p;reboot' && am start -W -d 'a://b' 'p;reboot'", cmd)
+        assertEquals("am force-stop 'p;reboot' && am start -W -d a://b 'p;reboot'", cmd)
     }
 
     @Test
     fun previewQuotesForLocalShell() {
         val r = LinkRequest("https://x.com/it's;rm")
         val preview = previewCommand("R5CX12", r)
-        assertEquals("adb -s 'R5CX12' shell " + DeviceApps.quote(deviceCommand(r)), preview)
+        assertEquals("adb -s R5CX12 shell " + DeviceApps.quote(deviceCommand(r)), preview)
+    }
+
+    @Test
+    fun quotingOnlyWhereNeeded() {
+        val link = "https://example.com/?a=1&b=2"
+        assertEquals("am start -W -d 'https://example.com/?a=1&b=2'", deviceCommand(LinkRequest(link)))
+        // A package-only token stays bare.
+        assertEquals("am start -W -d a://b com.android.chrome", deviceCommand(LinkRequest("a://b", packageName = "com.android.chrome")))
+    }
+
+    @Test
+    fun previewReadsNaturally() {
+        val r = LinkRequest("https://example.com/?a=1&b=2", packageName = "com.android.chrome", action = "android.intent.action.VIEW")
+        assertEquals(
+            "adb -s R5CX12GDWPZ shell \"am start -W -a android.intent.action.VIEW -d 'https://example.com/?a=1&b=2' com.android.chrome\"",
+            previewCommand("R5CX12GDWPZ", r),
+        )
+    }
+
+    @Test
+    fun previewFallsBackToSingleQuotesForDoubleQuoteSpecials() {
+        for (link in listOf("https://x.com/?q=\"a\"", "https://x.com/?q=\$HOME", "https://x.com/?q=`id`", "https://x.com/?q=a\\b", "https://x.com/?q=a!b")) {
+            val r = LinkRequest(link)
+            assertEquals("adb -s d shell " + DeviceApps.quote(deviceCommand(r)), previewCommand("d", r), link)
+        }
     }
 
     @Test

@@ -17,7 +17,7 @@ data class LinkRequest(
     val extra: Extra? = null,
 )
 
-/** The shell command to run on the device (no `adb shell` prefix). Every user value is single-quoted. */
+/** The shell command to run on the device (no `adb shell` prefix). A user value is left bare when it is only safe characters, else single-quoted. */
 fun deviceCommand(r: LinkRequest): String {
     val link = r.link.trim()
     val isIntentUri = linkKind(link).first == LinkKind.Intent
@@ -27,20 +27,34 @@ fun deviceCommand(r: LinkRequest): String {
         add("am start -W")
         // An intent: URI carries its own action and categories, and must be positional: `-d` fails to resolve.
         if (!isIntentUri) {
-            r.action?.takeIf { it.isNotBlank() }?.let { add("-a ${DeviceApps.quote(it)}") }
-            r.category?.takeIf { it.isNotBlank() }?.let { add("-c ${DeviceApps.quote(it)}") }
+            r.action?.takeIf { it.isNotBlank() }?.let { add("-a ${arg(it)}") }
+            r.category?.takeIf { it.isNotBlank() }?.let { add("-c ${arg(it)}") }
         }
-        if (!isIntentUri) add("-d ${DeviceApps.quote(link)}")
+        if (!isIntentUri) add("-d ${arg(link)}")
         r.extra?.takeIf { it.key.isNotBlank() }?.let {
-            add("${it.type.flag} ${DeviceApps.quote(it.key)} ${DeviceApps.quote(it.value)}")
+            add("${it.type.flag} ${arg(it.key)} ${arg(it.value)}")
         }
         if (r.before == Before.ClearTask) add("--activity-clear-task")
         // The positional argument goes last: the intent URI, or the chosen package.
-        if (isIntentUri) add(DeviceApps.quote(link)) else if (pkg != null) add(DeviceApps.quote(pkg))
+        if (isIntentUri) add(arg(link)) else if (pkg != null) add(arg(pkg))
     }.joinToString(" ")
-    return if (r.before == Before.ForceStop && pkg != null) "am force-stop ${DeviceApps.quote(pkg)} && $start" else start
+    return if (r.before == Before.ForceStop && pkg != null) "am force-stop ${arg(pkg)} && $start" else start
 }
 
-/** The text to show and copy: safe to paste into a local shell. */
-fun previewCommand(serial: String, r: LinkRequest): String =
-    "adb -s ${DeviceApps.quote(serial)} shell ${DeviceApps.quote(deviceCommand(r))}"
+private val SAFE = Regex("[A-Za-z0-9._/:=@%+,-]+")
+
+/** [value] bare when it is only safe characters, else in POSIX single quotes (so `&`, `?`, spaces, `'` stay literal). */
+private fun arg(value: String): String = if (SAFE.matches(value)) value else DeviceApps.quote(value)
+
+private val DOUBLE_QUOTE_UNSAFE = charArrayOf('"', '$', '`', '\\', '!')
+
+/**
+ * The text to show and copy: safe to paste into a local shell. The device command goes in double quotes when nothing in
+ * it is special inside them (its single quotes stay as they are), else in single quotes. Either way the device
+ * receives exactly [deviceCommand].
+ */
+fun previewCommand(serial: String, r: LinkRequest): String {
+    val device = deviceCommand(r)
+    val wrapped = if (device.none { it in DOUBLE_QUOTE_UNSAFE }) "\"$device\"" else DeviceApps.quote(device)
+    return "adb -s ${arg(serial)} shell $wrapped"
+}
