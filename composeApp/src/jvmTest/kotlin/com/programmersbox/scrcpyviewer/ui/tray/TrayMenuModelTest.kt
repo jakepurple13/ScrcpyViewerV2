@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceState
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 
 class TrayMenuModelTest {
     private fun device(serial: String, state: DeviceState = DeviceState.Device) =
@@ -87,5 +88,29 @@ class TrayMenuModelTest {
     @Test
     fun equalInputsGiveEqualModels() {
         assertEquals(menu(listOf(device("a")), setOf("a")), menu(listOf(device("a")), setOf("a")))
+    }
+
+    @Test
+    fun sameLabelsWithDifferentSerialsGiveDifferentModels() {
+        // The native menu hash ignores click targets, so the rows themselves are the rebuild key.
+        assertNotEquals(menu(listOf(device("a"), device("b"))), menu(listOf(device("b"), device("a"))))
+        val sameTitle = { _: Device -> "Pixel 7" }
+        assertNotEquals(
+            trayMenu(listOf(device("a")), emptySet(), sameTitle),
+            trayMenu(listOf(device("b")), emptySet(), sameTitle),
+        )
+    }
+
+    @Test
+    fun mirrorWithoutDeviceRowStaysReachable() {
+        val rows = menu(listOf(device("a")), setOf("gone2", "a", "gone1")).filterIsInstance<TrayRow.DeviceRow>()
+        assertEquals(
+            listOf(
+                TrayRow.DeviceRow("a", "🟢 T-a — Mirroring", TrayAction.Focus),
+                TrayRow.DeviceRow("gone2", "🟢 gone2 — Mirroring", TrayAction.Focus),
+                TrayRow.DeviceRow("gone1", "🟢 gone1 — Mirroring", TrayAction.Focus),
+            ),
+            rows,
+        )
     }
 }

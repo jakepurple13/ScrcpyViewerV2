@@ -30,6 +30,10 @@ private fun resource(name: String): ByteArray =
 private fun writeIfChanged(target: Path, bytes: ByteArray) {
     if (Files.exists(target) && Files.readAllBytes(target).contentEquals(bytes)) return
     val tmp = Files.createTempFile(target.parent, target.fileName.toString(), ".tmp")
-    Files.write(tmp, bytes)
-    Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    try {
+        Files.write(tmp, bytes)
+        Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    } finally {
+        Files.deleteIfExists(tmp)
+    }
 }

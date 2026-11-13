@@ -38,6 +38,11 @@ fun trayMenu(devices: List<Device>, mirroring: Set<String>, title: (Device) -> S
         }
         add(TrayRow.DeviceRow(device.serial, label, action))
     }
+    // Mirror windows whose device is gone from adb entirely stay reachable.
+    val listed = devices.mapTo(HashSet()) { it.serial }
+    mirroring.filter { it !in listed }.forEach { serial ->
+        add(TrayRow.DeviceRow(serial, "🟢 $serial — Mirroring", TrayAction.Focus))
+    }
     add(TrayRow.Divider)
     add(TrayRow.Command("Open Scrcpy Vwr", TrayAction.OpenMain))
     add(TrayRow.Command("Settings…", TrayAction.Settings))
