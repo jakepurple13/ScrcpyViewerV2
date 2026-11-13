@@ -290,7 +290,12 @@ private fun HistoryRow(entry: LinkEntry, starred: Boolean, onEvent: (LinksEvent)
                 entry.link, fontFamily = FontFamily.Monospace, fontSize = 12.5.sp, style = MaterialTheme.typography.bodySmall,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
-            val who = if (entry.ok) entry.appLabel ?: entry.packageName ?: "Opened" else "No app found"
+            // A timeout or adb error says nothing about the link: it shows the error, not "No app found".
+            val who = when {
+                entry.ok -> entry.appLabel ?: entry.packageName ?: "Opened"
+                entry.error -> entry.detail.lineSequence().firstOrNull { it.isNotBlank() } ?: "Could not open"
+                else -> "No app found"
+            }
             Text(
                 "$who · ${timeAgo(entry.at, now)}", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,

@@ -15,6 +15,8 @@ data class LinkEntry(
     val ok: Boolean,
     val detail: String = "",
     val at: Long,
+    /** True when the run itself failed (timeout, adb or transport error): [ok] false says nothing about the link. */
+    val error: Boolean = false,
 )
 
 /** [history] is per device serial, newest first; [starred] is global. */
@@ -36,6 +38,17 @@ class LinkStore(file: Path) {
 
     /** Non-null when the file on disk could not be read or backed up, or the last write failed. */
     val error: StateFlow<String?> get() = this.file.error
+
+    private val _notice = MutableStateFlow(
+        this.file.backedUpTo?.let { "${file.fileName} was unreadable; saved a copy as $it and started fresh" },
+    )
+
+    /** Set for this app run when a corrupt file was backed up and the store started empty, until [dismissNotice]. */
+    val notice: StateFlow<String?> get() = _notice
+
+    fun dismissNotice() {
+        _notice.value = null
+    }
 
     /** Puts [entry] at the top of [serial]'s history, replacing an earlier entry for the same link and package. */
     fun record(serial: String, entry: LinkEntry) = mutate {

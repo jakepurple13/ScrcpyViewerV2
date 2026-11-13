@@ -46,12 +46,14 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -97,6 +99,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.programmersbox.scrcpyviewer.ui.presets.ErrorBanner
 import com.programmersbox.scrcpyviewer.apps.DeviceApp
 import com.programmersbox.scrcpyviewer.links.Before
 import com.programmersbox.scrcpyviewer.links.ExtraType
@@ -214,6 +217,7 @@ fun LinksTabContent(
 ) {
     val colors = MaterialTheme.colorScheme
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp)) {
+        PersistenceBanners(links, motion)
         FieldLabel("Link or intent")
         val flash = rememberReplay(links.fills, FLASH_MILLIS, motion)
         val (kind, kindLabel) = links.kind
@@ -248,6 +252,7 @@ fun LinksTabContent(
                     options = listOf<DeviceApp?>(null) + listed,
                     description = "Open with",
                     enabled = enabled,
+                    motion = motion,
                     onSelect = { onEvent(LinksEvent.SetPackage(it?.packageName)) },
                 ) { app ->
                     if (app == null) {
@@ -273,6 +278,7 @@ fun LinksTabContent(
                     options = choices,
                     description = "Before opening",
                     enabled = enabled,
+                    motion = motion,
                     onSelect = { onEvent(LinksEvent.SetBefore(it)) },
                 ) { Text(beforeLabel(it)) }
             }
@@ -284,7 +290,7 @@ fun LinksTabContent(
 
         DetailsHeader(links.detailsOpen, motion) { onEvent(LinksEvent.ToggleDetails) }
         AnimatedVisibility(links.detailsOpen, enter = expandIn(DETAILS_MILLIS, motion), exit = foldOut(DETAILS_MILLIS, motion)) {
-            DetailsBody(links, onEvent, enabled)
+            DetailsBody(links, onEvent, enabled, motion)
         }
 
         CommandPreview(links.preview, motion, Modifier.padding(top = 12.dp))
@@ -450,11 +456,12 @@ private fun <T> DropdownField(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     mono: Boolean = false,
+    motion: Boolean = true,
     option: @Composable (T) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     var open by remember { mutableStateOf(false) }
-    val turn by animateFloatAsState(if (open) 180f else 0f, tween(OPEN_MILLIS, easing = EmphasizedDecelerate))
+    val turn by animateFloatAsState(if (open) 180f else 0f, if (motion) tween(OPEN_MILLIS, easing = EmphasizedDecelerate) else snap())
     Box(modifier) {
         Row(
             Modifier.fillMaxWidth().height(40.dp).clip(FieldShape).background(colors.surfaceContainerHighest)
@@ -512,7 +519,7 @@ private fun DetailsHeader(open: Boolean, motion: Boolean, onToggle: () -> Unit) 
 
 /** Action, Category and one extra (type, key, value). Used only while open. */
 @Composable
-private fun DetailsBody(links: LinksState, onEvent: (LinksEvent) -> Unit, enabled: Boolean) {
+private fun DetailsBody(links: LinksState, onEvent: (LinksEvent) -> Unit, enabled: Boolean, motion: Boolean) {
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
         FieldLabel("Action")
         LinkTextField(links.action, { onEvent(LinksEvent.SetAction(it)) }, description = "Action", enabled = enabled)
@@ -527,6 +534,7 @@ private fun DetailsBody(links: LinksState, onEvent: (LinksEvent) -> Unit, enable
                 description = "Extra type",
                 enabled = enabled,
                 mono = true,
+                motion = motion,
                 onSelect = { onEvent(LinksEvent.SetExtra(extra.copy(type = it))) },
                 modifier = Modifier.width(92.dp),
             ) { Text(it.name.lowercase(), fontFamily = FontFamily.Monospace) }
@@ -684,3 +692,36 @@ internal fun historyTag(item: HistoryItem): String = when (item) {
     HistoryItem.Divider -> "links-divider"
     is HistoryItem.Entry -> "links-row:${item.entry.link}"
 }
+
+/**
+ * The links file's problems above the form: an error strip while it can't be read or saved, and a dismissible note
+ * when a corrupt file was backed up. Each expands and fades in, and folds away when it goes.
+ */
+@Composable
+private fun PersistenceBanners(links: LinksState, motion: Boolean) {
+    Banner(links.persistError, motion, BANNER_ERROR_TAG) { ErrorBanner("Links can't be saved: $it") }
+    Banner(links.notice, motion, BANNER_NOTICE_TAG) { text ->
+        val colors = MaterialTheme.colorScheme
+        Surface(color = colors.secondaryContainer, shape = FieldShape, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(text, color = colors.onSecondaryContainer, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+                IconButton(onClick = links::dismissNotice, Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Close, contentDescription = "Dismiss", Modifier.size(16.dp), tint = colors.onSecondaryContainer)
+                }
+            }
+        }
+    }
+}
+
+/** [text] in [content] with a margin below, animated in and out; the last text stays on screen while it folds away. */
+@Composable
+private fun Banner(text: String?, motion: Boolean, tag: String, content: @Composable (String) -> Unit) {
+    var last by remember { mutableStateOf(text) }
+    if (text != null) last = text
+    AnimatedVisibility(text != null, Modifier.testTag(tag), enter = expandIn(OPEN_MILLIS, motion), exit = foldOut(CLOSE_MILLIS, motion)) {
+        Box(Modifier.padding(bottom = 12.dp)) { last?.let { content(it) } }
+    }
+}
+
+internal const val BANNER_ERROR_TAG = "links-error-banner"
+internal const val BANNER_NOTICE_TAG = "links-notice-banner"

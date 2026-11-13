@@ -50,6 +50,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /** The Links tab: each row of the spec's motion table moves over its time, without a single-frame jump. */
 @OptIn(ExperimentalComposeUiApi::class, InternalComposeUiApi::class)
@@ -430,6 +431,35 @@ class LinksTabTest {
         val awt = AwtKeyEvent(source, id, 0L, 0, code, AwtKeyEvent.CHAR_UNDEFINED)
         val type = if (id == AwtKeyEvent.KEY_PRESSED) KeyEventType.KeyDown else KeyEventType.KeyUp
         return KeyEvent(Key(code), type, nativeEvent = awt)
+    }
+
+    @Test
+    fun `an unreadable links file shows the error banner`() = onEdt {
+        val bad = Files.createTempDirectory("links-banner").resolve("links.json")
+        Files.createDirectories(bad) // a directory cannot be read as the links file
+        val l = LinksState("d1", FakeRunner(ok), LinkStore(bad), { apps }, scope, clock = { NOW })
+        val d = scene(l)
+        assertNotNull(d.tagged(BANNER_ERROR_TAG))
+        assertNotNull(d.text("Links can't be saved: ${l.persistError}"))
+        d.scene.close()
+    }
+
+    @Test
+    fun `the recovery notice shows, and folds away when dismissed`() = onEdt {
+        for (motion in listOf(true, false)) {
+            val file = Files.createTempDirectory("links-notice").resolve("links.json")
+            Files.writeString(file, "{ not json")
+            val l = LinksState("d1", FakeRunner(ok), LinkStore(file), { apps }, scope, clock = { NOW })
+            val watcher = scope.launch { l.watch() }
+            val d = scene(l, motion)
+            assertNotNull(d.text("links.json was unreadable; saved a copy as links.json.bak and started fresh"))
+            assertNull(d.tagged(BANNER_ERROR_TAG))
+            val fold = d.track(40, { l.dismissNotice() }) { checkNotNull(d.text("Link or intent")).positionInRoot.y }
+            if (motion) assertEases(fold, "the content under the notice") else assertInstant(fold, "the content under the notice")
+            assertNull(l.notice)
+            watcher.cancel()
+            d.scene.close()
+        }
     }
 
     private companion object {

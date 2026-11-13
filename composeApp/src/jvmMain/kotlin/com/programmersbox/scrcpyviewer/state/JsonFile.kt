@@ -27,6 +27,10 @@ internal class JsonFile<T>(
     /** Set when the file on disk could not be read or backed up: it must never be overwritten. */
     @Volatile private var readOnly = false
 
+    /** The file name a corrupt file was moved to by [load], or null when none was. */
+    @Volatile var backedUpTo: String? = null
+        private set
+
     /**
      * Non-null when the file on disk could not be read or backed up (persisting is then disabled), or when the last
      * write failed.
@@ -71,7 +75,9 @@ internal class JsonFile<T>(
 
     private fun backUpCorrupt(cause: Exception): T {
         try {
-            Files.move(file, file.resolveSibling(file.fileName.toString() + ".bak"), StandardCopyOption.REPLACE_EXISTING)
+            val bak = file.resolveSibling(file.fileName.toString() + ".bak")
+            Files.move(file, bak, StandardCopyOption.REPLACE_EXISTING)
+            backedUpTo = bak.fileName.toString()
         } catch (e: Exception) {
             readOnly = true
             _error.value = "${file.fileName} is unreadable (${cause.message}) and could not be backed up: ${e.message}"

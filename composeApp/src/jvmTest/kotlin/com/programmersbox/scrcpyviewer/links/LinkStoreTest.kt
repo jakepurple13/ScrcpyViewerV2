@@ -4,6 +4,7 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LinkStoreTest {
@@ -64,7 +65,12 @@ class LinkStoreTest {
         val s = LinkStore(file)
         assertTrue(s.state.value.history.isEmpty() && s.state.value.starred.isEmpty())
         assertTrue(Files.exists(file.resolveSibling("links.json.bak")))
+        assertNull(s.error.value, "a working backup is not an error")
+        assertEquals("links.json was unreadable; saved a copy as links.json.bak and started fresh", s.notice.value)
+        s.dismissNotice()
+        assertNull(s.notice.value)
         s.record("d", entry("a"))
+        assertNull(LinkStore(file).notice.value, "the next run has a good file and no notice")
         assertEquals(listOf("a"), LinkStore(file).state.value.history["d"]!!.map { it.link })
     }
 
@@ -72,7 +78,9 @@ class LinkStoreTest {
     fun `unreadable file sets error`() {
         // A directory named links.json cannot be read as text.
         Files.createDirectories(file)
-        assertNotNull(LinkStore(file).error.value)
+        val s = LinkStore(file)
+        assertNotNull(s.error.value)
+        assertNull(s.notice.value, "an unreadable file is an error, not a recovery")
     }
 
     @Test

@@ -28,6 +28,7 @@ import com.programmersbox.scrcpyviewer.links.summary
 import java.net.URI
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -35,7 +36,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  * The last run's outcome as the result strip shows it: [headline] ("Opened in …" or "No app on this device opens this
  * link[ with <app>]"), and [raw], the device's own lines (`Status / LaunchState / TotalTime`, or the `am` error).
  */
-data class LinkOutcome(val result: LaunchResult, val headline: String, val raw: String?)
+data class LinkOutcome(val result: LaunchResult, val headline: String, val raw: String?, val failed: Boolean = false)
 
 /** Starred links (all devices) first, then this device's recent links not already starred, newest first. */
 data class LinkHistory(val starred: List<LinkEntry>, val recent: List<LinkEntry>)
@@ -107,6 +108,14 @@ class LinksState(
 
     private var data by mutableStateOf(store.state.value)
 
+    /** Why the links file can't be read or saved, or null. Shown as a banner. */
+    var persistError by mutableStateOf(store.error.value)
+        private set
+
+    /** A one-time note that a corrupt links file was backed up and replaced, or null. Dismissible. */
+    var notice by mutableStateOf(store.notice.value)
+        private set
+
     val result: LaunchResult? get() = outcome?.result
 
     /** The detected kind and its chip label. */
@@ -142,18 +151,24 @@ class LinksState(
 
     /** Follows [store]: another window's runs and stars show here. Run in the window's scope. */
     suspend fun watch() {
-        store.state.collect { data = it }
+        combine(store.state, store.error, store.notice, ::Triple).collect { (d, e, n) ->
+            data = d
+            persistError = e
+            notice = n
+        }
     }
+
+    fun dismissNotice() = store.dismissNotice()
 
     fun onEvent(event: LinksEvent) {
         when (event) {
             is LinksEvent.SetText -> changeText(event.text)
-            is LinksEvent.SetPackage -> packageName = event.packageName?.takeIf { it.isNotBlank() }
-            is LinksEvent.SetBefore -> before = event.before
-            LinksEvent.ToggleDetails -> detailsOpen = !detailsOpen
-            is LinksEvent.SetAction -> action = event.action
-            is LinksEvent.SetCategory -> category = event.category
-            is LinksEvent.SetExtra -> extra = event.extra
+            is LinksEvent.SetPackage -> edit { packageName = event.packageName?.takeIf { it.isNotBlank() } }
+            is LinksEvent.SetBefore -> edit { before = event.before }
+            LinksEvent.ToggleDetails -> edit { detailsOpen = !detailsOpen }
+            is LinksEvent.SetAction -> edit { action = event.action }
+            is LinksEvent.SetCategory -> edit { category = event.category }
+            is LinksEvent.SetExtra -> edit { extra = event.extra }
             LinksEvent.Open -> open()
             is LinksEvent.Reopen -> reopen(event.entry)
             is LinksEvent.Fill -> fill(event.entry)
@@ -183,10 +198,10 @@ class LinksState(
             } catch (e: ShellTimeoutException) {
                 timedOut()
             } catch (e: Exception) {
-                LinkOutcome(LaunchResult(ok = false, errorLine = e.message), COULD_NOT_OPEN, e.message ?: e.toString())
+                LinkOutcome(LaunchResult(ok = false, errorLine = e.message), COULD_NOT_OPEN, e.message ?: e.toString(), failed = true)
             }
-            // The text changed mid-run: the outcome belongs to another link, so it is not shown (history still records it).
-            if (text.trim() == req.link) {
+            // A field changed mid-run: the outcome belongs to another request, so it is not shown (history still records it).
+            if (request == req) {
                 outcome = found
                 runs++
             }
@@ -201,6 +216,7 @@ class LinksState(
                     ok = found.result.ok,
                     detail = if (found.result.ok) found.headline else found.raw ?: found.headline,
                     at = clock(),
+                    error = found.failed,
                 ),
             )
             data = store.state.value
@@ -215,15 +231,23 @@ class LinksState(
     }
 
     fun fill(entry: LinkEntry) {
-        changeText(entry.link)
-        packageName = entry.packageName
+        edit {
+            text = entry.link
+            packageName = entry.packageName
+        }
         fills++
     }
 
-    /** A different link makes the last result stale: it goes (the result strip folds away). */
-    private fun changeText(value: String) {
-        if (value != text) outcome = null
-        text = value
+    private fun changeText(value: String) = edit { text = value }
+
+    /**
+     * Runs [change] to a field. When it changes what [request] would run (the link, the app, the steps before, the
+     * intent details), the last result is stale and goes (the result strip folds away).
+     */
+    private inline fun edit(change: () -> Unit) {
+        val was = request
+        change()
+        if (request != was) outcome = null
     }
 
     fun toggleStar(entry: LinkEntry) {
@@ -266,7 +290,7 @@ class LinksState(
         return LinkOutcome(parsed.copy(errorLine = raw), "$NO_APP$with", raw)
     }
 
-    private fun timedOut() = LinkOutcome(LaunchResult(ok = false, errorLine = TIMED_OUT), TIMED_OUT, null)
+    private fun timedOut() = LinkOutcome(LaunchResult(ok = false, errorLine = TIMED_OUT), TIMED_OUT, null, failed = true)
 
     companion object {
         const val DEFAULT_ACTION = "android.intent.action.VIEW"

@@ -23,6 +23,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -329,5 +330,96 @@ class LinksStateTest {
         val entry = s.history.recent.single()
         assertNull(entry.packageName)
         assertEquals("Chrome", entry.appLabel)
+    }
+
+    @Test
+    fun `an outcome is dropped when Open with, Before or Intent details change mid-run`() = runTest {
+        val edits = listOf<(LinksState) -> Unit>(
+            { it.onEvent(LinksEvent.SetPackage("com.android.chrome")) },
+            { it.onEvent(LinksEvent.SetBefore(Before.ClearTask)) },
+            { it.onEvent(LinksEvent.ToggleDetails); it.onEvent(LinksEvent.SetAction("android.intent.action.SEND")) },
+        )
+        for (edit in edits) {
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val s = state(FakeRunner { gate.await(); unresolved }, this)
+            s.onEvent(LinksEvent.SetText("myapp://x"))
+            s.onEvent(LinksEvent.Open)
+            runCurrent()
+            edit(s)
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(s.outcome)
+            assertEquals(0, s.runs)
+            assertFalse(s.running)
+        }
+    }
+
+    @Test
+    fun `changing Open with or Intent details clears a shown result`() = runTest {
+        val (s, _) = opened("myapp://x", unresolved)
+        assertNotNull(s.outcome)
+        s.onEvent(LinksEvent.SetPackage("com.android.chrome"))
+        assertNull(s.outcome)
+        s.onEvent(LinksEvent.Open)
+        runCurrent()
+        assertNotNull(s.outcome)
+        s.onEvent(LinksEvent.SetPackage("com.android.chrome"))
+        assertNotNull(s.outcome, "the same choice keeps it")
+        s.onEvent(LinksEvent.ToggleDetails)
+        s.onEvent(LinksEvent.SetAction("android.intent.action.SEND"))
+        assertNull(s.outcome)
+    }
+
+    @Test
+    fun `a timeout is recorded as an error, not as no app found`() = runTest {
+        val s = state(FakeRunner { awaitCancellation() }, this)
+        s.onEvent(LinksEvent.SetText("https://example.com"))
+        s.open()
+        advanceTimeBy(30_001)
+        runCurrent()
+        val entry = s.history.recent.single()
+        assertFalse(entry.ok)
+        assertTrue(entry.error)
+        assertEquals("Timed out after 30 s", entry.detail)
+    }
+
+    @Test
+    fun `an adb error is recorded as an error with its message`() = runTest {
+        val s = state(FakeRunner { error("device offline") }, this)
+        s.onEvent(LinksEvent.SetText("https://example.com"))
+        s.open()
+        runCurrent()
+        val entry = s.history.recent.single()
+        assertTrue(entry.error)
+        assertEquals("device offline", entry.detail)
+    }
+
+    @Test
+    fun `a link no app opens is not an error entry`() = runTest {
+        val (s, _) = opened("myapp://x", unresolved)
+        val entry = s.history.recent.single()
+        assertFalse(entry.ok)
+        assertFalse(entry.error)
+    }
+
+    @Test
+    fun `the store's error and recovery notice reach the state, and dismissing clears the notice`() = runTest {
+        val dir = Files.createTempDirectory("links-bad")
+        Files.writeString(dir.resolve("links.json"), "{ not json")
+        val bad = LinkStore(dir.resolve("links.json"))
+        val s = LinksState("d1", null, bad, { apps }, this)
+        assertNull(s.persistError)
+        assertNotNull(s.notice)
+        s.dismissNotice()
+        val watcher = launch { s.watch() }
+        runCurrent()
+        assertNull(s.notice)
+        watcher.cancel()
+
+        val unreadable = Files.createTempDirectory("links-dir").resolve("links.json")
+        Files.createDirectories(unreadable)
+        val t = LinksState("d1", null, LinkStore(unreadable), { apps }, this)
+        assertNotNull(t.persistError)
+        assertNull(t.notice)
     }
 }
