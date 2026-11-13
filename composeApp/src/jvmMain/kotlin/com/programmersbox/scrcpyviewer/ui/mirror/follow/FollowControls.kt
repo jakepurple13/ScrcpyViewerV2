@@ -115,6 +115,9 @@ object FollowMotion {
     const val CHIP_IN_MILLIS = 250
     const val CHIP_OUT_MILLIS = 200
 
+    /** A new leader's name crossfading in the chip while its width follows. */
+    const val LEADER_MILLIS = 200
+
     /** "Layout differs" expanding or shrinking beside the chip. */
     const val LAYOUT_MILLIS = 200
 
@@ -293,7 +296,11 @@ fun FollowingChip(
     val colors = MaterialTheme.colorScheme
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         // Weighted: "Layout differs" is measured first, so the device title is what ellipsizes.
-        Pill(followingText(leaderTitle), colors.primaryContainer, colors.onPrimaryContainer, Modifier.weight(1f, fill = false).widthIn(max = FOLLOWING_MAX))
+        // A new leader crossfades its name while the pill's width follows ([FollowMotion.LEADER_MILLIS]).
+        Pill(
+            followingText(leaderTitle), colors.primaryContainer, colors.onPrimaryContainer,
+            Modifier.weight(1f, fill = false).widthIn(max = FOLLOWING_MAX), animateFor = reduceMotion,
+        )
         val size = tween<androidx.compose.ui.unit.IntSize>(FollowMotion.LAYOUT_MILLIS, easing = FastOutSlowInEasing)
         val fade = tween<Float>(if (reduceMotion) FollowMotion.REDUCED_FADE_MILLIS else FollowMotion.LAYOUT_MILLIS, easing = LinearEasing)
         androidx.compose.animation.AnimatedVisibility(
@@ -332,18 +339,41 @@ fun FollowingChip(
     }
 }
 
+/**
+ * A rounded label. With [animateFor] (the reduced-motion flag) a new [text] crossfades with the old while the pill's
+ * width follows; without it the text changes in place.
+ */
 @Composable
-private fun Pill(text: String, container: Color, content: Color, modifier: Modifier = Modifier) {
+private fun Pill(text: String, container: Color, content: Color, modifier: Modifier = Modifier, animateFor: Boolean? = null) {
     Surface(modifier, shape = styledCorner(10.dp), color = container, contentColor = content) {
-        Text(
-            text,
-            Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (animateFor == null) {
+            PillText(text)
+        } else {
+            val millis = if (animateFor) FollowMotion.REDUCED_FADE_MILLIS else FollowMotion.LEADER_MILLIS
+            AnimatedContent(
+                targetState = text,
+                transitionSpec = {
+                    val fade = tween<Float>(millis, easing = if (animateFor) LinearEasing else FastOutSlowInEasing)
+                    (fadeIn(fade) togetherWith fadeOut(fade))
+                        .using(SizeTransform(clip = true) { _, _ -> tween(millis, easing = FastOutSlowInEasing) })
+                },
+                contentAlignment = Alignment.CenterStart,
+                label = "pillText",
+            ) { PillText(it) }
+        }
     }
+}
+
+@Composable
+private fun PillText(text: String) {
+    Text(
+        text,
+        Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        style = MaterialTheme.typography.labelMedium,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 /** [FollowingChip] while [visible]: it expands + fades in over 250 ms and shrinks + fades out over 200 ms. */

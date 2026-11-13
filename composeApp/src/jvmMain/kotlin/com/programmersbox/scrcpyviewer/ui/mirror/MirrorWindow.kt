@@ -184,6 +184,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.follow.sendInputLabel
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FOLLOWER_FIXED
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.MODEL_KEEP
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendPlace
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.ChipWidths
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.StripMins
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberChipWidths
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripEnter
@@ -1298,6 +1299,10 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip
     val reduce = follow?.reduceMotion == true
     val modelStyle = stripModelStyle()
     val chip = rememberChipWidths(state.model, modelStyle, follow)
+    // The chip's widths while it leaves (following stopped, chip already null), so its width cap does not jump. A
+    // plain holder.
+    val lastChip = remember { arrayOfNulls<ChipWidths>(1) }
+    if (chip != null) lastChip[0] = chip
     BoxWithConstraints(Modifier.fillMaxWidth().background(if (custom) Color.Transparent else colors.surfaceContainer)) {
         val w = maxWidth
         val room = stripRoom(w, STRIP_MINS, state.details.isNotEmpty(), follow, chip)
@@ -1325,7 +1330,7 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, follow: FollowStrip
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (follow != null) {
-                    val keep = minOf(chip?.model ?: MODEL_KEEP, MODEL_KEEP)
+                    val keep = minOf((chip ?: lastChip[0])?.model ?: MODEL_KEEP, MODEL_KEEP)
                     FollowerChip(
                         following, follow.leaderTitle, follow.layoutDiffers, follow.reduceMotion,
                         Modifier.widthIn(max = (w - FOLLOWER_FIXED - keep).coerceAtLeast(STRIP_GAP * 4)),
