@@ -4,11 +4,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -30,7 +26,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
@@ -46,7 +41,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -104,14 +98,8 @@ private fun LiveIndicator(run: LogcatRun, motion: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val live = run == LogcatRun.Running
     val dot by animateColorAsState(if (live) LogcatColors.level(LogLevel.Info).first else scheme.outline, if (motion) tween(300) else snap())
-    // Held as State and read in the layer, so the blink redraws the dot without recomposing.
-    val blink = if (live && motion) {
-        rememberInfiniteTransition().animateFloat(1f, 0.35f, infiniteRepeatable(tween(800), RepeatMode.Reverse))
-    } else {
-        null
-    }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).graphicsLayer { alpha = blink?.value ?: 1f }.background(dot, CircleShape))
+        LogcatLiveDot(dot, 8.dp, blinking = live, motion = motion)
         Spacer(Modifier.size(6.dp))
         val text = when (run) {
             LogcatRun.NotStarted -> "Not running"

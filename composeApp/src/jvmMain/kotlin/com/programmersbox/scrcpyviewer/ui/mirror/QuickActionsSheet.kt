@@ -4,15 +4,12 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.TweenSpec
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.offset
@@ -20,6 +17,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.rememberTextMeasurer
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatColors
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatLiveDot
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -230,6 +228,8 @@ fun QuickActionsPanel(
     modifier: Modifier = Modifier,
     filesTab: (@Composable () -> Unit)? = null,
     logcat: LogcatController? = null,
+    /** False under the OS's reduce motion: the Logcat segment's marks and label swap snap. */
+    motion: Boolean = remember { !systemReducesMotion() },
 ) {
     fun fit(width: Dp, tab: SheetTab) = if (rowWidth == null) {
         width.coerceAtLeast(SheetWidths.default(tab))
@@ -289,7 +289,7 @@ fun QuickActionsPanel(
                 onEvent(QuickActionEvent.ResetWidth)
             },
         )
-        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab, logcat, shown)
+        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab, logcat, shown, motion)
     }
 }
 
@@ -302,6 +302,7 @@ private fun RowScope.SheetContent(
     filesTab: (@Composable () -> Unit)?,
     logcat: LogcatController?,
     sheetWidth: Dp,
+    motion: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -339,6 +340,7 @@ private fun RowScope.SheetContent(
             state.tab, state.consoleRunning, state.filesTransfersRunning, state.logcatPopped, state.logcatLive, sheetWidth,
             onSelect = { if (it != state.tab) onEvent(QuickActionEvent.SelectTab(it)) },
             Modifier.padding(start = TABS_SIDE_PADDING, end = TABS_SIDE_PADDING, top = 8.dp),
+            motion,
         )
         // The command field takes focus on every switch to Shell: composed afresh, or, when a switch away is reversed
         // mid-transition, kept and selected again.
@@ -395,6 +397,8 @@ private fun SheetTabs(
     sheetWidth: Dp,
     onSelect: (SheetTab) -> Unit,
     modifier: Modifier = Modifier,
+    /** False under the OS's reduce motion: the Logcat segment's label swap, icon and dot snap. */
+    motion: Boolean = true,
 ) {
     val colors = MaterialTheme.colorScheme
     val segments = SheetTab.entries.size
@@ -469,6 +473,7 @@ private fun SheetTabs(
                             label, logcatIconOnly, logcatLive,
                             ring = if (selected) colors.surface else colors.surfaceContainerHighest,
                             tint = if (selected) colors.onSurface else colors.onSurfaceVariant,
+                            motion = motion,
                         )
                     } else {
                         label(Modifier)
@@ -497,7 +502,7 @@ private fun SheetTabs(
                         }
                     }
                     if (segment == SheetTab.Logcat) {
-                        LogcatSegmentMarks(logcatPopped && !logcatIconOnly, logcatLive && !logcatIconOnly, gap)
+                        LogcatSegmentMarks(logcatPopped && !logcatIconOnly, logcatLive && !logcatIconOnly, gap, motion)
                     }
                 }
             }
@@ -505,53 +510,42 @@ private fun SheetTabs(
     }
 }
 
-/** Blink of the Logcat segment's live dot: down to this opacity and back, every [LIVE_BLINK_MILLIS]. */
-private const val LIVE_BLINK_MILLIS = 1_600
-private const val LIVE_BLINK_LOW = 0.35f
-
 private val LIVE_DOT_SIZE = 6.dp
 private val WINDOW_ICON_SIZE = 14.dp
 
 /** The label ⇄ window icon cross-fade of a narrow Logcat segment: 280 ms, eased like the segment's other changes. */
 private const val LABEL_SWAP_MILLIS = 280
 
-/** The green live dot; it blinks unless the OS reduces motion. */
+/** [growSpec], or a snap when [motion] is off (the OS reduces motion). */
+private fun <T> segmentSpec(grow: Boolean, motion: Boolean): FiniteAnimationSpec<T> = if (motion) growSpec(grow) else snap()
+
+/** The green live dot (the shared [LogcatLiveDot]); it blinks unless [motion] is off. */
 @Composable
-private fun LiveDot(modifier: Modifier = Modifier) {
-    val blinks = remember { !systemReducesMotion() }
-    val blink = if (blinks) {
-        rememberInfiniteTransition(label = "logcat live").animateFloat(
-            1f, LIVE_BLINK_LOW,
-            infiniteRepeatable(tween(LIVE_BLINK_MILLIS / 2, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        )
-    } else {
-        null
-    }
-    Box(
-        modifier.size(LIVE_DOT_SIZE)
-            .graphicsLayer { alpha = blink?.value ?: 1f }
-            .background(LogcatColors.level(LogLevel.Info).first, CircleShape)
-            .semantics { contentDescription = "Logcat running" },
+private fun LiveDot(motion: Boolean, modifier: Modifier = Modifier) {
+    LogcatLiveDot(
+        LogcatColors.level(LogLevel.Info).first, LIVE_DOT_SIZE, blinking = true,
+        modifier.semantics { contentDescription = "Logcat running" },
+        motion = motion,
     )
 }
 
 /**
  * After the Logcat label, where they fit: the live dot ([live], scales in) and the window icon ([popped], grows from 0
- * to 14 dp wide), each [gap] after what comes before it.
+ * to 14 dp wide), each [gap] after what comes before it. Without [motion] they appear and go at once.
  */
 @Composable
-private fun LogcatSegmentMarks(popped: Boolean, live: Boolean, gap: Dp) {
+private fun LogcatSegmentMarks(popped: Boolean, live: Boolean, gap: Dp, motion: Boolean) {
     AnimatedVisibility(
         visible = live,
-        enter = scaleIn(growSpec(true)) + expandHorizontally(growSpec(true)),
-        exit = scaleOut(growSpec(false)) + shrinkHorizontally(growSpec(false)),
+        enter = scaleIn(segmentSpec(true, motion)) + expandHorizontally(segmentSpec(true, motion)),
+        exit = scaleOut(segmentSpec(false, motion)) + shrinkHorizontally(segmentSpec(false, motion)),
     ) {
-        LiveDot(Modifier.padding(start = gap))
+        LiveDot(motion, Modifier.padding(start = gap))
     }
     AnimatedVisibility(
         visible = popped,
-        enter = expandHorizontally(growSpec(true)) + fadeIn(growSpec(true)),
-        exit = shrinkHorizontally(growSpec(false)) + fadeOut(growSpec(false)),
+        enter = expandHorizontally(segmentSpec(true, motion)) + fadeIn(segmentSpec(true, motion)),
+        exit = shrinkHorizontally(segmentSpec(false, motion)) + fadeOut(segmentSpec(false, motion)),
     ) {
         Icon(
             Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "In its own window",
@@ -564,7 +558,7 @@ private fun LogcatSegmentMarks(popped: Boolean, live: Boolean, gap: Dp) {
  * The Logcat segment's [label], or, when [iconOnly] (Logcat is in its own window and the segment is too narrow for the
  * label and its marks), the window icon in its place, the two cross-fading over [LABEL_SWAP_MILLIS]. The icon carries
  * the segment's name for accessibility; while [live] the green dot sits on its top-end corner as a badge, ringed in the
- * segment's background ([ring]).
+ * segment's background ([ring]). Without [motion] the swap and the badge snap.
  */
 @Composable
 private fun LogcatSegmentLabel(
@@ -573,9 +567,13 @@ private fun LogcatSegmentLabel(
     live: Boolean,
     ring: androidx.compose.ui.graphics.Color,
     tint: androidx.compose.ui.graphics.Color,
+    motion: Boolean,
 ) {
     val easing = if (iconOnly) EmphasizedAccelerate else EmphasizedDecelerate
-    val toIcon by animateFloatAsState(if (iconOnly) 1f else 0f, tween(LABEL_SWAP_MILLIS, easing = easing))
+    val toIcon by animateFloatAsState(
+        if (iconOnly) 1f else 0f,
+        if (motion) tween(LABEL_SWAP_MILLIS, easing = easing) else snap(),
+    )
     Box(contentAlignment = Alignment.Center) {
         // Hidden behind the icon, the label keeps the segment's width and leaves the name to the icon.
         label(
@@ -593,10 +591,10 @@ private fun LogcatSegmentLabel(
                 AnimatedVisibility(
                     visible = live && iconOnly,
                     modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp),
-                    enter = scaleIn(growSpec(true)),
-                    exit = scaleOut(growSpec(false)),
+                    enter = scaleIn(segmentSpec(true, motion)),
+                    exit = scaleOut(segmentSpec(false, motion)),
                 ) {
-                    LiveDot(Modifier.background(ring, CircleShape).padding(1.5.dp))
+                    LiveDot(motion, Modifier.background(ring, CircleShape).padding(1.5.dp))
                 }
             }
         }

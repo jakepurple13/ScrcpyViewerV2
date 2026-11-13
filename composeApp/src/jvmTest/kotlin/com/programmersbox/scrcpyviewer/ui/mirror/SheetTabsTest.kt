@@ -64,10 +64,14 @@ class SheetTabsTest {
         frames(5)
     }
 
-    private fun panel(state: () -> QuickActionsUiState, events: MutableList<QuickActionEvent>): SceneDriver =
+    private fun panel(
+        state: () -> QuickActionsUiState,
+        events: MutableList<QuickActionEvent>,
+        motion: Boolean = true,
+    ): SceneDriver =
         SceneDriver(ImageComposeScene(600, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
-                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state(), { events += it }, console = null) }
+                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state(), { events += it }, console = null, motion = motion) }
             }
         }).also { it.frames(5) }
 
@@ -324,6 +328,40 @@ class SheetTabsTest {
         state = state.copy(logcatPopped = false)
         driver.frames(60)
         assertNull(driver.described("In its own window"))
+    }
+
+    @Test
+    fun `under reduced motion the Logcat segment's icon, live dot and badge snap`() = onEdt {
+        // Settled sizes, from a run with motion.
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat))
+        val moving = panel({ state }, mutableListOf())
+        state = state.copy(logcatPopped = true, logcatLive = true)
+        moving.frames(1)
+        val dotMidway = checkNotNull(moving.described("Logcat running")).boundsInRoot.width
+        moving.frames(60)
+        val dotSize = checkNotNull(moving.described("Logcat running")).boundsInRoot.width
+        assertTrue(dotMidway < dotSize, "with motion the dot scales in: $dotMidway then $dotSize")
+        moving.scene.close()
+
+        var still by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat))
+        val driver = panel({ still }, mutableListOf(), motion = false)
+        still = still.copy(logcatPopped = true, logcatLive = true)
+        driver.frames(2)
+        assertEquals(14f, checkNotNull(driver.described("In its own window")).boundsInRoot.width)
+        assertEquals(dotSize, checkNotNull(driver.described("Logcat running")).boundsInRoot.width)
+
+        // Narrow (Actions): the label gives way to the icon with its badge at once, and both go at once.
+        still = still.copy(tab = SheetTab.Actions)
+        driver.frames(2)
+        assertNull(driver.described("In its own window"))
+        val badge = checkNotNull(driver.described("Logcat running")).boundsInRoot.width
+        driver.frames(60)
+        assertEquals(badge, checkNotNull(driver.described("Logcat running")).boundsInRoot.width)
+        still = still.copy(logcatPopped = false, logcatLive = false)
+        driver.frames(2)
+        assertNull(driver.described("Logcat running"))
+        assertNull(driver.described("Logcat, open in its own window"))
+        driver.scene.close()
     }
 
     @Test
