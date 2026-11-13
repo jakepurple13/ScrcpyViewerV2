@@ -76,8 +76,6 @@ data class Settings(
     val autoDownloadUpdates: Boolean = false,
     /** The menu bar (macOS) / system tray (Windows, Linux) icon listing the devices. */
     val showTrayIcon: Boolean = true,
-    /** Keyboard shortcuts: action id to an encoded `Shortcut`. Empty by default (nothing has a shortcut). */
-    val shortcuts: Map<String, String> = emptyMap(),
 )
 
 /** Everything the theme reads from [Settings]. */

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
@@ -24,7 +25,6 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorUiState
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
 import com.programmersbox.scrcpyviewer.ui.onEdt
-import com.programmersbox.scrcpyviewer.ui.shortcuts.Shortcut
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
@@ -36,7 +36,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.awt.Rectangle
-import java.awt.event.KeyEvent
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -46,45 +45,29 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalComposeUiApi::class)
 class ArrangeControlsTest {
-    private val gridKeys = Shortcut(KeyEvent.VK_1, alt = true, meta = true).encode()
-
     // --- Model -------------------------------------------------------------------------------------------------------
 
     @Test
     fun `the button is there only with two or more mirror windows`() {
-        assertNull(arrangeStrip(0, ArrangeState(), emptyMap(), {}, {}))
-        assertNull(arrangeStrip(1, ArrangeState(), emptyMap(), {}, {}))
-        assertNotNull(arrangeStrip(2, ArrangeState(), emptyMap(), {}, {}))
-        assertNotNull(arrangeStrip(5, ArrangeState(), emptyMap(), {}, {}))
+        assertNull(arrangeStrip(0, ArrangeState(), {}, {}))
+        assertNull(arrangeStrip(1, ArrangeState(), {}, {}))
+        assertNotNull(arrangeStrip(2, ArrangeState(), {}, {}))
+        assertNotNull(arrangeStrip(5, ArrangeState(), {}, {}))
     }
 
     @Test
     fun `the menu lists the five layouts with the check on the current one`() {
-        val items = arrangeItems(ArrangeState(), emptyMap())
+        val items = arrangeItems(ArrangeState())
         assertEquals(listOf("As placed", "Grid", "Side by side", "Focus this window", "Cascade"), items.map { it.label })
         assertEquals(listOf(ArrangeLayout.AsPlaced), items.filter { it.checked }.map { it.layout })
-        val cascade = arrangeItems(ArrangeState(layout = ArrangeLayout.Cascade), emptyMap())
+        val cascade = arrangeItems(ArrangeState(layout = ArrangeLayout.Cascade))
         assertEquals(listOf(ArrangeLayout.Cascade), cascade.filter { it.checked }.map { it.layout })
         assertTrue(items.all { it.enabled })
     }
 
     @Test
-    fun `a layout shows its shortcut once set, in the OS's form`() {
-        val map = mapOf("arrange-grid" to gridKeys, "arrange-cascade" to "garbage", "follow" to gridKeys)
-        val mac = arrangeItems(ArrangeState(), map, mac = true).associate { it.layout to it.shortcut }
-        assertEquals("⌥⌘1", mac[ArrangeLayout.Grid])
-        assertNull(mac[ArrangeLayout.Cascade], "an unreadable entry shows nothing")
-        assertNull(mac[ArrangeLayout.AsPlaced])
-        assertEquals("Alt+Win+1", arrangeItems(ArrangeState(), map, mac = false).first { it.layout == ArrangeLayout.Grid }.shortcut)
-        // Every layout reads its own action id.
-        val all = ArrangeLayout.entries.associate { it.shortcutAction.id to gridKeys }
-        assertEquals(setOf("arrange-free", "arrange-grid", "arrange-row", "arrange-focus", "arrange-cascade"), all.keys)
-        assertTrue(arrangeItems(ArrangeState(), all, mac = true).all { it.shortcut == "⌥⌘1" })
-    }
-
-    @Test
     fun `layouts are disabled when the desktop doesn't let apps move windows`() {
-        assertTrue(arrangeItems(ArrangeState(movable = false), emptyMap()).none { it.enabled })
+        assertTrue(arrangeItems(ArrangeState(movable = false)).none { it.enabled })
     }
 
     @Test
@@ -106,18 +89,30 @@ class ArrangeControlsTest {
         assertNull(windows.lastFocused.value)
     }
 
+    @Test
+    fun `clearing the focus of a window that never registered drops it, other windows are left`() {
+        val windows = MirrorWindows()
+        windows.focused("A")
+        windows.clearFocused("B")
+        assertEquals("A", windows.lastFocused.value)
+        windows.clearFocused("A")
+        assertNull(windows.lastFocused.value)
+    }
+
     // --- Menu ------------------------------------------------------------------------------------------------------
 
     private class Picks {
         val picked = ArrayList<ArrangeLayout>()
         val keep = ArrayList<Boolean>()
         var dismissed = 0
+        var expand: () -> Unit = {}
     }
 
-    private fun withMenu(state: ArrangeState, shortcuts: Map<String, String> = emptyMap(), block: SceneDriver.(Picks) -> Unit) = onEdt {
+    private fun withMenu(state: ArrangeState, block: SceneDriver.(Picks) -> Unit) = onEdt {
         val picks = Picks()
         var expanded by mutableStateOf(true)
-        val strip = ArrangeStrip(state, shortcuts, onPick = { picks.picked += it }, onKeepTiled = { picks.keep += it })
+        picks.expand = { expanded = true }
+        val strip = ArrangeStrip(state, onPick = { picks.picked += it }, onKeepTiled = { picks.keep += it })
         val driver = SceneDriver(
             ImageComposeScene(500, 500, Density(1f)) {
                 ScrcpyViewerTheme(ThemeMode.Light) {
@@ -172,14 +167,10 @@ class ArrangeControlsTest {
     }
 
     @Test
-    fun `the menu shows the title, the layouts, a set shortcut and Keep tiled`() = withMenu(
-        ArrangeState(layout = ArrangeLayout.Grid),
-        mapOf("arrange-grid" to gridKeys),
-    ) {
+    fun `the menu shows the title, the layouts and Keep tiled`() = withMenu(ArrangeState(layout = ArrangeLayout.Grid)) {
         assertNotNull(text("ARRANGE MIRROR WINDOWS"))
         for (l in listOf("As placed", "Grid", "Side by side", "Focus this window", "Cascade")) assertNotNull(text(l), l)
         assertNotNull(text(KEEP_TILED))
-        assertNotNull(text(Shortcut.decode(gridKeys)!!.label()))
         assertTrue(selected("Grid"))
         assertFalse(selected("As placed"))
         assertNull(text(NOT_MOVABLE_NOTE))
@@ -205,6 +196,48 @@ class ArrangeControlsTest {
         frames(PICK_CLOSE_DELAY_MILLIS.toInt() / 16)
         assertEquals(1, picks.dismissed)
         assertEquals(listOf(ArrangeLayout.SideBySide), picks.picked)
+    }
+
+    @Test
+    fun `a menu reopened during its exit animation takes clicks again`() = withMenu(ArrangeState()) { picks ->
+        click(row("Grid"))
+        frames(PICK_CLOSE_DELAY_MILLIS.toInt() / 16 + 4)
+        assertEquals(listOf(ArrangeLayout.Grid), picks.picked)
+        // Closed, and reopened at once: before the exit animation ends the content is still composed.
+        picks.expand()
+        frames(2)
+        assertTrue(selected("As placed"), "a new opening starts on the current layout")
+        click(row("Cascade"))
+        frames(PICK_CLOSE_DELAY_MILLIS.toInt() / 16 + 4)
+        assertEquals(listOf(ArrangeLayout.Grid, ArrangeLayout.Cascade), picks.picked)
+    }
+
+    @Test
+    fun `a pick still applies when the slot showing the menu leaves within the delay`() = onEdt {
+        val picked = ArrayList<ArrangeLayout>()
+        var slot by mutableStateOf(true)
+        val driver = SceneDriver(
+            ImageComposeScene(500, 500, Density(1f)) {
+                ScrcpyViewerTheme(ThemeMode.Light) {
+                    Surface(Modifier.fillMaxSize()) {
+                        // The window's scope, like rememberArrangeStrip's; the slot below can be gone before the delay ends.
+                        val windowScope = rememberCoroutineScope()
+                        val strip = ArrangeStrip(ArrangeState(), onPick = { picked += it }, onKeepTiled = {}, pickScope = windowScope)
+                        if (slot) Box { ArrangeMenu(true, {}, strip) }
+                    }
+                }
+            },
+        )
+        try {
+            driver.frames(30)
+            driver.click(driver.row("Grid"))
+            driver.frames(2)
+            slot = false
+            driver.frames(PICK_CLOSE_DELAY_MILLIS.toInt() / 16 + 6)
+            assertEquals(listOf(ArrangeLayout.Grid), picked)
+        } finally {
+            driver.scene.close()
+        }
     }
 
     @Test
@@ -266,7 +299,7 @@ class ArrangeControlsTest {
 
     @Test
     fun `the title bar shows the Arrange button when wide, and not without a second window`() {
-        val strip = arrangeStrip(2, ArrangeState(), emptyMap(), {}, {})
+        val strip = arrangeStrip(2, ArrangeState(), {}, {})
         withStrip(900, strip) { assertNotNull(arrangeButton()) }
         withStrip(900, null) { assertNull(arrangeButton()) }
         // Narrow: it moves into the overflow menu with Fit.
@@ -276,7 +309,7 @@ class ArrangeControlsTest {
     @Test
     fun `the Arrange button grows in and shrinks out over the strip's 200 ms, never in one frame`() = onEdt {
         var arrange by mutableStateOf<ArrangeStrip?>(null)
-        val strip = arrangeStrip(2, ArrangeState(), emptyMap(), {}, {})
+        val strip = arrangeStrip(2, ArrangeState(), {}, {})
         val driver = SceneDriver(
             ImageComposeScene(900, 40, Density(1f)) {
                 ScrcpyViewerTheme(ThemeMode.Light) { Box(Modifier.fillMaxSize()) { Bar.TopStrip(uiState, null, arrange) {} } }

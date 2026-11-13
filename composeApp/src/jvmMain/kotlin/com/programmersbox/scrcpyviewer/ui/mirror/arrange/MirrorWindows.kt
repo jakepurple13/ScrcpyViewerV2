@@ -53,6 +53,11 @@ class MirrorWindows {
         _lastFocused.value = serial
     }
 
+    /** [serial]'s window is gone: it is no longer the last focused (a no-op when another window is). */
+    fun clearFocused(serial: String) {
+        _lastFocused.compareAndSet(serial, null)
+    }
+
     fun register(serial: String, entry: WindowEntry) {
         _entries.update { it + (serial to entry) }
     }

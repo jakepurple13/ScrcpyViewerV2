@@ -302,8 +302,8 @@ class MirrorScreenshotTest {
 
     // --- Arrange mirror windows ------------------------------------------------------------------------------------
 
-    private fun arrangeStrip(state: ArrangeState = ArrangeState(), shortcuts: Map<String, String> = emptyMap()) =
-        ArrangeStrip(state, shortcuts, onPick = {}, onKeepTiled = {})
+    private fun arrangeStrip(state: ArrangeState = ArrangeState()) =
+        ArrangeStrip(state, onPick = {}, onKeepTiled = {})
 
     /** The title bar with the Arrange button (and [follow]'s send button), as the custom bar paints it, at [width]. */
     private fun renderArrangeStrip(name: String, mode: ThemeMode, follow: FollowStrip?, width: Int) {
@@ -349,11 +349,8 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror arrange menu`() {
-        // Grid checked with its shortcut set, Keep tiled on.
-        val grid = arrangeStrip(
-            ArrangeState(layout = ArrangeLayout.Grid, keepTiled = true),
-            mapOf("arrange-grid" to "AM:49", "arrange-focus" to "CAM:70"),
-        )
+        // Grid checked, Keep tiled on.
+        val grid = arrangeStrip(ArrangeState(layout = ArrangeLayout.Grid, keepTiled = true))
         renderArrangeMenu("mirror-arrange-menu-light.png", ThemeMode.Light, grid)
         renderArrangeMenu("mirror-arrange-menu-dark.png", ThemeMode.Dark, grid)
         renderArrangeMenu("mirror-arrange-menu-default.png", ThemeMode.Light, arrangeStrip())

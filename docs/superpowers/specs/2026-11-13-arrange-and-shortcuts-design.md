@@ -1,5 +1,7 @@
 # Arrange mirror windows and keyboard shortcuts
 
+> Update 2026-11-13: keyboard shortcuts were dropped by the user; only Arrange ships.
+
 Date: 2026-11-13
 Status: approved (mockup https://claude.ai/artifact/AEV6zuT1JVS9XRxa4GRaQt, tabs "12 Tile windows" and "6·12 Shortcut
 settings")
@@ -74,7 +76,7 @@ toolbar + open sheet width), and for Focus the focused serial. Output: target ou
 - Menu bar icon: "Arrange mirror windows ›" submenu with the same five entries (✓ prefix on the current one) and
   "Keep tiled" (✓ prefix when on); only shown when at least 2 mirrors are open. Text only (no item icons).
 
-## Keyboard shortcuts
+## Keyboard shortcuts (DROPPED 2026-11-13, not built; kept for history)
 
 ### Model (`ui/shortcuts/`)
 

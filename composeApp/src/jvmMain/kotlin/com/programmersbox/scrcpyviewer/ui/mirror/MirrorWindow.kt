@@ -41,7 +41,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeWindow
-import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ARRANGE_LABEL
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeButton
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeMenu
@@ -389,8 +388,6 @@ fun MirrorWindow(
     mirrorWindows: MirrorWindows = koinInject(),
     /** Arrange mirror windows: the title bar's Arrange button applies layouts through it. */
     arranger: WindowArranger = koinInject(),
-    /** `Settings.shortcuts`, shown next to the Arrange menu's layouts once set. */
-    appSettings: AppSettings = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -641,8 +638,7 @@ fun MirrorWindow(
         reduceMotion = reduceMotion,
         control = control,
     )
-    val shortcuts = appSettings.settings.collectAsState().value.shortcuts
-    val arrangeStrip = rememberArrangeStrip(serial, arranger, controller.open, shortcuts, reduceMotion)
+    val arrangeStrip = rememberArrangeStrip(serial, arranger, controller.open, reduceMotion)
     val followRings = remember(session) { ClickIndicator(mapper::displayedRect) }
     FollowedTouchRings(serial, following, followRings, mapper::toView)
 
@@ -770,6 +766,8 @@ fun MirrorWindow(
         if ("print-fps" in e) {
             LaunchedEffect(session) { session.fps.collect { if (it > 0) println("[$serial] %.1f fps".format(it)) } }
         }
+        // A window that gained focus but closed before registering must not stay the "last focused".
+        DisposableEffect(serial) { onDispose { mirrorWindows.clearFocused(serial) } }
         LaunchedEffect(session, handle) {
             windowHandle = handle
             handle.focused.collect {

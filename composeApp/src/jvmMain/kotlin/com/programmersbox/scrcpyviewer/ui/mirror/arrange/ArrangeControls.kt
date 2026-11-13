@@ -26,8 +26,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,12 +49,10 @@ import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowMotion
-import com.programmersbox.scrcpyviewer.ui.shortcuts.Shortcut
-import com.programmersbox.scrcpyviewer.ui.shortcuts.ShortcutAction
 import androidx.compose.runtime.withFrameMillis
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
@@ -80,16 +80,6 @@ val ArrangeLayout.menuLabel: String
         ArrangeLayout.Cascade -> "Cascade"
     }
 
-/** The shortcut action that applies the layout (its id is the key in `Settings.shortcuts`). */
-val ArrangeLayout.shortcutAction: ShortcutAction
-    get() = when (this) {
-        ArrangeLayout.AsPlaced -> ShortcutAction.ArrangeFree
-        ArrangeLayout.Grid -> ShortcutAction.ArrangeGrid
-        ArrangeLayout.SideBySide -> ShortcutAction.ArrangeRow
-        ArrangeLayout.Focus -> ShortcutAction.ArrangeFocus
-        ArrangeLayout.Cascade -> ShortcutAction.ArrangeCascade
-    }
-
 private val ArrangeLayout.icon: ImageVector
     get() = when (this) {
         ArrangeLayout.AsPlaced -> Icons.Outlined.WebAsset
@@ -99,23 +89,21 @@ private val ArrangeLayout.icon: ImageVector
         ArrangeLayout.Cascade -> Icons.Outlined.AutoAwesomeMotion
     }
 
-/** One layout entry of the Arrange menu: [checked] on the current layout, [shortcut] its key label once set. */
+/** One layout entry of the Arrange menu: [checked] on the current layout. */
 data class ArrangeItem(
     val layout: ArrangeLayout,
     val label: String,
     val checked: Boolean,
-    val shortcut: String?,
     val enabled: Boolean,
 )
 
-/** The menu's five layout entries for [state], with the shortcuts in [shortcuts] (`Settings.shortcuts`). */
-fun arrangeItems(state: ArrangeState, shortcuts: Map<String, String>, mac: Boolean = Os.isMac): List<ArrangeItem> =
+/** The menu's five layout entries for [state]. */
+fun arrangeItems(state: ArrangeState): List<ArrangeItem> =
     ArrangeLayout.entries.map { layout ->
         ArrangeItem(
             layout = layout,
             label = layout.menuLabel,
             checked = layout == state.layout,
-            shortcut = shortcuts[layout.shortcutAction.id]?.let(Shortcut::decode)?.label(mac),
             enabled = state.movable,
         )
     }
@@ -126,23 +114,28 @@ fun arrangeItems(state: ArrangeState, shortcuts: Map<String, String>, mac: Boole
  */
 data class ArrangeStrip(
     val state: ArrangeState,
-    val shortcuts: Map<String, String>,
     val onPick: (ArrangeLayout) -> Unit,
     val onKeepTiled: (Boolean) -> Unit,
     /** The system asks for reduced motion: the check mark fades instead of scaling, and the menu closes at once. */
     val reduceMotion: Boolean = false,
+    /**
+     * Runs the delayed pick. Must outlive the button or more-menu slot showing the menu: that slot can leave the
+     * composition (a second window closing) within [PICK_CLOSE_DELAY_MILLIS]. Needs a frame clock; null runs it in the
+     * menu's own scope.
+     */
+    val pickScope: CoroutineScope? = null,
 )
 
 /** The Arrange control for a window, only while at least two mirror windows are open ([openWindows]). */
 fun arrangeStrip(
     openWindows: Int,
     state: ArrangeState,
-    shortcuts: Map<String, String>,
     onPick: (ArrangeLayout) -> Unit,
     onKeepTiled: (Boolean) -> Unit,
     reduceMotion: Boolean = false,
+    pickScope: CoroutineScope? = null,
 ): ArrangeStrip? =
-    if (openWindows < 2) null else ArrangeStrip(state, shortcuts, onPick, onKeepTiled, reduceMotion)
+    if (openWindows < 2) null else ArrangeStrip(state, onPick, onKeepTiled, reduceMotion, pickScope)
 
 /** [arrangeStrip] for the window of [serial]: picking Focus puts this window in the large area. */
 @Composable
@@ -150,14 +143,15 @@ fun rememberArrangeStrip(
     serial: String,
     arranger: WindowArranger,
     open: StateFlow<Map<String, *>>,
-    shortcuts: Map<String, String>,
     reduceMotion: Boolean,
 ): ArrangeStrip? {
     val state by arranger.state.collectAsState()
     val sessions by open.collectAsState()
     val onPick = remember(serial, arranger) { { layout: ArrangeLayout -> arranger.apply(layout, focus = serial) } }
     val onKeepTiled = remember(arranger) { { on: Boolean -> arranger.setKeepTiled(on) } }
-    return arrangeStrip(sessions.size, state, shortcuts, onPick, onKeepTiled, reduceMotion)
+    // The window's own scope: it outlives the title bar slot that shows the menu.
+    val pickScope = rememberCoroutineScope()
+    return arrangeStrip(sessions.size, state, onPick, onKeepTiled, reduceMotion, pickScope)
 }
 
 /** The title bar's Arrange icon button (a grid) and its menu. */
@@ -173,7 +167,7 @@ fun ArrangeButton(arrange: ArrangeStrip, modifier: Modifier = Modifier) {
 }
 
 /**
- * The Arrange menu: the title, the five layouts (a check on the current one, its shortcut when set) and Keep tiled.
+ * The Arrange menu: the title, the five layouts (a check on the current one) and Keep tiled.
  * When the desktop does not let the app move windows ([ArrangeState.movable] false) the entries are disabled under
  * [NOT_MOVABLE_NOTE].
  *
@@ -185,10 +179,13 @@ fun ArrangeButton(arrange: ArrangeStrip, modifier: Modifier = Modifier) {
 fun ArrangeMenu(expanded: Boolean, onDismiss: () -> Unit, arrange: ArrangeStrip) {
     val colors = MaterialTheme.colorScheme
     // Outlives the menu's content, which leaves the composition once the menu has closed.
-    val scope = rememberCoroutineScope()
+    val ownScope = rememberCoroutineScope()
+    val scope = arrange.pickScope ?: ownScope
+    // Lives outside the content: that stays composed through the exit animation, so a reopen would keep a stale pick.
+    // Each opening starts with no pick pending and the check on the current layout.
+    var picked by remember { mutableStateOf<ArrangeLayout?>(null) }
+    LaunchedEffect(expanded) { if (expanded) picked = null }
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
-        // The content is composed afresh each time the menu opens: no pick pending, the check on the current layout.
-        var picked by remember { mutableStateOf<ArrangeLayout?>(null) }
         val state = arrange.state
         Text(
             ARRANGE_TITLE,
@@ -205,19 +202,16 @@ fun ArrangeMenu(expanded: Boolean, onDismiss: () -> Unit, arrange: ArrangeStrip)
                 Text(NOT_MOVABLE_NOTE, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             }
         }
-        for (item in arrangeItems(state, arrange.shortcuts)) {
+        for (item in arrangeItems(state)) {
             val checked = picked?.let { it == item.layout } ?: item.checked
             DropdownMenuItem(
                 text = { Text(item.label, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) },
                 leadingIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CheckMark(checked, arrange.reduceMotion, Modifier.testTag(checkTag(item.layout)))
+                        CheckMark(checked, item.enabled, arrange.reduceMotion, Modifier.testTag(checkTag(item.layout)))
                         Spacer(Modifier.width(8.dp))
                         Icon(item.layout.icon, contentDescription = null, Modifier.size(18.dp))
                     }
-                },
-                trailingIcon = item.shortcut?.let { label ->
-                    { Text(label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, maxLines = 1) }
                 },
                 onClick = {
                     if (picked != null) return@DropdownMenuItem
@@ -259,7 +253,7 @@ fun checkTag(layout: ArrangeLayout) = "arrange-check-${layout.name}"
 
 /** The check before a layout: scales in (emphasized) and out over [CHECK_IN_MILLIS]; a short fade with reduced motion. */
 @Composable
-private fun CheckMark(checked: Boolean, reduceMotion: Boolean, modifier: Modifier = Modifier) {
+private fun CheckMark(checked: Boolean, enabled: Boolean, reduceMotion: Boolean, modifier: Modifier = Modifier) {
     val target = if (checked) 1f else 0f
     val scale by animateFloatAsState(
         if (reduceMotion) 1f else target,
@@ -280,6 +274,7 @@ private fun CheckMark(checked: Boolean, reduceMotion: Boolean, modifier: Modifie
             scaleY = scale
             this.alpha = alpha
         }.then(modifier),
-        tint = MaterialTheme.colorScheme.primary,
+        // Dims with its disabled row.
+        tint = if (enabled) MaterialTheme.colorScheme.primary else MenuDefaults.itemColors().disabledLeadingIconColor,
     )
 }

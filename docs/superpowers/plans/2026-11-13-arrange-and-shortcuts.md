@@ -1,5 +1,7 @@
 # Arrange Windows and Keyboard Shortcuts Implementation Plan
 
+> Update 2026-11-13: keyboard shortcuts were dropped by the user; only Arrange ships.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Arrange mirror windows into five layouts from a title-bar menu and the tray, and let the user record keyboard shortcuts for those layouts and multi-device follow.
@@ -30,7 +32,7 @@
 
 ---
 
-### Task 1: Shortcut model
+### Task 1: Shortcut model (DROPPED 2026-11-13)
 
 **Files:** Create `ui/shortcuts/Shortcut.kt`, `ui/shortcuts/ShortcutActions.kt`; Modify `state/AppSettings.kt`; Tests `ui/shortcuts/ShortcutTest.kt`, extend `AppSettingsTest`.
 **Produces:** `data class Shortcut(keyCode: Int, ctrl, alt, shift, meta)` with `encode(): String`, `companion fun decode(String): Shortcut?`, `fun label(os: Os): String`; `enum class ShortcutAction(id, label, group)`; `fun validate(s: Shortcut, os: Os): ShortcutProblem?` (`NeedsModifier`, `Reserved`); `fun conflict(map: Map<String,String>, action, s): ShortcutAction?`; `Settings.shortcuts: Map<String, String> = emptyMap()`.
@@ -58,13 +60,13 @@
 - [ ] Tests: button only with ≥2 windows; menu check on current layout; shortcut text shown when set; disabled entries + note when `movable=false`; strip collapse order keeps the multi-device rules and a lone window's layout unchanged; tray submenu only with ≥2 mirrors.
 - [ ] Implement; screenshots (title bar with Arrange, open menu, disabled note); commit `feat(arrange): arrange menu in mirror windows and the menu bar`.
 
-### Task 5: Keyboard shortcuts settings page
+### Task 5: Keyboard shortcuts settings page (DROPPED 2026-11-13)
 
 **Files:** Create `ui/settings/shortcuts/ShortcutsPage.kt`, `ShortcutRecorder.kt`; Modify `SettingsRegistry.kt` (category `Keyboard` after Mirroring), `SettingsViewModel`/actions; Tests `ShortcutRecorderTest.kt`, settings screenshots.
 - [ ] Tests (Compose harness): recording consumes keys and Esc cancels; valid chord sets and persists; invalid → hint text; reserved → hint; conflict strip with Replace clears the other; Clear all; search folds rows; motion values per the spec table.
 - [ ] Implement; screenshots idle/recording/conflict/invalid (light+dark); commit `feat(shortcuts): keyboard shortcuts settings page`.
 
-### Task 6: Shortcut dispatch
+### Task 6: Shortcut dispatch (DROPPED 2026-11-13)
 
 **Files:** Create `ui/shortcuts/ShortcutMatcher.kt`, `ui/shortcuts/ShortcutCommands.kt`; Modify `MirrorKeys.kt` (matcher after sheet check, before device), `Main.kt` main window + `LogcatWindow.kt` (`onPreviewKeyEvent`), track last focused mirror window (registry); Tests `ShortcutMatcherTest.kt`, extend `MirrorKeysTest`, `ShortcutCommandsTest.kt`.
 **Produces:** `ShortcutMatcher(shortcuts: () -> Map<String,String>)` with `handle(AwtKeyTuple): ShortcutAction?` consuming the full chord and `reset()`; `ShortcutCommands(following, arranger, windows, controls)` with `run(action, fromSerial: String?)`.
