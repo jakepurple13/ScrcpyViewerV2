@@ -16,12 +16,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -74,8 +72,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -129,6 +125,7 @@ import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import java.awt.datatransfer.StringSelection
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -335,25 +332,8 @@ private fun FilterRow(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent)
             FilterChip(
                 selected = selected,
                 onClick = { if (!selected) onEvent(AppsEvent.Filter(filter)) },
-                label = {
-                    Text(filter.name)
-                    if (state.apps != null) {
-                        Spacer(Modifier.width(6.dp))
-                        Counter(state.count(filter))
-                    }
-                },
-                leadingIcon = {
-                    // The check grows into the chip as it is selected and shrinks away as it is not.
-                    AnimatedVisibility(
-                        visible = selected,
-                        enter = expandHorizontally(tween(220, easing = EmphasizedDecelerate)) +
-                            scaleIn(tween(220, easing = EmphasizedDecelerate), initialScale = 0.4f) + fadeIn(tween(160)),
-                        exit = shrinkHorizontally(tween(180, easing = EmphasizedAccelerate)) +
-                            scaleOut(tween(180), targetScale = 0.4f) + fadeOut(tween(120)),
-                    ) {
-                        Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(FilterChipDefaults.IconSize))
-                    }
-                },
+                label = { Text(filter.name) },
+                trailing = if (state.apps != null) ({ Counter(state.count(filter)) }) else null,
             )
         }
         Spacer(Modifier.weight(1f))
@@ -373,7 +353,7 @@ private fun Counter(count: Int) {
                 .using(SizeTransform(clip = true))
         },
     ) { n ->
-        Text("$n", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+        Text("$n", fontSize = 11.sp)
     }
 }
 

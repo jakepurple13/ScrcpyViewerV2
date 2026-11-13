@@ -28,8 +28,12 @@ import com.programmersbox.scrcpyviewer.logcat.LogcatLine
 import com.programmersbox.scrcpyviewer.logcat.LogcatSource
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
 import com.programmersbox.scrcpyviewer.ui.onEdt
+import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
+import com.programmersbox.scrcpyviewer.ui.theme.LocalStyleTokens
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
+import com.programmersbox.scrcpyviewer.ui.theme.StyleTokens
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import java.awt.Canvas
 import java.awt.event.KeyEvent as AwtKeyEvent
 import kotlin.coroutines.EmptyCoroutineContext
@@ -74,17 +78,20 @@ class LogcatToolbarTest {
     private var colors: ColorScheme? = null
     private val awtSource = Canvas()
 
-    private fun scene(motion: Boolean = true, isMac: Boolean = true): SceneDriver = SceneDriver(
+    private var tokens: StyleTokens? = null
+
+    private fun scene(motion: Boolean = true, isMac: Boolean = true, style: ThemeStyle = ThemeStyle.Material): SceneDriver = SceneDriver(
         ImageComposeScene(640, 600, Density(1f)) {
-            ScrcpyViewerTheme(ThemeMode.Light) {
+            ScrcpyViewerTheme(AppTheme(mode = ThemeMode.Light, style = style)) {
                 colors = MaterialTheme.colorScheme
+                tokens = LocalStyleTokens.current
                 Surface(Modifier.fillMaxSize()) { LogcatTab(controller, 640.dp, motion = motion, isMac = isMac) }
             }
         },
     ).also { it.frames(5) }
 
-    private fun withScene(motion: Boolean = true, isMac: Boolean = true, block: SceneDriver.() -> Unit) {
-        val driver = scene(motion, isMac)
+    private fun withScene(motion: Boolean = true, isMac: Boolean = true, style: ThemeStyle = ThemeStyle.Material, block: SceneDriver.() -> Unit) {
+        val driver = scene(motion, isMac, style)
         try {
             driver.block()
         } finally {
@@ -207,6 +214,39 @@ class LogcatToolbarTest {
             assertNotNull(text("Resume"))
             click(checkNotNull(described("Resume logcat")))
             assertEquals(LogcatRun.Running, controller.run)
+        }
+    }
+
+    @Test
+    fun `in Retro, Play is the default button with accent ink while stopped and a plain button while running`() = onEdt {
+        withScene(style = ThemeStyle.Retro) {
+            fun look(description: String): Pair<androidx.compose.ui.graphics.Color, Int> {
+                frames(30) // the ink fades 250 ms
+                val b = checkNotNull(described(description)).boundsInRoot
+                val pixels = snapshot()
+                // The button's outermost pixel: walk left from inside the bevel to the window face.
+                val y = b.center.y.toInt()
+                val face = checkNotNull(colors).surface
+                var x = b.left.toInt() + 1
+                while (pixels[x - 1, y] != face) x--
+                val edge = pixels[x, y]
+                val accent = checkNotNull(colors).primary
+                var inked = 0
+                for (x in b.left.toInt() until b.right.toInt()) for (y in b.top.toInt() until b.bottom.toInt()) {
+                    if (pixels[x, y] == accent) inked++
+                }
+                return edge to inked
+            }
+            val bevel = checkNotNull(tokens).bevel
+            val (stoppedEdge, stoppedInk) = look("Start logcat")
+            assertEquals(bevel.dark, stoppedEdge, "stopped: the default button's dark frame")
+            assertTrue(stoppedInk > 20, "stopped: icon and label in the accent ($stoppedInk px)")
+
+            click(checkNotNull(described("Start logcat")))
+            assertEquals(LogcatRun.Running, controller.run)
+            val (runningEdge, runningInk) = look("Pause logcat")
+            assertEquals(bevel.light, runningEdge, "running: a plain raised bevel, no frame")
+            assertEquals(0, runningInk, "running: the usual ink")
         }
     }
 

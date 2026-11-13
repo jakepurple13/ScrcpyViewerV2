@@ -1,7 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
@@ -9,18 +8,17 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material.icons.automirrored.filled.Input
@@ -43,12 +41,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
@@ -85,10 +80,11 @@ import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
 import com.programmersbox.scrcpyviewer.logcat.queryTerms
 import com.programmersbox.scrcpyviewer.logcat.withTerm
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
+import com.programmersbox.scrcpyviewer.ui.theme.RetroButton
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 
@@ -166,6 +162,7 @@ fun LogcatTab(
 /**
  * Play / Pause / Resume, 104 dp wide: filled primary while stopped, tonal while running (color fades 250 ms), the
  * icon morphing play ⇄ pause (rotate, scale, fade, 280 ms). Each [LogcatController.nudge] bump pulses two rings.
+ * Retro 95 draws stopped as the default button (dark frame) with accent ink, running as a plain button.
  */
 @Composable
 private fun PlayPauseButton(controller: LogcatController, motion: Boolean) {
@@ -192,25 +189,42 @@ private fun PlayPauseButton(controller: LogcatController, motion: Boolean) {
         LogcatRun.Running -> "Pause logcat"
         LogcatRun.Paused, LogcatRun.StoppedByLeaving -> "Resume logcat"
     }
+    // Retro's own colors fade too: the accent while stopped, the usual ink while running.
+    val retroInk by animateColorAsState(if (running) scheme.onSurface else scheme.primary, colorSpec)
+    val enabled = running || controller.canPlay
+    val modifier = Modifier.width(104.dp).height(36.dp).playPulse(controller, motion)
+        .semantics { contentDescription = description }
+    val body: @Composable RowScope.() -> Unit = {
+        PlayPauseIcon(running, motion)
+        Spacer(Modifier.width(6.dp))
+        AnimatedContent(
+            label,
+            transitionSpec = {
+                if (motion) fadeIn(tween(200, delayMillis = 60)).togetherWith(fadeOut(tween(120)))
+                else EnterTransition.None.togetherWith(ExitTransition.None)
+            },
+        ) { Text(it, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1) }
+    }
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-        Button(
-            onClick = controller::toggle,
-            enabled = running || controller.canPlay,
-            modifier = Modifier.width(104.dp).height(36.dp).playPulse(controller, motion)
-                .semantics { contentDescription = description },
-            shape = ButtonShape,
-            colors = colors,
-            contentPadding = PaddingValues(horizontal = 10.dp),
-        ) {
-            PlayPauseIcon(running, motion)
-            Spacer(Modifier.width(6.dp))
-            AnimatedContent(
-                label,
-                transitionSpec = {
-                    if (motion) fadeIn(tween(200, delayMillis = 60)).togetherWith(fadeOut(tween(120)))
-                    else EnterTransition.None.togetherWith(ExitTransition.None)
-                },
-            ) { Text(it, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1) }
+        if (currentStyle == ThemeStyle.Retro) {
+            // The styled Button ignores colors in Retro, so stopped (the default button, accent ink) and running (a
+            // plain button) are drawn here. One RetroButton either way, so focus stays on it across the toggle.
+            val source = remember { MutableInteractionSource() }
+            val pressed by source.collectIsPressedAsState()
+            RetroButton(
+                controller::toggle, modifier, enabled, isDefault = !running, source, pressed && enabled, body,
+                contentColor = retroInk,
+            )
+        } else {
+            Button(
+                onClick = controller::toggle,
+                enabled = enabled,
+                modifier = modifier,
+                shape = ButtonShape,
+                colors = colors,
+                contentPadding = PaddingValues(horizontal = 10.dp),
+                content = body,
+            )
         }
     }
 }
@@ -344,40 +358,15 @@ private fun ChipsRow(controller: LogcatController, motion: Boolean) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for ((label, term) in listOf("Picked app" to "package:mine", "Warnings and up" to "level:warn", "Crashes" to "is:crash")) {
             val on = term in terms
-            QueryChip(label, on, motion) { controller.query = withTerm(controller.query, term, !on) }
+            FilterChip(
+                selected = on,
+                onClick = { controller.query = withTerm(controller.query, term, !on) },
+                label = { Text(label, maxLines = 1) },
+                motion = motion,
+            )
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { MineLabel(controller.mine, motion) }
     }
-}
-
-@Composable
-private fun QueryChip(label: String, on: Boolean, motion: Boolean, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    val spec = if (motion) tween<androidx.compose.ui.graphics.Color>(200) else snap()
-    val container by animateColorAsState(if (on) scheme.primaryContainer else scheme.primaryContainer.copy(alpha = 0f), spec)
-    val text by animateColorAsState(if (on) scheme.onPrimaryContainer else scheme.onSurfaceVariant, spec)
-    val edge by animateColorAsState(if (on) scheme.outlineVariant.copy(alpha = 0f) else scheme.outlineVariant, spec)
-    FilterChip(
-        selected = on,
-        onClick = onClick,
-        label = { Text(label, maxLines = 1) },
-        leadingIcon = {
-            // The check grows from 0 to 16 dp as the chip turns on.
-            AnimatedVisibility(
-                visible = on,
-                enter = if (motion) expandHorizontally(tween(250, easing = EmphasizedDecelerate)) + scaleIn(tween(250), initialScale = 0.4f) + fadeIn(tween(160)) else EnterTransition.None,
-                exit = if (motion) shrinkHorizontally(tween(200, easing = EmphasizedAccelerate)) + scaleOut(tween(200), targetScale = 0.4f) + fadeOut(tween(120)) else ExitTransition.None,
-            ) {
-                Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(16.dp))
-            }
-        },
-        colors = FilterChipDefaults.filterChipColors(
-            containerColor = container, selectedContainerColor = container,
-            labelColor = text, selectedLabelColor = text,
-            iconColor = text, selectedLeadingIconColor = text,
-        ),
-        border = FilterChipDefaults.filterChipBorder(enabled = true, selected = on, borderColor = edge, selectedBorderColor = edge),
-    )
 }
 
 /** "mine = <package>" for the app picked in Apps, or how to pick one. */
