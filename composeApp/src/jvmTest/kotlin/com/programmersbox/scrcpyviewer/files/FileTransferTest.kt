@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -585,6 +586,74 @@ class FileTransferTest {
         // The next result is the plain pull's: the drag-out pull said nothing.
         q.enqueue(listOf(pull(drag, "b.txt")))
         assertEquals(listOf("Pulled b.txt to drag"), withTimeout(5_000) { results.await() }.map { it.message })
+    }
+
+    private fun streamed(name: String, total: Long? = 100) =
+        TransferRequest(Paths.get(""), TransferKind.Pull, "/sdcard/Download", name, size = total)
+
+    @Test
+    fun `a tracked job shows running in the list, follows its bytes and ends as told`() = runBlocking<Unit> {
+        val adb = FakeAdb()
+        val q = queue(adb)
+        val tracked = q.track(streamed("a.mp4")) {}!!
+        assertEquals(JobState.Running, q.jobs.value.single { it.id == tracked.id }.state)
+        assertEquals(100L, q.jobs.value.single().total)
+        tracked.progress(40)
+        assertEquals(40L, q.jobs.value.single().bytes)
+        tracked.finish(JobState.Done)
+        assertEquals(JobState.Done, q.jobs.value.single().state)
+        // Ended: later calls change nothing.
+        tracked.progress(90)
+        tracked.finish(JobState.Failed("late"))
+        assertEquals(JobState.Done, q.jobs.value.single().state)
+        assertEquals(40L, q.jobs.value.single().bytes)
+        assertTrue(adb.calls.isEmpty(), "a tracked job runs no adb of the queue's")
+    }
+
+    @Test
+    fun `cancelling a tracked job tells its owner and ends it cancelled`() = runBlocking<Unit> {
+        val q = queue(FakeAdb())
+        var cancels = 0
+        val tracked = q.track(streamed("a.mp4")) { cancels++ }!!
+        q.cancel(tracked.id)
+        assertEquals(1, cancels)
+        assertEquals(JobState.Cancelled, q.jobs.value.single().state)
+        tracked.finish(JobState.Failed("stream closed"))
+        assertEquals(JobState.Cancelled, q.jobs.value.single().state, "the cancel wins")
+    }
+
+    @Test
+    fun `a tracked job does not hold up queued ones`() = runBlocking<Unit> {
+        val drag = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args -> java.nio.file.Files.writeString(Paths.get(args.last()), "x"); ProcessResult(0, "", "") }
+        val q = queue(adb)
+        q.track(streamed("a.mp4")) {}!!
+        val id = q.enqueue(listOf(pull(drag, "b.txt"))).single()
+        q.awaitJob(id) { it.state == JobState.Done }
+    }
+
+    @Test
+    fun `no tracked job while the device is away`() = runBlocking<Unit> {
+        val q = queue(FakeAdb(), connected = { false })
+        assertNull(q.track(streamed("a.mp4")) {})
+        assertTrue(q.jobs.value.isEmpty())
+    }
+
+    @Test
+    fun `the window closing cancels tracked jobs and tells their owners`() = runBlocking<Unit> {
+        // The queue's thread is busy until after the cancel: its loop never starts, as when a window closes at once.
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val hold = java.util.concurrent.CountDownLatch(1)
+        executor.execute { hold.await() }
+        val own = CoroutineScope(Job() + executor.asCoroutineDispatcher())
+        val q = FileTransferQueue("SER", FakeAdb(), DEFAULT_PUSH_TARGET, { true }, {}, own, tempRoot = tmp.resolve("scrcpy-vwr"))
+        val told = CompletableDeferred<Unit>()
+        q.track(streamed("a.mp4")) { told.complete(Unit) }!!
+        own.cancel()
+        hold.countDown()
+        executor.shutdown()
+        withTimeout(5_000) { told.await() }
+        withTimeout(5_000) { q.jobs.first { list -> list.single().state == JobState.Cancelled } }
     }
 
     @Test

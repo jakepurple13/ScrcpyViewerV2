@@ -211,6 +211,16 @@ private fun rememberPromiseDragStarter(isMac: Boolean): PromiseDragStarter? {
 }
 
 /**
+ * The Windows virtual-file drag for this window (Explorer reads each file from the device after the drop), or null
+ * elsewhere.
+ */
+@Composable
+private fun rememberVirtualDragStarter(): VirtualDragStarter? {
+    val handle = LocalMirrorWindowHandle.current
+    return remember(handle) { if (Os.isWindows && handle != null) WindowsVirtualFileDragStarter { handle.hwnd } else null }
+}
+
+/**
  * [FilesTab] reading a computer drag's data through [dragData], handing drags out of the window to [dragOutStarter]
  * through the drag folders of [dragCache] (tests).
  */
@@ -230,11 +240,12 @@ internal fun FilesTab(
     dragOutStarter: OutboundDragStarter = remember { ComposeDragOutStarter() },
     dragCache: DragCache = remember { DragCache() },
     promiseStarter: PromiseDragStarter? = rememberPromiseDragStarter(isMac),
+    virtualStarter: VirtualDragStarter? = rememberVirtualDragStarter(),
 ) {
     var menu by remember { mutableStateOf<FilesMenu?>(null) }
     val drop = remember(browser) { FilesDropState(browser) }
     val dragScope = rememberCoroutineScope()
-    val dragOut = remember(browser, dragOutStarter, dragCache, promiseStarter) {
+    val dragOut = remember(browser, dragOutStarter, dragCache, promiseStarter, virtualStarter) {
         DragOutController(
             browser.serial, dragCache,
             pull = { names, dir ->
@@ -259,6 +270,13 @@ internal fun FilesTab(
                 }
             },
             jobUpdates = browser.queueJobUpdates,
+            virtual = virtualStarter,
+            virtualDrag = { names ->
+                // Read now, before the listing suspends.
+                val from = drop.movingFrom ?: browser.path
+                val rows = drop.movingEntries.filter { it.name in names }
+                browser.virtualDrags?.build(from, rows)
+            },
         ).also { it.onFinished = drop::cancelMove }
     }
     LaunchedEffect(dragOut) { snapshotFlow { browser.transferJobs }.collect(dragOut::onJobs) }

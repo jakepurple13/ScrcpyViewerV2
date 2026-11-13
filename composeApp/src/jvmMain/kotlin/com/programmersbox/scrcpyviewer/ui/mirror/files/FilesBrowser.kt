@@ -25,6 +25,7 @@ import com.programmersbox.scrcpyviewer.files.JobState
 import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
+import com.programmersbox.scrcpyviewer.files.shellQuote
 import com.programmersbox.scrcpyviewer.files.TransferRequest
 import com.programmersbox.scrcpyviewer.files.devicePath
 import com.programmersbox.scrcpyviewer.files.CONTAINS_MOVED
@@ -132,6 +133,8 @@ class FilesBrowser(
     private val openOnComputer: (Path) -> Boolean = { false },
     /** Whether a computer path is a folder (Keep both names a pushed folder without an extension split). */
     private val isHostDir: (Path) -> Boolean = { Files.isDirectory(it) },
+    /** Reads a device file's bytes as a stream (a virtual-file drag); null when there is no way to. */
+    private val openDeviceStream: ((devicePath: String) -> java.io.InputStream)? = null,
 ) {
     private val saved = memory.filesLocation(serial)
 
@@ -794,6 +797,26 @@ class FilesBrowser(
     }
 
     /**
+     * Builds virtual-file drags of this device's rows (Windows): folders listed through [files], bytes read through
+     * [openDeviceStream], one tray job per row tracked by the queue. Null without a device stream or a queue.
+     */
+    internal val virtualDrags: VirtualDragBuilder? = openDeviceStream?.takeIf { transfers.queue != null }?.let { open ->
+        VirtualDragBuilder(
+            tree = files::tree,
+            openStream = open,
+            track = { row, total, onCancel ->
+                val request = TransferRequest(Paths.get(""), TransferKind.Pull, null, row.name, size = total, isDirectory = row.isDir)
+                transfers.queue?.track(request, onCancel)?.let { job ->
+                    object : RowTransfer {
+                        override fun progress(bytes: Long) = job.progress(bytes)
+                        override fun finish(state: JobState) = job.finish(state)
+                    }
+                }
+            },
+        )
+    }
+
+    /**
      * Queues a pull of [entry] in [fromDir] to exactly [target], a path a file-promise drop picked (Finder's folder
      * and name). It is an ordinary pull in the tray, reported when done. Null when it could not be queued.
      */
@@ -850,6 +873,7 @@ fun rememberFilesBrowser(
                 DeviceFiles(ShellRunner(it, serial)) { path -> session.send(ControlMessage.ScanFile(path)) },
                 transfers, memory, settings, transfers.pushTarget, scope,
                 openOnComputer = { path -> openOnComputer(path) },
+                openDeviceStream = { path -> it.openExecStream(serial, "cat ${shellQuote(path)}") },
             )
         }
     } ?: return null

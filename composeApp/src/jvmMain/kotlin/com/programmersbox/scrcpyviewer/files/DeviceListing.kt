@@ -61,6 +61,38 @@ fun parseListing(output: String, exitCode: Int?): Listing {
     return Listing.Failed(last ?: if (exitCode == null) "No response from device" else "Exit code $exitCode")
 }
 
+/** A file or folder under a dragged row, [path] relative to the row's folder ("Camera/1.jpg"). */
+data class TreeEntry(val path: String, val isDir: Boolean, val size: Long)
+
+/**
+ * One shell process printing a stat record for every folder and regular file under [names] in [dir] (the rows
+ * themselves included), for a virtual-file drag. Names go in as "./name" so one starting with "-" is not an option.
+ */
+fun treeCommand(dir: String, names: List<String>): String =
+    "cd ${shellQuote(dir)} && find ${names.joinToString(" ") { shellQuote("./$it") }} \\( -type d -o -type f \\) " +
+        "-exec stat -c '%F|%s|%n$MARKER' {} + 2>/dev/null"
+
+/** The folders and regular files of [treeCommand]'s output, in its order; anything else is left out. */
+fun parseTree(output: String): List<TreeEntry> {
+    val entries = ArrayList<TreeEntry>()
+    for (record in records(output)) {
+        val a = record.indexOf('|')
+        if (a < 0) continue
+        val b = record.indexOf('|', a + 1)
+        if (b < 0) continue
+        val type = record.substring(0, a).substringAfterLast('\n').trim()
+        val size = record.substring(a + 1, b).trim().toLongOrNull() ?: continue
+        val path = record.substring(b + 1).removePrefix("./")
+        if (path.isEmpty()) continue
+        entries += when (type) {
+            "directory" -> TreeEntry(path, isDir = true, size = 0)
+            "regular file", "regular empty file" -> TreeEntry(path, isDir = false, size = size)
+            else -> continue
+        }
+    }
+    return entries
+}
+
 /** Prints "<count>|<name>|__svend__" for each of [folders] under [dir]. */
 fun countsCommand(dir: String, folders: List<String>): String {
     if (folders.isEmpty()) return ":"
