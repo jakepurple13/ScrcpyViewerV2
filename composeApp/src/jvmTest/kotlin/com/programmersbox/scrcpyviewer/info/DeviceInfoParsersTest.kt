@@ -36,6 +36,11 @@ class DeviceInfoParsersTest {
     }
 
     @Test
+    fun `battery with negative level is null`() {
+        assertNull(DeviceInfoParsers.battery("  present: true\n  level: -1\n  scale: 100\n"))
+    }
+
+    @Test
     fun `battery uses first key match`() {
         val text = "  charge counter: 1\n  charge counter: 1\n  level: 40\n  scale: 50\n"
         assertEquals(80, DeviceInfoParsers.battery(text)!!.level)

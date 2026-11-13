@@ -234,6 +234,26 @@ class DeviceInfoViewModelTest {
     }
 
     @Test
+    fun `only device unplugging mid-poll stops polling`() = runTest {
+        devices.value = listOf(device("R1", model = "Pixel_8"))
+        val r1 = reader("R1")
+        val vm = vm()
+        vm.setActive(true)
+        runCurrent()
+        assertEquals("R1", vm.state.value.serial)
+        assertEquals(1, r1.liveCalls)
+        devices.value = emptyList()
+        runCurrent()
+        advanceTimeBy(20_000)
+        runCurrent()
+        assertEquals(1, r1.liveCalls)
+        // No device selected: the state resets to the empty one, with nothing to read and no not-ready message.
+        assertNull(vm.state.value.serial)
+        assertNull(vm.state.value.title)
+        assertNull(vm.state.value.notReady)
+    }
+
+    @Test
     fun `failed live keeps last values`() = runTest {
         val r1 = reader("R1").apply {
             onLive = { if (it == 2) throw IOException("adb: closed") else live(it) }

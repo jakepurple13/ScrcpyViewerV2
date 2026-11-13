@@ -19,6 +19,10 @@ data class MemoryInfo(val totalKb: Long, val availableKb: Long) {
     val usedKb: Long get() = totalKb - availableKb
 }
 
+/**
+ * Byte sizes from `dumpsys diskstats`. [system] is the system partition, which is not part of /data and is not shown.
+ * [other] is diskstats' own figure; the UI does not show it and shows used minus [apps] minus [media] as Other instead.
+ */
 data class StorageBreakdown(val apps: Long, val media: Long, val system: Long, val other: Long)
 
 data class StorageInfo(val totalBytes: Long, val usedBytes: Long, val breakdown: StorageBreakdown?)

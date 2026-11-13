@@ -31,7 +31,7 @@ object DeviceInfoParsers {
     fun battery(text: String): BatteryInfo? {
         val t = clean(text)
         if (first(t, """^\s*present:\s*(\w+)""") == "false") return null
-        val raw = first(t, """^\s*level:\s*(-?\d+)""")?.toIntOrNull() ?: return null
+        val raw = first(t, """^\s*level:\s*(-?\d+)""")?.toIntOrNull()?.takeIf { it >= 0 } ?: return null
         val scale = first(t, """^\s*scale:\s*(\d+)""")?.toIntOrNull()?.takeIf { it > 0 } ?: 100
         fun powered(key: String) = first(t, """^\s*$key powered:\s*(\w+)""") == "true"
         return BatteryInfo(

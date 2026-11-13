@@ -1,12 +1,14 @@
 package com.programmersbox.scrcpyviewer.info
 
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.adb.ShellReadTimeout
 import java.io.IOException
 import java.net.SocketTimeoutException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
@@ -15,9 +17,11 @@ private fun fixture(name: String): String =
 
 private class FakeAdb(private val answer: suspend (String) -> String) : AdbClient(adbPath = { error("no adb") }) {
     val commands = mutableListOf<String>()
+    val readTimeouts = mutableListOf<Int?>()
 
     override suspend fun shell(serial: String, cmd: String): String {
         commands += cmd
+        readTimeouts += currentCoroutineContext()[ShellReadTimeout]?.ms
         return answer(cmd)
     }
 }
@@ -88,5 +92,12 @@ class DeviceInfoReaderTest {
     fun `slow shell times out`() {
         val reader = DeviceInfoReader(FakeAdb { delay(60_000); "" }, "serial", timeoutMs = 50)
         assertFailsWith<IOException> { runBlocking { reader.readLive() } }
+    }
+
+    @Test
+    fun `shell socket read timeout matches the reader timeout`() = runBlocking {
+        val adb = FakeAdb { "" }
+        DeviceInfoReader(adb, "serial", timeoutMs = 7_000).readLive()
+        assertEquals(listOf<Int?>(7_000), adb.readTimeouts)
     }
 }

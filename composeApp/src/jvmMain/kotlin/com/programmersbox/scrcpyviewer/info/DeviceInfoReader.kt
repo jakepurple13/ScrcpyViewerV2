@@ -1,12 +1,21 @@
 package com.programmersbox.scrcpyviewer.info
 
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.adb.ShellReadTimeout
 import java.io.IOException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
-/** Runs the Info tab's shell commands on one device and parses the output. Failures surface as [IOException]. */
+/**
+ * Runs the Info tab's shell commands on one device and parses the output. Failures surface as [IOException].
+ *
+ * Each call is bounded by [timeoutMs] twice: [withTimeout] fails the coroutine after [timeoutMs] in total, and the
+ * same value is the socket read timeout of [AdbClient.shell] (via [ShellReadTimeout]), because a cancelled coroutine
+ * cannot interrupt the blocking socket read. The blocked read therefore ends at most [timeoutMs] after the device last
+ * sent data, so a hung device frees its IO thread instead of holding it forever.
+ */
 open class DeviceInfoReader(
     private val adb: AdbClient,
     private val serial: String,
@@ -31,7 +40,9 @@ open class DeviceInfoReader(
     }
 
     private suspend fun run(cmd: String): String = try {
-        withTimeout(timeoutMs) { adb.shell(serial, cmd) }
+        withTimeout(timeoutMs) {
+            withContext(ShellReadTimeout(timeoutMs.toInt())) { adb.shell(serial, cmd) }
+        }
     } catch (e: TimeoutCancellationException) {
         throw IOException("Timed out reading device info after $timeoutMs ms", e)
     } catch (e: CancellationException) {
@@ -49,11 +60,11 @@ open class DeviceInfoReader(
             echo @@wm
             wm size; wm density
             echo @@display
-            dumpsys display | grep -m1 DisplayDeviceInfo
+            dumpsys display 2>/dev/null | grep -m1 DisplayDeviceInfo
             echo @@df
             df -k /data
             echo @@diskstats
-            dumpsys diskstats | grep -E '^(App|App Data|Photos|Videos|Audio|Downloads|System|Other) Size:'
+            dumpsys diskstats 2>/dev/null | grep -E '^(App|App Data|Photos|Videos|Audio|Downloads|System|Other) Size:'
             echo @@ip
             ip -f inet addr show wlan0
             echo @@wifi

@@ -36,11 +36,11 @@ echo "kernel=$(uname -r)"
 echo @@wm
 wm size; wm density
 echo @@display
-dumpsys display | grep -m1 DisplayDeviceInfo
+dumpsys display 2>/dev/null | grep -m1 DisplayDeviceInfo
 echo @@df
 df -k /data
 echo @@diskstats
-dumpsys diskstats | grep -E '^(App|App Data|Photos|Videos|Audio|Downloads|System|Other) Size:'
+dumpsys diskstats 2>/dev/null | grep -E '^(App|App Data|Photos|Videos|Audio|Downloads|System|Other) Size:'
 echo @@ip
 ip -f inet addr show wlan0
 echo @@wifi
