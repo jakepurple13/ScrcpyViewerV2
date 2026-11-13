@@ -2,10 +2,12 @@ package com.programmersbox.scrcpyviewer.ui.mirror
 
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesLocation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SheetWidthTest {
@@ -99,9 +101,47 @@ class SheetWidthTest {
     }
 
     @Test
+    fun `files tab width`() {
+        assertEquals(440.dp, sheetWidth(true, SheetTab.Files))
+        assertEquals(SheetWidths(files = 600.dp), SheetWidths().with(SheetTab.Files, 600.dp))
+        assertEquals(440.dp, clampSheetWidth(300.dp, SheetTab.Files, 1200.dp, 64.dp))
+        assertEquals(SheetWidths(files = 440.dp), SheetWidths.fromSettings(280, 400, 480, 100))
+        assertEquals(SheetWidths(files = SHEET_MAX_WIDTH), SheetWidths.fromSettings(280, 400, 480, 99_999))
+    }
+
+    @Test
+    fun `resizing the files tab saves the files width`() {
+        val saved = mutableListOf<Pair<SheetTab, Dp>>()
+        val qa = QuickActions(
+            device = null, scope = CoroutineScope(Dispatchers.Unconfined), saveWidth = { tab, width -> saved += tab to width },
+        ) {}
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Files))
+        qa.onEvent(QuickActionEvent.Resize(560.dp))
+        qa.onEvent(QuickActionEvent.ResizeDone(SheetTab.Files))
+        assertEquals(SheetWidths(files = 560.dp), qa.uiState.widths)
+        assertEquals(listOf(SheetTab.Files to 560.dp), saved)
+    }
+
+    @Test
+    fun `files location is remembered per device`() {
+        val memory = QuickActionsMemory()
+        assertNull(memory.filesLocation("a"))
+        val location = FilesLocation("/sdcard/DCIM", listOf("/sdcard"))
+        memory.setFilesLocation("a", location)
+        assertEquals(location, memory.filesLocation("a"))
+        assertNull(memory.filesLocation("b"))
+    }
+
+    @Test
     fun `saved widths load between each tab's minimum and 1200 dp`() {
-        assertEquals(SheetWidths(actions = 520.dp, shell = 640.dp), SheetWidths.fromSettings(520, 640))
-        assertEquals(SheetWidths(actions = 280.dp, shell = 400.dp), SheetWidths.fromSettings(0, -5))
-        assertEquals(SheetWidths(actions = 1200.dp, shell = 1200.dp), SheetWidths.fromSettings(90_000, 5000))
+        assertEquals(
+            SheetWidths(actions = 520.dp, shell = 640.dp, apps = 600.dp, files = 700.dp),
+            SheetWidths.fromSettings(520, 640, 600, 700),
+        )
+        assertEquals(SheetWidths(actions = 280.dp, shell = 400.dp, apps = 480.dp, files = 440.dp), SheetWidths.fromSettings(0, -5, 1, 0))
+        assertEquals(
+            SheetWidths(actions = 1200.dp, shell = 1200.dp, apps = 1200.dp, files = 1200.dp),
+            SheetWidths.fromSettings(90_000, 5000, 6000, 7000),
+        )
     }
 }

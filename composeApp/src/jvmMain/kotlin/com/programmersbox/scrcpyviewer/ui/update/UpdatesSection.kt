@@ -18,7 +18,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalUriHandler
+import com.programmersbox.scrcpyviewer.ui.common.openWebUrl
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.update.UpdateState
 import java.time.Duration
@@ -37,9 +37,9 @@ fun UpdatesContent(
     onUpdate: () -> Unit,
     onCancel: () -> Unit,
     now: Instant = Instant.now(),
+    openUrl: (String) -> Boolean = ::openWebUrl,
 ) {
-    val uriHandler = LocalUriHandler.current
-    val openReleasePage = { uriHandler.openSafely(ui.releasePageUrl) }
+    val openReleasePage = { openUrl(ui.releasePageUrl); Unit }
     val state = ui.state
     val busy = state is UpdateState.Checking || state is UpdateState.Downloading || state is UpdateState.Installing
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

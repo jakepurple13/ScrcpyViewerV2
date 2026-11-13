@@ -88,6 +88,9 @@ class NoAwtToolkitTest {
             "java.awt.Cursor",
             "java.awt.datatransfer.StringSelection",
             "java.awt.datatransfer.DataFlavor",
+            // The file list of a drag out of the window (Tao reads it as plain data).
+            "java.awt.datatransfer.Transferable",
+            "java.awt.datatransfer.UnsupportedFlavorException",
             // Tao's synthetic drop events extend these; they do not start the toolkit.
             "java.awt.dnd.DnDConstants",
             "java.awt.dnd.DropTargetDragEvent",

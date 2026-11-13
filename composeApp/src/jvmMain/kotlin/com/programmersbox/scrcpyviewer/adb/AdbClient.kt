@@ -23,6 +23,14 @@ import java.util.concurrent.TimeUnit
 
 data class ProcessResult(val exitCode: Int, val stdout: String, val stderr: String)
 
+/**
+ * Coroutine-context element that raises the socket read timeout of [AdbClient.shell] for one call, for a command that
+ * is silent for long (an `rm -rf` of a big folder): `withContext(ShellReadTimeout(120_000)) { adb.shell(...) }`.
+ */
+class ShellReadTimeout(val ms: Int) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+    companion object Key : kotlin.coroutines.CoroutineContext.Key<ShellReadTimeout>
+}
+
 /** Talks to the adb server over its socket protocol and runs the adb binary for everything else. */
 open class AdbClient(
     private val adbPath: () -> Path,
@@ -57,9 +65,11 @@ open class AdbClient(
      * Runs `shell:<cmd>` on [serial] and returns its output. Throws [java.net.SocketTimeoutException] when the adb
      * server sends nothing for [shellReadTimeoutMs].
      */
-    open suspend fun shell(serial: String, cmd: String): String = withContext(Dispatchers.IO) {
+    open suspend fun shell(serial: String, cmd: String): String {
+        val timeout = currentCoroutineContext()[ShellReadTimeout]?.ms ?: shellReadTimeoutMs
+        return withContext(Dispatchers.IO) {
         openSocket().use { socket ->
-            socket.soTimeout = shellReadTimeoutMs
+            socket.soTimeout = timeout
             val out = socket.getOutputStream()
             val input = socket.getInputStream()
             out.write(AdbWire.encodeRequest("host:transport:$serial"))
@@ -69,6 +79,54 @@ open class AdbClient(
             out.flush()
             AdbWire.readStatus(input)
             String(input.readBytes(), Charsets.UTF_8)
+        }
+        }
+    }
+
+    /**
+     * Runs `exec:<cmd>` on [serial] and returns its output byte for byte (no pty, so binary output such as a file
+     * read with `unzip -p` arrives intact). Throws [java.net.SocketTimeoutException] like [shell].
+     */
+    open suspend fun execOut(serial: String, cmd: String): ByteArray = withContext(Dispatchers.IO) {
+        openSocket().use { socket ->
+            socket.soTimeout = shellReadTimeoutMs
+            val out = socket.getOutputStream()
+            val input = socket.getInputStream()
+            out.write(AdbWire.encodeRequest("host:transport:$serial"))
+            out.flush()
+            AdbWire.readStatus(input)
+            out.write(AdbWire.encodeRequest("exec:$cmd"))
+            out.flush()
+            AdbWire.readStatus(input)
+            input.readBytes()
+        }
+    }
+
+    /**
+     * Runs `exec:<cmd>` on [serial] and hands back its output as a stream, byte for byte as it arrives (a file read
+     * with `cat` for a virtual-file drag). Closing the stream closes the connection, which stops the command. Blocks
+     * while connecting: never on the UI thread. A device silent for [readTimeoutMs] fails the read.
+     */
+    open fun openExecStream(serial: String, cmd: String, readTimeoutMs: Int = 30_000): java.io.InputStream {
+        val socket = openSocket()
+        try {
+            socket.soTimeout = readTimeoutMs
+            val out = socket.getOutputStream()
+            val input = socket.getInputStream()
+            out.write(AdbWire.encodeRequest("host:transport:$serial"))
+            out.flush()
+            AdbWire.readStatus(input)
+            out.write(AdbWire.encodeRequest("exec:$cmd"))
+            out.flush()
+            AdbWire.readStatus(input)
+            return object : java.io.FilterInputStream(input) {
+                override fun close() {
+                    socket.close()
+                }
+            }
+        } catch (e: Throwable) {
+            runCatching { socket.close() }
+            throw e
         }
     }
 
@@ -136,6 +194,17 @@ open class AdbClient(
         ProcessBuilder(listOf(adbPath().toString()) + args)
             .redirectInput(ProcessBuilder.Redirect.from(nullFile()))
             .redirectErrorStream(true)
+            .start()
+
+    /**
+     * Starts the adb binary with [args] as a process the caller can kill, its stdout and stderr both written to
+     * [output] (a file, not a pipe: see [runAdb]). stdin is empty; the caller waits for it and destroys it.
+     */
+    open fun startProcess(output: Path, vararg args: String): Process =
+        ProcessBuilder(listOf(adbPath().toString()) + args)
+            .redirectInput(ProcessBuilder.Redirect.from(nullFile()))
+            .redirectErrorStream(true)
+            .redirectOutput(output.toFile())
             .start()
 
     /**

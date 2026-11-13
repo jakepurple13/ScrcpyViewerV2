@@ -19,6 +19,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-12-narrow-window-layouts-design.md`
 **Mockup:** https://claude.ai/artifact/UfUaFu8LacPbdangsuXvA3 ("With E" mode). Match its behavior and motion.
+**Mockup addendum (mirror sheet tabs, Tasks 13, 16, 17):** https://claude.ai/artifact/6wsGe9iFtdpu4JJPkzcTi7.
 
 All paths below are relative to `composeApp/src/jvmMain/kotlin/com/programmersbox/scrcpyviewer/` (main) or `composeApp/src/jvmTest/kotlin/com/programmersbox/scrcpyviewer/` (test).
 
@@ -484,7 +485,8 @@ Changes:
   - `ui/settings/SettingsDetailPane.kt:70-91` (`SettingRow`)
   - `ui/settings/SettingsControls.kt`: Theme at 43, folder at 84, adb at 111–124, preset button at 136
   - `ui/settings/PalettePicker.kt`: header rows at 306/366, slider rows at 418, swatches at 270
-  - `ui/settings/StylePicker.kt`: 91, 117, 220
+  - `ui/settings/StylePicker.kt`: 71, 91, 117, 220
+  - `ui/settings/LaunchQuitPicker.kt` (tile width and reflow motion)
   - `ui/App.kt`: hoist the Settings `ListDetailPanes` like the others
 - Delete: `ResizableListDetail`, `DetailBackButton` and the `ListDetailPaneScaffold` use in `ui/common/ListDetailPanes.kt`.
 - Delete or replace: `ui/common/ResizableListDetailTest.kt` (covered by `AdaptiveListDetailTest`).
@@ -515,6 +517,9 @@ Changes:
   - Slider rows: the label goes above the slider when the slider would get < 120 dp. Use `AdaptiveRow` with the label as `text` and `textMin` set so the slider keeps 120 dp, or a dedicated two-line layout (builder's call).
   - Role swatches: labels `maxLines = 1` + ellipsis.
 - **StylePicker:** Retro colors row, Glass opacity row and blur row → `AdaptiveRow`.
+- **Tile pickers (spec rule 5, added 2026-11-13):** `LaunchQuitPicker.kt` and `StylePicker.kt:71`.
+  - Launch & quit tiles: `.width(200.dp)` → `min(200 dp, row width)`.
+  - Both `FlowRow`s sit in a `LookaheadScope`; each tile gets `animateBounds` with `layoutSpring()`, skipped when `LocalReduceMotion` is true. Pattern: `DevicesScreen.kt:534, 640` (`optionMotion`).
 - **Review Focus 5** is covered in the tests.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -523,6 +528,8 @@ Changes:
   - At 360: Theme shows the menu button "System".
   - In list view at 600, typing "dark" in search keeps list view and shows Appearance.
   - Clicking Appearance opens item view.
+  - Launch & quit at 1000: the three tiles share one top. At 360: every tile's right edge ≤ the picker's right edge, and each tile is ≤ 200 dp wide.
+  - Launch & quit reflow animates: resize 1000 → 600 with the clock paused; one frame in, a wrapped tile sits between its old and new position.
 - [ ] **Step 2: Run them.** Expected: FAIL.
 - [ ] **Step 3: Implement, then delete the old pane code.**
 - [ ] **Step 4: Run them, `SettingsScreenshotTest`, `StylesScreenshotTest`, `AppNavigationTest` and the full suite.** Expected: PASS.
@@ -592,14 +599,20 @@ Changes:
 - **Sheet header subtitle:** `maxLines = 1` + ellipsis.
 - **Tile titles:** `maxLines = 2`.
 - **ShellTab:**
-  - LiveBar: the text gets `maxLines = 1`. "Pause" and "Copy" go into a `PriorityBar` (Pause p0, Copy p1).
+  - LiveBar: the text gets `maxLines = 1`. "Pause" and "Copy" go into a `PriorityBar` (Pause p0, Copy p1), so Copy folds into ⋮ under about 360 dp.
   - Command row: `AdaptiveRow(textMin = 120.dp)` with Run/Stop as the control.
+- **Per-tab placement (spec 6a, added 2026-11-13):** `sheetMin` is the current tab's minimum (`SheetWidths.default(tab)`: Actions 280, Apps 480, Shell 400, Files 440) and `sheetWidth` the tab's saved width. Switching tabs can change placement; that change animates like a resize.
+- **Sheet tab control (spec 6a):** `SheetTabs` (`QuickActionsSheet.kt:348`) gets `fun sheetTabsCompact(width: Dp): Boolean = width < 340.dp`. Compact: each segment shows its icon (Actions `Bolt`, Apps `Apps`, Shell `Terminal`, Files `Folder`), the selected one also its label, and segment weights animate (selected 2.2, others 1) with `layoutSpring`. The highlight keeps following the selected segment's animated bounds. Shell's dot and the Files badge sit at the icon's top end. Each segment has a tooltip with its name.
 
 - [ ] **Step 1: Write the failing tests.**
   - `sheetPlacement(600.dp, 64.dp, 280.dp, 280.dp) == Docked` (504 ≤ 600).
   - `sheetPlacement(503.dp, 64.dp, 280.dp, 280.dp) == Floating`.
   - `sheetPlacement(343.dp, 64.dp, 280.dp, 280.dp) == Full`.
   - Shell: `sheetPlacement(620.dp, 64.dp, 400.dp, 400.dp) == Floating`.
+  - Files: `sheetPlacement(503.dp, 64.dp, 440.dp, 440.dp) == Full`; `sheetPlacement(663.dp, 64.dp, 440.dp, 440.dp) == Floating`.
+  - Apps: `sheetPlacement(704.dp, 64.dp, 480.dp, 480.dp) == Docked`.
+  - `sheetTabsCompact(339.dp)` is true, `sheetTabsCompact(340.dp)` false.
+  - Scene test: the sheet at 280 dp on the Files tab with 2 transfers running: the "Files" label and the badge "2" are displayed and inside the sheet; at 440 dp all four labels are displayed.
   - Scene test (if `MirrorScreenshotTest`'s harness allows composing the content Row offscreen): at 450 wide with the sheet open, the sheet's right edge is ≤ 450 - 64 and the stage width is 450 - 64.
 - [ ] **Step 2: Run them.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
@@ -645,7 +658,80 @@ Changes:
 
 ---
 
+### Task 16: Apps tab narrow (spec 6a, added 2026-11-13)
+
+**Files:**
+- Modify: `ui/mirror/AppsTab.kt`: `FilterRow` (328), the options sheet's info row (744) and `ActionButtons` (788).
+- Test: `ui/mirror/AppsNarrowTest.kt`
+
+**Interfaces:**
+- Consumes: `layoutSpring`, `LocalReduceMotion` (Task 1). The sheet width reaches the tab as its own max width constraint (Task 13); read it with `BoxWithConstraints` or a layout modifier, not a new parameter.
+- Produces: `fun appsFiltersCompact(width: Dp): Boolean = width < 400.dp`, `fun appOptionsCompact(width: Dp): Boolean = width < 360.dp`.
+
+Changes:
+- **Filters compact:** one `FilterChip` showing the current filter, its `Counter` and a drop-down arrow; it opens a `DropdownMenu` with All / User / System, each with its count and a check on the current one. Reload stays at the end. The three chips and the single chip cross-fade (`AnimatedContent`, fade 150 ms, size via `layoutSpring`).
+- **Options compact:** the two `InfoBox`es stack (`Column`, 8 dp gap); `ActionButtons` becomes a 2 × 2 grid (Launch, Force stop / Copy, Uninstall) with each `SheetAction` laying its icon beside its label. Position changes use `animateBounds` with `layoutSpring`; none under reduced motion.
+- Above 400 / 360 dp nothing changes.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `appsFiltersCompact(399.dp)` true, `(400.dp)` false; `appOptionsCompact(359.dp)` true, `(360.dp)` false.
+  - Scene, `AppsTabContent` in a 280 × 600 box with fake apps (reuse `AppExplorerTest`'s fakes): one node with text "All" is displayed, no "User" node is displayed until the chip is clicked, then "User" and "System" are displayed; Reload is inside 280.
+  - Scene, options open at 280: "Launch" and "Uninstall" are displayed, "Copy" sits below "Launch", and "Version code" sits below "Version name".
+  - Scene at 480: three filter chips displayed (unchanged).
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them, `AppExplorerTest`, `AppsSearchFieldTest` and the full suite.** Expected: PASS.
+- [ ] **Step 5: Commit.** `feat(apps): Apps tab reflows in a narrow sheet`
+
+---
+
+### Task 17: Files tab narrow (spec 6a, added 2026-11-13)
+
+**Files:**
+- Modify:
+  - `ui/mirror/files/FilesTab.kt`: `Toolbar` (499), `Crumbs` (584), `FilterRow` (647), `FreeSpace` (702), `ColumnHeader` (718).
+  - `ui/mirror/files/FileRow.kt`: `FileRow` (120).
+  - `ui/mirror/files/SelectionBar.kt`: `Bar` (96).
+  - `ui/mirror/files/TransfersTray.kt`: `TransferRow` (163).
+  - `ui/mirror/files/FilesDialogs.kt`: `DialogCard` (177).
+  - `ui/mirror/files/FilesDrop.kt`: the drop chip.
+  - `ui/mirror/files/FilesMenus.kt`: folded items in the view menu and the selection menu.
+- Test: `ui/mirror/files/FilesNarrowTest.kt`
+
+**Interfaces:**
+- Consumes: `PriorityBar`, `BarItem`, `BarSpacer` (Task 4); `layoutSpring`, `LocalReduceMotion` (Task 1).
+- Produces, in `ui/mirror/files/FilesNarrow.kt`:
+  - `data class FilesLayout(val foldRefreshAndNew: Boolean, val foldPush: Boolean, val spaceBelowFilter: Boolean, val modifiedBelow: Boolean, val sizeBelow: Boolean, val foldRenameDelete: Boolean, val trayStacked: Boolean, val dialogButtonsStacked: Boolean)`
+  - `fun filesLayout(width: Dp): FilesLayout` with: fold Refresh + New folder `< 440`, fold Push `< 340`, space below filter `< 380`, Modified below `< 400`, Size below `< 330`, fold Rename + Delete `< 380`, tray stacked `< 400`, dialog buttons stacked `< 340`.
+
+Changes:
+- **Toolbar:** Back and Up, the crumbs (grow, `minWidth = 120.dp`), Refresh, New folder, Push and ⋮. Folded items leave the bar (fade) and show first in the ⋮ view menu, then a divider, then the existing items. Use the thresholds from `filesLayout`, not `PriorityBar` measuring, so the menu and the bar agree; `PriorityBar` may still host the bar if it takes a forced fold set, else a plain Row with `AnimatedVisibility` per item.
+- **Free space below:** the filter field takes the full width; the meter fills a line under it with "41.2 GB free" at its end.
+- **Rows:** a custom `Layout` (or two-row arrangement) keeps the same size and date `Text` nodes and moves them: Modified to a second line under the name, then Size before it ("4.1 MB · Nov 8, 2:32 PM"). Row height 40 → 52 dp, animated. Cells move with `animateBounds`. The header shows one sort chip (current key and direction) that opens the existing sort items.
+- **Selection bar:** Rename and Delete fold into the bar's ⋮, first in the menu. Clear, the count and Pull stay.
+- **Tray:** stacked transfer rows: name; bar; destination and progress text (may wrap to 2 lines); cancel stays at the end, centred.
+- **Dialogs:** stacked buttons full width, the filled one on top.
+- **Drop chip:** `widthIn(max = listWidth - 24.dp)`, folder name ellipsized.
+- Above every threshold nothing changes. Keyboard shortcuts (F2, ⌫, ⇧⌘N, ⌘R) keep working when their buttons are folded.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `filesLayout` at 439 / 440, 399 / 400, 379 / 380, 339 / 340, 329 / 330: each flag flips exactly at its threshold; at 440 every flag is false.
+  - Scene, `FilesTab` at 280 × 640 with a fake listing (reuse `FilesTabTest`'s fakes): the crumb "Download" is displayed and ≥ 120 wide; "Refresh" is not displayed; opening ⋮ shows "Refresh", "New folder" and "Push files here…" before "Show hidden files".
+  - Same scene: the row "IMG_20261108_143212.jpg" shows its name with width ≥ 160, and its date text's top is below the name's bottom.
+  - With 2 rows selected at 280: "Pull" is displayed; "Rename" is not until the bar's ⋮ is opened.
+  - With a running transfer at 280: its name, progress text and cancel button are all inside the sheet.
+  - Delete dialog at 280: "Delete" sits above "Cancel", both ≥ 200 wide.
+  - Scene at 440: the header shows "Size" and "Modified"; Refresh is displayed (unchanged).
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them, every `ui/mirror/files` test class, `MirrorScreenshotTest` and the full suite.** Expected: PASS.
+- [ ] **Step 5: Commit.** `feat(files): Files tab reflows in a narrow sheet`
+
+---
+
 ### Task 15: Width-matrix tests and hand-check notes
+
+Runs last, after Tasks 16 and 17.
 
 **Files:**
 - Create: `ui/NarrowWidthsTest.kt`
@@ -656,6 +742,7 @@ Changes:
     - The screen's primary action node is displayed and its bounds are inside the scene width: Mirror / Apply / Save / the Theme control.
     - No `Text` node in the detail has a width < 40 px while its text is longer than 3 characters. This catches letter-per-line wrapping.
   - Reuse the fakes from Tasks 8–11.
+  - The mirror sheet's Apps, Shell and Files tabs at sheet widths **280, 340, 400 and their minimum**: Pull (Files, with a selection), Run (Shell) and Reload (Apps) are displayed and inside the sheet, and the same short-text check holds.
 - [ ] **Step 2: Run it.** Expected: PASS. If it fails, fix the owning task's code, not the test.
 - [ ] **Step 3: Write the hand-check list.** For each screen, the transitions to watch on macOS:
   - two panes ↔ strip, strip ↔ list, the overlay, item switch

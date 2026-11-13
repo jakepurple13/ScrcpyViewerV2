@@ -1,0 +1,22 @@
+// Spike only: adds docs/superpowers/notes/launch-overlay-spike/src to :composeApp's jvmTest compilation and registers
+// runOverlaySpike. Only active when passed with -I. The repo's build files stay unchanged.
+allprojects {
+    if (path == ':composeApp') {
+        afterEvaluate {
+            def spikeSrc = rootProject.file('docs/superpowers/notes/launch-overlay-spike/src')
+            kotlin.sourceSets.getByName('jvmTest').kotlin.srcDir(spikeSrc)
+            def comp = kotlin.targets.getByName('jvm').compilations.getByName('test')
+            tasks.register('runOverlaySpike', JavaExec) {
+                dependsOn(comp.compileAllTaskName)
+                // Classes only: jvmTest resources carry TestMainDispatcherFactory (Dispatchers.Main on Swing), which breaks Tao.
+                classpath = files(comp.output.classesDirs, comp.runtimeDependencyFiles)
+                mainClass = 'spike.OverlaySpikeKt'
+                jvmArgs '--enable-native-access=ALL-UNNAMED'
+                ["spike.forceX11", "spike.slow", "spike.auto"].each { k ->
+                    def v = System.getProperty(k) ?: project.findProperty(k)
+                    if (v != null) systemProperty k, v
+                }
+            }
+        }
+    }
+}

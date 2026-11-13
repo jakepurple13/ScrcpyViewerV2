@@ -1,0 +1,2 @@
+regular file|4312448|1731090720|/sdcard/Movies/clip.mp4|__svend__
+regular empty file|0|1731090000|/sdcard/Movies/empty.txt|__svend__

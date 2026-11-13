@@ -8,6 +8,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
@@ -54,5 +56,34 @@ class FileTransferDeviceTest {
             Files.deleteIfExists(local)
         }
         assertTrue(adb.shell(serial, "ls '$remote' 2>/dev/null").isBlank(), "$remote should be deleted")
+    }
+
+    @Test
+    fun `a Replace push takes the place of a same-named folder instead of nesting in it`() = runBlocking<Unit> {
+        val base = "/sdcard/Download/svwt-push"
+        val host = Files.createTempDirectory("push-replace")
+        val folder = Files.createDirectories(host.resolve("Photos"))
+        Files.writeString(folder.resolve("new.txt"), "new\n")
+        val file = Files.writeString(host.resolve("Notes"), "a file now\n")
+        val queue = FileTransferQueue(serial, adb, DEFAULT_PUSH_TARGET, { true }, {}, scope)
+        try {
+            adb.shell(serial, "mkdir -p '$base/Photos' '$base/Notes' && echo old > '$base/Photos/old.txt'")
+            val results = async(start = CoroutineStart.UNDISPATCHED) { queue.results.take(2).toList() }
+            queue.enqueue(
+                listOf(
+                    TransferRequest(folder, TransferKind.Push, base, "Photos", replace = true),
+                    TransferRequest(file, TransferKind.Push, base, "Notes", replace = true),
+                ),
+            )
+            val r = withTimeout(60_000) { results.await() }
+            println("[$serial] ${r.map { it.message }}")
+            assertEquals(listOf(TransferResult.Pushed("Photos", base), TransferResult.Pushed("Notes", base)), r)
+            assertEquals("new.txt", adb.shell(serial, "ls '$base/Photos'").trim(), "replaced, not nested, old one gone")
+            assertEquals("a file now", adb.shell(serial, "cat '$base/Notes'").trim(), "a file in place of the folder")
+            assertEquals(listOf("Notes", "Photos"), adb.shell(serial, "ls -1A '$base'").lines().map { it.trim() }.filter { it.isNotEmpty() }.sorted(), "no temp copies left")
+        } finally {
+            adb.exec("-s", serial, "shell", "rm", "-rf", base)
+            host.toFile().deleteRecursively()
+        }
     }
 }
