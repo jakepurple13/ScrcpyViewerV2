@@ -271,7 +271,10 @@ private fun StandbyLine() {
     }
 }
 
-/** Whether the OS asks for less motion: Reduce motion on macOS, animations off on Windows. False when unknown. */
+/**
+ * Whether the OS asks for less motion: Reduce motion on macOS, animations off on Windows, GNOME's animations switch on
+ * Linux. False when unknown.
+ */
 fun systemReducesMotion(): Boolean = try {
     when {
         Os.isMac -> {
@@ -285,8 +288,22 @@ fun systemReducesMotion(): Boolean = try {
                 .invokeInt(arrayOf(spiGetClientAreaAnimation, 0, on.pointer, 0)) != 0
             ok && on.value == 0
         }
-        else -> false
+        else -> gnomeAnimationsOff(gsettingsEnableAnimations())
     }
 } catch (_: Throwable) {
     false
 }
+
+/** `gsettings get org.gnome.desktop.interface enable-animations` (null when it fails or takes over 500 ms). */
+private fun gsettingsEnableAnimations(): String? {
+    val process = ProcessBuilder("gsettings", "get", "org.gnome.desktop.interface", "enable-animations")
+        .redirectErrorStream(true).start()
+    if (!process.waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        process.destroyForcibly()
+        return null
+    }
+    return process.inputStream.bufferedReader().readText()
+}
+
+/** GNOME's animations switch is off: [output] of `gsettings get … enable-animations` is `false`. */
+internal fun gnomeAnimationsOff(output: String?): Boolean = output?.trim() == "false"
