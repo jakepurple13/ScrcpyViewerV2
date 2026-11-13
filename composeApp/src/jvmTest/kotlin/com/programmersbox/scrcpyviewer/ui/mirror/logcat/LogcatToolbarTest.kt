@@ -8,6 +8,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -17,6 +18,7 @@ import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -72,17 +74,17 @@ class LogcatToolbarTest {
     private var colors: ColorScheme? = null
     private val awtSource = Canvas()
 
-    private fun scene(motion: Boolean = true): SceneDriver = SceneDriver(
+    private fun scene(motion: Boolean = true, isMac: Boolean = true): SceneDriver = SceneDriver(
         ImageComposeScene(640, 600, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 colors = MaterialTheme.colorScheme
-                Surface(Modifier.fillMaxSize()) { LogcatTab(controller, 640.dp, motion = motion) }
+                Surface(Modifier.fillMaxSize()) { LogcatTab(controller, 640.dp, motion = motion, isMac = isMac) }
             }
         },
     ).also { it.frames(5) }
 
-    private fun withScene(motion: Boolean = true, block: SceneDriver.() -> Unit) {
-        val driver = scene(motion)
+    private fun withScene(motion: Boolean = true, isMac: Boolean = true, block: SceneDriver.() -> Unit) {
+        val driver = scene(motion, isMac)
         try {
             driver.block()
         } finally {
@@ -127,15 +129,20 @@ class LogcatToolbarTest {
         frames(5)
     }
 
-    private fun key(id: Int, code: Int, char: Char = AwtKeyEvent.CHAR_UNDEFINED): KeyEvent {
+    private fun key(id: Int, code: Int, char: Char = AwtKeyEvent.CHAR_UNDEFINED, mods: Int = 0): KeyEvent {
         val typed = id == AwtKeyEvent.KEY_TYPED
-        val awt = AwtKeyEvent(awtSource, id, 0L, 0, if (typed) AwtKeyEvent.VK_UNDEFINED else code, char)
+        val awt = AwtKeyEvent(awtSource, id, 0L, mods, if (typed) AwtKeyEvent.VK_UNDEFINED else code, char)
         val type = when (id) {
             AwtKeyEvent.KEY_PRESSED -> KeyEventType.KeyDown
             AwtKeyEvent.KEY_RELEASED -> KeyEventType.KeyUp
             else -> KeyEventType.Unknown
         }
-        return KeyEvent(Key(if (typed) AwtKeyEvent.VK_UNDEFINED else code), type, codePoint = char.code, nativeEvent = awt)
+        return KeyEvent(
+            Key(if (typed) AwtKeyEvent.VK_UNDEFINED else code), type, codePoint = char.code,
+            isCtrlPressed = mods and AwtKeyEvent.CTRL_DOWN_MASK != 0,
+            isMetaPressed = mods and AwtKeyEvent.META_DOWN_MASK != 0,
+            nativeEvent = awt,
+        )
     }
 
     private fun SceneDriver.type(text: String) = text.forEach { c ->
@@ -146,11 +153,32 @@ class LogcatToolbarTest {
         frame()
     }
 
-    private fun SceneDriver.press(code: Int) {
-        scene.sendKeyEvent(key(AwtKeyEvent.KEY_PRESSED, code))
-        scene.sendKeyEvent(key(AwtKeyEvent.KEY_RELEASED, code))
+    private fun SceneDriver.press(code: Int, mods: Int = 0) {
+        scene.sendKeyEvent(key(AwtKeyEvent.KEY_PRESSED, code, mods = mods))
+        scene.sendKeyEvent(key(AwtKeyEvent.KEY_RELEASED, code, mods = mods))
         frames(5)
     }
+
+    /** Space as AWT sends it: pressed, typed ' ', released. */
+    private fun SceneDriver.space() {
+        scene.sendKeyEvent(key(AwtKeyEvent.KEY_PRESSED, AwtKeyEvent.VK_SPACE, ' '))
+        scene.sendKeyEvent(key(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_SPACE, ' '))
+        scene.sendKeyEvent(key(AwtKeyEvent.KEY_RELEASED, AwtKeyEvent.VK_SPACE, ' '))
+        frames(5)
+    }
+
+    /** A press on the list's empty space, under the toolbar and above the status bar. */
+    private fun SceneDriver.clickList() {
+        val at = Offset(320f, 420f)
+        scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
+        scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, button = PointerButton.Primary)
+        scene.sendPointerEvent(PointerEventType.Release, at, type = PointerType.Mouse, button = PointerButton.Primary)
+        frames(5)
+    }
+
+    private fun SceneDriver.fieldFocused(): Boolean = field().config.getOrNull(SemanticsProperties.Focused) == true
+
+    private fun SceneDriver.fieldSelection(): TextRange? = field().config.getOrNull(SemanticsProperties.TextSelectionRange)
 
     private fun SceneDriver.pulsing(): Boolean =
         nodes().any { it.config.getOrNull(LogcatPulseKey) == true }
@@ -339,6 +367,108 @@ class LogcatToolbarTest {
             assertTrue(controller.wrap)
             click(checkNotNull(described("Compact view")))
             assertTrue(controller.compact)
+        }
+    }
+
+    @Test
+    fun `Space toggles play when focus is in the list, not in the field`() = onEdt {
+        withScene {
+            controller.play()
+            settle()
+            frames(30)
+            clickList()
+            space()
+            assertEquals(LogcatRun.Paused, controller.run, "Space in the list pauses")
+            space()
+            assertEquals(LogcatRun.Running, controller.run, "and resumes")
+            controller.pause()
+            frames(5)
+            space()
+            assertEquals(LogcatRun.Running, controller.run, "Paused resumes")
+
+            // In the filter field Space types a space and leaves the run alone.
+            click(field())
+            type("a b")
+            frames(5)
+            assertEquals("a b", controller.query)
+            assertEquals(LogcatRun.Running, controller.run)
+        }
+    }
+
+    @Test
+    fun `Space on the focused Play button toggles once`() = onEdt {
+        withScene {
+            click(field())
+            press(AwtKeyEvent.VK_ESCAPE) // closes the suggestions, so Tab moves focus
+            press(AwtKeyEvent.VK_TAB)
+            frames(5)
+            assertFalse(fieldFocused(), "Tab left the field")
+            space()
+            assertEquals(LogcatRun.Running, controller.run)
+            space()
+            assertEquals(LogcatRun.Paused, controller.run)
+        }
+    }
+
+    @Test
+    fun `Cmd+F focuses the filter and selects its text`() = onEdt {
+        withScene {
+            controller.query = "tag:x"
+            frames(5)
+            clickList()
+            assertFalse(fieldFocused())
+            press(AwtKeyEvent.VK_F, AwtKeyEvent.META_DOWN_MASK)
+            frames(5)
+            assertTrue(fieldFocused(), "the filter has focus")
+            assertEquals(TextRange(0, 5), fieldSelection())
+            type("y")
+            assertEquals("y", controller.query, "typing replaces the selected query")
+            // From inside the field too.
+            press(AwtKeyEvent.VK_F, AwtKeyEvent.META_DOWN_MASK)
+            assertEquals(TextRange(0, 1), fieldSelection())
+        }
+    }
+
+    @Test
+    fun `Cmd+K clears from the list and from the field`() = onEdt {
+        withScene {
+            controller.play()
+            settle()
+            source.stream.trySend(toolbarLine("one"))
+            source.stream.trySend(toolbarLine("two"))
+            settle()
+            frames(5)
+            assertEquals(2, controller.totalLines)
+            clickList()
+            press(AwtKeyEvent.VK_K, AwtKeyEvent.META_DOWN_MASK)
+            assertEquals(0, controller.totalLines)
+            source.stream.trySend(toolbarLine("three"))
+            settle()
+            frames(5)
+            assertEquals(1, controller.totalLines)
+            controller.query = "tag:Tag"
+            frames(5)
+            click(field())
+            press(AwtKeyEvent.VK_K, AwtKeyEvent.META_DOWN_MASK)
+            assertEquals(0, controller.totalLines)
+            assertEquals("tag:Tag", controller.query, "the query stays")
+            assertEquals(LogcatRun.Running, controller.run, "the run stays")
+        }
+    }
+
+    @Test
+    fun `off macOS Ctrl is the shortcut modifier, not Meta`() = onEdt {
+        withScene(isMac = false) {
+            controller.query = "tag:x"
+            frames(5)
+            clickList()
+            press(AwtKeyEvent.VK_F, AwtKeyEvent.META_DOWN_MASK)
+            assertFalse(fieldFocused(), "Meta+F does nothing off macOS")
+            press(AwtKeyEvent.VK_F, AwtKeyEvent.CTRL_DOWN_MASK)
+            assertTrue(fieldFocused(), "Ctrl+F focuses the filter")
+            toasts.clear()
+            press(AwtKeyEvent.VK_K, AwtKeyEvent.CTRL_DOWN_MASK)
+            assertTrue("Cleared. Older lines stay on the device buffer." in toasts, "Ctrl+K clears")
         }
     }
 }

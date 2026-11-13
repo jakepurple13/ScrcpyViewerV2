@@ -48,7 +48,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -123,10 +122,16 @@ private class Shown(val items: List<Suggestion>, val start: Int, val keys: Boole
 /**
  * The filter field: the query in monospace with syntax colors, a clear button, autocomplete under the caret's token
  * (Up/Down move, Tab or Enter accepts, Esc closes) and the error hint, which opens under the field. The query text in
- * [controller] is the only state; chips and accepted suggestions edit it.
+ * [controller] is the only state; chips and accepted suggestions edit it. [filterFocus] reports the field's focus to
+ * the tab's keys and asks it to take focus with its text selected (⌘F).
  */
 @Composable
-internal fun LogcatFilterField(controller: LogcatController, motion: Boolean, modifier: Modifier = Modifier) {
+internal fun LogcatFilterField(
+    controller: LogcatController,
+    motion: Boolean,
+    modifier: Modifier = Modifier,
+    filterFocus: LogcatFilterFocus = remember { LogcatFilterFocus() },
+) {
     val scheme = MaterialTheme.colorScheme
     val density = LocalDensity.current
     val query = controller.query
@@ -157,7 +162,14 @@ internal fun LogcatFilterField(controller: LogcatController, motion: Boolean, mo
         val start = suggestions.first().replaceStart
         held[0] = Shown(suggestions, start, ':' !in shown.text.substring(start, caret))
     }
-    val focus = remember { FocusRequester() }
+    val focus = filterFocus.requester
+    val selectAll = filterFocus.selectAllRequests
+    LaunchedEffect(selectAll) {
+        if (selectAll == 0) return@LaunchedEffect
+        val text = controller.query
+        change(TextFieldValue(text, TextRange(0, text.length)))
+        focus.requestFocus()
+    }
     fun accept(i: Int) {
         val s = suggestions.getOrNull(i) ?: return
         val (t, c) = s.applyTo(shown.text)
@@ -242,6 +254,7 @@ internal fun LogcatFilterField(controller: LogcatController, motion: Boolean, mo
                             .onFocusChanged {
                                 if (it.isFocused && !focused) dismissed = false
                                 focused = it.isFocused
+                                filterFocus.focused = it.isFocused
                             }
                             .semantics { contentDescription = "Logcat filter" }
                             .onPreviewKeyEvent { e ->

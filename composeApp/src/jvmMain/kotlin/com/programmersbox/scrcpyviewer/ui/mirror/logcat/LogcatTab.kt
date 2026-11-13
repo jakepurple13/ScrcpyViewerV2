@@ -56,6 +56,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.SemanticsPropertyKey
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -65,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
 import com.programmersbox.scrcpyviewer.logcat.queryTerms
 import com.programmersbox.scrcpyviewer.logcat.withTerm
@@ -84,13 +88,36 @@ private const val PULSE_MILLIS = 900
 /**
  * The sheet's Logcat tab for [controller], in a sheet [sheetWidth] wide: the filter and Play/Pause, the chips, the
  * list and the status bar. [motion] is false under the OS's reduce motion.
+ *
+ * Keys, with focus anywhere in the tab ([logcatKeyAction]; ⌘ on macOS per [isMac], Ctrl elsewhere): Space plays or
+ * pauses (outside the filter field), ⌘F focuses the filter with its text selected, ⌘K clears the list. The sheet
+ * holds focus, so none of them reach the device.
  */
 @Composable
-fun LogcatTab(controller: LogcatController, sheetWidth: Dp, motion: Boolean = remember { !systemReducesMotion() }) {
-    Column(Modifier.fillMaxSize()) {
+fun LogcatTab(
+    controller: LogcatController,
+    sheetWidth: Dp,
+    motion: Boolean = remember { !systemReducesMotion() },
+    isMac: Boolean = Os.isMac,
+) {
+    val filterFocus = remember { LogcatFilterFocus() }
+    Column(
+        Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            val key = logcatKeyAction(event, isMac, inField = filterFocus.focused) ?: return@onPreviewKeyEvent false
+            // Space's typed and release events are consumed too, so a focused button doesn't click as well.
+            if (event.type == KeyEventType.KeyDown) {
+                when (key) {
+                    LogcatKey.TogglePlay -> controller.toggle()
+                    LogcatKey.FocusFilter -> filterFocus.focusAndSelectAll()
+                    LogcatKey.Clear -> controller.clear()
+                }
+            }
+            true
+        },
+    ) {
         Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.Top) {
-                LogcatFilterField(controller, motion, Modifier.weight(1f))
+                LogcatFilterField(controller, motion, Modifier.weight(1f), filterFocus)
                 Spacer(Modifier.width(6.dp))
                 PlayPauseButton(controller, motion)
             }
@@ -132,7 +159,7 @@ private fun PlayPauseButton(controller: LogcatController, motion: Boolean) {
     }
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
         Button(
-            onClick = { if (running) controller.pause() else controller.play() },
+            onClick = controller::toggle,
             modifier = Modifier.width(104.dp).height(36.dp).playPulse(controller, motion)
                 .semantics { contentDescription = description },
             shape = ButtonShape,

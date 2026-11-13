@@ -235,6 +235,9 @@ class LogcatController(
     /** Stops the device command; [play] resumes. */
     fun pause() = stop(LogcatRun.Paused)
 
+    /** Pauses a running stream, else plays (Play/Pause and Space). */
+    fun toggle() = if (run == LogcatRun.Running) pause() else play()
+
     /** Stops the device command because the tab is no longer shown. Only a running stream changes. */
     fun stopForLeaving() = stop(LogcatRun.StoppedByLeaving)
 
