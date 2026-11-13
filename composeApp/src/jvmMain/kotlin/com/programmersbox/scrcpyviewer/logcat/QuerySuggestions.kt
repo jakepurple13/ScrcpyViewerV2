@@ -34,7 +34,7 @@ fun suggest(text: String, caret: Int, ctx: SuggestionContext): List<Suggestion> 
         if (':' in tok) return emptyList()
         val neg = if (tok.startsWith("-")) "-" else ""
         val word = tok.removePrefix("-")
-        return LogcatQuery.KEYS.filter { it.key.startsWith(word) }.map { (k, d) ->
+        return LogcatQuery.KEYS.filter { it.key.startsWith(word, ignoreCase = true) }.map { (k, d) ->
             Suggestion(neg + k + ":", d, start, caret, neg + k + ":")
         }.take(MAX_SUGGESTIONS)
     }

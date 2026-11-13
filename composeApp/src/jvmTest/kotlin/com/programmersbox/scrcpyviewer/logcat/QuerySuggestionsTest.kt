@@ -30,6 +30,12 @@ class QuerySuggestionsTest {
     }
 
     @Test
+    fun `key prefix is case insensitive`() {
+        assertEquals(listOf("tag:"), s("TA").map { it.insert })
+        assertEquals(listOf("-tag:"), s("-Ta").map { it.insert })
+    }
+
+    @Test
     fun `after level lists levels`() {
         val r = s("level:")
         assertEquals(LogLevel.entries.map { "level:${it.word} " }, r.map { it.insert })
