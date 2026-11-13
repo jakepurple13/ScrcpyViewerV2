@@ -94,6 +94,37 @@ object InfoText {
     /** True when the device has no Wi-Fi name or address: the Network card reads [NOT_ON_WIFI]. */
     fun offWifi(n: NetworkInfo): Boolean = n.ssid == null && n.ipAddress == null
 
+    /** How the used bytes on `/data` split for the Storage card's bar and legend. The three parts sum to used. */
+    data class StorageParts(val apps: Long, val media: Long, val other: Long)
+
+    /**
+     * Apps (app size + app data) and media (photos, videos, audio, downloads) from diskstats, and other = used minus
+     * both. diskstats' System Size is the system partition, not `/data`, so it is left out. When apps and media alone
+     * exceed used, they are scaled to fit it and other is 0. Null without a breakdown.
+     */
+    fun storageParts(s: StorageInfo): StorageParts? {
+        val b = s.breakdown ?: return null
+        val used = s.usedBytes.coerceAtLeast(0)
+        val apps = b.apps.coerceAtLeast(0)
+        val media = b.media.coerceAtLeast(0)
+        if (apps + media <= used) return StorageParts(apps, media, used - apps - media)
+        val scaledApps = Math.round(used.toDouble() * apps / (apps + media))
+        return StorageParts(scaledApps, used - scaledApps, 0)
+    }
+
+    private const val BREAK = '​'
+
+    /**
+     * [value] with a zero-width break chance after every '.', '-' and '_', so a long build id or kernel version wraps
+     * between its parts instead of in the middle of one.
+     */
+    fun breakable(value: String): String = buildString(value.length + 8) {
+        value.forEachIndexed { i, c ->
+            append(c)
+            if ((c == '.' || c == '-' || c == '_') && i < value.lastIndex) append(BREAK)
+        }
+    }
+
     fun storageLine(s: StorageInfo): String = "${gb(s.usedBytes)} of ${gb(s.totalBytes)} GB used"
 
     fun memoryLine(m: MemoryInfo): String = "${gbFromKb(m.usedKb)} of ${gbFromKb(m.totalKb)} GB in use"

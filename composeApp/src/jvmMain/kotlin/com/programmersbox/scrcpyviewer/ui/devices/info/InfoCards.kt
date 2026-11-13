@@ -69,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -110,7 +111,6 @@ import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import com.programmersbox.scrcpyviewer.ui.theme.styleRaised
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
-import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import kotlinx.coroutines.delay
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -336,7 +336,8 @@ private fun PulseKvLines(pulse: State<Float>, count: Int) {
 
 /**
  * Pulsing blocks shaped like card [index]'s body (Battery … Software) line for line, so a placeholder is as tall as
- * the card it turns into. Software assumes its build and kernel lines wrap once, as they do at the usual widths.
+ * the card it turns into. Software lays out typical values with the real row layout, so long values stack and wrap
+ * the same way.
  */
 @Composable
 private fun PlaceholderBody(index: Int, pulse: State<Float>) {
@@ -370,10 +371,22 @@ private fun PlaceholderBody(index: Int, pulse: State<Float>) {
             }
             3 -> PulseKvLines(pulse, 4)
             4 -> PulseKvLines(pulse, 3)
-            else -> PulseKvLines(pulse, 8)
+            else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SoftwareSample.forEach { (label, value, mono) -> KvRow(label, value, mono, pulse = pulse) }
+            }
         }
     }
 }
+
+/** Typical Software rows (the Galaxy A15's), laid out invisibly by the placeholder so its height matches the card. */
+private val SoftwareSample = listOf(
+    Triple("Android", "16 (API 36)", false),
+    Triple("One UI", "8.5", false),
+    Triple("Security patch", "2026-07-05", false),
+    Triple("Build", "BP4A.251205.006.A156U1UESCEZG1", true),
+    Triple("ABI", "arm64-v8a", false),
+    Triple("Kernel", "5.15.189-android13-8-33641424", true),
+)
 
 /** The last non-null [value], so content that is leaving keeps showing what it showed. */
 @Composable
@@ -447,21 +460,78 @@ internal fun InfoCard(
 
 /** A label on the left and its value on the right, as in the mockup's key/value lists. */
 @Composable
-private fun KvRow(label: String, value: String, mono: Boolean = false, ticking: Boolean = false) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val family = if (mono) FontFamily.Monospace else null
-        if (ticking) {
-            TickingText(value, Modifier.weight(1f), MaterialTheme.typography.bodySmall, fontFamily = family, textAlign = TextAlign.End)
+private fun KvRow(
+    label: String,
+    value: String,
+    mono: Boolean = false,
+    ticking: Boolean = false,
+    /** Draws the row as a pulsing placeholder with the same layout (for the Software placeholder). */
+    pulse: State<Float>? = null,
+) {
+    val style = MaterialTheme.typography.bodySmall
+    val family = if (mono) FontFamily.Monospace else null
+    // Mono values (build id, kernel) may only wrap between their parts.
+    val shown = if (mono) InfoText.breakable(value) else value
+    val hidden = pulse != null
+    val fill = if (pulse != null) Modifier.pulseFill(pulse) else Modifier
+    val labelColor = if (hidden) Color.Transparent else MaterialTheme.colorScheme.onSurfaceVariant
+    val valueColor = if (hidden) Color.Transparent else Color.Unspecified
+    Layout(
+        content = {
+            Text(label, style = style, color = labelColor, modifier = fill)
+            if (ticking && !hidden) {
+                TickingText(shown, style = style, fontFamily = family)
+            } else {
+                Text(shown, style = style.merge(TextStyle(fontFeatureSettings = "tnum")), color = valueColor, fontFamily = family, modifier = fill)
+            }
+        },
+        measurePolicy = KvRowPolicy,
+    )
+}
+
+/**
+ * Lays out a [KvRow]: label left and value right-aligned on one line when the value fits beside the label without
+ * wrapping; otherwise the label on its own line and the value below it at full width, left-aligned.
+ */
+private object KvRowPolicy : MeasurePolicy {
+    private val gap = 12.dp
+
+    override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val (labelM, valueM) = measurables
+        val width = constraints.maxWidth
+        val label = labelM.measure(Constraints(maxWidth = width))
+        val gapPx = gap.roundToPx()
+        val inline = !constraints.hasBoundedWidth || label.width + gapPx + valueM.maxIntrinsicWidth(Constraints.Infinity) <= width
+        return if (inline) {
+            val value = valueM.measure(Constraints(maxWidth = if (constraints.hasBoundedWidth) width - label.width - gapPx else Constraints.Infinity))
+            val rowWidth = if (constraints.hasBoundedWidth) width else label.width + gapPx + value.width
+            layout(rowWidth, maxOf(label.height, value.height)) {
+                label.placeRelative(0, 0)
+                value.placeRelative(rowWidth - value.width, 0)
+            }
         } else {
-            Text(
-                value,
-                style = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFeatureSettings = "tnum")),
-                fontFamily = family,
-                textAlign = TextAlign.End,
-                modifier = Modifier.weight(1f),
-            )
+            val value = valueM.measure(Constraints(maxWidth = width))
+            layout(width, label.height + value.height) {
+                label.placeRelative(0, 0)
+                value.placeRelative(0, label.height)
+            }
         }
+    }
+}
+
+/** Fills the element with the pulsing placeholder color, inset to a text line's block height. */
+@Composable
+private fun Modifier.pulseFill(pulse: State<Float>): Modifier {
+    val color = MaterialTheme.colorScheme.surfaceContainerHighest
+    val radius = if (currentStyle == ThemeStyle.Retro) 0.dp else 6.dp
+    return drawBehind {
+        val inset = 2.dp.toPx()
+        drawRoundRect(
+            color.copy(alpha = color.alpha * pulse.value),
+            topLeft = Offset(0f, inset),
+            size = Size(size.width, (size.height - 2 * inset).coerceAtLeast(0f)),
+            cornerRadius = CornerRadius(radius.toPx()),
+        )
     }
 }
 
@@ -557,22 +627,21 @@ internal fun StorageCard(storage: StorageInfo?, modifier: Modifier = Modifier) {
             return@InfoCard
         }
         AmountLine(InfoText.gb(storage.usedBytes), "of ${InfoText.gb(storage.totalBytes)} GB used")
-        val usedFraction = storage.usedBytes.toFloat() / storage.totalBytes
-        val parts = storage.breakdown?.let { b ->
+        val total = storage.totalBytes.toFloat()
+        // Apps, media and the rest of used: they sum to df's used bytes (see InfoText.storageParts).
+        val parts = InfoText.storageParts(storage)?.let { p ->
             listOf(
-                Triple("Apps", b.apps, MaterialTheme.colorScheme.primary),
-                Triple("Media", b.media, MaterialTheme.colorScheme.tertiary),
-                Triple("System", b.system, warnColor()),
-                Triple("Other", b.other, MaterialTheme.colorScheme.outline),
+                Triple("Apps", p.apps, MaterialTheme.colorScheme.primary),
+                Triple("Media", p.media, MaterialTheme.colorScheme.tertiary),
+                Triple("Other", p.other, MaterialTheme.colorScheme.outline),
             )
         }.orEmpty()
-        val sum = parts.sumOf { it.second.coerceAtLeast(0) }
-        // diskstats counts some bytes outside /data, so the parts split the used length of the bar by share.
-        // Zero parts stay in the list at width 0, so each part keeps its slot and color.
-        val segments = if (sum > 0) {
-            parts.map { (name, bytes, color) -> BarSegment(name, usedFraction * bytes.coerceAtLeast(0) / sum, color) }
+        // Zero parts stay in the list at width 0, so each part keeps its slot and color. A key that is no longer
+        // passed (for example "Used" when a breakdown arrives) shrinks away inside StackedBar.
+        val segments = if (parts.isNotEmpty()) {
+            parts.map { (name, bytes, color) -> BarSegment(name, bytes / total, color) }
         } else {
-            listOf(BarSegment("Used", usedFraction, MaterialTheme.colorScheme.primary))
+            listOf(BarSegment("Used", storage.usedBytes / total, MaterialTheme.colorScheme.primary))
         }
         StackedBar(segments)
         val legend = parts.filter { it.second > 0 }
@@ -737,25 +806,36 @@ internal fun PlaceholderCard(index: Int, pulse: State<Float>, modifier: Modifier
 /** Number of cards (and placeholders): Battery, Storage, Memory, Display, Network, Software. */
 internal const val CARD_COUNT = 6
 
+/** The grid never uses more columns than this, so six cards fill it evenly (two per column). */
+internal const val GRID_MAX_COLUMNS = 3
+
 /**
- * An adaptive grid: as many columns of at least [GridMinColumn] as fit, [GridGap] apart. Cards are top-aligned at
- * their own height, so a card whose content changes animates its own height; there is no shared row height to jump
- * to. [item] gets each card's index and the modifier that sizes it.
+ * A masonry grid: as many columns of at least [GridMinColumn] as fit (at most [GRID_MAX_COLUMNS]), [GridGap] apart.
+ * Cards go to columns by index, round-robin, and each column stacks its cards [GridGap] apart at their own heights,
+ * so a card that changes animates its own height and only the cards below it in its column follow. Assignment by
+ * index (not by shortest column) keeps a card in its column while heights animate. [item] gets each card's index and
+ * the modifier that sizes it.
  */
 @Composable
 internal fun InfoGrid(count: Int, modifier: Modifier = Modifier, item: @Composable (index: Int, Modifier) -> Unit) {
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        val columns = ((maxWidth + GridGap) / (GridMinColumn + GridGap)).toInt().coerceAtLeast(1)
-        Column(verticalArrangement = Arrangement.spacedBy(GridGap)) {
-            (0 until count).chunked(columns).forEach { row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(GridGap), verticalAlignment = Alignment.Top) {
-                    row.forEach { index -> item(index, Modifier.weight(1f)) }
-                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+        val columns = gridColumns(maxWidth)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(GridGap), verticalAlignment = Alignment.Top) {
+            repeat(columns) { column ->
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(GridGap)) {
+                    masonryColumn(column, columns, count).forEach { index -> item(index, Modifier.fillMaxWidth()) }
                 }
             }
         }
     }
 }
+
+/** How many [GridMinColumn] columns fit in [width], at least 1 and at most [GRID_MAX_COLUMNS]. */
+internal fun gridColumns(width: Dp): Int =
+    ((width + GridGap) / (GridMinColumn + GridGap)).toInt().coerceIn(1, GRID_MAX_COLUMNS)
+
+/** The card indexes in [column] of [columns]: round-robin, so cards read left to right, then down. */
+internal fun masonryColumn(column: Int, columns: Int, count: Int): List<Int> = (column until count step columns).toList()
 
 /**
  * Children left to right, wrapping to a new line when the next one doesn't fit. Unlike `FlowRow` it reports its

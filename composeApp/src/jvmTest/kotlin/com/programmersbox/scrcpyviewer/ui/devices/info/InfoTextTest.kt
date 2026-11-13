@@ -99,6 +99,37 @@ class InfoTextTest {
     }
 
     @Test
+    fun `storage parts sum to df used and drop system`() {
+        val parts = InfoText.storageParts(samsungStatic.storage!!)!!
+        val used = 18165728L * 1024
+        assertEquals(10329260032 + 4519657306, parts.apps)
+        assertEquals(8888320L + 773464064, parts.media)
+        assertEquals(used - parts.apps - parts.media, parts.other)
+        assertEquals(used, parts.apps + parts.media + parts.other)
+        assertEquals(listOf("14.8", "0.8", "3.0"), listOf(parts.apps, parts.media, parts.other).map(InfoText::gb))
+    }
+
+    @Test
+    fun `storage parts scale apps and media to fit used`() {
+        val storage = StorageInfo(totalBytes = 5000, usedBytes = 1000, breakdown = StorageBreakdown(800, 400, 9000, 50))
+        assertEquals(InfoText.StorageParts(apps = 667, media = 333, other = 0), InfoText.storageParts(storage))
+    }
+
+    @Test
+    fun `storage parts need a breakdown`() {
+        assertNull(InfoText.storageParts(StorageInfo(5000, 1000, null)))
+    }
+
+    @Test
+    fun `breakable adds break chances only after dot dash and underscore`() {
+        val z = "​"
+        assertEquals("BP4A.${z}251205.${z}006.${z}A156U1UESCEZG1", InfoText.breakable("BP4A.251205.006.A156U1UESCEZG1"))
+        assertEquals("5.${z}15.${z}189-${z}android13-${z}8-${z}33641424", InfoText.breakable("5.15.189-android13-8-33641424"))
+        assertEquals("a_${z}b", InfoText.breakable("a_b"))
+        assertEquals("arm64", InfoText.breakable("arm64"))
+    }
+
+    @Test
     fun `display override reads set and device values`() {
         val display = DisplayInfo(1080, 2340, 450, 720, 1560, 300, null)
         assertEquals("720 × 1560 (set, device is 1080 × 2340)", InfoText.resolution(display))
