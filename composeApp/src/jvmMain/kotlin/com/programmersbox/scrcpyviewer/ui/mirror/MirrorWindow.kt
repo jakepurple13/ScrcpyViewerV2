@@ -40,6 +40,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeWindow
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowEntry
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -211,6 +214,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -371,6 +375,8 @@ fun MirrorWindow(
     inbox: ActionInbox = koinInject(),
     /** The app-wide "Send input to…" link between mirror windows. */
     following: InputFollowing = koinInject(),
+    /** The open mirror windows the arranger moves; this window joins once it has its first frame and size. */
+    mirrorWindows: MirrorWindows = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -552,6 +558,10 @@ fun MirrorWindow(
     val readWake = remember(wake) { wake?.let { w -> { w.value } } }
     // True while the window's bounds animate: the first-frame sizing and the aspect lock wait.
     var zooming by remember { mutableStateOf(zoomFrom != null) }
+    // True while the arranger moves the window (Arrange mirror windows): the same effects wait, as for the zoom.
+    val arranging = remember { mutableStateOf(false) }
+    // The window's bounds are someone else's (its open / close animation, or the arranger): sizing and the lock wait.
+    val held = zooming || arranging.value
     var closing by remember { mutableStateOf(false) }
     // A growing window stays hidden until its content is composed, then shows at the button and grows at once.
     var shown by remember { mutableStateOf(zoomFrom == null) }
@@ -774,8 +784,9 @@ fun MirrorWindow(
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
         // Keyed on the pin clearing too: a height the user dragged during a sheet animation is corrected once it ends.
-        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null, zooming) {
-            if (zooming) return@LaunchedEffect // sized once the window has grown (or not at all while it shrinks)
+        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null, held) {
+            // Sized once the window has grown or been arranged (or not at all while it shrinks).
+            if (held) return@LaunchedEffect
             val fs = displayedSize ?: return@LaunchedEffect
             if (stage == IntSize.Zero || windowState.placement != WindowPlacement.Floating) return@LaunchedEffect
             if (autoSized) {
@@ -845,9 +856,9 @@ fun MirrorWindow(
         // against a window of the same moment; cleared at once while the sheet animates, with Fit off, without the
         // lock option, or when not floating. The settle correction above still fits new frames and Fit coming back
         // on, and is the whole lock where there is no live one (Windows, Linux: it corrects once a resize settles).
-        LaunchedEffect(handle, stage, displayedSize, fit, aspectLock, pinnedStage == null, zooming, windowState.placement) {
+        LaunchedEffect(handle, stage, displayedSize, fit, aspectLock, pinnedStage == null, held, windowState.placement) {
             val fs = displayedSize
-            val wanted = fit && aspectLock && pinnedStage == null && !zooming && stage != IntSize.Zero &&
+            val wanted = fit && aspectLock && pinnedStage == null && !held && stage != IntSize.Zero &&
                 windowState.placement == WindowPlacement.Floating
             if (fs == null || !wanted) {
                 handle.lockAspect(null)
@@ -871,6 +882,36 @@ fun MirrorWindow(
             displayedSize != null && (autoSized || windowState.placement != WindowPlacement.Floating),
         )
         val downForWake by rememberUpdatedState(state.disconnected)
+
+        // Arrange mirror windows: the window joins the registry once it has its first frame and its size (or is not
+        // floating, where it is skipped anyway), and leaves as it closes.
+        val arrangeFrame by rememberUpdatedState(displayedSize)
+        LaunchedEffect(handle) {
+            snapshotFlow { sizedForWake && stage != IntSize.Zero }.first { it }
+            val entry = WindowEntry(
+                handle = handle,
+                info = {
+                    val outer = handle.size
+                    ArrangeWindow(
+                        serial,
+                        arrangeFrame ?: IntSize(outer.width, outer.height),
+                        chromeW = (outer.width - stage.width / density.density).roundToInt().coerceAtLeast(0),
+                        chromeH = (outer.height - stage.height / density.density).roundToInt().coerceAtLeast(0),
+                    )
+                },
+                floating = { windowState.placement == WindowPlacement.Floating },
+                minimized = { windowState.isMinimized },
+                showing = { shown && !zooming && !closing && handle.isShowing },
+                arranging = arranging,
+                uiContext = uiScope.coroutineContext,
+            )
+            mirrorWindows.register(serial, entry)
+            try {
+                awaitCancellation()
+            } finally {
+                mirrorWindows.unregister(serial, entry)
+            }
+        }
         if (wake != null) {
             LaunchedEffect(Unit) {
                 if (zoomFrom != null && zoomTo != null) {
@@ -917,10 +958,11 @@ fun MirrorWindow(
         val sheetTab = state.quickActions.tab
         val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
         val lastSheet = remember { SheetRun(false, sheetTab) }
-        LaunchedEffect(sheetOpen, sheetTab, sheetTarget, zooming) {
-            // While the window grows or shrinks its bounds are the zoom's: a base taken now would be pinned back on
-            // every frame below (the window jumped to where it sat before it was placed). Runs again once it ends.
-            if (zooming) return@LaunchedEffect
+        LaunchedEffect(sheetOpen, sheetTab, sheetTarget, held) {
+            // While the window grows, shrinks or is arranged its bounds are the animation's: a base taken now would be
+            // pinned back on every frame below (the window jumped to where it sat before it was placed). Runs again
+            // once it ends.
+            if (held) return@LaunchedEffect
             // Same open tab as the last run: only its width changed, by the drag bar.
             val resized = sheetOpen && lastSheet.open && lastSheet.tab == sheetTab
             lastSheet.open = sheetOpen

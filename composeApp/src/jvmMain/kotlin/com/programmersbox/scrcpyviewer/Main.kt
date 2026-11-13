@@ -43,6 +43,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.LocalMirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindow
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.App
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
@@ -253,6 +254,13 @@ fun main() {
             LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
             // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
             val handle = remember(nucleusWindow) { TaoMirrorWindowHandle(nucleusWindow, koin.get<ScreenGeometry>()) }
+            // Arrange mirror windows lays them out on the screen the main window is on.
+            DisposableEffect(handle) {
+                val windows = koin.get<MirrorWindows>()
+                val bounds: () -> java.awt.Rectangle? = { handle.bounds.takeIf { it.width > 0 && it.height > 0 } }
+                windows.mainWindowBounds = bounds
+                onDispose { if (windows.mainWindowBounds === bounds) windows.mainWindowBounds = { null } }
+            }
             CompositionLocalProvider(LocalMirrorWindowHandle provides handle, LocalLaunchEntrance provides entrance) {
                 Box(Modifier.fillMaxSize().recordInto(picture)) { App() }
             }
