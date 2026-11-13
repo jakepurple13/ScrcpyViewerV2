@@ -265,9 +265,10 @@ private fun rememberLastNonNull(value: Long?): Long? = rememberLastReady(if (val
 /** Seconds since [at], ticking once a second; the number ticks like the card numbers. */
 @Composable
 private fun UpdatedAge(at: Long, stale: Boolean) {
-    val now by produceState(System.currentTimeMillis(), at) {
+    val clock = LocalInfoNow.current
+    val now by produceState(clock(), at) {
         while (true) {
-            value = System.currentTimeMillis()
+            value = clock()
             // Wake on the next whole second after [at], so the count turns over evenly.
             delay(1_000 - ((value - at) % 1_000).coerceIn(0, 999))
         }

@@ -32,7 +32,20 @@ import com.programmersbox.scrcpyviewer.adb.MdnsType
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
-import com.programmersbox.scrcpyviewer.info.*
+import androidx.compose.runtime.CompositionLocalProvider
+import com.programmersbox.scrcpyviewer.info.BatteryHealth
+import com.programmersbox.scrcpyviewer.info.BatteryInfo
+import com.programmersbox.scrcpyviewer.info.ChargeStatus
+import com.programmersbox.scrcpyviewer.info.DisplayInfo
+import com.programmersbox.scrcpyviewer.info.LiveInfo
+import com.programmersbox.scrcpyviewer.info.MemoryInfo
+import com.programmersbox.scrcpyviewer.info.NetworkInfo
+import com.programmersbox.scrcpyviewer.info.PowerSource
+import com.programmersbox.scrcpyviewer.info.SoftwareInfo
+import com.programmersbox.scrcpyviewer.info.StaticInfo
+import com.programmersbox.scrcpyviewer.info.StorageBreakdown
+import com.programmersbox.scrcpyviewer.info.StorageInfo
+import com.programmersbox.scrcpyviewer.ui.devices.info.LocalInfoNow
 import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
 import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoUiState
 import com.programmersbox.scrcpyviewer.ui.devices.info.Load
@@ -78,15 +91,21 @@ class DevicesScreenshotTest {
         width: Int = 1280,
         listWidthPx: Int? = null,
         detailOpen: Boolean = false,
+        detailTab: DetailTab = DetailTab.Options,
+        info: DeviceInfoUiState = DeviceInfoUiState(),
+        settleMillis: Long = 1_000,
     ) {
         val out = outDir.resolve(name)
-        renderToPng(width, 800, out, settleMillis = 1_000) {
+        renderToPng(width, 800, out, settleMillis = settleMillis) {
             ScrcpyViewerTheme(mode) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    DevicesContent(
-                        state, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
-                        panes = screenshotPanes(listWidthPx, detailOpen),
-                    )
+                    CompositionLocalProvider(LocalInfoNow provides { infoNow }) {
+                        DevicesContent(
+                            state, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                            panes = screenshotPanes(listWidthPx, detailOpen),
+                            detailTab = detailTab, info = info,
+                        )
+                    }
                 }
             }
         }
@@ -117,6 +136,7 @@ class DevicesScreenshotTest {
         display = DisplayInfo(1080, 2340, 450, null, null, null, 90.0),
         storage = StorageInfo(
             110534640L * 1024, 18165728L * 1024,
+            // Real Samsung values; System is the system partition, which is not part of the used total.
             StorageBreakdown(10329260032 + 4519657306, 8888320 + 773464064, 24251482112, 1679273984),
         ),
         network = NetworkInfo("Office-5G", "192.168.1.36", 351),
@@ -127,32 +147,28 @@ class DevicesScreenshotTest {
         MemoryInfo(3644192, 931408),
     )
 
+    private val infoNow = 1_800_000_000_000L
+
     private fun infoState(
         static: Load<StaticInfo> = Load.Ready(samsungStatic),
         live: Load<LiveInfo> = Load.Ready(samsungLive),
         notReady: String? = null,
     ) = DeviceInfoUiState(
         serial = "R5CX12GDWPZ", title = "Galaxy A15 5G", notReady = notReady, static = static, live = live,
-        liveUpdatedAt = if (live is Load.Ready) System.currentTimeMillis() - 12_000 else null,
+        liveUpdatedAt = if (live is Load.Ready) infoNow - 12_000 else null,
     )
 
-    private fun renderInfo(name: String, mode: ThemeMode, info: DeviceInfoUiState) {
-        val out = outDir.resolve(name)
-        val samsung = Device("R5CX12GDWPZ", DeviceState.Device, "device", "SM_A156U1", null, 1, false, DeviceInfo("Galaxy A15 5G", "16", 36))
-        val infoDevices = DevicesUiState(devices = listOf(samsung), selectedSerial = "R5CX12GDWPZ", adbConnected = true, canMirror = true)
-        renderToPng(1280, 800, out, settleMillis = 3_000) {
-            ScrcpyViewerTheme(mode) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    DevicesContent(
-                        infoDevices, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
-                        panes = screenshotPanes(null, false),
-                        detailTab = DetailTab.Info, info = info,
-                    )
-                }
-            }
-        }
-        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
-    }
+    private fun infoDevices(deviceState: DeviceState = DeviceState.Device) = DevicesUiState(
+        devices = listOf(
+            Device("R5CX12GDWPZ", deviceState, deviceState.name.lowercase(), "SM_A156U1", null, 1, false, DeviceInfo("Galaxy A15 5G", "16", 36)),
+        ),
+        selectedSerial = "R5CX12GDWPZ", adbConnected = true, canMirror = deviceState == DeviceState.Device,
+    )
+
+    private val infoFailed = Load.Failed("Couldn't reach the device")
+
+    private fun renderInfo(name: String, mode: ThemeMode, info: DeviceInfoUiState, deviceState: DeviceState = DeviceState.Device) =
+        render(name, mode, infoDevices(deviceState), detailTab = DetailTab.Info, info = info, settleMillis = 3_000)
 
     @Test
     fun `devices info light`() = renderInfo("devices-info-light.png", ThemeMode.Light, infoState())
@@ -165,15 +181,12 @@ class DevicesScreenshotTest {
         renderInfo("devices-info-loading.png", ThemeMode.Light, infoState(Load.Loading, Load.Loading))
 
     @Test
-    fun `devices info failed`() = renderInfo(
-        "devices-info-failed.png", ThemeMode.Dark,
-        infoState(Load.Failed("Couldn't reach the device"), Load.Failed("Couldn't reach the device")),
-    )
+    fun `devices info failed`() = renderInfo("devices-info-failed.png", ThemeMode.Dark, infoState(infoFailed, infoFailed))
 
     @Test
     fun `devices info not ready`() = renderInfo(
         "devices-info-not-ready.png", ThemeMode.Light,
-        infoState(Load.Loading, Load.Loading, notReady = "Device is offline. Reconnect it to see its info."),
+        infoState(Load.Loading, Load.Loading, notReady = "Device is offline"), DeviceState.Offline,
     )
 
     @Test

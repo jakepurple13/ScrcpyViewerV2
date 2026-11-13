@@ -147,6 +147,9 @@ internal val SizeEasing = FastOutSlowInEasing
 /** True when the OS asks for less motion: the pane's changes become instant swaps or [REDUCED_FADE_MILLIS] fades. */
 internal val LocalInfoReduceMotion = staticCompositionLocalOf { false }
 
+/** The footer's clock (epoch millis); screenshots pin it so "Updated N s ago" is steady. */
+internal val LocalInfoNow = staticCompositionLocalOf<() -> Long> { System::currentTimeMillis }
+
 /** The ring's color for a healthy charge: the green dot device rows use for Ready (the theme's primary). */
 @Composable
 internal fun readyColor(): Color = MaterialTheme.colorScheme.primary
