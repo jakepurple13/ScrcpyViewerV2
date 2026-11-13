@@ -1,5 +1,20 @@
 package com.programmersbox.scrcpyviewer.ui.update
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Switch
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.IntOffset
+import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,12 +51,14 @@ fun UpdatesContent(
     onCheck: () -> Unit,
     onUpdate: () -> Unit,
     onCancel: () -> Unit,
+    onRestart: () -> Unit = {},
     now: Instant = Instant.now(),
     openUrl: (String) -> Boolean = ::openWebUrl,
 ) {
     val openReleasePage = { openUrl(ui.releasePageUrl); Unit }
     val state = ui.state
-    val busy = state is UpdateState.Checking || state is UpdateState.Downloading || state is UpdateState.Installing
+    val busy = state is UpdateState.Checking || state is UpdateState.Downloading ||
+        state is UpdateState.Ready || state is UpdateState.Installing
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Current version ${ui.currentVersion}", style = MaterialTheme.typography.bodyMedium)
         ui.updatedFrom?.let {
@@ -57,18 +74,43 @@ fun UpdatesContent(
                     publishedDate(release.publishedAt)?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    if (state is UpdateState.Downloading) {
-                        Text(state.progressText(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            DownloadProgressBar(state, Modifier.weight(1f))
-                            TextButton(onClick = onCancel) { Text("Cancel") }
-                        }
-                    } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (ui.canSelfUpdate) {
-                                Button(onClick = onUpdate, enabled = !busy) { Text("Update now") }
+                    // Keyed by phase, so the download numbers tick in place and only a phase change slides.
+                    AnimatedContent(
+                        targetState = state,
+                        contentKey = { it.cardPhase },
+                        transitionSpec = {
+                            val inSpec = tween<Float>(OPEN_MILLIS, delayMillis = CLOSE_MILLIS / 2, easing = EmphasizedDecelerate)
+                            val inSlide = tween<IntOffset>(OPEN_MILLIS, delayMillis = CLOSE_MILLIS / 2, easing = EmphasizedDecelerate)
+                            val outSpec = tween<Float>(CLOSE_MILLIS / 2, easing = EmphasizedAccelerate)
+                            (fadeIn(inSpec) + slideInVertically(inSlide) { it / 2 }) togetherWith fadeOut(outSpec) using
+                                SizeTransform(clip = false)
+                        },
+                        label = "updateCard",
+                    ) { phase ->
+                        when (phase) {
+                            is UpdateState.Downloading -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(phase.progressText(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    DownloadProgressBar(phase, Modifier.weight(1f))
+                                    TextButton(onClick = onCancel) { Text("Cancel") }
+                                }
                             }
-                            TextButton(onClick = openReleasePage) { Text("View release notes") }
+                            is UpdateState.Ready -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    PoppingCheck(ReadyCheckSize)
+                                    Text("Downloaded. Restart Scrcpy Vwr to finish updating.", style = MaterialTheme.typography.bodySmall)
+                                }
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Button(onClick = onRestart) { Text("Restart to update") }
+                                    TextButton(onClick = openReleasePage) { Text("View release notes") }
+                                }
+                            }
+                            else -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (ui.canSelfUpdate) {
+                                    Button(onClick = onUpdate, enabled = !busy) { Text("Update now") }
+                                }
+                                TextButton(onClick = openReleasePage) { Text("View release notes") }
+                            }
                         }
                     }
                 }
@@ -101,6 +143,25 @@ fun UpdatesContent(
         val failure = (state as? UpdateState.Failed)?.message ?: ui.previousFailure
         failure?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
     }
+}
+
+private val ReadyCheckSize = 20.dp
+
+/** Which body the release card shows; a change between these animates. */
+private val UpdateState.cardPhase: Int
+    get() = when (this) {
+        is UpdateState.Downloading -> 1
+        is UpdateState.Ready -> 2
+        else -> 0
+    }
+
+/** "Download updates automatically": the whole row toggles; off limits when this copy cannot update itself. */
+internal fun autoDownloadToggle(enabled: Boolean, checked: Boolean, onChange: (Boolean) -> Unit) =
+    Modifier.toggleable(value = checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+
+@Composable
+internal fun AutoDownloadSwitch(enabled: Boolean, checked: Boolean) {
+    Switch(checked = checked, onCheckedChange = null, enabled = enabled)
 }
 
 private fun publishedDate(publishedAt: String?): String? =

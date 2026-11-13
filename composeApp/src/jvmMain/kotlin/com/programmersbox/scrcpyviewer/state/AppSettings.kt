@@ -70,6 +70,8 @@ data class Settings(
     val animateMirrorWindows: Boolean = true,
     /** A [LaunchQuitAnimation] name; unknown or missing names fall back to IconUnfold. */
     val launchQuitAnimation: String = LaunchQuitAnimation.IconUnfold.name,
+    /** A newer release downloads in the background as soon as it is found, then waits for a restart. */
+    val autoDownloadUpdates: Boolean = false,
 )
 
 /** Everything the theme reads from [Settings]. */

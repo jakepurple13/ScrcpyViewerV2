@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
@@ -86,9 +87,11 @@ fun UpdateDialog(
     onLater: () -> Unit,
     onUpdate: () -> Unit,
     onCancel: () -> Unit,
+    onRestart: () -> Unit = {},
     openUrl: (String) -> Boolean = ::openWebUrl,
 ) {
     when (val state = ui.state) {
+        is UpdateState.Ready -> ReadyDialog(state.release, onLater, onRestart)
         is UpdateState.Available ->
             OfferDialog(state.release, ui.previousFailure?.let { "Last update failed: $it" }, ui, onLater, onUpdate, openUrl)
         is UpdateState.Failed -> (state.release ?: ui.available)?.let {
@@ -165,6 +168,53 @@ private fun OfferDialog(
                 Button(onClick = if (ui.canSelfUpdate) onUpdate else ({ openUrl(ui.releasePageUrl); Unit })) {
                     Text(if (ui.canSelfUpdate) "Update now" else "Download from GitHub")
                 }
+            }
+        }
+    }
+}
+
+/**
+ * A background download finished: the check pops in and draws itself, and the user picks when to restart. "Later"
+ * leaves it ready; quitting the app installs it.
+ */
+@Composable
+private fun ReadyDialog(release: Release, onLater: () -> Unit, onRestart: () -> Unit) {
+    Dialog(onDismissRequest = onLater) {
+        DialogCard {
+            PoppingCheck(CheckCircleSize)
+            Spacer(Modifier.height(16.dp))
+            Text("Update ready", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Version ${release.versionLabel} has downloaded. Restart Scrcpy Vwr to install it.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!release.body.isNullOrBlank()) {
+                Text(
+                    release.body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .padding(top = 14.dp)
+                        .fillMaxWidth()
+                        .heightIn(max = 110.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLowest, MaterialTheme.shapes.medium)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
+            Text(
+                "Restarting closes open mirror windows. Your computer may ask for your password.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            ) {
+                TextButton(onClick = onLater) { Text("Later") }
+                Button(onClick = onRestart) { Text("Restart now") }
             }
         }
     }
@@ -274,30 +324,49 @@ private fun DownloadProgress(downloading: UpdateState.Downloading?) {
             null -> if (!startDone) LinearProgressIndicator(bar)
             else -> DownloadProgressBar(lastDownload, bar)
         }
-        val circleColor = MaterialTheme.colorScheme.primaryContainer
-        val checkColor = MaterialTheme.colorScheme.onPrimaryContainer
-        Canvas(
-            Modifier.requiredSize(CheckCircleSize).graphicsLayer {
-                val s = circle.value
-                scaleX = s
-                scaleY = s
-                alpha = s.coerceIn(0f, 1f)
-            },
-        ) {
-            if (circle.value == 0f) return@Canvas
-            drawCircle(circleColor)
-            val trim = check.value
-            if (trim <= 0f) return@Canvas
-            val unit = size.width / 40f
-            val mark = Path().apply {
-                moveTo(12f * unit, 20.5f * unit)
-                lineTo(17.5f * unit, 26f * unit)
-                lineTo(28.5f * unit, 14.5f * unit)
-            }
-            val measure = PathMeasure().apply { setPath(mark, false) }
-            val drawn = Path()
-            measure.getSegment(0f, measure.length * trim, drawn, true)
-            drawPath(drawn, checkColor, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        }
+        CheckMark(CheckCircleSize, circle = { circle.value }, check = { check.value })
     }
+}
+
+/** A filled circle with a check drawn up to [check] (0..1), scaled by [circle]. Both are read in layer and draw only. */
+@Composable
+internal fun CheckMark(size: Dp, circle: () -> Float, check: () -> Float, modifier: Modifier = Modifier) {
+    val circleColor = MaterialTheme.colorScheme.primaryContainer
+    val checkColor = MaterialTheme.colorScheme.onPrimaryContainer
+    Canvas(
+        modifier.requiredSize(size).graphicsLayer {
+            val s = circle()
+            scaleX = s
+            scaleY = s
+            alpha = s.coerceIn(0f, 1f)
+        },
+    ) {
+        if (circle() == 0f) return@Canvas
+        drawCircle(circleColor)
+        val trim = check()
+        if (trim <= 0f) return@Canvas
+        val unit = this.size.width / 40f
+        val mark = Path().apply {
+            moveTo(12f * unit, 20.5f * unit)
+            lineTo(17.5f * unit, 26f * unit)
+            lineTo(28.5f * unit, 14.5f * unit)
+        }
+        val measure = PathMeasure().apply { setPath(mark, false) }
+        val drawn = Path()
+        measure.getSegment(0f, measure.length * trim, drawn, true)
+        // 3dp on the 40dp circle, scaled with it.
+        drawPath(drawn, checkColor, style = Stroke(width = 3f * unit, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+/** [CheckMark] that pops in (overshooting) and draws its stroke when it enters the composition. */
+@Composable
+internal fun PoppingCheck(size: Dp, modifier: Modifier = Modifier) {
+    val circle = remember { Animatable(0f) }
+    val check = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        launch { circle.animateTo(1f, tween(CHECK_POP_MILLIS, easing = OvershootEasing)) }
+        check.animateTo(1f, tween(CHECK_DRAW_MILLIS, delayMillis = CHECK_DRAW_DELAY_MILLIS, easing = EmphasizedDecelerate))
+    }
+    CheckMark(size, circle = { circle.value }, check = { check.value }, modifier)
 }
