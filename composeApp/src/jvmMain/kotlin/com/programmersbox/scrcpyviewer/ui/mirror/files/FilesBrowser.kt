@@ -265,6 +265,9 @@ class FilesBrowser(
     /** Reads the queue's jobs as they are now (the tray's [transferJobs] is a snapshot that may lag); null without adb. */
     internal val queueJobsNow: (() -> List<TransferJob>)? = transfers.queue?.let { q -> { q.jobs.value } }
 
+    /** The queue's jobs as they change, from any thread; null without adb. */
+    internal val queueJobUpdates: Flow<List<TransferJob>>? = transfers.queue?.jobs
+
     /** The push target a push without a folder goes to. */
     val pushTarget: String get() = transfers.pushTarget
 
@@ -788,6 +791,20 @@ class FilesBrowser(
             TransferRequest(toDir, TransferKind.Pull, fromDir, it.name, size = it.size, isDirectory = it.isDir, dragOut = true)
         }
         return if (requests.isEmpty()) emptyList() else enqueue(requests)
+    }
+
+    /**
+     * Queues a pull of [entry] in [fromDir] to exactly [target], a path a file-promise drop picked (Finder's folder
+     * and name). It is an ordinary pull in the tray, reported when done. Null when it could not be queued.
+     */
+    internal fun pullPromised(fromDir: String, entry: DeviceEntry, target: Path): Long? {
+        if (!connected) return null
+        val dir = target.parent ?: return null
+        return enqueue(
+            listOf(
+                TransferRequest(dir, TransferKind.Pull, fromDir, entry.name, size = entry.size, isDirectory = entry.isDir, hostTarget = target),
+            ),
+        ).singleOrNull()
     }
 
     // Connection
