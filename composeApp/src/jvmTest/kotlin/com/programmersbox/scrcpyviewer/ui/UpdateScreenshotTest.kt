@@ -60,6 +60,9 @@ class UpdateScreenshotTest {
         render("update-downloading.png", ui(UpdateState.Downloading(release, 31_000_000, 50_000_000)))
 
     @Test
+    fun `update ready`() = render("update-ready.png", ui(UpdateState.Ready(release)))
+
+    @Test
     fun `update failed`() =
         render("update-failed.png", ui(UpdateState.Failed("Download failed: connection reset", release)))
 

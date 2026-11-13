@@ -64,6 +64,8 @@ fun SettingsScreen(
         onCheckUpdates = updateViewModel::check,
         onUpdate = updateViewModel::update,
         onCancelUpdate = updateViewModel::cancel,
+        onRestartToUpdate = updateViewModel::restart,
+        onAutoDownloadUpdates = viewModel::setAutoDownloadUpdates,
         onOpenAiSkill = { showAiSkillDialog = true },
         onInstallAiSkill = { targets ->
             showAiSkillDialog = false

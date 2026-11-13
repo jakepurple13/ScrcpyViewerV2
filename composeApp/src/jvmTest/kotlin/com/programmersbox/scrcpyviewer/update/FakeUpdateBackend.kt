@@ -35,6 +35,8 @@ class FakeUpdateBackend(
     val downloads = AtomicInteger()
     val downloadStarted = CompletableDeferred<Unit>()
     val installed = mutableListOf<File>()
+    /** Files installed by [installAndQuit], which does not reopen the app. */
+    val installedQuitting = mutableListOf<File>()
     var eventsConsumed = 0
         private set
 
@@ -51,6 +53,10 @@ class FakeUpdateBackend(
 
     override fun installAndRestart(file: File) {
         installed += file
+    }
+
+    override fun installAndQuit(file: File) {
+        installedQuitting += file
     }
 
     override fun consumeUpdateEvent(): UpdateEvent? {
