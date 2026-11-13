@@ -44,6 +44,31 @@ class LaunchPolicyTest {
     fun `full screen fades`() = assertEquals(LaunchEffect.Fade, on(fullscreen = true))
 
     @Test
+    fun `a minimized window quits without animation`() {
+        assertEquals(LaunchEffect.None, launchEffect(LaunchConditions(IconUnfold, MacOS, false, false, false, minimized = true)))
+        assertEquals(LaunchEffect.None, launchEffect(LaunchConditions(ScreenOn, MacOS, true, false, false, minimized = true)))
+    }
+
+    @Test
+    fun `previews loop on hover unless the OS asks for less motion`() {
+        assertTrue(LaunchPreview.loops(hovered = true, reduceMotion = false))
+        assertFalse(LaunchPreview.loops(hovered = true, reduceMotion = true))
+        assertFalse(LaunchPreview.loops(hovered = false, reduceMotion = false))
+    }
+
+    @Test
+    fun `a cached value is read once per window of time`() {
+        var now = 0L
+        var reads = 0
+        val cache = TimedCache(ttlMs = 1_000, clock = { now }) { reads++; reads }
+        assertEquals(1, cache.get())
+        now = 999
+        assertEquals(1, cache.get())
+        now = 1_000
+        assertEquals(2, cache.get())
+    }
+
+    @Test
     fun `platforms not yet confirmed fade`() {
         for (p in listOf(Windows, LinuxX11, LinuxWayland)) {
             assertEquals(LaunchEffect.Fade, on(p))

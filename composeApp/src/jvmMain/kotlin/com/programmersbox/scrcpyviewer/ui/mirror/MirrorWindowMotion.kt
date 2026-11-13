@@ -288,10 +288,18 @@ fun systemReducesMotion(): Boolean = try {
                 .invokeInt(arrayOf(spiGetClientAreaAnimation, 0, on.pointer, 0)) != 0
             ok && on.value == 0
         }
-        else -> gnomeAnimationsOff(gsettingsEnableAnimations())
+        else -> gnomeReducesMotion.get()
     }
 } catch (_: Throwable) {
     false
+}
+
+/**
+ * GNOME's switch, read at most once a minute: it runs a process (up to 500 ms) and callers are on the UI thread (every
+ * mirror window open, the main window's launch and quit).
+ */
+private val gnomeReducesMotion = com.programmersbox.scrcpyviewer.ui.window.launch.TimedCache(60_000) {
+    runCatching { gnomeAnimationsOff(gsettingsEnableAnimations()) }.getOrDefault(false)
 }
 
 /** `gsettings get org.gnome.desktop.interface enable-animations` (null when it fails or takes over 500 ms). */
@@ -302,7 +310,7 @@ private fun gsettingsEnableAnimations(): String? {
         process.destroyForcibly()
         return null
     }
-    return process.inputStream.bufferedReader().readText()
+    return process.inputStream.bufferedReader().use { it.readText() }
 }
 
 /** GNOME's animations switch is off: [output] of `gsettings get … enable-animations` is `false`. */

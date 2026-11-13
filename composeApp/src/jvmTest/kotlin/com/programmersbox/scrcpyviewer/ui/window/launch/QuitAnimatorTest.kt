@@ -31,6 +31,30 @@ class QuitAnimatorTest {
     }
 
     @Test
+    fun `play waits for the fade to finish`() = runBlocking<Unit> {
+        val q = QuitAnimator(WindowPicture()) { at }
+        q.begin(LaunchEffect.Fade, sessionsOpen = false)
+        val playing = async { q.play() }
+        kotlinx.coroutines.delay(100)
+        assertFalse(playing.isCompleted, "exit must wait for the 150 ms fade")
+        q.fadeFinished()
+        withTimeout(1_000) { playing.await() }
+    }
+
+    @Test
+    fun `play lets the scrim fade out before taking the picture`() = runBlocking<Unit> {
+        val q = QuitAnimator(WindowPicture()) { at }
+        q.begin(overlay, sessionsOpen = true)
+        val started = System.nanoTime()
+        val playing = async { q.play() }
+        withTimeout(2_000) { while (q.playing == null) yield() }
+        val waitedMs = (System.nanoTime() - started) / 1_000_000
+        assertTrue(waitedMs >= QUIT_SCRIM_EXIT_MILLIS, "picture taken after $waitedMs ms, scrim fades for $QUIT_SCRIM_EXIT_MILLIS ms")
+        q.overlayEnded()
+        withTimeout(1_000) { playing.await() }
+    }
+
+    @Test
     fun `fade and none keep today's flow`() {
         QuitAnimator(WindowPicture()) { at }.apply {
             begin(LaunchEffect.Fade, sessionsOpen = true)
@@ -75,7 +99,7 @@ class QuitAnimatorTest {
     @Test
     fun `play returns at once without the overlay or without bounds`() = runBlocking<Unit> {
         QuitAnimator(WindowPicture()) { at }.apply {
-            begin(LaunchEffect.Fade, sessionsOpen = false)
+            begin(LaunchEffect.None, sessionsOpen = false)
             withTimeout(1_000) { play() }
             assertNull(playing)
         }

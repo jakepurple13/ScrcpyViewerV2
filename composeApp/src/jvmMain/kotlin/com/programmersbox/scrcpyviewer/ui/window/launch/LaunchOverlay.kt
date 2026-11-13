@@ -116,6 +116,13 @@ fun NucleusApplicationScope.LaunchOverlayWindow(
     }
 }
 
+/** Sets the window's native opacity (macOS NSWindow alphaValue); does nothing elsewhere. */
+fun setWindowAlpha(window: NucleusWindow, alpha: Float) {
+    if (!Os.isMac) return
+    val ns = window.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L }?.let(::Pointer) ?: return
+    setMacAlpha(ns, alpha.toDouble())
+}
+
 /**
  * [LaunchEffect.Fade]: the window's native opacity from [from] to [to] over [LAUNCH_FADE_MILLIS]. macOS only (NSWindow
  * alphaValue); elsewhere there is no native opacity to animate and the window appears or goes as it is.

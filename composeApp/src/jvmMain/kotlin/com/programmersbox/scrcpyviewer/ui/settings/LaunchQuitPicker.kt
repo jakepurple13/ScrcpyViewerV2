@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
 import com.programmersbox.scrcpyviewer.state.launchQuit
 import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchQuitPreview
+import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchPreview
+import com.programmersbox.scrcpyviewer.ui.mirror.systemReducesMotion
 
 /**
  * One tile per [LaunchQuitAnimation], laid out like the Style picker: a small desktop that loops the animation while
@@ -92,8 +94,9 @@ private fun LaunchQuitTile(anim: LaunchQuitAnimation, selected: Boolean, onClick
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        val reduceMotion = remember { systemReducesMotion() }
         LaunchQuitPreview(
-            anim, looping = hovered, playOnce = picks,
+            anim, looping = LaunchPreview.loops(hovered, reduceMotion), playOnce = picks,
             modifier = Modifier.fillMaxWidth().height(116.dp).clip(RoundedCornerShape(8.dp)),
         )
         Row(Modifier.fillMaxWidth().padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {

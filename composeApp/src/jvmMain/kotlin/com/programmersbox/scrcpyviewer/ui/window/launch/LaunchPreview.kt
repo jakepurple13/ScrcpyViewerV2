@@ -35,6 +35,9 @@ object LaunchPreview {
     const val OFF_SHOWN_MS = 600
     const val OFF_GONE_MS = 250
 
+    /** A tile loops its preview while hovered, unless the OS asks for less motion (then it plays once when picked). */
+    fun loops(hovered: Boolean, reduceMotion: Boolean): Boolean = hovered && !reduceMotion
+
     fun loopMs(anim: LaunchQuitAnimation): Int =
         if (anim == LaunchQuitAnimation.Off) OFF_SHOWN_MS + OFF_GONE_MS
         else LaunchMotion.durationMs(anim, Launch) + HOLD_MS + LaunchMotion.durationMs(anim, Quit) + GAP_MS

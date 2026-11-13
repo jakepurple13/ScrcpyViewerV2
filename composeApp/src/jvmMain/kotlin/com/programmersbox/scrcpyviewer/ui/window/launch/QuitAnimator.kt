@@ -58,6 +58,7 @@ class QuitAnimator(private val picture: WindowPicture, private val bounds: () ->
         private set
 
     private var done: CompletableDeferred<Unit>? = null
+    private val fadeDone = CompletableDeferred<Unit>()
 
     /** The window keeps showing while the sessions close: only the overlay needs it. */
     val keepsWindow: Boolean get() = effect is LaunchEffect.Overlay
@@ -72,15 +73,22 @@ class QuitAnimator(private val picture: WindowPicture, private val bounds: () ->
 
     fun fadeFinished() {
         faded = true
+        fadeDone.complete(Unit)
     }
 
-    /** AppShutdown's animateOut. Returns at once unless [effect] is the overlay. */
+    /**
+     * AppShutdown's animateOut: waits for the fade, or plays the overlay. Returns at once for [LaunchEffect.None] or
+     * when the window has no bounds.
+     */
     suspend fun play() {
+        if (effect == LaunchEffect.Fade) return fadeDone.await()
         val overlay = effect as? LaunchEffect.Overlay ?: return
         val at = bounds() ?: return
         if (dimmed) {
             dimmed = false
-            delay(FRAME_MILLIS) // the window draws without the scrim before its picture is taken
+            // The scrim is drawn over the content, outside the picture: let it fade out first, or the window would
+            // jump from dimmed to clear when the overlay takes over.
+            delay(QUIT_SCRIM_EXIT_MILLIS + FRAME_MILLIS)
         }
         val done = CompletableDeferred<Unit>().also { done = it }
         playing = Play(at, overlay.anim, picture.capture())
@@ -100,13 +108,16 @@ class QuitAnimator(private val picture: WindowPicture, private val bounds: () ->
     }
 }
 
+/** How long [QuitScrim] takes to fade out. */
+const val QUIT_SCRIM_EXIT_MILLIS = 120L
+
 /**
  * Over the main window while the sessions close before the quit animation: a scrim that takes every click, with
  * "Finishing recording…" while a recorder writes its file. Fades in and out.
  */
 @Composable
 fun QuitScrim(visible: Boolean, finishingRecording: Boolean) {
-    AnimatedVisibility(visible, enter = fadeIn(tween(200)), exit = fadeOut(tween(120))) {
+    AnimatedVisibility(visible, enter = fadeIn(tween(200)), exit = fadeOut(tween(QUIT_SCRIM_EXIT_MILLIS.toInt()))) {
         Box(
             Modifier
                 .fillMaxSize()

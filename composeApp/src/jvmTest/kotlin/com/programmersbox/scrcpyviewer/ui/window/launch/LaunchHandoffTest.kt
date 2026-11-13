@@ -48,6 +48,43 @@ class LaunchHandoffTest {
     }
 
     @Test
+    fun `the watchdog shows the window if the overlay never ends`() = kotlinx.coroutines.runBlocking {
+        val h = LaunchHandoff(overlay)
+        launchWatchdog(h, timeoutMs = 50)
+        assertEquals(Step.Done, h.step.value)
+        assertTrue(h.realVisible.value)
+        assertFalse(h.overlayOpen.value)
+    }
+
+    @Test
+    fun `the watchdog leaves a finished launch alone`() = kotlinx.coroutines.runBlocking {
+        val h = LaunchHandoff(overlay)
+        h.overlayEnded()
+        h.realWindowDrew()
+        launchWatchdog(h, timeoutMs = 10)
+        assertEquals(Step.Done, h.step.value)
+    }
+
+    @Test
+    fun `a hidden fade launch shows the window once it is see-through`() {
+        val h = LaunchHandoff(LaunchEffect.Fade, hideForFade = true)
+        assertFalse(h.realVisible.value, "shown only after alpha is 0, so it never flashes opaque")
+        assertFalse(h.overlayOpen.value)
+        h.fadeReady()
+        assertTrue(h.realVisible.value)
+        assertEquals(Step.Done, h.step.value)
+    }
+
+    @Test
+    fun `cancel finishes the row entrance at once`() {
+        val h = LaunchHandoff(overlay)
+        val entrance = LaunchEntrance(h.realVisible)
+        h.cancel()
+        entrance.skip()
+        assertTrue(entrance.skipped)
+    }
+
+    @Test
     fun `realWindowDrew before overlayEnded is ignored`() {
         val h = LaunchHandoff(overlay)
         h.realWindowDrew()

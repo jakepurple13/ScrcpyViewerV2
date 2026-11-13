@@ -55,11 +55,16 @@ data class LaunchConditions(
     /** An overlay can't sit over a full-screen window (a macOS full-screen Space). */
     val fullscreen: Boolean,
     val enabled: Set<OverlayPlatform> = OverlayEnabled,
+    /** The window isn't on screen (quit from the Dock while minimized): there is nothing to animate away. */
+    val minimized: Boolean = false,
 )
 
-/** Off is no animation; anything the overlay can't do well fades; otherwise the overlay plays the chosen animation. */
+/**
+ * Off, or a minimized window, is no animation; anything the overlay can't do well fades; otherwise the overlay plays
+ * the chosen animation.
+ */
 fun launchEffect(c: LaunchConditions): LaunchEffect = when {
-    c.setting == LaunchQuitAnimation.Off -> LaunchEffect.None
+    c.setting == LaunchQuitAnimation.Off || c.minimized -> LaunchEffect.None
     c.reduceMotion || c.glassBlur || c.fullscreen || c.platform !in c.enabled -> LaunchEffect.Fade
     else -> LaunchEffect.Overlay(c.setting)
 }
@@ -68,7 +73,7 @@ fun launchEffect(c: LaunchConditions): LaunchEffect = when {
 const val LAUNCH_FADE_MILLIS = 150
 
 /** [launchEffect] for this machine now: the chosen setting, this platform, the OS's motion preference, Glass blur. */
-fun launchEffectNow(settings: Settings, fullscreen: Boolean): LaunchEffect {
+fun launchEffectNow(settings: Settings, fullscreen: Boolean, minimized: Boolean = false): LaunchEffect {
     val theme = settings.appTheme
     return launchEffect(
         LaunchConditions(
@@ -77,6 +82,24 @@ fun launchEffectNow(settings: Settings, fullscreen: Boolean): LaunchEffect {
             reduceMotion = systemReducesMotion(),
             glassBlur = Os.isMac && theme.style == ThemeStyle.Glass && theme.desktopBlur,
             fullscreen = fullscreen,
+            minimized = minimized,
         ),
     )
+}
+
+/** A value read at most once per [ttlMs] ([clock] in ms); [load] runs again once that has passed. */
+class TimedCache<T>(private val ttlMs: Long, private val clock: () -> Long = System::currentTimeMillis, private val load: () -> T) {
+    private var value: T? = null
+    private var readAt = Long.MIN_VALUE
+
+    @Synchronized
+    fun get(): T {
+        val now = clock()
+        @Suppress("UNCHECKED_CAST")
+        if (readAt != Long.MIN_VALUE && now - readAt < ttlMs) return value as T
+        return load().also {
+            value = it
+            readAt = now
+        }
+    }
 }

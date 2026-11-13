@@ -22,13 +22,22 @@ import kotlinx.coroutines.flow.first
  * [Step.Done] (overlay closed). Without one, it starts at [Step.Done]. [cancel] (a quit during the launch) jumps to
  * [Step.Done] at once.
  */
-class LaunchHandoff(val effect: LaunchEffect) {
+class LaunchHandoff(
+    val effect: LaunchEffect,
+    /**
+     * A fade launch keeps the window hidden until [fadeReady] (its opacity is 0 by then), so it never shows one opaque
+     * frame first. True where the fade has a native opacity to animate (macOS).
+     */
+    hideForFade: Boolean = false,
+) {
     enum class Step { Playing, ShowReal, RealDrawn, Done }
+
+    private val waitsForFade = hideForFade && effect == LaunchEffect.Fade
 
     private val _step = MutableStateFlow(if (effect is LaunchEffect.Overlay) Step.Playing else Step.Done)
     val step: StateFlow<Step> = _step.asStateFlow()
 
-    private val _realVisible = MutableStateFlow(_step.value != Step.Playing)
+    private val _realVisible = MutableStateFlow(_step.value != Step.Playing && !waitsForFade)
     /** False only while the overlay is playing. */
     val realVisible: StateFlow<Boolean> = _realVisible.asStateFlow()
 
@@ -48,6 +57,11 @@ class LaunchHandoff(val effect: LaunchEffect) {
         finish()
     }
 
+    /** A fade launch: the window's opacity is 0 now, so it can be shown and faded in. */
+    fun fadeReady() {
+        _realVisible.value = true
+    }
+
     /** Ends the launch now: the real window shows and the overlay closes. */
     fun cancel() = finish()
 
@@ -59,12 +73,34 @@ class LaunchHandoff(val effect: LaunchEffect) {
 }
 
 /**
+ * Shows the real window if the launch hasn't finished after [timeoutMs] (the overlay never drew, its frame clock
+ * stalled, or it failed to open). Returns after the timeout either way.
+ */
+suspend fun launchWatchdog(handoff: LaunchHandoff, timeoutMs: Long) {
+    delay(timeoutMs)
+    if (handoff.step.value != LaunchHandoff.Step.Done) handoff.cancel()
+}
+
+/** The watchdog's allowance past the animation itself: window creation, the picture, the hand-off frames. */
+const val LAUNCH_WATCHDOG_SLACK_MILLIS = 2_000L
+
+/**
  * On the launch that played Icon unfold: the main window's rows fade up in a stagger once the real window shows.
  * [shown] turns true when it does. Rows first composed more than [WINDOW_MILLIS] after that don't animate (they are
  * ordinary list changes by then, animated by the list itself).
  */
 class LaunchEntrance(val shown: StateFlow<Boolean>) {
     @Volatile internal var shownAtNanos: Long = 0L
+
+    private val _skipped = MutableStateFlow(false)
+    val skipped: Boolean get() = _skipped.value
+
+    /** Shows every row at once (a quit during the launch: the quit's picture must have the rows in it). */
+    fun skip() {
+        _skipped.value = true
+    }
+
+    internal val skippedFlow: StateFlow<Boolean> get() = _skipped
 
     companion object {
         const val STAGGER_MILLIS = 40
@@ -82,13 +118,17 @@ private val EntranceEasing = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)
 @Composable
 fun Modifier.launchEntrance(index: Int): Modifier {
     val entrance = LocalLaunchEntrance.current ?: return this
-    val progress = remember { Animatable(if (entrance.isLate()) 1f else 0f) }
+    val progress = remember { Animatable(if (entrance.isLate() || entrance.skipped) 1f else 0f) }
     LaunchedEffect(entrance) {
         if (progress.value >= 1f) return@LaunchedEffect
         entrance.shown.first { it }
         if (entrance.shownAtNanos == 0L) entrance.shownAtNanos = System.nanoTime()
         delay(index.coerceAtMost(12) * LaunchEntrance.STAGGER_MILLIS.toLong())
         progress.animateTo(1f, tween(LaunchEntrance.MILLIS, easing = EntranceEasing))
+    }
+    LaunchedEffect(entrance) {
+        entrance.skippedFlow.first { it }
+        progress.snapTo(1f)
     }
     return graphicsLayer {
         alpha = progress.value
