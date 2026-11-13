@@ -59,6 +59,8 @@ class InputMapper(
     /** Device position of the last forwarded SDK mouse event, for [releaseButtons]. */
     private var lastPosition: Position? = null
     private var lastKeyDown = -1
+    private var lastKeyMods = 0
+    private var lastKeyLocation = AwtKeyEvent.KEY_LOCATION_STANDARD
     private var repeat = 0
     private val clickCounter = ClickCounter()
 
@@ -95,6 +97,21 @@ class InputMapper(
         hidMouse?.let { return listOf(it.click(0)) }
         val p = lastPosition ?: return emptyList()
         return listOf(touch(ACTION_UP, p, pressure = 0f, actionButton = released and -released))
+    }
+
+    /** The key UP for the key still held (focus lost: its real release goes elsewhere); empty when none is. */
+    fun releaseKey(): List<ControlMessage> {
+        val code = lastKeyDown
+        if (code == -1) return emptyList()
+        return keyEvent(false, code, lastKeyMods, lastKeyLocation)
+    }
+
+    /** The UP [releaseKey] would send, without forgetting the held key (it is still held for other devices). */
+    fun heldKeyUp(): List<ControlMessage> {
+        val code = lastKeyDown
+        if (code == -1) return emptyList()
+        val android = convertKeycode(code, lastKeyMods, lastKeyLocation) ?: return emptyList()
+        return listOf(ControlMessage.InjectKeycode(KEY_ACTION_UP, android, 0, metaState(lastKeyMods)))
     }
 
     /** Relative motion of a captured pointer (UHID mouse only). */
@@ -202,6 +219,22 @@ class InputMapper(
         return Position(x, y, size.width, size.height)
     }
 
+    /** The view point where the frame pixel at [position] shows (its centre), or null before the first frame. */
+    fun toView(position: Position): Offset? {
+        val size = frameSize() ?: return null
+        if (size.width <= 0 || size.height <= 0) return null
+        val oriented = orientation.orientedSize(size)
+        val content = contentRect(oriented, viewRect(), stretch())
+        if (content.width <= 0f || content.height <= 0f) return null
+        // The position may be in another frame size (sent just before a rotation): scale it onto this one.
+        val fx = (position.x + 0.5) * size.width / position.screenWidth.coerceAtLeast(1)
+        val fy = (position.y + 0.5) * size.height / position.screenHeight.coerceAtLeast(1)
+        val w = oriented.width.toDouble()
+        val h = oriented.height.toDouble()
+        val (ox, oy) = orientation.toDisplayed(fx, fy, w, h)
+        return Offset((content.left + ox * content.width / w).toFloat(), (content.top + oy * content.height / h).toFloat())
+    }
+
     /** Maps a Compose key event through its AWT event. */
     fun key(event: KeyEvent): List<ControlMessage> {
         val awt = event.nativeKeyEvent as? AwtKeyEvent ?: return emptyList()
@@ -230,6 +263,8 @@ class InputMapper(
                 repeat = 0
             }
             lastKeyDown = keyCode
+            lastKeyMods = mods
+            lastKeyLocation = location
         } else {
             if (keyCode == lastKeyDown) lastKeyDown = -1
         }

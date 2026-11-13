@@ -33,9 +33,13 @@ import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatRun
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlin.math.roundToInt
@@ -240,6 +244,19 @@ data class QuickActionsUiState(
     val apps: AppsUiState = AppsUiState(),
 )
 
+/** A window following this one's input: its device title (for the result line), shell runner and serial. */
+data class FollowRunner(val title: String, val runner: ShellRunner, val serial: String)
+
+/**
+ * The result line of a quick action that also ran on following windows: [total] counts the leader and its followers,
+ * [failures] are (device title, reason), the leader's first. One failure is named; the rest are counted.
+ */
+fun followResult(total: Int, failures: List<Pair<String, String>>): String {
+    val first = failures.firstOrNull() ?: return "Ran on $total devices"
+    val more = if (failures.size > 1) " and ${failures.size - 1} more" else ""
+    return "Ran on ${total - failures.size} of $total devices · ${first.first} failed: ${first.second}$more"
+}
+
 /** A tap in the quick actions sheet. */
 sealed interface QuickActionEvent {
     data class Toggle(val toggle: QuickToggle, val on: Boolean) : QuickActionEvent
@@ -286,6 +303,9 @@ sealed interface QuickActionEvent {
  * and flip back (with a message) when the command fails; the states are read again each time the sheet opens.
  * Custom actions come from [store]; their buffered commands run through [runner], Shell-tab output through [console].
  * Snapshot state is written on the UI thread (the window's coroutine scope); [watchActions] must run in it.
+ * While this window leads, [followers] get each toggle's new state (once it is set here) and each buffered run-once
+ * command (after this window's prompt and confirm dialog) on their own runners, and the run ends with a
+ * [followResult] line. Shell-tab runs stay on this window.
  */
 @Stable
 class QuickActions internal constructor(
@@ -303,6 +323,10 @@ class QuickActions internal constructor(
     private val saveWidth: (SheetTab, Dp) -> Unit = { _, _ -> },
     /** The Apps tab; it lists the apps the first time it shows. */
     private val apps: AppExplorer? = null,
+    /** This device's title, named in the result line when it fails along with its followers. */
+    private val title: () -> String = { serial },
+    /** The windows following this one right now; read when a toggle is switched or a run starts. */
+    private val followers: () -> List<FollowRunner> = { emptyList() },
     /** The Logcat tab; null without adb. Its stream stops when the tab stops showing, unless it is in its own window. */
     val logcat: LogcatController? = null,
     private val notify: (String) -> Unit,
@@ -512,16 +536,26 @@ class QuickActions internal constructor(
         val d = device ?: return
         if (toggle in pending) return
         val before = toggles[toggle]
+        val targets = followers()
+        val turns = takeTurns(targets, "builtin:${toggle.name}")
         pending = pending + toggle
         toggles = toggles + (toggle to on)
         scope.launch {
             try {
-                d.set(toggle, on)
-            } catch (e: Exception) {
-                toggles = toggles + (toggle to before)
-                notify("Could not turn ${toggle.label} ${if (on) "on" else "off"}: ${e.message ?: e}")
+                val ok = try {
+                    d.set(toggle, on)
+                    true
+                } catch (e: Exception) {
+                    toggles = toggles + (toggle to before)
+                    notify("Could not turn ${toggle.label} ${if (on) "on" else "off"}: ${e.message ?: e}")
+                    false
+                } finally {
+                    pending = pending - toggle
+                }
+                // Followers are set to the leader's new state, never flipped: theirs may already differ.
+                if (ok) toggleResult(targets, runOn(targets, toggle.setCommand(on), turns))
             } finally {
-                pending = pending - toggle
+                turns.forEach(::endTurn)
             }
         }
     }
@@ -532,19 +566,62 @@ class QuickActions internal constructor(
         val r = runner ?: return
         if (id in customPending) return
         val before = customState[id]
+        val targets = followers()
+        val turns = takeTurns(targets, "custom:$id")
+        val cmd = if (on) action.on else action.off
         customPending = customPending + id
         customState = customState + (id to on)
         scope.launch {
             try {
-                r.runChecked(if (on) action.on else action.off)
-                if (action.read == null) memory.setToggle(serial, id, on)
-            } catch (e: Exception) {
-                customState = customState + (id to before)
-                notify(failure("Could not turn ${action.name} ${if (on) "on" else "off"}", e))
+                val ok = try {
+                    r.runChecked(cmd)
+                    if (action.read == null) memory.setToggle(serial, id, on)
+                    true
+                } catch (e: Exception) {
+                    customState = customState + (id to before)
+                    notify(failure("Could not turn ${action.name} ${if (on) "on" else "off"}", e))
+                    false
+                } finally {
+                    customPending = customPending - id
+                }
+                if (ok) {
+                    val failures = runOn(targets, cmd, turns) { f ->
+                        // A follower's sheet shows the state it was set to, like the leader's.
+                        if (action.read == null) memory.setToggle(f.serial, id, on)
+                    }
+                    toggleResult(targets, failures)
+                }
             } finally {
-                customPending = customPending - id
+                turns.forEach(::endTurn)
             }
         }
+    }
+
+    /**
+     * The last queued command of each follower's toggle, by (follower serial, toggle key); it completes once that
+     * command has run. Followers' toggle commands run one after another in tap order, so a quick on-then-off cannot
+     * leave a slow follower on. The leader's own toggle is never held back by them. Used on the UI thread.
+     */
+    private val followerTurns = HashMap<Pair<String, String>, CompletableDeferred<Unit>>()
+
+    /** One follower's place in its toggle's queue, taken at tap time: it runs after [previous] completes. */
+    private class Turn(val key: Pair<String, String>, val previous: CompletableDeferred<Unit>?, val mine: CompletableDeferred<Unit>)
+
+    private fun takeTurns(targets: List<FollowRunner>, toggleKey: String): List<Turn> = targets.map { f ->
+        val key = f.serial to toggleKey
+        val mine = CompletableDeferred<Unit>()
+        Turn(key, followerTurns.put(key, mine), mine)
+    }
+
+    /** Lets the next command in [turn]'s queue run; safe to call more than once. */
+    private fun endTurn(turn: Turn) {
+        turn.mine.complete(Unit)
+        if (followerTurns[turn.key] === turn.mine) followerTurns.remove(turn.key)
+    }
+
+    /** A toggle switch reports its followers only when one failed; a run-once action always does. */
+    private fun toggleResult(targets: List<FollowRunner>, failures: List<Pair<String, String>>) {
+        if (failures.isNotEmpty()) notify(followResult(targets.size + 1, failures))
     }
 
     /** A run-once tap: the variable prompt, then the confirm dialog, then the run; the steps it doesn't need are skipped. */
@@ -589,17 +666,63 @@ class QuickActions internal constructor(
         }
         val r = runner ?: return
         if (action.id in customPending) return
+        val targets = followers()
         customPending = customPending + action.id
         scope.launch {
             try {
-                val out = r.runChecked(cmd)
-                if (action.output == OutputTarget.Toast) notify(out.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "Done")
-            } catch (e: Exception) {
-                notify(failure("Could not run ${action.name}", e))
+                if (targets.isEmpty()) {
+                    try {
+                        val out = r.runChecked(cmd)
+                        if (action.output == OutputTarget.Toast) notify(firstLine(out))
+                    } catch (e: Exception) {
+                        notify(failure("Could not run ${action.name}", e))
+                    }
+                    return@launch
+                }
+                // The leader first, then every follower whatever the leader's result: the command is the same.
+                val (out, leaderFailure) = try {
+                    r.runChecked(cmd) to null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null to (title() to reason(e))
+                }
+                val result = followResult(targets.size + 1, listOfNotNull(leaderFailure) + runOn(targets, cmd))
+                notify(if (out != null && action.output == OutputTarget.Toast) "${firstLine(out)} · $result" else result)
             } finally {
                 customPending = customPending - action.id
             }
         }
+    }
+
+    /**
+     * Runs [cmd] on every follower at once and returns the failures as (title, reason) in [targets]' order;
+     * [onSuccess] runs for each follower whose command succeeded. With [turns] (one per target), each follower waits
+     * for its previous command for the same toggle first, and lets the next one run when done.
+     */
+    private suspend fun runOn(
+        targets: List<FollowRunner>,
+        cmd: String,
+        turns: List<Turn>? = null,
+        onSuccess: (FollowRunner) -> Unit = {},
+    ): List<Pair<String, String>> = coroutineScope {
+        targets.mapIndexed { i, f ->
+            async {
+                val turn = turns?.get(i)
+                try {
+                    turn?.previous?.await()
+                    f.runner.runChecked(cmd)
+                    onSuccess(f)
+                    null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    f.title to reason(e)
+                } finally {
+                    turn?.let(::endTurn)
+                }
+            }
+        }.awaitAll().filterNotNull()
     }
 
     /** Custom toggles without a read command, at the state they were last set to on this device. */
@@ -631,6 +754,12 @@ class QuickActions internal constructor(
             return result.output
         }
 
+        /** The first non-blank line of a Toast action's output, or "Done". */
+        fun firstLine(out: String): String = out.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: "Done"
+
+        /** Why a device failed, for the result line. */
+        fun reason(e: Exception): String = e.message ?: e.toString()
+
         /** The timeout explains itself; other failures read "[what]: message", as the built-ins do. */
         fun failure(what: String, e: Exception): String =
             if (e is ShellTimeoutException) e.message!! else "$what: ${e.message ?: e}"
@@ -648,6 +777,10 @@ fun rememberQuickActions(
     adb: AdbClient?,
     notify: (String) -> Unit,
     onManage: (actionId: String?, new: Boolean) -> Unit = { _, _ -> },
+    /** This device's title, for the result line of a run that also went to [followers]. */
+    title: String = serial,
+    /** The windows following this one right now (none unless it leads). */
+    followers: () -> List<FollowRunner> = { emptyList() },
     store: ActionStore = koinInject(),
     memory: QuickActionsMemory = koinInject(),
     history: ShellHistory = koinInject(),
@@ -657,6 +790,8 @@ fun rememberQuickActions(
 ): QuickActions {
     val currentNotify by rememberUpdatedState(notify)
     val currentOnManage by rememberUpdatedState(onManage)
+    val currentTitle by rememberUpdatedState(title)
+    val currentFollowers by rememberUpdatedState(followers)
     val scope = rememberCoroutineScope()
     val actions = remember(serial, adb) {
         val runner = adb?.let { ShellRunner(it, serial) }
@@ -691,6 +826,8 @@ fun rememberQuickActions(
                 }
             },
             apps = apps,
+            title = { currentTitle },
+            followers = { currentFollowers() },
             logcat = adb?.let { LogcatController(LogcatSource(it, serial), scope, { msg -> currentNotify(msg) }) },
         ) { currentNotify(it) }
     }

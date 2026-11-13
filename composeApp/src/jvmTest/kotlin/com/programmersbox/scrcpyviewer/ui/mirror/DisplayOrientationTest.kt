@@ -81,4 +81,19 @@ class DisplayOrientationTest {
         // Clamped (a held button dragged into a bar) stays on the frame.
         assertEquals(Position(200, 199, 400, 200), m.toDevice(Offset(0f, 200f), clamp = true))
     }
+
+    @Test
+    fun `toView puts a frame position back where it shows, for every orientation`() {
+        for (o in DisplayOrientation.entries) {
+            // Letterboxed both ways, so the content rect's offset matters too.
+            val m = mapper(o, Rect(10f, 20f, 610f, 520f))
+            for (p in listOf(Offset(150f, 150f), Offset(300f, 400f), Offset(500f, 260f))) {
+                val device = m.toDevice(p, clamp = false) ?: continue
+                val back = m.toView(device)!!
+                val again = m.toDevice(back, clamp = false)
+                assertEquals(device, again, "$o: $p -> $device -> $back")
+            }
+        }
+        assertNull(InputMapper(frameSize = { null }, viewRect = { Rect(0f, 0f, 10f, 10f) }).toView(Position(1, 1, 400, 200)))
+    }
 }

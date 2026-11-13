@@ -36,6 +36,18 @@ enum class DisplayOrientation(val quarterTurns: Int, val flip: Boolean) {
         Flip270 -> y to x
     }
 
+    /** The inverse of [toFrame]: where the frame point ([x], [y]) shows in the displayed image of [w] x [h]. */
+    fun toDisplayed(x: Double, y: Double, w: Double, h: Double): Pair<Double, Double> = when (this) {
+        R0 -> x to y
+        R90 -> w - y to x
+        R180 -> w - x to h - y
+        R270 -> y to h - x
+        Flip0 -> w - x to y
+        Flip90 -> w - y to h - x
+        Flip180 -> x to h - y
+        Flip270 -> y to x
+    }
+
     companion object {
         /** `0`..`270`, `flip0`..`flip270` (cli.c `parse_orientation`); anything else is [R0]. */
         fun parse(value: String?): DisplayOrientation {

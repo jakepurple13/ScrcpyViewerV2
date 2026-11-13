@@ -25,6 +25,8 @@ import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
 import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoReaderFactory
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.InputFollowing
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import com.programmersbox.scrcpyviewer.ui.mirror.OpenMirrors
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
@@ -181,6 +183,7 @@ class MirrorModule {
         serverLauncher: ServerLauncher,
         settings: AppSettings,
         clipboard: PcClipboard,
+        following: Lazy<InputFollowing>,
     ): MirrorController = MirrorController(
         scope = scope,
         devices = tracker.devices,
@@ -201,7 +204,14 @@ class MirrorModule {
             )
         },
         setClipboard = clipboard::setText,
+        // Lazy: InputFollowing is built on this controller's open sessions.
+        clipboardMuted = { following.value.roleOf(it) is FollowRole.Follower },
     )
+
+    /** The app-wide follow link between mirror windows; pruned as mirrors close. */
+    @Singleton
+    fun inputFollowing(mirrors: MirrorController, scope: AppScope): InputFollowing =
+        InputFollowing(mirrors.open, scope)
 }
 
 /** App updates, through Nucleus' updater ([UpdateBackend]). */
