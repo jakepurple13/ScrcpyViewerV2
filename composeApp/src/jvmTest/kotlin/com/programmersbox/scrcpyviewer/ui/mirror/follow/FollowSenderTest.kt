@@ -186,6 +186,89 @@ class FollowSenderTest {
     }
 
     @Test
+    fun `nav and panel messages go verbatim`() {
+        val b = device("B", tablet)
+        val msgs = listOf(
+            ControlMessage.BackOrScreenOn(0),
+            ControlMessage.ExpandNotificationPanel,
+            ControlMessage.ExpandSettingsPanel,
+            ControlMessage.CollapsePanels,
+        )
+        sender.send(setOf("B"), msgs)
+        assertEquals(msgs, b.sent)
+    }
+
+    @Test
+    fun `get clipboard is not forwarded`() {
+        val b = device("B", tablet)
+        sender.send(setOf("B"), listOf(ControlMessage.GetClipboard(1)))
+        assertTrue(b.sent.isEmpty())
+    }
+
+    @Test
+    fun `every message kind not followed is dropped`() {
+        val b = device("B", tablet)
+        val dropped = listOf(
+            ControlMessage.GetClipboard(0),
+            ControlMessage.SetDisplayPower(false),
+            ControlMessage.ResizeDisplay(800, 600),
+            ControlMessage.ScanFile("/sdcard/a.png"),
+            ControlMessage.StartApp("com.example"),
+            ControlMessage.ResetVideo,
+            ControlMessage.CameraSetTorch(true),
+            ControlMessage.CameraZoomIn,
+            ControlMessage.CameraZoomOut,
+            ControlMessage.OpenHardKeyboardSettings,
+            ControlMessage.UhidCreate(1, 0, 0, "kbd", byteArrayOf(1)),
+            ControlMessage.UhidInput(1, byteArrayOf(2)),
+            ControlMessage.UhidDestroy(1),
+        )
+        for (msg in dropped) {
+            sender.send(setOf("B"), listOf(msg))
+            assertTrue(b.sent.isEmpty(), "${msg::class.simpleName} was forwarded")
+        }
+        // Guard: a new ControlMessage kind must be added to the allow-list or to this list.
+        val followed = setOf(
+            InjectTouch::class, InjectScroll::class, InjectKeycode::class, InjectText::class, SetClipboard::class,
+            RotateDevice::class, ControlMessage.BackOrScreenOn::class, ControlMessage.ExpandNotificationPanel::class,
+            ControlMessage.ExpandSettingsPanel::class, ControlMessage.CollapsePanels::class,
+        )
+        assertEquals(ControlMessage::class.java.permittedSubclasses.toSet(), (followed + dropped.map { it::class }).map { it.java }.toSet())
+    }
+
+    @Test
+    fun `release while target missing keeps press for later`() {
+        val b = device("B", tablet)
+        sender.send(setOf("B"), listOf(touch(ACTION_DOWN, leader(540, 1170))))
+        devices.remove("B")
+        sender.release(setOf("B"))
+        b.frameSize = null
+        devices["B"] = b
+        sender.release(setOf("B"))
+        assertEquals(1, b.sent.size)
+
+        b.frameSize = tablet
+        sender.release(setOf("B"))
+        val up = b.sent.last() as InjectTouch
+        assertEquals(ACTION_UP, up.action)
+        assertEquals(Position(800, 1280, 1600, 2560), up.position)
+        sender.release(setOf("B"))
+        assertEquals(2, b.sent.size)
+    }
+
+    @Test
+    fun `removed follower without target gets up on a later send`() {
+        val b = device("B", tablet)
+        device("C", tablet)
+        sender.send(setOf("B", "C"), listOf(touch(ACTION_DOWN, leader(540, 1170))))
+        devices.remove("B")
+        sender.send(setOf("C"), listOf(touch(ACTION_MOVE, leader(108, 234))))
+        devices["B"] = b
+        sender.send(setOf("C"), listOf(touch(ACTION_MOVE, leader(216, 468))))
+        assertEquals(listOf(ACTION_DOWN, ACTION_UP), b.sent.map { (it as InjectTouch).action })
+    }
+
+    @Test
     fun `layoutDiffers`() {
         assertFalse(sender.layoutDiffers(phone, IntSize(1080, 2424)))
         assertTrue(sender.layoutDiffers(phone, tablet))

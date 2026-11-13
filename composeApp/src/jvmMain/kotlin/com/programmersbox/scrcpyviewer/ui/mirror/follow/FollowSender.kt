@@ -2,14 +2,16 @@ package com.programmersbox.scrcpyviewer.ui.mirror.follow
 
 import androidx.compose.ui.unit.IntSize
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
+import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.BackOrScreenOn
+import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.CollapsePanels
+import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.ExpandNotificationPanel
+import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.ExpandSettingsPanel
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.InjectKeycode
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.InjectScroll
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.InjectText
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.InjectTouch
+import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.RotateDevice
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.SetClipboard
-import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.UhidCreate
-import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.UhidDestroy
-import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage.UhidInput
 import com.programmersbox.scrcpyviewer.scrcpy.Position
 import com.programmersbox.scrcpyviewer.ui.mirror.InputMapper.Companion.ACTION_DOWN
 import com.programmersbox.scrcpyviewer.ui.mirror.InputMapper.Companion.ACTION_MOVE
@@ -25,8 +27,8 @@ class FollowTarget(val frameSize: IntSize?, val flags: FollowerFlags, val send: 
 /**
  * Sends the leader's control messages to follower sessions. Touch and scroll positions are moved by fraction of the
  * screen onto each follower's current frame (the server drops a touch whose screen size isn't the current one).
- * Keys, text, clipboard and the other position-free messages go verbatim; UHID messages never go (they belong to the
- * leader's own HID devices).
+ * Keys, text, clipboard, rotate, Back and the panel messages go verbatim. Nothing else is followed (an allow-list):
+ * UHID belongs to the leader's own HID devices, and a forwarded GetClipboard would overwrite the computer clipboard.
  *
  * Each follower only gets a gesture it saw start: a follower added while the leader holds a press gets no MOVE / UP
  * until the next DOWN, and a follower dropped (or [release]d) while its press is held gets an `ACTION_UP` at its last
@@ -39,7 +41,8 @@ class FollowSender(private val target: (serial: String) -> FollowTarget?) {
 
     fun send(followers: Set<String>, messages: List<ControlMessage>) {
         release(previous - followers)
-        previous = followers
+        // A dropped follower whose UP couldn't go yet (no target or frame) is retried on the next call.
+        previous = followers + (pressed.keys - followers)
         for (serial in followers) {
             val t = target(serial) ?: continue
             for (msg in messages) forward(serial, t, msg)
@@ -49,9 +52,11 @@ class FollowSender(private val target: (serial: String) -> FollowTarget?) {
     /** Sends `ACTION_UP` at the last forwarded position to each of [followers] that has a press in progress. */
     fun release(followers: Set<String>) {
         for (serial in followers) {
-            val last = pressed.remove(serial) ?: continue
+            // The press stays stored until its UP is sent, so a later call can still deliver it.
+            val last = pressed[serial] ?: continue
             val t = target(serial) ?: continue
             val size = t.frameSize ?: continue
+            pressed.remove(serial)
             val position = last.position.let { if (it.screenWidth == size.width && it.screenHeight == size.height) it else remap(it, size) }
             t.send(
                 InjectTouch(
@@ -88,14 +93,16 @@ class FollowSender(private val target: (serial: String) -> FollowTarget?) {
     private fun forward(serial: String, t: FollowTarget, msg: ControlMessage) {
         if (!t.flags.control) return
         when (msg) {
-            is UhidCreate, is UhidInput, is UhidDestroy -> Unit
             is InjectTouch -> touch(serial, t, msg)
             is InjectScroll -> if (t.flags.mouse) {
                 val size = t.frameSize ?: return
                 t.send(msg.copy(position = remap(msg.position, size)))
             }
             is InjectKeycode, is InjectText, is SetClipboard -> if (t.flags.keyboard) t.send(msg)
-            else -> t.send(msg)
+            is RotateDevice, is BackOrScreenOn, is ExpandNotificationPanel, is ExpandSettingsPanel, is CollapsePanels -> t.send(msg)
+            // Not followed: UHID (the leader's own HID devices), GetClipboard (the follower's reply would overwrite
+            // the computer clipboard), display power, resize, scan, start app, reset video, camera, keyboard settings.
+            else -> Unit
         }
     }
 
