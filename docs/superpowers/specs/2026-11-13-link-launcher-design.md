@@ -39,8 +39,9 @@ the device, shows exactly what happened, and keeps a history.
    It updates as fields change.
 6. **Open on device** button (spinner while running) and **Save as quick action**.
 7. **Result** strip (expands 400 ms, colour by outcome):
-   - Success: "Opened in <app label> · <cold|warm> start <n> ms" plus the raw `Status / LaunchState / TotalTime`
-     line in small monospace.
+   - Success: "Opened in <app label> · <cold|warm|hot> start <n> ms" plus the raw `Status / LaunchState / TotalTime`
+     line in small monospace. Android 16 reports `LaunchState: UNKNOWN (0)` and only `WaitTime`: then
+     "Opened in <app label> · <n> ms" (time is TotalTime, else WaitTime; omitted if neither exists).
    - Failure: "No app on this device opens this link" (+ " with <app>" when one was chosen) plus the raw `am` error
      line; the strip shakes once (400 ms).
 8. **History**: starred links first (with a divider), then recent links for this device, newest first, capped at 50.
@@ -51,8 +52,9 @@ the device, shows exactly what happened, and keeps a history.
 ## Command
 
 `am start -W [-a <action>] [-c <category>] -d '<link>' [--es|--ei|--ez <key> <value>] [--activity-clear-task]
-[<package>]`, prefixed with `am force-stop <package> && ` for a cold start. Intent URIs (`intent:`) are passed with
-`-d` and no `-a`/`-c` (the URI carries them). Values are single-quoted with `DeviceApps.quote`. Runs through
+[<package>]`, prefixed with `am force-stop <package> && ` for a cold start. Intent URIs (`intent:`) are passed as the
+positional argument (not `-d`, which fails to resolve) with no `-a`/`-c`/package: the URI carries them, so "Open with"
+is ignored for them (no force-stop either). Values are single-quoted with `DeviceApps.quote`. Runs through
 `ShellRunner.run` (30 s timeout).
 
 Parsing `am start -W` output: `Status: ok`, `LaunchState: COLD|WARM|HOT`, `TotalTime: n`, the activity's package

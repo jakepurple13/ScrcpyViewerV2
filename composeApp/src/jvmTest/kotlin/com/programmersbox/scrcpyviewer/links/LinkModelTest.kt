@@ -75,7 +75,44 @@ class LinkModelTest {
             action = "android.intent.action.VIEW",
             category = "android.intent.category.BROWSABLE",
         )
-        assertEquals("am start -W -d 'intent://x#Intent;scheme=a;end'", deviceCommand(r))
+        assertEquals("am start -W 'intent://x#Intent;scheme=a;end'", deviceCommand(r))
+    }
+
+    @Test
+    fun intentUriIsPositionalAndIgnoresPackage() {
+        val uri = "intent://www.example.com/#Intent;scheme=https;package=com.android.chrome;end"
+        val r = LinkRequest(uri, packageName = "other.app", before = Before.ForceStop, extra = Extra(ExtraType.Bool, "k", "true"))
+        assertEquals("am start -W --ez 'k' 'true' '$uri'", deviceCommand(r))
+        assertEquals(
+            "am start -W --activity-clear-task '$uri'",
+            deviceCommand(LinkRequest(uri, before = Before.ClearTask)),
+        )
+    }
+
+    @Test
+    fun parseAndroid16UnknownState() {
+        val out = """
+            Starting: Intent { act=android.intent.action.VIEW dat=https://www.example.com/... pkg=com.android.chrome }
+            Status: ok
+            LaunchState: UNKNOWN (0)
+            Activity: com.android.chrome/org.chromium.chrome.browser.document.ChromeLauncherActivity
+            WaitTime: 189
+            Complete
+        """.trimIndent()
+        val r = parseAmStart(out)
+        assertTrue(r.ok)
+        assertNull(r.launchState)
+        assertNull(r.totalMs)
+        assertEquals(189L, r.waitMs)
+        assertEquals("com.android.chrome", r.packageName)
+        assertEquals("Opened in Chrome · 189 ms", r.summary("Chrome"))
+    }
+
+    @Test
+    fun summaries() {
+        assertEquals("Opened in X · cold start 412 ms", LaunchResult(true, launchState = "COLD", totalMs = 412, waitMs = 420).summary("X"))
+        assertEquals("Opened in X · hot start 9 ms", LaunchResult(true, launchState = "HOT", waitMs = 9).summary("X"))
+        assertEquals("Opened in X", LaunchResult(true).summary("X"))
     }
 
     @Test
