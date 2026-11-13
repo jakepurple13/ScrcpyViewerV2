@@ -160,14 +160,11 @@ fun rememberFollowStrip(
     captureOn: Boolean,
     ownFrame: IntSize?,
     reduceMotion: Boolean,
+    control: Boolean = true,
 ): FollowStrip {
     val state by following.state.collectAsState()
     val sessions by open.collectAsState()
-    val role = when {
-        state.leader == serial -> FollowRole.Leader(state.followers)
-        serial in state.followers && state.leader != null -> FollowRole.Follower(state.leader!!)
-        else -> FollowRole.None
-    }
+    val role = state.roleOf(serial)
     fun titleOf(s: String) = devices.firstOrNull { it.serial == s }?.let(::deviceTitle) ?: s
     val others = remember(serial, sessions.keys, devices) {
         sessions.keys.filter { it != serial }.map { FollowCandidate(it, titleOf(it)) }
@@ -185,6 +182,7 @@ fun rememberFollowStrip(
         layoutDiffers = differs,
         onChange = onChange,
         reduceMotion = reduceMotion,
+        control = control,
     )
 }
 

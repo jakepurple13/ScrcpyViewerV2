@@ -47,6 +47,14 @@ class StripRoomTest {
     }
 
     @Test
+    fun `a no-control window has no send control, neither in the bar nor in the overflow`() {
+        val noControl = strip(FollowRole.None).copy(control = false)
+        for (w in (300..1400 step 10).map { it.dp }) {
+            assertEquals(room(w, null), room(w, noControl), "today's cutoffs at $w")
+        }
+    }
+
+    @Test
     fun `a follower never shows the send control`() {
         for (w in (300..1400 step 10).map { it.dp }) {
             assertEquals(SendPlace.None, room(w, strip(FollowRole.Follower("A")), chip).send, "at $w")

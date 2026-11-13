@@ -612,6 +612,7 @@ fun MirrorWindow(
         captureOn = capture != null,
         ownFrame = frameSize,
         reduceMotion = reduceMotion,
+        control = control,
     )
     val followRings = remember(session) { ClickIndicator(mapper::displayedRect) }
     FollowedTouchRings(serial, following, followRings, mapper::toView)

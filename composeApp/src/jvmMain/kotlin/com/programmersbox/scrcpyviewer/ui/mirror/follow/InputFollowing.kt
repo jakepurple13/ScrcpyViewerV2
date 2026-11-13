@@ -14,7 +14,14 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 
 /** Who leads and who follows. One leader at a time; both are serials of open mirrors. */
-data class FollowState(val leader: String? = null, val followers: Set<String> = emptySet())
+data class FollowState(val leader: String? = null, val followers: Set<String> = emptySet()) {
+    /** [serial]'s part in this link. */
+    fun roleOf(serial: String): FollowRole = when {
+        leader == serial -> FollowRole.Leader(followers)
+        serial in followers && leader != null -> FollowRole.Follower(leader)
+        else -> FollowRole.None
+    }
+}
 
 /** A touch the leader sent to follower [serial]: its `InjectTouch` action at [position] in that follower's frame. */
 data class FollowedTouch(val serial: String, val action: Int, val position: Position)
@@ -62,14 +69,7 @@ class InputFollowing(
         _touches.tryEmit(touch)
     }
 
-    fun roleOf(serial: String): FollowRole {
-        val s = _state.value
-        return when {
-            s.leader == serial -> FollowRole.Leader(s.followers)
-            serial in s.followers && s.leader != null -> FollowRole.Follower(s.leader)
-            else -> FollowRole.None
-        }
-    }
+    fun roleOf(serial: String): FollowRole = _state.value.roleOf(serial)
 
     private fun FollowState.pruned(serials: Set<String>): FollowState {
         val l = leader ?: return FollowState()

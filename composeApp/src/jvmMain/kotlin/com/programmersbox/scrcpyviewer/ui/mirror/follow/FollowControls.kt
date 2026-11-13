@@ -90,6 +90,8 @@ data class FollowStrip(
     val onChange: (Set<String>) -> Unit,
     /** The system asks for reduced motion: fades instead of movement, no pulse. */
     val reduceMotion: Boolean = false,
+    /** This window's options let it send input (not `no-control`): without it there is no "Send input to…". */
+    val control: Boolean = true,
 )
 
 const val SEND_INPUT_IDLE = "Send input to…"

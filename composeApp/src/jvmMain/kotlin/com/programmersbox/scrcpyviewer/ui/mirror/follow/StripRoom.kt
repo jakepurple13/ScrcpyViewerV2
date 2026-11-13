@@ -60,7 +60,8 @@ private val GAP = 10.dp
 /**
  * The title bar's layout at strip width [width].
  *
- * - No other mirror window open ([FollowStrip.others] empty) or no [follow]: exactly [mins], no send control.
+ * - No other mirror window open ([FollowStrip.others] empty), no [follow], or a `no-control` window
+ *   ([FollowStrip.control] off: it has no input to send): exactly [mins], no send control.
  * - Leading or idle with other windows: the button with words from [SEND_WORDS_MIN], icon only down to the Fit
  *   cutoff, then in the overflow menu; the copy button and details give it room first.
  * - Following: no send control. Every cutoff moves up by the chip's width ([chip]), so copy, then Fit, then zoom go
@@ -70,7 +71,7 @@ private val GAP = 10.dp
 fun stripRoom(width: Dp, mins: StripMins, hasDetails: Boolean, follow: FollowStrip?, chip: ChipWidths?): StripRoom {
     val following = follow?.role is FollowRole.Follower
     if (following && chip != null) {
-        val differs = follow!!.layoutDiffers
+        val differs = follow.layoutDiffers
         val compact = differs && width < FOLLOWER_FIXED + chip.model + chip.following + chip.differs
         val extra = chip.following + (if (!differs) 0.dp else if (compact) chip.differsIcon else chip.differs) + GAP
         return StripRoom(
@@ -82,7 +83,7 @@ fun stripRoom(width: Dp, mins: StripMins, hasDetails: Boolean, follow: FollowStr
             compactWarning = compact,
         )
     }
-    val canSend = follow != null && !following && follow.others.isNotEmpty()
+    val canSend = follow != null && !following && follow.control && follow.others.isNotEmpty()
     if (!canSend) {
         return StripRoom(
             details = hasDetails && width >= mins.details,
