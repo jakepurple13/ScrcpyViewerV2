@@ -271,6 +271,9 @@ class FileTransferQueue(
     private var runningProcess: Process? = null
     private var cancelRequested = false
 
+    /** What a tracked job's owner does when it is cancelled; held while the job runs. */
+    private val trackedCancels = HashMap<Long, () -> Unit>()
+
     private val _jobs = MutableStateFlow<List<TransferJob>>(emptyList())
     val jobs: StateFlow<List<TransferJob>> = _jobs.asStateFlow()
 
@@ -286,10 +289,12 @@ class FileTransferQueue(
                 for (id in queue) run(id)
             } finally {
                 _progress.value = null
-                // The window went away: nothing left will run.
-                synchronized(lock) {
+                // The window went away: nothing left will run, and tracked transfers are told to stop.
+                val owners = synchronized(lock) {
                     _jobs.value = _jobs.value.map { if (it.active) it.copy(state = JobState.Cancelled) else it }
+                    trackedCancels.values.toList().also { trackedCancels.clear() }
                 }
+                owners.forEach { runCatching(it) }
             }
         }.invokeOnCompletion { queue.cancel() }
     }
@@ -327,12 +332,48 @@ class FileTransferQueue(
     fun enqueuePaths(paths: List<Path>): List<Long> = enqueue(requestsFor(paths))
 
     /**
+     * A transfer that runs outside the queue, shown in [jobs] like the others: a Windows virtual-file drag, whose
+     * bytes Explorer reads through a stream after the drop. It starts [JobState.Running] beside whatever the queue
+     * runs; its owner reports its bytes and how it ended. [cancel] calls [onCancel] (the owner stops reading) and
+     * ends it [JobState.Cancelled]. Null when the device is not connected.
+     */
+    fun track(request: TransferRequest, onCancel: () -> Unit): Tracked? {
+        if (!canTransfer()) return null
+        return synchronized(lock) {
+            val id = nextId++
+            trackedCancels[id] = onCancel
+            _jobs.value += TransferJob(id, request, JobState.Running, 0, request.size, null)
+            Tracked(id)
+        }
+    }
+
+    /** A job made by [track]. Thread-safe; calls after it ended change nothing. */
+    inner class Tracked internal constructor(val id: Long) {
+        private val started = System.nanoTime()
+
+        fun progress(bytes: Long) {
+            val elapsedMs = ((System.nanoTime() - started) / 1_000_000).coerceAtLeast(1)
+            synchronized(lock) {
+                updateJob(id) { if (it.state == JobState.Running) it.copy(bytes = bytes, bytesPerSecond = bytes * 1000 / elapsedMs) else it }
+            }
+        }
+
+        fun finish(state: JobState) {
+            synchronized(lock) {
+                trackedCancels.remove(id)
+                updateJob(id) { if (it.state == JobState.Running) it.copy(state = state) else it }
+            }
+        }
+    }
+
+    /**
      * Stops job [id]: a queued job is removed without running adb; a running one has its adb killed and what it wrote
      * removed (the partial host file of a pull, `rm -f` of the partial device file of a push), then turns
      * [JobState.Cancelled]; nothing is removed when adb had not started yet. No-op once the job ended, and an adb
      * run that already exited successfully still completes the job (a late cancel does not undo it).
      */
     fun cancel(id: Long) {
+        var owner: (() -> Unit)? = null
         val process = synchronized(lock) {
             val job = _jobs.value.find { it.id == id } ?: return
             when (job.state) {
@@ -341,7 +382,11 @@ class FileTransferQueue(
                     pending--
                     null
                 }
-                JobState.Running -> if (runningId == id) {
+                JobState.Running -> if (id in trackedCancels) {
+                    owner = trackedCancels.remove(id)
+                    updateJob(id) { it.copy(state = JobState.Cancelled) }
+                    null
+                } else if (runningId == id) {
                     cancelRequested = true
                     runningProcess
                 } else {
@@ -351,6 +396,8 @@ class FileTransferQueue(
             }
         }
         process?.destroyForcibly()
+        // Outside the lock: the owner may close a stream another thread is reading.
+        owner?.invoke()
     }
 
     /** Forgets the ended job [id]; queued and running jobs stay. */

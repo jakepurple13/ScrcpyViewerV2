@@ -21,6 +21,10 @@ open class DeviceFiles(
         return parseCounts(runner.run(countsCommand(dir, folders)).output)
     }
 
+    /** Every folder and regular file under [names] in [dir] (see [treeCommand]). */
+    open suspend fun tree(dir: String, names: List<String>): List<TreeEntry> =
+        if (names.isEmpty()) emptyList() else parseTree(runner.run(treeCommand(dir, names)).output)
+
     open suspend fun freeSpace(): DeviceSpace? {
         val r = runner.run(freeSpaceCommand())
         return if (r.exitCode == 0) parseFreeSpace(r.output) else null
