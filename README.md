@@ -27,9 +27,18 @@ so you do not need to install scrcpy, adb or FFmpeg.
 - **Live device list.** Uses adb's `track-devices` stream, so devices appear and disappear as they connect. You never
   need to press refresh.
 - **Device states.** Shows each device as ready, unauthorized (accept the prompt on the phone), or offline.
-- **Wi-Fi debugging.** Pair a device with a QR code, a pairing code, or an IP address. You can also right-click a USB
-  device to switch it to Wi-Fi. Devices on the network are found through mDNS, with a `dns-sd` fallback on macOS.
-- **Restart adb** from the app when the adb server gets stuck.
+- **Simple and advanced views.** Clicking a device opens a simple pane: connection, Android version, serial, the
+  chosen preset and a large **Mirror** button. **Advanced options** opens the full options pane. The app remembers
+  which view you used.
+- **Info tab.** Battery, storage, memory, display, network and software details for the selected device. Battery and
+  memory refresh every 5 seconds. **Copy as text** copies every field, for bug reports.
+- **Wi-Fi debugging.** Pair a device with a QR code, a pairing code, or an IP address, or scan the network for
+  devices. You can also switch a USB device to Wi-Fi with one click. Devices on the network are found through mDNS,
+  with a `dns-sd` fallback on macOS.
+- **Restart adb** from the device list when the adb server gets stuck. If mirror windows or Wi-Fi devices would be
+  lost, the app asks first.
+- **Emulators.** A collapsible Emulators section under Connected lists your Android Virtual Devices. Start one with no
+  emulator window and mirror it in Scrcpy Vwr, or stop one, including emulators started elsewhere.
 
 ### Options and presets
 - **Every scrcpy 5.0 option** as a checkbox. Options that take a value add a text field or dropdown.
@@ -46,14 +55,61 @@ so you do not need to install scrcpy, adb or FFmpeg.
 - **Mouse and keyboard input**, including scrcpy's UHID keyboard and mouse modes.
 - **Navigation buttons:** Back, Home, Recents, Volume up/down, Rotate and Power.
 - **Audio playback** from the device.
-- **Screenshots and screen recordings**, saved to a capture folder you choose in Settings.
+- **Screenshots and screen recordings**, saved to a capture folder you choose in Settings. After a screenshot, a
+  thumbnail shows for a few seconds. From it you can copy the image as PNG or export a GIF.
 - **Zoom** from 25% to 400%, plus fit to window.
 - **Drag and drop files.** Drop an APK to install it. Other files go to `/sdcard/Download/`.
 - **Reconnect.** If a device disconnects, the window keeps the last frame and offers Reconnect when the device returns.
+- **Send input to other windows.** One mirror window can lead. Its taps, swipes, scrolls, typing, nav buttons and
+  quick actions also go to the other mirror windows you pick. Positions map by percent of each device's screen.
+- **Arrange mirror windows.** An Arrange button in the title bar (and in the menu bar icon) tiles open mirror windows:
+  As placed, Grid, Side by side, Focus this window or Cascade. Windows keep their device's shape. **Keep tiled**
+  re-tiles them as windows open and close.
+
+### Quick actions sheet
+A bolt button in each mirror window's side toolbar opens a sheet beside the device screen. The window grows to make
+room, so the mirrored image keeps its size. Drag the sheet's edge to resize it. It has these tabs:
+
+- **Actions.** Quick-settings tiles: dark mode, Wi-Fi, airplane mode, show taps, auto-rotate, Developer options and
+  Reboot. Your own custom actions appear below them.
+- **Apps.** Every launchable app, with icon, name, package and version. Search, filter to user or system apps, and
+  Launch, Force stop, Uninstall or Copy package name.
+- **Shell.** An `adb shell` console with live output, Stop and Ctrl+C, a filter, Pause, Copy and command history.
+- **Files.** A file browser for the device's shared storage. Pull, push, move, rename, delete and make folders.
+  Drag files in from your computer, or drag rows out to Finder or Explorer. On macOS and Windows the copy starts after
+  you drop, with no wait. A transfers tray shows progress, speed and Cancel.
+- **Links.** Open a URL or deep link on the device. History is kept per device, and starred links are shared by all
+  devices.
+- **Logcat.** Live `adb logcat` with Android Studio's filter language (`tag:`, `package:`, `level:`, `is:crash`,
+  regex and more), level colors, folded stack traces and autocomplete. **Show in Logcat** in the Apps tab filters to
+  one app. **Open in new window** moves Logcat to its own window, with an always-on-top pin.
+
+### Custom actions
+- **Actions page** in the main window. Build a **Toggle** (with a command that reads its state) or a **Run once**
+  action, with a name, an icon and `adb shell` commands.
+- **Variables.** `{variables}` ask for a value when the action runs: text, a list, or an app picked from the device.
+- **Output** goes to a toast, the Shell tab or nowhere. Actions can ask for confirmation first.
+- **16 templates** such as Grant permission, Start activity, Send broadcast and Stay awake.
+- **Import and export** actions as JSON. The import preview shows every command and never runs anything.
+- **AI skill.** Settings › AI installs a skill into Claude Code, Gemini CLI, Codex, Grok CLI or a folder you pick.
+  The AI tool can then write actions that appear in the app within about 2 seconds, in a "Made by AI" group.
+
+### Appearance
+- **Light and dark mode**, with 11 color palettes, neon palettes, a Custom palette editor and a pure black option.
+- **Styles:** Material, Glass (see-through panes; on macOS the real desktop blurs behind them), Soft (neumorphic) and
+  Retro 95.
+- **Motion everywhere.** Theme changes reveal in a circle from the control you clicked. Mirror windows grow out of the
+  Mirror button and shrink back into it when closed. The main window has a launch and quit animation (Icon unfold,
+  Screen on or Off). All motion follows your OS reduce-motion setting.
+- **Menu bar / system tray icon.** Its menu lists connected devices: mirror one, or bring its mirror window forward.
+  It also has Open Scrcpy Vwr, Settings… and Quit. You can turn it off in Settings › Appearance.
 
 ### App
-- Material 3 theme, light and dark.
-- Custom Material title bar on every window.
+- **Keyboard shortcuts.** Settings › Keyboard shortcuts lets you record shortcuts for Send input to other windows and
+  each Arrange layout. None are set by default.
+- **Searchable settings**, grouped into Appearance, Mirroring, Keyboard shortcuts, adb, AI, Updates and Help.
+- **Updates.** Checks on launch and every 6 hours. It can also download updates in the background and install them
+  when you quit.
 - First-run welcome guide. You can reopen it from Settings.
 - Uses the bundled adb by default, or a custom adb path you choose.
 
@@ -92,6 +148,10 @@ The app checks for updates when it opens and can install them itself (Settings >
 | Concurrency    | kotlinx.coroutines                                                                              |
 | Serialization  | kotlinx.serialization (JSON settings and presets)                                               |
 | QR codes       | [QRose](https://github.com/alexzhirkevich/qrose) (Wi-Fi pairing)                                |
+| DI             | [Koin](https://insert-koin.io) 4.2 with the Koin compiler plugin                                |
+| App icons      | [apk-parser](https://github.com/hsiafan/apk-parser) (reads icons out of APKs for the Apps tab)  |
+| Native calls   | [JNA](https://github.com/java-native-access/jna) (macOS desktop blur, file promise drags, Windows virtual-file drags) |
+| Tray icon      | Nucleus ComposeNativeTray (macOS menu bar / Windows and Linux system tray)                       |
 | Runtime        | JDK 25, the Gradle daemon JVM (compiled with JDK 21 toolchain); no JetBrains Runtime needed     |
 | Build          | Gradle (Kotlin DSL) with version catalog, [Nucleus](https://nucleusframework.dev) packaging (electron-builder) |
 | Updates        | Nucleus updater (`latest-*.yml` metadata on GitHub releases)                                     |
@@ -143,20 +203,26 @@ platform-tools adb for each OS.
 
 ```
 composeApp/src/jvmMain/kotlin/com/programmersbox/scrcpyviewer/
+├── actions/    custom quick actions: model, storage, templates, import/export, AI skill and inbox
 ├── adb/        adb wire protocol client, device tracking, Wi-Fi pairing and mDNS discovery
+├── apps/       device app listing and icon extraction
+├── di/         Koin modules
+├── info/       device info reading and parsing
+├── logcat/     logcat stream, line parsing and the filter language
 ├── scrcpy/     scrcpy-server launcher, stream protocol, control and device messages
 ├── media/      FFmpeg video decoding, audio playback, screenshots and recording
 ├── options/    scrcpy option catalog, values and command-line / server-argument generation
 ├── presets/    preset model, JSON codec, storage and import planning
 ├── state/      app settings and per-device option storage
-├── files/      file push and APK install
+├── files/      device file browser, transfers and APK install
 ├── tools/      bundled adb and scrcpy-server lookup
-└── ui/         Compose screens: devices, mirror, presets, settings, onboarding, window chrome, theme
+├── update/     update checks and downloads
+└── ui/         Compose screens: devices, mirror, actions, presets, settings, onboarding, window chrome, theme
 ```
 
 ## Data location
 
-Settings, presets and per-device options are stored as JSON in:
+Settings, presets, custom actions and per-device options are stored as JSON in:
 
 | OS      | Path                                                         |
 |---------|--------------------------------------------------------------|
