@@ -231,9 +231,36 @@ class QuickActionsLogcatTest {
     fun `dock while disconnected selects Logcat but leaves the sheet closed`() = runTest {
         val f = fixture() // no device: never enabled
         f.logcat.popOut()
+        f.logcat.play()
+        runCurrent()
+        assertEquals(LogcatRun.Running, f.logcat.run)
         f.logcat.dock()
         assertEquals(false, f.qa.open)
         assertEquals(SheetTab.Logcat, f.memory.tab)
+        // No panel shows it, so the stream stops as when the tab is left.
+        assertEquals(LogcatRun.StoppedByLeaving, f.logcat.run)
+    }
+
+    @Test
+    fun `while disconnected Play does nothing in the window, and docking leaves logcat stopped`() = runTest {
+        val f = fixture()
+        f.logcat.popOut()
+        f.qa.onSessionStatus(SessionStatus.Disconnected)
+        assertEquals(false, f.logcat.connected)
+        assertEquals(false, f.logcat.canPlay)
+        f.logcat.play()
+        f.logcat.toggle() // Space
+        runCurrent()
+        assertEquals(LogcatRun.NotStarted, f.logcat.run)
+        assertEquals(0, f.source.starts)
+        f.logcat.dock()
+        assertEquals(LogcatRun.NotStarted, f.logcat.run)
+
+        f.qa.onSessionStatus(SessionStatus.Running)
+        assertEquals(true, f.logcat.canPlay)
+        f.logcat.play()
+        runCurrent()
+        assertEquals(LogcatRun.Running, f.logcat.run)
     }
 
     @Test

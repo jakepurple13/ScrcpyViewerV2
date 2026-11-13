@@ -211,6 +211,26 @@ class LogcatToolbarTest {
     }
 
     @Test
+    fun `while disconnected both Play buttons show disabled and neither they nor Space start logcat`() = onEdt {
+        controller.connected = false
+        withScene {
+            val plays = nodes().filter { it.config.getOrNull(SemanticsProperties.ContentDescription)?.contains("Start logcat") == true }
+            assertEquals(2, plays.size) // the toolbar's and the start card's
+            assertTrue(plays.all { SemanticsProperties.Disabled in it.config })
+            plays.forEach { click(it) }
+            clickList()
+            space()
+            settle()
+            assertEquals(LogcatRun.NotStarted, controller.run)
+            assertEquals(0, source.streams.size)
+
+            controller.connected = true
+            frames(5)
+            assertTrue(nodes().none { SemanticsProperties.Disabled in it.config && it.config.getOrNull(SemanticsProperties.ContentDescription)?.contains("Start logcat") == true })
+        }
+    }
+
+    @Test
     fun `a nudge bump starts the pulse animation on the Play button`() = onEdt {
         withScene {
             frames(10)

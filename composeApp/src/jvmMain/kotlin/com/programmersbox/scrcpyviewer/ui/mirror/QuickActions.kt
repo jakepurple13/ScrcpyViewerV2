@@ -366,6 +366,7 @@ class QuickActions internal constructor(
      */
     internal fun onSessionStatus(status: SessionStatus) {
         connected = status != SessionStatus.Disconnected && status != SessionStatus.Failed
+        logcat?.connected = connected
         if (!connected) {
             logcat?.takeIf { it.popped }?.pause()
             close()
@@ -392,7 +393,8 @@ class QuickActions internal constructor(
 
     /**
      * Logcat came back from its own window ([LogcatController.dock]): shows its tab as it is, opening the sheet when it
-     * can. Nothing stops and Play doesn't pulse.
+     * can. Nothing stops and Play doesn't pulse. When the sheet can't open (disconnected) the stream stops as if the
+     * tab were left, since no panel would show it.
      */
     private fun showLogcatTab() {
         tab = SheetTab.Logcat
@@ -400,6 +402,8 @@ class QuickActions internal constructor(
         if (!open && enabled) {
             open = true
             refresh()
+        } else if (!open) {
+            logcat?.stopForLeaving()
         }
     }
 

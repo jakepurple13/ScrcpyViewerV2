@@ -58,11 +58,11 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 
 /**
- * "Logcat isn't running" over the list with a big Play calling [onPlay]. It fades and scales to 0.97 as it leaves
- * (300 ms).
+ * "Logcat isn't running" over the list with a big Play calling [onPlay], disabled unless [canPlay]. It fades and
+ * scales to 0.97 as it leaves (300 ms).
  */
 @Composable
-internal fun BoxScope.LogcatStartCard(visible: Boolean, motion: Boolean, onPlay: () -> Unit) {
+internal fun BoxScope.LogcatStartCard(visible: Boolean, motion: Boolean, canPlay: Boolean, onPlay: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     AnimatedVisibility(
         visible,
@@ -75,7 +75,7 @@ internal fun BoxScope.LogcatStartCard(visible: Boolean, motion: Boolean, onPlay:
             verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            BigPlay(motion, onPlay)
+            BigPlay(motion, canPlay, onPlay)
             Spacer(Modifier.height(6.dp))
             Text("Logcat isn't running", style = MaterialTheme.typography.titleSmall, color = scheme.onSurface, fontWeight = FontWeight.SemiBold)
             Text(
@@ -89,21 +89,26 @@ internal fun BoxScope.LogcatStartCard(visible: Boolean, motion: Boolean, onPlay:
     }
 }
 
-/** The 56 dp round Play; grows to 1.06 on hover (200 ms). */
+/**
+ * The 56 dp round Play; grows to 1.06 on hover (200 ms). Unless [enabled] it shows Material's disabled colors
+ * (onSurface at 12 % behind, 38 % on the icon), doesn't grow and keeps the default cursor.
+ */
 @Composable
-private fun BigPlay(motion: Boolean, onPlay: () -> Unit) {
+private fun BigPlay(motion: Boolean, enabled: Boolean, onPlay: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
-    val scale by animateFloatAsState(if (hovered && motion) 1.06f else 1f, tween(200, easing = EmphasizedDecelerate))
+    val scale by animateFloatAsState(if (hovered && motion && enabled) 1.06f else 1f, tween(200, easing = EmphasizedDecelerate))
+    val container = if (enabled) scheme.primary else scheme.onSurface.copy(alpha = 0.12f)
+    val tint = if (enabled) scheme.onPrimary else scheme.onSurface.copy(alpha = 0.38f)
     Box(
-        Modifier.size(56.dp).graphicsLayer { scaleX = scale; scaleY = scale }.clip(CircleShape).background(scheme.primary)
-            .hoverable(hover).pointerHoverIcon(PointerIcon.Hand)
-            .clickable(interactionSource = hover, indication = null, role = Role.Button, onClick = onPlay)
+        Modifier.size(56.dp).graphicsLayer { scaleX = scale; scaleY = scale }.clip(CircleShape).background(container)
+            .hoverable(hover, enabled).then(if (enabled) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier)
+            .clickable(interactionSource = hover, indication = null, enabled = enabled, role = Role.Button, onClick = onPlay)
             .semantics { contentDescription = "Start logcat" },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = scheme.onPrimary)
+        Icon(Icons.Filled.PlayArrow, null, Modifier.size(28.dp), tint = tint)
     }
 }
 

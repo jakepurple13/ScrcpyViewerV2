@@ -195,6 +195,7 @@ private fun PlayPauseButton(controller: LogcatController, motion: Boolean) {
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
         Button(
             onClick = controller::toggle,
+            enabled = running || controller.canPlay,
             modifier = Modifier.width(104.dp).height(36.dp).playPulse(controller, motion)
                 .semantics { contentDescription = description },
             shape = ButtonShape,

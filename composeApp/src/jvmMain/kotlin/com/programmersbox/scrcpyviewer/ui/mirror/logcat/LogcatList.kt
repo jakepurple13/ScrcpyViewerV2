@@ -302,7 +302,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
                 onClick = { scope.launch { follow.jump(motion) } },
                 Modifier.align(Alignment.BottomCenter),
             )
-            LogcatStartCard(run == LogcatRun.NotStarted, motion, controller::play)
+            LogcatStartCard(run == LogcatRun.NotStarted, motion, controller.canPlay, controller::play)
         }
     }
 }

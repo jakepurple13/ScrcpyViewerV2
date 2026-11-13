@@ -86,6 +86,16 @@ class LogcatController(
     var run by mutableStateOf(LogcatRun.NotStarted)
         private set
 
+    /**
+     * False while the device's session is disconnected (the sheet sets it): [play] does nothing and Play shows
+     * disabled, in the sheet and in the own window. Pause still works.
+     */
+    var connected by mutableStateOf(true)
+        internal set
+
+    /** Play can start or resume the stream now. */
+    val canPlay: Boolean get() = source != null && connected
+
     /** Host `HH:MM:SS` when the stream last stopped; null while running or before the first play. */
     var pausedAt by mutableStateOf<String?>(null)
         private set
@@ -242,10 +252,10 @@ class LogcatController(
     private var lookupJob: Job? = null
     private var lastLookupAt = Long.MIN_VALUE
 
-    /** Starts the stream, or resumes it from the newest line received. */
+    /** Starts the stream, or resumes it from the newest line received. Does nothing while not [connected]. */
     fun play() {
         val src = source ?: return
-        if (run == LogcatRun.Running) return
+        if (run == LogcatRun.Running || !connected) return
         val since = if (run == LogcatRun.NotStarted) null else newestTs
         if (run != LogcatRun.NotStarted) {
             val now = hostTime(clock())
