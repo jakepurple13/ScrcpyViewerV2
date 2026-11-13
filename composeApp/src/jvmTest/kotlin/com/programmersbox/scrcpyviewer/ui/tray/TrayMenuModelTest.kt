@@ -1,0 +1,79 @@
+package com.programmersbox.scrcpyviewer.ui.tray
+
+import com.programmersbox.scrcpyviewer.adb.Device
+import com.programmersbox.scrcpyviewer.adb.DeviceState
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class TrayMenuModelTest {
+    private fun device(serial: String, state: DeviceState = DeviceState.Device) =
+        Device(serial, state, "raw", null, null, null, false)
+
+    private fun menu(devices: List<Device>, mirroring: Set<String> = emptySet()) =
+        trayMenu(devices, mirroring) { "T-${it.serial}" }
+
+    private val tail = listOf(
+        TrayRow.Divider,
+        TrayRow.Command("Open Scrcpy Vwr", TrayAction.OpenMain),
+        TrayRow.Command("Settings…", TrayAction.Settings),
+        TrayRow.Divider,
+        TrayRow.Command("Quit Scrcpy Vwr", TrayAction.Quit),
+    )
+
+    @Test
+    fun headerForZeroOneTwoDevices() {
+        assertEquals(TrayRow.Header("No devices connected"), menu(emptyList()).first())
+        assertEquals(TrayRow.Header("Scrcpy Vwr · 1 device"), menu(listOf(device("a"))).first())
+        assertEquals(TrayRow.Header("Scrcpy Vwr · 2 devices"), menu(listOf(device("a"), device("b"))).first())
+    }
+
+    @Test
+    fun emptyMenuHasOnlyHeaderAndTail() {
+        assertEquals(listOf<TrayRow>(TrayRow.Header("No devices connected")) + tail, menu(emptyList()))
+    }
+
+    @Test
+    fun readyDeviceMirrors() {
+        assertEquals(TrayRow.DeviceRow("a", "⚪ T-a — Mirror", TrayAction.Mirror), menu(listOf(device("a")))[2])
+    }
+
+    @Test
+    fun mirroringDeviceFocuses() {
+        assertEquals(
+            TrayRow.DeviceRow("a", "🟢 T-a — Mirroring", TrayAction.Focus),
+            menu(listOf(device("a")), setOf("a"))[2],
+        )
+    }
+
+    @Test
+    fun unauthorizedHasNoAction() {
+        assertEquals(
+            TrayRow.DeviceRow("a", "🟠 T-a — Accept the USB debugging prompt", null),
+            menu(listOf(device("a", DeviceState.Unauthorized)), setOf("a"))[2],
+        )
+    }
+
+    @Test
+    fun offlineHasNoAction() {
+        assertEquals(
+            TrayRow.DeviceRow("a", "⚫ T-a — Offline", null),
+            menu(listOf(device("a", DeviceState.Offline)))[2],
+        )
+    }
+
+    @Test
+    fun orderFollowsDeviceList() {
+        val rows = menu(listOf(device("z"), device("a"))).filterIsInstance<TrayRow.DeviceRow>()
+        assertEquals(listOf("z", "a"), rows.map { it.serial })
+    }
+
+    @Test
+    fun deviceMenuEndsWithTail() {
+        assertEquals(tail, menu(listOf(device("a"))).takeLast(tail.size))
+    }
+
+    @Test
+    fun equalInputsGiveEqualModels() {
+        assertEquals(menu(listOf(device("a")), setOf("a")), menu(listOf(device("a")), setOf("a")))
+    }
+}
