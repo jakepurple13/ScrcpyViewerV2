@@ -11,6 +11,7 @@ import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.adb.optionsKey
 import com.programmersbox.scrcpyviewer.info.DeviceInfoReader
+import com.programmersbox.scrcpyviewer.links.LinkStore
 import com.programmersbox.scrcpyviewer.media.AudioPlayer
 import com.programmersbox.scrcpyviewer.media.DelayedVideoSink
 import com.programmersbox.scrcpyviewer.media.VideoDecoder
@@ -92,6 +93,9 @@ class StorageModule {
 
     @Singleton
     fun actionStore(dataDir: DataDir): ActionStore = ActionStore(dataDir.path.resolve("actions.json"))
+
+    @Singleton
+    fun linkStore(dataDir: DataDir): LinkStore = LinkStore(dataDir.path.resolve("links.json"))
 
     /** Watches `actions-inbox` for action files AI tools drop in; `main()` starts it. */
     @Singleton
