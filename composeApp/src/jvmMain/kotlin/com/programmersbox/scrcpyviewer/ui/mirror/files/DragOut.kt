@@ -159,6 +159,9 @@ class DragOutController(
     private val jobUpdates: Flow<List<TransferJob>>? = null,
     /** Where promised pulls are queued from (the UI thread). */
     private val ui: CoroutineContext = Dispatchers.Main,
+    private val virtual: VirtualDragStarter? = null,
+    /** The virtual files of [names] (folders listed); null when they cannot be offered that way. */
+    private val virtualDrag: suspend (names: List<String>) -> VirtualDrag? = { null },
 ) {
     /** One drag-out: its folder and pull jobs. */
     private class Drag(val dir: Path, val ids: Set<Long>) {
@@ -199,6 +202,12 @@ class DragOutController(
             return false
         }
         if (beginPromised(names)) return true
+        if (beginVirtual(names, at)) return true
+        return beginPulled(names, at)
+    }
+
+    /** The pull-first drag: [names] are pulled into a drag folder, then handed to the OS drag. */
+    private fun beginPulled(names: List<String>, at: Offset): Boolean {
         val dir = cache.newDragDir(serial)
         logDragOut("begin: names=$names, at=$at, dragDir=$dir, rule=$rule")
         val ids = pull(names, dir)
@@ -213,6 +222,58 @@ class DragOutController(
         readyFiles = null
         moveToPhase(DragOutPhase.Pulling)
         onJobs(lastJobs)
+        return true
+    }
+
+    /** Lists the folders of a virtual drag; null when none is being prepared. */
+    private var virtualPrep: kotlinx.coroutines.Job? = null
+
+    /**
+     * The virtual-file drag of [names] (Windows): their files are listed (folders take a device call) while the button
+     * stays held, shown as working; then the OS drag runs, blocking until the drop, and nothing is pulled until the
+     * drop target reads. A release or cancel meanwhile starts nothing. Files that cannot be offered that way are
+     * pulled first instead. False when there is no virtual starter.
+     */
+    private fun beginVirtual(names: List<String>, at: Offset): Boolean {
+        val starter = virtual ?: return false
+        logDragOut("begin (virtual): names=$names")
+        pointer = at
+        progress = null
+        moveToPhase(DragOutPhase.Pulling)
+        virtualPrep = scope.launch {
+            val drag = try {
+                virtualDrag(names)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logDragOutWarn("virtual drag: listing failed", e)
+                null
+            }
+            virtualPrep = null
+            // Released or cancelled while listing: never start after a release.
+            if (phase != DragOutPhase.Pulling) return@launch
+            if (drag == null) {
+                logDragOut("virtual drag not possible: pulling first instead")
+                moveToPhase(DragOutPhase.Idle)
+                if (!beginPulled(names, pointer)) onFinished()
+                return@launch
+            }
+            moveToPhase(DragOutPhase.OsDrag)
+            onOsDrag(true)
+            val dropped = try {
+                starter.start(drag)
+            } catch (e: Exception) {
+                logDragOutWarn("virtual drag threw", e)
+                false
+            } finally {
+                onOsDrag(false)
+            }
+            logDragOut("virtual drag ended: dropped=$dropped")
+            // Nothing dropped: nothing will be read.
+            if (!dropped) drag.readsEnded()
+            reset()
+            onFinished()
+        }
         return true
     }
 
@@ -291,6 +352,13 @@ class DragOutController(
     fun cancel() = giveUp()
 
     private fun giveUp() {
+        virtualPrep?.let {
+            logDragOut("giveUp: virtual drag still listing, cancelled")
+            it.cancel()
+            virtualPrep = null
+            reset()
+            return
+        }
         val drag = current ?: return
         if (phase == DragOutPhase.OsDrag) {
             logDragOut("giveUp ignored: OS drag already running")

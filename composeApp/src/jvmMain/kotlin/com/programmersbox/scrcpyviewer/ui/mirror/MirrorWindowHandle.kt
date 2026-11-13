@@ -38,6 +38,9 @@ interface MirrorWindowHandle {
     /** The window's NSWindow on macOS. Null off macOS or before the window has a native peer. */
     val nsWindow: Pointer?
 
+    /** The window's HWND on Windows. Null elsewhere or before the window has a native peer. */
+    val hwnd: Pointer? get() = null
+
     /** Brings the window to the front and asks for the keyboard focus. */
     fun toFront()
 
