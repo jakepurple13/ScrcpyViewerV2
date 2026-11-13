@@ -31,8 +31,8 @@ data class LogcatLine(
 }
 
 private const val HEAD = """^(\d\d-\d\d) (\d\d:\d\d:\d\d\.\d{3})\s+(\d+)\s+(\d+) ([VDIWEAF]) """
-private val threadtime = Regex("$HEAD(.*?)\\s*: (.*)$")
-private val threadtimeEmpty = Regex("$HEAD(.*?)\\s*:$")
+private val threadtime = Regex("$HEAD(.*?)\\s*: (.*)$", RegexOption.DOT_MATCHES_ALL)
+private val threadtimeEmpty = Regex("$HEAD(.*?)\\s*:$", RegexOption.DOT_MATCHES_ALL)
 
 /** Parses one `logcat -v threadtime` line; null for markers and other non-log lines. */
 fun parseThreadtime(line: String): LogcatLine? {

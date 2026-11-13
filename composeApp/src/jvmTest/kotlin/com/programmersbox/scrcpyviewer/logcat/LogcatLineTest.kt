@@ -64,6 +64,23 @@ class LogcatLineTest {
     }
 
     @Test
+    fun `message with a line separator character survives`() {
+        for (sep in listOf(" ", " ", "\u0085", "\r")) {
+            val msg = "a${sep}b"
+            val l = assertNotNull(parseThreadtime("11-13 09:24:01.123  1  2 I Tag: $msg"), "sep U+%04X".format(sep[0].code))
+            assertEquals(msg, l.message)
+        }
+    }
+
+    @Test
+    fun `splitter handles CRLF split across chunks`() {
+        val s = LineSplitter()
+        assertEquals(emptyList(), s.feed("a\r"))
+        assertEquals(listOf("a"), s.feed("\nb"))
+        assertEquals("b", s.flush())
+    }
+
+    @Test
     fun `non-ASCII survives`() {
         val l = assertNotNull(parseThreadtime("11-13 09:24:01.123  1  2 I Tag: Größe 😀"))
         assertEquals("Größe 😀", l.message)
