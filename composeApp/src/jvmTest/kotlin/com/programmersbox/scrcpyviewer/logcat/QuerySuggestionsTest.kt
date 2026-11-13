@@ -91,4 +91,23 @@ class QuerySuggestionsTest {
         val m = suggest(mid, 13, ctx).single()
         assertEquals("level:warn tag: g:x" to 15, m.applyTo(mid))
     }
+
+    @Test
+    fun `accepting a key with the caret inside the token keeps its value`() {
+        fun accept(text: String, caret: Int, label: String = "tag:") =
+            suggest(text, caret, ctx).first { it.label == label }.applyTo(text)
+        assertEquals("tag:x" to 4, accept("tag:x", 2)) // ta|g:x
+        assertEquals("tag:x level:warn" to 4, accept("tag:x level:warn", 1))
+        assertEquals("-tag~:Ok" to 6, accept("-tag~:Ok", 3, "-tag:")) // -ta|g~:Ok keeps the regex op
+        assertEquals("tag: rest" to 4, accept("tagz rest", 2)) // no colon: the whole token goes
+    }
+
+    @Test
+    fun `accepting a value with the caret inside the token replaces the rest of it`() {
+        fun accept(text: String, caret: Int, label: String) =
+            suggest(text, caret, ctx).first { it.label == label }.applyTo(text)
+        assertEquals("level:warn " to 11, accept("level:wa", 7, "level:warn")) // level:w|a
+        assertEquals("level:warn tag:x" to 11, accept("level:wa tag:x", 7, "level:warn"))
+        assertEquals("level:error " to 12, accept("level:erorr", 8, "level:error")) // level:er|orr
+    }
 }
