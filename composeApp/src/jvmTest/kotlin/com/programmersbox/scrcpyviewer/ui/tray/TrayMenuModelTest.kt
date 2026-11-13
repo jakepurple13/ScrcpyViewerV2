@@ -49,8 +49,20 @@ class TrayMenuModelTest {
     fun unauthorizedHasNoAction() {
         assertEquals(
             TrayRow.DeviceRow("a", "🟠 T-a — Accept the USB debugging prompt", null),
-            menu(listOf(device("a", DeviceState.Unauthorized)), setOf("a"))[2],
+            menu(listOf(device("a", DeviceState.Unauthorized)))[2],
         )
+    }
+
+    @Test
+    fun openMirrorFocusesWhateverTheAdbState() {
+        // A window whose device went unauthorized or offline can still be reached from the menu.
+        DeviceState.entries.forEach { state ->
+            assertEquals(
+                TrayRow.DeviceRow("a", "🟢 T-a — Mirroring", TrayAction.Focus),
+                menu(listOf(device("a", state)), setOf("a"))[2],
+                "state $state",
+            )
+        }
     }
 
     @Test

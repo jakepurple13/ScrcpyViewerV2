@@ -32,6 +32,8 @@ class SettingsRegistryTest {
         assertEquals(listOf("launch-quit-animation"), hit("animation"))
         assertEquals(listOf("launch-quit-animation"), hit("startup"))
         assertEquals(listOf("animate-mirror"), hit("zoom"))
+        assertEquals(listOf("tray-icon"), hit("menu bar"))
+        assertEquals(listOf("tray-icon"), hit("system tray"))
     }
 
     @Test
@@ -42,5 +44,13 @@ class SettingsRegistryTest {
         assertEquals("Plays when Scrcpy Vwr opens and quits.", entry.description)
         // Preview tiles below the title, like the Style picker.
         assertEquals(EntryLayout.Block, entry.layout)
+    }
+
+    @Test
+    fun `tray icon row is named for the platform`() {
+        assertEquals("Show icon in menu bar", trayIconSettingTitle(isMac = true))
+        assertEquals("Show icon in system tray", trayIconSettingTitle(isMac = false))
+        val entry = settingsCategories.first { it.id == Appearance }.entries.single { it.id == "tray-icon" }
+        assertEquals(trayIconSettingTitle(), entry.title)
     }
 }

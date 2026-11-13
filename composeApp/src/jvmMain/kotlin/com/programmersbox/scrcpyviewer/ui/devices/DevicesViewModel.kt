@@ -264,7 +264,7 @@ class DevicesViewModel(
     /** Whether [serial] can be mirrored now: it is ready and its options are valid (the right-click Mirror item). */
     fun canMirror(serial: String): Boolean {
         val device = state.value.devices.firstOrNull { it.serial == serial } ?: return false
-        return device.state == DeviceState.Device && options.workingSet(device.optionsKey()).value.values.validate().isEmpty()
+        return options.canMirror(device)
     }
 
     /** Right-click "Connect over Wi-Fi": `tcpip` over USB, then `adb connect`. Ignored while [serial] is switching. */
@@ -405,6 +405,10 @@ fun deviceSummary(devices: List<Device>): String {
     }
     return parts.joinToString(" · ")
 }
+
+/** Whether [device] can be mirrored now: it is ready and its working options are valid (Mirror buttons, tray menu). */
+fun DeviceOptionsStore.canMirror(device: Device): Boolean =
+    device.state == DeviceState.Device && workingSet(device.optionsKey()).value.values.validate().isEmpty()
 
 /** Model from the device's properties, else the model from the adb line (`_` as space), else the serial. */
 fun deviceTitle(device: Device): String =

@@ -79,6 +79,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.recordResultMessage
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavDisplay
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavigator
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
+import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
 import com.programmersbox.scrcpyviewer.ui.onboarding.OnboardingDialog
 import com.programmersbox.scrcpyviewer.ui.presets.NativePresetFileDialogs
 import com.programmersbox.scrcpyviewer.ui.presets.PresetsScreen
@@ -245,6 +246,7 @@ fun App(
     mirrorController: MirrorController = koinInject(),
     appSettings: AppSettings = koinInject(),
     actionsNavigation: ActionsNavigation = koinInject(),
+    mainWindowRequests: MainWindowRequests = koinInject(),
     inbox: ActionInbox = koinInject(),
 ) {
     val update by updateViewModel.state.collectAsStateWithLifecycle()
@@ -275,6 +277,10 @@ fun App(
             // In the single-pane layout, an opened action shows the editor rather than the list.
             if (request.new || request.actionId != null) actionsPanes.navigation.openDetail()
         }
+    }
+    // The tray menu's Settings… (or a device it can't mirror): show that destination. Main.kt raises the window.
+    LaunchedEffect(mainWindowRequests, navigator) {
+        mainWindowRequests.requests.collect { request -> request.route?.let(navigator::select) }
     }
     // Inside AppWindow: follow the window's revealed theme, not the settings directly.
     ScrcpyViewerTheme {

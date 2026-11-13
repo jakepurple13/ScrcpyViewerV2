@@ -74,6 +74,8 @@ data class Settings(
     val launchQuitAnimation: String = LaunchQuitAnimation.IconUnfold.name,
     /** A newer release downloads in the background as soon as it is found, then waits for a restart. */
     val autoDownloadUpdates: Boolean = false,
+    /** The menu bar (macOS) / system tray (Windows, Linux) icon listing the devices. */
+    val showTrayIcon: Boolean = true,
 )
 
 /** Everything the theme reads from [Settings]. */

@@ -28,14 +28,13 @@ fun trayMenu(devices: List<Device>, mirroring: Set<String>, title: (Device) -> S
     if (devices.isNotEmpty()) add(TrayRow.Divider)
     devices.forEach { device ->
         val name = title(device)
-        val (label, action) = when (device.state) {
-            DeviceState.Device ->
-                if (device.serial in mirroring) "🟢 $name — Mirroring" to TrayAction.Focus
-                else "⚪ $name — Mirror" to TrayAction.Mirror
-
-            DeviceState.Unauthorized -> "🟠 $name — Accept the USB debugging prompt" to null
-            DeviceState.Offline -> "⚫ $name — Offline" to null
-            DeviceState.Other -> "⚫ $name — ${device.rawState}" to null
+        // An open mirror is reachable whatever adb now says about its device (unauthorized, offline).
+        val (label, action) = when {
+            device.serial in mirroring -> "🟢 $name — Mirroring" to TrayAction.Focus
+            device.state == DeviceState.Device -> "⚪ $name — Mirror" to TrayAction.Mirror
+            device.state == DeviceState.Unauthorized -> "🟠 $name — Accept the USB debugging prompt" to null
+            device.state == DeviceState.Offline -> "⚫ $name — Offline" to null
+            else -> "⚫ $name — ${device.rawState}" to null
         }
         add(TrayRow.DeviceRow(device.serial, label, action))
     }
