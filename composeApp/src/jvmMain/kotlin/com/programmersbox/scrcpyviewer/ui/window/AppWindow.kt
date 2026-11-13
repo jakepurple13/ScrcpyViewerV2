@@ -57,6 +57,12 @@ import dev.nucleusframework.window.styling.TitleBarMetrics
 import dev.nucleusframework.window.styling.TitleBarStyle
 import kotlin.math.roundToInt
 
+/** The smallest the main window can be dragged to. */
+val MainWindowMinSize = DpSize(360.dp, 480.dp)
+
+/** The smallest a mirror window can be dragged to; applied by the mirror window. */
+val MirrorWindowMinSize = DpSize(344.dp, 360.dp)
+
 /** What a title-bar slot can use: the window's [chrome], and [interactive] for clickable parts of the bar. */
 interface AppTitleBarScope {
     val chrome: WindowChrome
@@ -95,6 +101,8 @@ fun NucleusApplicationScope.AppWindow(
     alwaysOnTop: Boolean = false,
     icon: Painter? = AppIcon.painter,
     titleBarHeight: Dp = 38.dp,
+    /** The smallest size the user can drag the window to; null for no limit. */
+    minSize: DpSize? = null,
     /** Sees each key event of this window before its focused content; true consumes it. */
     onPreviewKeyEvent: (KeyEvent) -> Boolean = { false },
     titleBar: @Composable AppTitleBarScope.() -> Unit,
@@ -120,6 +128,8 @@ fun NucleusApplicationScope.AppWindow(
             onPreviewKeyEvent = onPreviewKeyEvent,
             titleBarStyle = nucleusTitleBarStyle(bar, titleBarHeight),
             transparent = transparent,
+            // Nucleus applies it through NucleusWindow.setMinimumSize (Tao: taoWindow.setMinimumSize).
+            minimumSize = minSize,
         ) {
             // Tao windows run their own Compose scene: the theme, the reveal origin and the clipboard are provided
             // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).

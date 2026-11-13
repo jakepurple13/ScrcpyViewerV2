@@ -28,6 +28,7 @@ import com.programmersbox.scrcpyviewer.state.appTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.neonText
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
+import com.programmersbox.scrcpyviewer.ui.window.MainWindowMinSize
 import com.programmersbox.scrcpyviewer.ui.window.bringToFront
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -90,6 +91,7 @@ fun main() {
             theme = settings.appTheme,
             visible = shuttingDown == null,
             titleBar = { MainTitle() },
+            minSize = MainWindowMinSize,
         ) {
             // A mirror window asked for the Actions screen: App selects the tab, this brings the window forward.
             LaunchedEffect(actionsNavigation) {
