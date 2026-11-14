@@ -102,7 +102,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -237,6 +236,7 @@ import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
 import com.programmersbox.scrcpyviewer.ui.mirror.files.ComposeDragOutStarter
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlash
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlashState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnail
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnailState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishScreenshot
@@ -455,8 +455,8 @@ fun MirrorWindow(
     val thumbnail = remember { ScreenshotThumbnailState(uiScope) }
     DisposableEffect(thumbnail) { onDispose(thumbnail::dispose) }
     val screenshotDragStarter = remember { ComposeDragOutStarter() }
-    /** Bumped per screenshot: the flash over the video. */
-    var screenshotFlashes by remember { mutableIntStateOf(0) }
+    /** The flash over the video, once per screenshot. Out here, so the content re-entering does not replay it. */
+    val screenshotFlash = remember { ScreenshotFlashState() }
 
     /**
      * Copies the frame now (inside VideoFrame.use), encodes and writes the PNG on the IO dispatcher, then shows the
@@ -468,13 +468,16 @@ fun MirrorWindow(
             notify("No frame to capture yet")
             return
         }
-        screenshotFlashes++
+        screenshotFlash.flash()
+        // Taken now, in screenshot order: saves run in parallel and may finish out of order; only the latest shows.
+        val ticket = thumbnail.begin()
         uiScope.launch {
             finishScreenshot(
                 bitmap, currentAfterScreenshot, thumbnail,
                 save = { withContext(Dispatchers.IO) { Screenshot.save(bitmap, Paths.get(currentCaptureDir), currentModel) } },
                 copy = { withContext(Dispatchers.IO) { ImageClipboard.copyPng(it) } }, // blocks up to 5 s
                 notify = ::notify,
+                ticket = ticket,
             )
         }
     }
@@ -1129,7 +1132,7 @@ fun MirrorWindow(
                         followIndicator = followRings,
                         onSheetBounds = { sheetBounds[0] = it },
                         stageOverlay = {
-                            ScreenshotFlash(screenshotFlashes, motion = !reduceMotion)
+                            ScreenshotFlash(screenshotFlash, motion = !reduceMotion)
                             ScreenshotThumbnail(
                                 thumbnail,
                                 motion = !reduceMotion,

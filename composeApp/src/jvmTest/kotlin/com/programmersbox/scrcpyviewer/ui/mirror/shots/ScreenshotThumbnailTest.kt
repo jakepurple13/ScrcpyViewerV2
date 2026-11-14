@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -17,6 +17,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -42,6 +43,7 @@ import kotlin.math.abs
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -375,25 +377,127 @@ class ScreenshotThumbnailTest {
 
     @Test
     fun `the flash fades from 90 percent white to nothing in 450 ms`() = onEdt {
-        var trigger by mutableIntStateOf(0)
+        var flash = ScreenshotFlashState()
+        var shown by mutableStateOf(true)
         fun flashScene(motion: Boolean) = SceneDriver(ImageComposeScene(100, 100, Density(1f)) {
-            Box(Modifier.fillMaxSize().background(Color.Black)) { ScreenshotFlash(trigger, motion) }
+            Box(Modifier.fillMaxSize().background(Color.Black)) { if (shown) ScreenshotFlash(flash, motion) }
         }).also { it.frames(2) }
         val d = flashScene(motion = true)
         assertEquals(0f, d.snapshot()[50, 50].red, 0.01f)
-        trigger++
+        flash.flash()
         val reds = (1..30).map { d.snapshot()[50, 50].red }
         assertTrue(reds.first() > 0.8f, "starts near .9 white: $reds")
         assertTrue(reds.zipWithNext().all { (a, b) -> b <= a + 0.01f }, "only fades: $reds")
         assertTrue(abs(reds[13] - 0.45f) < 0.15f, "about half at 225 ms: $reds")
         assertEquals(0f, reds.last(), 0.01f)
+
+        // Leaving and re-entering the composition does not play it again.
+        shown = false
+        d.frames(2)
+        shown = true
+        val again = (1..10).map { d.snapshot()[50, 50].red }
+        assertTrue(again.all { it < 0.01f }, "no replay on re-entry: $again")
         d.scene.close()
 
-        trigger = 0
+        flash = ScreenshotFlashState()
         val still = flashScene(motion = false)
-        trigger++
+        flash.flash()
         val none = (1..10).map { still.snapshot()[50, 50].red }
         assertTrue(none.all { it < 0.01f }, "no flash with reduced motion: $none")
         still.scene.close()
+    }
+
+    @Test
+    fun `a replaced screenshot stays open while its crossfade slot draws it, then is closed`() = onEdt {
+        val d = scene(motion = true)
+        val red = solid(Color.Red)
+        state.show(file, red)
+        d.frames(30)
+        state.show(file, solid(Color.Blue))
+        // A stalled window: no frames for far longer than any wall-clock delay.
+        advance(60_000)
+        d.frames(2)
+        assertFalse(red.asSkiaBitmap().isClosed, "still drawn by the crossfade")
+        d.frames(30)
+        assertTrue(red.asSkiaBitmap().isClosed, "closed once its slot left")
+        d.scene.close()
+    }
+
+    @Test
+    fun `a dismissed screenshot stays open through the leave animation, then is closed`() = onEdt {
+        val d = scene(motion = true)
+        val red = solid(Color.Red)
+        state.show(file, red)
+        d.frames(30)
+        state.dismiss()
+        d.frames(3)
+        assertFalse(red.asSkiaBitmap().isClosed, "still drawn while it leaves")
+        d.frames(30)
+        assertNull(d.described("Screenshot"))
+        assertTrue(red.asSkiaBitmap().isClosed)
+        d.scene.close()
+    }
+
+    @Test
+    fun `a card that leaves with the pointer on it does not hold the next one`() = onEdt {
+        val d = scene(motion = true)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        d.scene.sendPointerEvent(PointerEventType.Move, d.described("Screenshot")!!.boundsInRoot.center, type = PointerType.Mouse)
+        d.frames(2)
+        assertTrue(state.held.value)
+        d.click(d.described("Close")!!) // the pointer stays where the card was; no Exit comes
+        d.frames(30)
+        assertNull(d.described("Screenshot"))
+        state.show(file, solid(Color.Blue))
+        d.frames(2)
+        advance(THUMBNAIL_MILLIS)
+        d.frames(30)
+        assertNull(state.shown.value, "the timer ran")
+        d.scene.close()
+    }
+
+    @Test
+    fun `the strips beside the overhanging close button do not hold the timer`() = onEdt {
+        val d = scene(motion = true)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        val close = d.described("Close")!!.boundsInRoot
+        // Right of the card, below the ring: in the thumbnail's bounds, outside the card and the ring.
+        d.scene.sendPointerEvent(PointerEventType.Move, Offset(close.center.x + 4f, close.bottom + 30f), type = PointerType.Mouse)
+        d.frames(2)
+        assertFalse(state.held.value)
+        // Card to ring and back: held all the way.
+        d.scene.sendPointerEvent(PointerEventType.Move, Offset(close.left - 20f, close.bottom + 20f), type = PointerType.Mouse)
+        d.frames(2)
+        assertTrue(state.held.value)
+        d.scene.sendPointerEvent(PointerEventType.Move, close.center, type = PointerType.Mouse)
+        d.frames(2)
+        assertTrue(state.held.value)
+        d.scene.close()
+    }
+
+    @Test
+    fun `the timer is held for the whole OS drag`() = onEdt {
+        var heldDuringDrag: Boolean? = null
+        val starter = object : OutboundDragStarter {
+            override fun start(files: List<File>, at: Offset, onEnd: (dropped: Boolean) -> Unit): Boolean {
+                heldDuringDrag = state.held.value
+                onEnd(false)
+                return true
+            }
+        }
+        val d = scene(motion = true, starter = starter)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        val from = d.described("Screenshot")!!.boundsInRoot.center
+        d.scene.sendPointerEvent(PointerEventType.Press, from, type = PointerType.Mouse, button = PointerButton.Primary)
+        d.frame()
+        for (i in 1..10) {
+            d.scene.sendPointerEvent(PointerEventType.Move, from - Offset(8f * i, 0f), type = PointerType.Mouse)
+            d.frame()
+        }
+        assertEquals(true, heldDuringDrag)
+        d.scene.close()
     }
 }

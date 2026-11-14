@@ -117,19 +117,20 @@ class ScreenshotThumbnailStateTest {
         val second = bitmap()
         state.show(file, first)
         val firstShot = state.shown.value!!
+        assertTrue(state.acquire(firstShot)) // the crossfade's slot draws it
         advance(5_000)
         state.show(Paths.get("/tmp/caps/two.png"), second)
         val shot = state.shown.value!!
         assertSame(second, shot.bitmap)
         assertTrue(shot.id != firstShot.id)
         assertEquals(1f, state.remainingFraction)
-        // Kept through the crossfade, then closed.
+        // Kept while its slot is composed, however long that takes (no wall clock), then closed when it leaves.
+        state.hover(true) // held, so the new one stays while time passes
+        advance(60_000)
         assertFalse(first.closed)
-        advance(BITMAP_RELEASE_MILLIS)
+        state.release(firstShot)
         assertTrue(first.closed)
         assertFalse(second.closed)
-        advance(5_999 - BITMAP_RELEASE_MILLIS)
-        assertNotNull(state.shown.value)
     }
 
     @Test
@@ -137,20 +138,78 @@ class ScreenshotThumbnailStateTest {
         val bitmaps = List(10) { bitmap() }
         bitmaps.forEach { state.show(file, it); advance(50) }
         assertSame(bitmaps.last(), state.shown.value?.bitmap)
-        advance(BITMAP_RELEASE_MILLIS)
+        // Never composed: closed at once.
         assertTrue(bitmaps.dropLast(1).all { it.closed })
         assertFalse(bitmaps.last().closed)
     }
 
     @Test
-    fun `dismiss releases the bitmap after the leave animation`() {
+    fun `dismiss keeps the bitmap while a slot draws it and closes it when the slot leaves`() {
+        val b = bitmap()
+        state.show(file, b)
+        val shot = state.shown.value!!
+        state.acquire(shot)
+        state.acquire(shot) // two slots (the leaving card and a crossfade)
+        state.dismiss()
+        assertNull(state.shown.value)
+        state.release(shot)
+        assertFalse(b.closed)
+        state.release(shot)
+        assertTrue(b.closed)
+    }
+
+    @Test
+    fun `dismiss of a never drawn screenshot closes it at once`() {
         val b = bitmap()
         state.show(file, b)
         state.dismiss()
-        assertNull(state.shown.value)
-        assertFalse(b.closed)
-        advance(BITMAP_RELEASE_MILLIS)
         assertTrue(b.closed)
+    }
+
+    @Test
+    fun `a closed shot is not acquired`() {
+        val b = bitmap()
+        state.show(file, b)
+        val shot = state.shown.value!!
+        state.show(file, bitmap()) // closes b: nobody drew it
+        assertFalse(state.acquire(shot))
+        state.release(shot) // no-op, no double close
+    }
+
+    @Test
+    fun `dispose closes a shot a slot still draws`() {
+        val b = bitmap()
+        state.show(file, b)
+        state.acquire(state.shown.value!!)
+        state.dispose()
+        assertTrue(b.closed)
+    }
+
+    @Test
+    fun `a pointer left on a card that went away does not hold the next one`() {
+        state.hover(true) // nothing shown: ignored
+        state.show(file, bitmap())
+        state.hover(true)
+        state.dismiss() // the card leaves with the pointer on it; no Exit comes
+        state.hover(true) // nothing shown: ignored
+        state.show(file, bitmap())
+        advance(THUMBNAIL_MILLIS)
+        assertNull(state.shown.value)
+    }
+
+    @Test
+    fun `an earlier screenshot whose save finishes last is not shown`() {
+        val older = bitmap()
+        val newer = bitmap()
+        val olderTicket = state.begin()
+        val newerTicket = state.begin()
+        scope.launch { finishScreenshot(newer, AfterScreenshot.Thumbnail, state, { Paths.get("/tmp/new.png") }, { Result.success(Unit) }, {}, newerTicket) }
+        scheduler.runCurrent()
+        scope.launch { finishScreenshot(older, AfterScreenshot.Thumbnail, state, { Paths.get("/tmp/old.png") }, { Result.success(Unit) }, {}, olderTicket) }
+        scheduler.runCurrent()
+        assertSame(newer, state.shown.value?.bitmap)
+        assertTrue(older.closed)
+        assertFalse(newer.closed)
     }
 
     @Test
@@ -201,7 +260,7 @@ class ScreenshotThumbnailStateTest {
         copy: suspend (Path) -> Result<Unit> = { Result.success(Unit) },
     ): List<String> {
         val messages = mutableListOf<String>()
-        scope.launch { finishScreenshot(b, mode, state, save, copy) { messages += it } }
+        scope.launch { finishScreenshot(b, mode, state, save, copy, notify = { messages += it }) }
         scheduler.runCurrent()
         return messages
     }

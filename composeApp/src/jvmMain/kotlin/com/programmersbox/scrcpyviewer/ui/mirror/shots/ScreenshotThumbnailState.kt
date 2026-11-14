@@ -23,12 +23,6 @@ const val THUMBNAIL_RESUME_MIN_MILLIS = 2_000L
 /** How long the Copy button shows its check. */
 const val COPIED_MILLIS = 1_500L
 
-/**
- * How long a replaced or dismissed screenshot's bitmap is kept before its native pixels are released: longer than the
- * crossfade (250 ms) and the leave animation (300 ms), which still draw it.
- */
-const val BITMAP_RELEASE_MILLIS = 1_000L
-
 /** A screenshot on show: its saved PNG and the copy of the frame it was made from. [id] is new for every screenshot. */
 class Shot(val file: Path, val bitmap: ImageBitmap, val id: Long)
 
@@ -37,8 +31,11 @@ class Shot(val file: Path, val bitmap: ImageBitmap, val id: Long)
  *
  * It stays [THUMBNAIL_MILLIS]; [hover] holds the timer, and leaving resumes it with at least
  * [THUMBNAIL_RESUME_MIN_MILLIS] left. [touch] (copy, reveal, drag) restarts it at [THUMBNAIL_MILLIS]. A new [show]
- * replaces the screenshot and restarts the timer. The thumbnail owns its bitmaps: a replaced or dismissed one is closed
- * [BITMAP_RELEASE_MILLIS] later (the animations still draw it), and [dispose] closes them all at once.
+ * replaces the screenshot and restarts the timer.
+ *
+ * The thumbnail owns its bitmaps. A replaced or dismissed screenshot is retired: its bitmap is closed once no slot of
+ * the composition draws it any more ([acquire] / [release], tied to the slot's composition, so a stalled or minimized
+ * window never draws a closed bitmap), or at once when none ever did. [dispose] closes them all.
  *
  * Timers run on [scope] and read [clock] (milliseconds), so tests drive both on virtual time. UI thread only.
  */
@@ -62,60 +59,85 @@ class ScreenshotThumbnailState(
     /** Bumped whenever the time left jumps up (a new screenshot, an interaction, a resume to 2 s): the ring refills. */
     val refills: StateFlow<Int> = _refills.asStateFlow()
 
+    private val _hovered = MutableStateFlow(false)
+
+    /** The timer is held (pointer on the card, or an OS drag): the countdown ring need not redraw. */
+    val held: StateFlow<Boolean> = _hovered.asStateFlow()
+
     private var nextId = 0L
-    private var hovered = false
     private var disposed = false
+
+    /** The latest screenshot [begin] handed out; an older one that finishes later is not shown. */
+    private var lastTicket = 0L
+    private var shownTicket = 0L
 
     /** While running: when the timer ends ([clock]). */
     private var deadline = 0L
 
     /** While hovered: the time left, held. */
-    private var held = 0L
+    private var heldMillis = 0L
     private var timer: Job? = null
     private var copiedTimer: Job? = null
 
-    /** Replaced or dismissed bitmaps waiting for their animations to end. */
-    private val retiring = mutableListOf<ImageBitmap>()
+    /** How many composed slots draw each screenshot. */
+    private val drawing = HashMap<Shot, Int>()
+
+    /** Replaced or dismissed screenshots still drawn by some slot: closed when the last one leaves. */
+    private val retired = HashSet<Shot>()
+
+    private var hovered: Boolean
+        get() = _hovered.value
+        set(value) {
+            _hovered.value = value
+        }
 
     /** The time left, in milliseconds. */
     private val remainingMillis: Long
         get() = when {
             _shown.value == null -> 0L
-            hovered -> held
+            hovered -> heldMillis
             else -> (deadline - clock()).coerceIn(0L, THUMBNAIL_MILLIS)
         }
 
     /** The share of [THUMBNAIL_MILLIS] left, 1 to 0, for the countdown ring. Read it every frame; it is not state. */
     val remainingFraction: Float get() = remainingMillis.toFloat() / THUMBNAIL_MILLIS
 
-    /** Shows [file]'s thumbnail, drawn from [bitmap], which the thumbnail now owns. Replaces the one on show. */
-    fun show(file: Path, bitmap: ImageBitmap) {
-        if (disposed) {
+    /** A screenshot is being taken: its ticket for [show]. Saves can finish out of order; only the latest shows. */
+    fun begin(): Long = ++lastTicket
+
+    /**
+     * Shows [file]'s thumbnail, drawn from [bitmap], which the thumbnail now owns. Replaces the one on show. With a
+     * [ticket] older than the one on show (a slower save of an earlier screenshot), [bitmap] is closed instead.
+     */
+    fun show(file: Path, bitmap: ImageBitmap, ticket: Long = begin()) {
+        if (disposed || ticket < shownTicket) {
             close(bitmap)
             return
         }
-        _shown.value?.let { retire(it.bitmap) }
+        shownTicket = ticket
+        _shown.value?.let(::retire)
         _shown.value = Shot(file, bitmap, ++nextId)
         clearCopied()
         restart()
     }
 
-    /** The pointer entered ([on]) or left the thumbnail. */
+    /** The pointer entered ([on]) or left the thumbnail, or an OS drag of it started or ended. */
     fun hover(on: Boolean) {
         if (on == hovered) return
         if (_shown.value == null) {
-            hovered = on
+            // Nothing to hold: a pointer left on a card that went away must not hold the next one.
+            if (!on) hovered = false
             return
         }
         if (on) {
-            held = remainingMillis
+            heldMillis = remainingMillis
             hovered = true
             timer?.cancel()
             timer = null
         } else {
             hovered = false
-            if (held < THUMBNAIL_RESUME_MIN_MILLIS) _refills.value++
-            schedule(held.coerceAtLeast(THUMBNAIL_RESUME_MIN_MILLIS))
+            if (heldMillis < THUMBNAIL_RESUME_MIN_MILLIS) _refills.value++
+            schedule(heldMillis.coerceAtLeast(THUMBNAIL_RESUME_MIN_MILLIS))
         }
     }
 
@@ -144,7 +166,25 @@ class ScreenshotThumbnailState(
         timer = null
         hovered = false
         clearCopied()
-        retire(shot.bitmap)
+        retire(shot)
+    }
+
+    /** A slot of the composition draws [shot] from now on. False when its bitmap is already closed: draw nothing. */
+    fun acquire(shot: Shot): Boolean {
+        if (shot.bitmap.asSkiaBitmap().isClosed) return false
+        drawing[shot] = (drawing[shot] ?: 0) + 1
+        return true
+    }
+
+    /** A slot that [acquire]d [shot] left the composition; a retired shot nobody draws is closed. */
+    fun release(shot: Shot) {
+        val count = drawing[shot] ?: return
+        if (count > 1) {
+            drawing[shot] = count - 1
+            return
+        }
+        drawing.remove(shot)
+        if (retired.remove(shot)) close(shot.bitmap)
     }
 
     /** The window closed: the timers stop and every bitmap is closed now. Later [show]s close theirs at once. */
@@ -155,14 +195,15 @@ class ScreenshotThumbnailState(
         copiedTimer?.cancel()
         _shown.value?.let { close(it.bitmap) }
         _shown.value = null
-        retiring.forEach(::close)
-        retiring.clear()
+        retired.forEach { close(it.bitmap) }
+        retired.clear()
+        drawing.clear()
     }
 
     private fun restart() {
         _refills.value++
         if (hovered) {
-            held = THUMBNAIL_MILLIS
+            heldMillis = THUMBNAIL_MILLIS
             timer?.cancel()
             timer = null
         } else {
@@ -186,22 +227,23 @@ class ScreenshotThumbnailState(
         _copied.value = false
     }
 
-    private fun retire(bitmap: ImageBitmap) {
-        retiring += bitmap
-        scope.launch {
-            delay(BITMAP_RELEASE_MILLIS)
-            if (retiring.remove(bitmap)) close(bitmap)
-        }
+    /** [shot] left the screen: closed now when no slot draws it, else when the last one leaves ([release]). */
+    private fun retire(shot: Shot) {
+        if (drawing.containsKey(shot)) retired += shot else close(shot.bitmap)
     }
 
-    private fun close(bitmap: ImageBitmap) = bitmap.asSkiaBitmap().close()
+    private fun close(bitmap: ImageBitmap) {
+        val skia = bitmap.asSkiaBitmap()
+        if (!skia.isClosed) skia.close()
+    }
 }
 
 /**
  * The rest of a toolbar screenshot once the frame is copied into [bitmap]: [save] writes the PNG, then by [mode] the
  * thumbnail shows (it takes the bitmap) or the image is copied ([copy] runs off the UI thread) and a snackbar says so.
  * A failed save shows "Could not save the screenshot: …" and nothing else. The bitmap is closed unless the thumbnail
- * took it.
+ * took it. [ticket] is [ScreenshotThumbnailState.begin]'s, taken when the frame was copied: a save that finishes after
+ * a later screenshot's is kept on disk but not shown.
  */
 internal suspend fun finishScreenshot(
     bitmap: ImageBitmap,
@@ -210,14 +252,15 @@ internal suspend fun finishScreenshot(
     save: suspend () -> Path,
     copy: suspend (Path) -> Result<Unit>,
     notify: (String) -> Unit,
+    ticket: Long = thumbnail.begin(),
 ) {
     var kept = false
     try {
         val file = save()
         when (mode) {
             AfterScreenshot.Thumbnail -> {
-                thumbnail.show(file, bitmap)
-                kept = true
+                kept = true // show() takes it, or closes it when a later screenshot is already on show
+                thumbnail.show(file, bitmap, ticket)
             }
             AfterScreenshot.Copy -> notify(
                 copy(file).fold(

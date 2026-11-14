@@ -41,6 +41,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.RememberObserver
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -58,6 +61,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -108,15 +112,36 @@ private val CLOSE_OVERHANG = CLOSE_SIZE / 2
 private val StandardAccelerate = CubicBezierEasing(0.3f, 0f, 1f, 1f)
 
 /**
- * The white flash over the video when a screenshot is taken: plays each time [trigger] changes (0 never plays). Draws
+ * The screenshot flashes asked for ([flash]) and the last one played. Kept outside [ScreenshotFlash], so a flash that
+ * leaves and re-enters the composition does not play an old one again.
+ */
+@Stable
+class ScreenshotFlashState {
+    var requested by mutableIntStateOf(0)
+        private set
+    internal var played = 0
+
+    /** A screenshot was taken: the flash plays once. */
+    fun flash() {
+        requested++
+    }
+}
+
+/**
+ * The white flash over the video when a screenshot is taken: plays once per [ScreenshotFlashState.flash]. Draws
  * nothing with reduced motion ([motion] false). Takes no input.
  */
 @Composable
-fun ScreenshotFlash(trigger: Int, motion: Boolean, modifier: Modifier = Modifier) {
-    if (!motion) return
+fun ScreenshotFlash(state: ScreenshotFlashState, motion: Boolean, modifier: Modifier = Modifier) {
+    if (!motion) {
+        state.played = state.requested // skipped, not owed
+        return
+    }
     val alpha = remember { Animatable(0f) }
-    LaunchedEffect(trigger) {
-        if (trigger == 0) return@LaunchedEffect
+    val requested = state.requested
+    LaunchedEffect(requested) {
+        if (requested == state.played) return@LaunchedEffect
+        state.played = requested
         alpha.snapTo(FLASH_ALPHA)
         alpha.animateTo(0f, tween(FLASH_MILLIS, easing = LinearEasing))
     }
@@ -189,20 +214,23 @@ private fun ThumbnailCard(
     val scope = rememberCoroutineScope()
     val copied by state.copied.collectAsState()
     val currentShot by rememberUpdatedState(shot)
-    Box(
-        Modifier.pointerInput(state) {
-            awaitPointerEventScope {
-                while (true) {
-                    when (awaitPointerEvent().type) {
-                        PointerEventType.Enter -> state.hover(true)
-                        PointerEventType.Exit -> state.hover(false)
-                    }
+    val hold = remember(state) { HoverHold(state) }
+    // A card that leaves with the pointer on it gets no Exit: it must not hold the next one.
+    DisposableEffect(hold) { onDispose(hold::clear) }
+    // Only the card and the ring: the strips around the overhanging close button let the device's taps through.
+    val hoverModifier = Modifier.pointerInput(hold) {
+        awaitPointerEventScope {
+            while (true) {
+                when (awaitPointerEvent().type) {
+                    PointerEventType.Enter -> hold.enter()
+                    PointerEventType.Exit -> scope.launch { hold.exit() }
                 }
             }
-        },
-    ) {
+        }
+    }
+    Box {
         Surface(
-            Modifier.padding(top = CLOSE_OVERHANG, end = CLOSE_OVERHANG).width(CARD_WIDTH),
+            Modifier.padding(top = CLOSE_OVERHANG, end = CLOSE_OVERHANG).width(CARD_WIDTH).then(hoverModifier),
             shape = RoundedCornerShape(12.dp),
             color = colors.surfaceContainerHigh,
             shadowElevation = 6.dp,
@@ -216,8 +244,12 @@ private fun ThumbnailCard(
                     animationSpec = tween(THUMBNAIL_SWAP_MILLIS),
                     label = "thumbnailImage",
                 ) { s ->
+                    // This slot draws s's bitmap until it leaves the composition (the crossfade or the card's exit
+                    // ended): only then may a retired shot's bitmap be closed. A closed one is never drawn.
+                    val open = !s.bitmap.asSkiaBitmap().isClosed
+                    remember(s) { ShotLease(state, s) }
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Image(
+                        if (open) Image(
                             s.bitmap,
                             contentDescription = "Screenshot",
                             contentScale = ContentScale.Fit,
@@ -231,8 +263,10 @@ private fun ThumbnailCard(
                                         onDragStart = { at ->
                                             val file = currentShot.file
                                             state.touch()
-                                            // Out of the gesture: the OS drag blocks until the drop.
+                                            // Out of the gesture: the OS drag blocks until the drop. The timer is
+                                            // held for the whole drag.
                                             scope.launch {
+                                                hold.dragging(true)
                                                 onOsDrag(true)
                                                 try {
                                                     dragStarter.start(listOf(file.toFile()), at) { dropped ->
@@ -240,6 +274,7 @@ private fun ThumbnailCard(
                                                     }
                                                 } finally {
                                                     onOsDrag(false)
+                                                    hold.dragging(false)
                                                     drags++
                                                 }
                                             }
@@ -277,7 +312,7 @@ private fun ThumbnailCard(
                 }
             }
         }
-        CloseRing(state, motion, Modifier.align(Alignment.TopEnd))
+        CloseRing(state, motion, Modifier.align(Alignment.TopEnd).then(hoverModifier))
     }
 }
 
@@ -287,7 +322,11 @@ private fun CloseRing(state: ScreenshotThumbnailState, motion: Boolean, modifier
     val colors = MaterialTheme.colorScheme
     // The time left, read every frame and only at draw time.
     var fraction by remember { mutableFloatStateOf(state.remainingFraction) }
-    LaunchedEffect(state) {
+    // Held (hovered, dragged): the ring stands still, so no frames are asked for.
+    val held by state.held.collectAsState()
+    LaunchedEffect(state, held) {
+        fraction = state.remainingFraction
+        if (held) return@LaunchedEffect
         while (true) withFrameMillis { fraction = state.remainingFraction }
     }
     val refills by state.refills.collectAsState()
@@ -325,6 +364,56 @@ private fun CloseRing(state: ScreenshotThumbnailState, motion: Boolean, modifier
             Icon(Icons.Filled.Close, contentDescription = "Close", Modifier.size(14.dp), tint = colors.onSurfaceVariant)
         }
     }
+}
+
+/**
+ * What holds the timer from the card: the pointer on the card or the ring (an Exit is applied a frame later, so moving
+ * from one to the other does not let go in between), or an OS drag. UI thread only.
+ */
+private class HoverHold(private val state: ScreenshotThumbnailState) {
+    private var parts = 0
+    private var drag = false
+
+    fun enter() {
+        parts++
+        apply()
+    }
+
+    suspend fun exit() {
+        parts = (parts - 1).coerceAtLeast(0)
+        withFrameMillis { }
+        apply()
+    }
+
+    fun dragging(on: Boolean) {
+        drag = on
+        apply()
+    }
+
+    /** The card left the composition: nothing of it holds the timer any more. */
+    fun clear() {
+        parts = 0
+        drag = false
+        state.hover(false)
+    }
+
+    private fun apply() = state.hover(parts > 0 || drag)
+}
+
+/** One slot of the composition drawing [shot]: [ScreenshotThumbnailState.acquire]d while it is remembered. */
+private class ShotLease(private val state: ScreenshotThumbnailState, private val shot: Shot) : RememberObserver {
+    private var held = false
+
+    override fun onRemembered() {
+        held = state.acquire(shot)
+    }
+
+    override fun onForgotten() {
+        if (held) state.release(shot)
+        held = false
+    }
+
+    override fun onAbandoned() = Unit
 }
 
 @OptIn(ExperimentalFoundationApi::class)
