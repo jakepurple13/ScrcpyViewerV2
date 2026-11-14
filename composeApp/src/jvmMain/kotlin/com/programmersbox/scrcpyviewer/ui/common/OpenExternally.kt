@@ -96,7 +96,8 @@ internal fun revealCommand(file: String, platform: OpenPlatform): List<String> =
     // "/select," apart: with the path in the same argument, Java quotes both together when the path has a space, and
     // Explorer then opens its default folder instead.
     OpenPlatform.Windows -> listOf("explorer.exe", "/select,", file)
-    OpenPlatform.Linux -> listOf("xdg-open", java.nio.file.Paths.get(file).parent?.toString() ?: ".")
+    // String operations, not Path: a Linux path always uses '/', whatever OS builds the command (tests run on Windows).
+    OpenPlatform.Linux -> listOf("xdg-open", file.substringBeforeLast('/', ".").ifEmpty { "/" })
 }
 
 internal fun revealInFolder(

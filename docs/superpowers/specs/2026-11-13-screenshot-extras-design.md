@@ -53,7 +53,7 @@ closing disposes it.
     clipboard).
   - Linux: `wl-copy --type image/png` when `WAYLAND_DISPLAY` is set, else `xclip -selection clipboard -t image/png
     -i <file>`; when neither tool is found, a failure "Install wl-clipboard or xclip to copy images".
-- `revealCommand(file, platform): List<String>`: macOS `open -R <file>`; Windows `explorer.exe /select,<file>`; Linux
+- `revealCommand(file, platform): List<String>`: macOS `open -R <file>`; Windows `explorer.exe`, `/select,`, `<file>` as separate arguments (joined, Java quotes both together when the path has a space and Explorer ignores it); Linux
   `xdg-open <parent>`. Never a shell string.
 
 ## Motion

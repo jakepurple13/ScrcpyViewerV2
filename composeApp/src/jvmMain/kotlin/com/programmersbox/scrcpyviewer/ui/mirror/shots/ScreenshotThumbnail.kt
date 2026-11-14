@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.ui.mirror.shots
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
@@ -240,7 +241,10 @@ private fun ThumbnailCard(
                 var drags by remember { mutableIntStateOf(0) }
                 Crossfade(
                     shot,
-                    Modifier.fillMaxWidth().animateContentSize(tween(THUMBNAIL_SWAP_MILLIS, easing = EmphasizedDecelerate)),
+                    // Under reduced motion only fades are allowed: the size changes at once.
+                    Modifier.fillMaxWidth().animateContentSize(
+                        if (motion) tween(THUMBNAIL_SWAP_MILLIS, easing = EmphasizedDecelerate) else snap(),
+                    ),
                     animationSpec = tween(THUMBNAIL_SWAP_MILLIS),
                     label = "thumbnailImage",
                 ) { s ->
