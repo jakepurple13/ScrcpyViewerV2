@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Copy (exact): "Edit", "Open editor", "Edit screenshot", "Pen", "Arrow", "Box", "Pixelate", "Undo", "Red", "Yellow", "Blue", "Black", "Draw on the screenshot. Pixelate hides private text such as emails or order numbers.", "Copy", "Copied", "Save", "Close", "Saved <file name>", "Could not save: <reason>", "Discard your marks?", "Your marks aren't saved or copied yet.", "Discard", "Keep editing", "EDITED". The editor Copy button label reads "Copied" while its check shows.
+- Copy (exact): "Edit", "Open editor", "Edit screenshot", "Pen", "Arrow", "Box", "Pixelate", "Undo", "Red", "Yellow", "Blue", "Black", "Draw on the screenshot. Pixelate hides private text such as emails or order numbers.", "Copy", "Copied", "Save", "Close", "Saved <file name>", "Could not save: <reason>", "Could not copy the image: <reason>", "Discard your marks?", "Your marks aren't saved or copied yet.", "Discard", "Keep editing", "EDITED". The editor Copy button label reads "Copied" while its check shows.
 - Colors `#E53935` (default), `#FBC02D`, `#1E88E5`, `#111111`. Stroke 0.8% of shorter side (min 3 px); arrow head 4× stroke, 26°; pixel block 2.5% of shorter side (min 8 px); min drag 2 px.
 - Save never overwrites: `<name>-edited.png`, `-edited-2`, …
 - `ImageClipboard.copyPng` blocks up to 5 s: call on Dispatchers.IO only. Bitmaps are native: close what you create; never draw a closed one.

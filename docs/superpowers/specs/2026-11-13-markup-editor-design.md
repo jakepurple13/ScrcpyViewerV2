@@ -33,7 +33,7 @@ each side); Box is a stroked rectangle from drag start to end; Pixelate replaces
 so pixelating twice never reveals anything). A drag shorter than 2 px adds nothing.
 
 - **Copy**: renders the marked image, copies it as PNG (`ImageClipboard.copyPng` on IO via a temp file), the button's
-  icon turns to a check for 1.5 s ("Copied"). The editor stays open.
+  icon turns to a check for 1.5 s ("Copied"). The editor stays open. Failure: snackbar "Could not copy the image: <reason>".
 - **Save**: writes the marked image as a new file next to the original, `<original name>-edited.png` (then `-edited-2`,
   …), never overwriting the original; closes the editor; the thumbnail crossfades to the edited file with a small
   "EDITED" tag at its top-left (accent fill) and its timer restarts at 6 s; snackbar "Saved
