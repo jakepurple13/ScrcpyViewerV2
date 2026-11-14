@@ -445,7 +445,9 @@ private fun MarkCanvas(
                     val start = image(down.position)
                     val points = ArrayList<MarkPoint>().apply { add(start) }
                     fun mark(end: MarkPoint): Mark = when (t) {
-                        MarkupTool.Pen -> Mark.Pen(argb, points)
+                        // A copy: with the live list, each new Pen equals the last (same list), so the state
+                        // write is skipped and the stroke only showed on release.
+                        MarkupTool.Pen -> Mark.Pen(argb, points.toList())
                         MarkupTool.Arrow -> Mark.Arrow(argb, start, end)
                         MarkupTool.Box -> Mark.Box(argb, start, end)
                         MarkupTool.Pixelate -> Mark.Pixelate(start, end)

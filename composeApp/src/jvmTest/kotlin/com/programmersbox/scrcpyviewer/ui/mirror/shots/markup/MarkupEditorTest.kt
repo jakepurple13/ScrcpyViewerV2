@@ -267,6 +267,28 @@ class MarkupEditorTest {
     }
 
     @Test
+    fun `a pen stroke shows while it is drawn, before the button is released`() = onEdt {
+        val e = Editor(motion = true).opened()
+        val d = e.d
+        val c = d.canvas()
+        fun at(fx: Float, fy: Float) = Offset(c.left + c.width * fx, c.top + c.height * fy)
+        d.scene.sendPointerEvent(PointerEventType.Move, at(0.2f, 0.5f), type = PointerType.Mouse)
+        d.scene.sendPointerEvent(PointerEventType.Press, at(0.2f, 0.5f), type = PointerType.Mouse, button = PointerButton.Primary)
+        d.frame()
+        for (i in 1..6) {
+            d.scene.sendPointerEvent(PointerEventType.Move, at(0.2f + 0.1f * i, 0.5f), type = PointerType.Mouse)
+            d.frame()
+        }
+        // Still held: the stroke so far is on screen, not only its first point.
+        val px = d.snapshot()
+        val along = px[at(0.65f, 0.5f).x.toInt(), at(0.65f, 0.5f).y.toInt()]
+        assertTrue(along.red > 0.7f && along.green < 0.4f, "the held stroke is drawn red along its path: $along")
+        d.scene.sendPointerEvent(PointerEventType.Release, at(0.8f, 0.5f), type = PointerType.Mouse, button = PointerButton.Primary)
+        d.frames(2)
+        e.close()
+    }
+
+    @Test
     fun `each tool adds its mark`() = onEdt {
         val e = Editor(motion = true).opened()
         val d = e.d
