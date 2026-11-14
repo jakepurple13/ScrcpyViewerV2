@@ -157,8 +157,8 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 content = { CaptureDirControl(it) },
             ),
             SettingEntry(
-                "after-screenshot", "After a screenshot", "Show a thumbnail to copy, reveal or drag out, or copy the image straight away.",
-                keywords = listOf("screenshot", "thumbnail", "copy", "clipboard", "image", "capture", "preview"),
+                "after-screenshot", "After a screenshot", "What happens once a screenshot is saved.",
+                keywords = listOf("screenshot", "thumbnail", "copy", "clipboard", "image", "capture", "preview", "edit", "editor", "markup", "annotate", "draw"),
                 content = { AfterScreenshotControl(it) },
             ),
         ),

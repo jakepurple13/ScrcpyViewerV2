@@ -234,6 +234,10 @@ import com.programmersbox.scrcpyviewer.ui.common.ImageClipboard
 import com.programmersbox.scrcpyviewer.ui.common.openExternally
 import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditor
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorHost
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.copyMarked
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.saveMarkedShot
 import com.programmersbox.scrcpyviewer.ui.mirror.files.ComposeDragOutStarter
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlash
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlashState
@@ -454,13 +458,15 @@ fun MirrorWindow(
     // The thumbnail after a screenshot; it owns its bitmaps, released when the window closes.
     val thumbnail = remember { ScreenshotThumbnailState(uiScope) }
     DisposableEffect(thumbnail) { onDispose(thumbnail::dispose) }
+    // The markup editor over the window: opened from the thumbnail's Edit or right after a screenshot (by setting).
+    val markupEditor = remember { MarkupEditorHost(thumbnail) }
     val screenshotDragStarter = remember { ComposeDragOutStarter() }
     /** The flash over the video, once per screenshot. Out here, so the content re-entering does not replay it. */
     val screenshotFlash = remember { ScreenshotFlashState() }
 
     /**
      * Copies the frame now (inside VideoFrame.use), encodes and writes the PNG on the IO dispatcher, then shows the
-     * thumbnail or copies the image, by `Settings.afterScreenshot` ([finishScreenshot]).
+     * thumbnail, copies the image or opens the markup editor, by `Settings.afterScreenshot` ([finishScreenshot]).
      */
     fun takeScreenshot() {
         val bitmap = Screenshot.copyLatest { session.frames.value }
@@ -478,6 +484,8 @@ fun MirrorWindow(
                 copy = { withContext(Dispatchers.IO) { ImageClipboard.copyPng(it) } }, // blocks up to 5 s
                 notify = ::notify,
                 ticket = ticket,
+                canOpenEditor = { !markupEditor.isOpen },
+                openEditor = markupEditor::open,
             )
         }
     }
@@ -764,6 +772,7 @@ fun MirrorWindow(
             legacyPaste = "legacy-paste" in e,
             followerSend = follow::send,
             followerKeyRepeat = "no-key-repeat" !in e,
+            editorOpen = { markupEditor.isOpen },
         ).also { follow.heldKeyUp = it::followerHeldKeyUp }
     }
 
@@ -805,6 +814,15 @@ fun MirrorWindow(
             handle.focusEvents.collect {
                 keys.onFocusChanged(it)
                 if (!it) follow.releaseAll() // a release in another window never reaches the followers either
+            }
+        }
+        // The markup editor takes the keys and the pointer: release what the device holds, and the mouse capture.
+        LaunchedEffect(keys) {
+            snapshotFlow { markupEditor.isOpen }.collect { open ->
+                if (open) {
+                    keys.onEditorOpened()
+                    capture?.focusLost()
+                }
             }
         }
         DisposableEffect(keys) {
@@ -1147,11 +1165,26 @@ fun MirrorWindow(
                                 modifier = Modifier.align(Alignment.BottomEnd),
                                 // Dropped back on this window it would be pushed to the device: the drop targets refuse it.
                                 onOsDrag = { transfers.draggingOut = it },
+                                onEdit = markupEditor::open,
                             )
                         },
                     )
                     }
                 }
+                // Over the whole window content; its snackbars ("Saved …") show above it.
+                MarkupEditor(
+                    markupEditor.shot,
+                    motion = !reduceMotion,
+                    onCopy = { shot, marks ->
+                        copyMarked(shot, marks, ImageClipboard::copyPng) // the copy blocks up to 5 s: on IO in there
+                            .onFailure { notify("Could not copy the image: ${it.message ?: it}") }
+                            .isSuccess
+                    },
+                    onSave = { shot, marks -> saveMarkedShot(shot, marks, thumbnail, ::notify) },
+                    onClose = markupEditor::close,
+                    leases = thumbnail,
+                    modifier = Modifier.fillMaxSize(),
+                )
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 80.dp, bottom = 44.dp))
             }
         }

@@ -33,6 +33,7 @@ class MirrorKeysTest {
     private var sheetOpen = false
     private var sheetFocused = false
     private var sheetCloses = 0
+    private var editorOpen = false
     private var clipboard: String? = null
     private val mapper = InputMapper(frameSize = { IntSize(1080, 2400) }, viewRect = { Rect(0f, 0f, 540f, 1200f) })
 
@@ -55,6 +56,7 @@ class MirrorKeysTest {
         mac = true,
         legacyPaste = legacyPaste,
         followerKeyRepeat = followerKeyRepeat,
+        editorOpen = { editorOpen },
     )
 
     private fun down(key: Key, meta: Boolean = false) = KeyEvent(key, KeyEventType.KeyDown, isMetaPressed = meta)
@@ -369,5 +371,33 @@ class MirrorKeysTest {
         k.onKey(up(Key.ShiftLeft))
         assertEquals(InputMapper.KEY_ACTION_UP, assertIs<ControlMessage.InjectKeycode>(followerSent.single()).action)
         assertTrue(k.followerHeldKeyUp().isEmpty())
+    }
+
+    @Test
+    fun editorOpen_everyKeyGoesToCompose_noneToTheDevice() {
+        val k = keys()
+        editorOpen = true
+        sheetOpen = true
+        for (key in listOf(Key.Escape, Key.Z, Key.A, Key.Equals, Key.V)) {
+            assertFalse(k.onKey(down(key, meta = true)), "$key")
+            assertFalse(k.onKey(up(key, meta = true)), "$key")
+            assertFalse(k.onKey(down(key)), "$key")
+            assertFalse(k.onKey(up(key)), "$key")
+        }
+        assertFalse(k.onKey(typed('z')))
+        assertTrue(sent.isEmpty(), "nothing to the device: $sent")
+        assertTrue(followerSent.isEmpty())
+        assertTrue(zooms.isEmpty())
+        assertEquals(0, sheetCloses)
+    }
+
+    @Test
+    fun editorOpened_releasesTheHidKeysHeld() {
+        val hid = HidKeyboard(lockState = { 0 }, forwardLockKeys = true)
+        val k = keys(hid)
+        k.onKey(down(Key.A))
+        sent.clear()
+        k.onEditorOpened()
+        assertTrue(sent.isNotEmpty(), "the held A is released")
     }
 }

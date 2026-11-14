@@ -7,6 +7,9 @@ enum class AfterScreenshot(val label: String) {
 
     /** The image is copied to the clipboard at once; no thumbnail. */
     Copy("Copy"),
+
+    /** The markup editor opens on the screenshot at once; no thumbnail (until an edit is saved). */
+    OpenEditor("Open editor"),
     ;
 
     companion object {

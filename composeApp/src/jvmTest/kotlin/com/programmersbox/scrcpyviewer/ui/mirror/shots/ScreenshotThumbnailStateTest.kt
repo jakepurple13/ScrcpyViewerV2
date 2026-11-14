@@ -253,6 +253,9 @@ class ScreenshotThumbnailStateTest {
 
     // The window's screenshot flow, by setting.
 
+    private var editorFree = true
+    private val opened = mutableListOf<Shot>()
+
     private fun finish(
         mode: AfterScreenshot,
         b: ImageBitmap,
@@ -260,7 +263,12 @@ class ScreenshotThumbnailStateTest {
         copy: suspend (Path) -> Result<Unit> = { Result.success(Unit) },
     ): List<String> {
         val messages = mutableListOf<String>()
-        scope.launch { finishScreenshot(b, mode, state, save, copy, notify = { messages += it }) }
+        scope.launch {
+            finishScreenshot(
+                b, mode, state, save, copy, notify = { messages += it },
+                canOpenEditor = { editorFree }, openEditor = { opened += it },
+            )
+        }
         scheduler.runCurrent()
         return messages
     }
@@ -304,5 +312,125 @@ class ScreenshotThumbnailStateTest {
             assertNull(state.shown.value)
             assertTrue(b.closed)
         }
+    }
+
+    @Test
+    fun `OpenEditor mode opens the editor on the saved shot and shows no thumbnail`() {
+        val b = bitmap()
+        val messages = finish(AfterScreenshot.OpenEditor, b)
+        assertEquals(emptyList(), messages)
+        assertNull(state.shown.value)
+        val shot = opened.single()
+        assertSame(b, shot.bitmap)
+        assertEquals(file, shot.file)
+        assertFalse(shot.edited)
+        assertFalse(b.closed, "the editor draws it")
+        // The editor's slot draws it, then leaves: closed.
+        assertTrue(state.acquire(shot))
+        state.release(shot)
+        assertTrue(b.closed)
+    }
+
+    @Test
+    fun `OpenEditor mode with the editor already open shows the thumbnail instead`() {
+        editorFree = false
+        val b = bitmap()
+        finish(AfterScreenshot.OpenEditor, b)
+        assertEquals(emptyList(), opened)
+        assertSame(b, state.shown.value?.bitmap)
+    }
+
+    @Test
+    fun `a kept shot is closed when the window closes before the editor draws it`() {
+        val b = bitmap()
+        val shot = assertNotNull(state.keep(file, b, state.begin()))
+        assertFalse(b.closed)
+        state.dispose()
+        assertTrue(b.closed)
+        assertFalse(state.acquire(shot))
+    }
+
+    @Test
+    fun `a kept shot from an older screenshot than the one on show is closed at once`() {
+        val older = state.begin()
+        state.show(file, bitmap(), state.begin())
+        val b = bitmap()
+        assertNull(state.keep(file, b, older))
+        assertTrue(b.closed)
+    }
+
+    @Test
+    fun `editing holds the timer and closing the editor restarts it at 6 seconds`() {
+        state.show(file, bitmap())
+        advance(4_000)
+        state.editing(true)
+        assertTrue(state.held.value)
+        advance(60_000)
+        assertNotNull(state.shown.value)
+        assertEquals(2_000f / 6_000f, state.remainingFraction, 0.001f)
+        val refills = state.refills.value
+        state.editing(false)
+        assertFalse(state.held.value)
+        assertEquals(1f, state.remainingFraction)
+        assertEquals(refills + 1, state.refills.value)
+        advance(THUMBNAIL_MILLIS - 1)
+        assertNotNull(state.shown.value)
+        advance(1)
+        assertNull(state.shown.value)
+    }
+
+    @Test
+    fun `hovering out while editing keeps the timer held`() {
+        state.show(file, bitmap())
+        state.hover(true)
+        state.editing(true)
+        state.hover(false)
+        advance(60_000)
+        assertNotNull(state.shown.value)
+        assertTrue(state.held.value)
+        state.editing(false)
+        advance(THUMBNAIL_MILLIS)
+        assertNull(state.shown.value)
+    }
+
+    @Test
+    fun `the pointer left on the card after editing holds the 6 seconds until it leaves`() {
+        state.show(file, bitmap())
+        state.editing(true)
+        state.hover(true)
+        state.editing(false)
+        assertTrue(state.held.value)
+        advance(60_000)
+        assertEquals(1f, state.remainingFraction)
+        state.hover(false)
+        advance(THUMBNAIL_MILLIS)
+        assertNull(state.shown.value)
+    }
+
+    @Test
+    fun `a screenshot shown while editing is held until the editor closes`() {
+        state.editing(true)
+        state.show(file, bitmap())
+        advance(60_000)
+        assertNotNull(state.shown.value)
+        state.editing(false)
+        advance(THUMBNAIL_MILLIS)
+        assertNull(state.shown.value)
+    }
+
+    @Test
+    fun `an edited shot replaces the one on show, tagged, and keeps the original's name for the next edit`() {
+        val first = bitmap()
+        state.show(file, first)
+        val edited = bitmap()
+        val editedFile = Paths.get("/tmp/caps/Pixel 8 Pro #1-edited.png")
+        state.showEdited(editedFile, edited, original = file)
+        val shot = assertNotNull(state.shown.value)
+        assertTrue(shot.edited)
+        assertEquals(editedFile, shot.file)
+        assertEquals(file, shot.original)
+        assertSame(edited, shot.bitmap)
+        assertTrue(first.closed, "the replaced one, drawn by no slot, is closed")
+        assertEquals(1f, state.remainingFraction)
     }
 }

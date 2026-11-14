@@ -8,6 +8,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
@@ -171,15 +172,119 @@ class MirrorScreenshotTest {
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
     }
 
+    /**
+     * The markup editor over the window, with a pen stroke, an arrow, a box and a pixelated line, drawn with the pointer
+     * (the scene's frames are virtual, so the animations settle).
+     */
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+    private fun renderEditor(name: String, mode: ThemeMode) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher())
+        val thumbnail = ScreenshotThumbnailState(timers, clock = { 0L })
+        val bitmap = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
+        val shot = checkNotNull(thumbnail.keep(Paths.get("/tmp/Pixel 8 Pro.png"), bitmap, thumbnail.begin()))
+        val scene = androidx.compose.ui.ImageComposeScene(1280, 800, androidx.compose.ui.unit.Density(1f)) {
+            ScrcpyViewerTheme(AppTheme(mode)) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    Box(Modifier.fillMaxSize()) {
+                        MirrorContent(state, frame, {}, {}, {}, {}, {}, {}, showTopStrip = false)
+                        com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditor(
+                            shot, motion = true, onCopy = { _, _ -> true }, onSave = { _, _ -> true }, onClose = {},
+                            leases = thumbnail, modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        try {
+            val d = SceneDriver(scene)
+            d.frames(40)
+            fun nodes(): List<androidx.compose.ui.semantics.SemanticsNode> {
+                val all = mutableListOf<androidx.compose.ui.semantics.SemanticsNode>()
+                fun walk(n: androidx.compose.ui.semantics.SemanticsNode) {
+                    all += n
+                    n.children.forEach(::walk)
+                }
+                scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
+                return all
+            }
+            // The last match: the editor is over the window (the toolbar has a "Screenshot" button too).
+            fun described(label: String) = nodes().last {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription)?.contains(label) == true
+            }
+            fun press(at: Offset) {
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Press, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse, button = androidx.compose.ui.input.pointer.PointerButton.Primary)
+            }
+            fun release(at: Offset) {
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Release, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse, button = androidx.compose.ui.input.pointer.PointerButton.Primary)
+                d.frames(2)
+            }
+            fun click(label: String) {
+                val at = described(label).boundsInRoot.center
+                press(at)
+                release(at)
+            }
+            val c = described("Screenshot").boundsInRoot
+            fun at(x: Float, y: Float) = Offset(c.left + c.width * x, c.top + c.height * y)
+            fun drag(points: List<Offset>) {
+                press(points.first())
+                d.frame()
+                points.drop(1).forEach {
+                    scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, it, type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+                    d.frame()
+                }
+                release(points.last())
+            }
+            // Pixelate the date, box the clock, an arrow at it in yellow, and a pen loop around an icon in blue.
+            click("Pixelate")
+            drag(listOf(at(0.06f, 0.18f), at(0.62f, 0.23f)))
+            click("Box")
+            drag(listOf(at(0.05f, 0.08f), at(0.55f, 0.19f)))
+            click("Arrow")
+            click("Yellow")
+            drag(listOf(at(0.85f, 0.45f), at(0.6f, 0.2f)))
+            click("Pen")
+            click("Blue")
+            drag((0..24).map { i ->
+                val a = i / 24f * 2 * Math.PI
+                at(0.165f + 0.11f * kotlin.math.cos(a).toFloat(), 0.77f + 0.05f * kotlin.math.sin(a).toFloat())
+            })
+            // Pointer off the tools, so no tooltip shows.
+            scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, Offset(5f, 5f), type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+            d.frames(60)
+            val image = scene.render(10_000_000_000L)
+            val data = checkNotNull(image.encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG))
+            Files.createDirectories(out.parent)
+            Files.write(out, data.bytes)
+        } finally {
+            scene.close()
+            thumbnail.dispose()
+            timers.cancel()
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror screenshot markup editor`() = onEdt {
+        renderEditor("mirror-markup-editor-light.png", ThemeMode.Light)
+        renderEditor("mirror-markup-editor-dark.png", ThemeMode.Dark)
+    }
+
     /** The window after a toolbar screenshot: the thumbnail in the video area's corner, its ring two thirds full. */
-    private fun renderThumbnail(name: String, mode: ThemeMode, copied: Boolean = false) {
+    private fun renderThumbnail(name: String, mode: ThemeMode, copied: Boolean = false, edited: Boolean = false) {
         val out = outDir.resolve(name)
         val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
         val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher()) // never advanced: nothing expires
         var now = 0L
         val thumbnail = ScreenshotThumbnailState(timers, clock = { now })
         val bitmap = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
-        thumbnail.show(Paths.get("/tmp/Pixel 8 Pro.png"), bitmap)
+        if (edited) {
+            thumbnail.showEdited(Paths.get("/tmp/Pixel 8 Pro-edited.png"), bitmap, Paths.get("/tmp/Pixel 8 Pro.png"))
+        } else {
+            thumbnail.show(Paths.get("/tmp/Pixel 8 Pro.png"), bitmap)
+        }
         if (copied) thumbnail.markCopied()
         now = 2_000
         try {
@@ -211,6 +316,7 @@ class MirrorScreenshotTest {
         renderThumbnail("mirror-thumbnail-light.png", ThemeMode.Light)
         renderThumbnail("mirror-thumbnail-dark.png", ThemeMode.Dark)
         renderThumbnail("mirror-thumbnail-copied-dark.png", ThemeMode.Dark, copied = true)
+        renderThumbnail("mirror-thumbnail-edited-light.png", ThemeMode.Light, edited = true)
     }
 
     @Test
