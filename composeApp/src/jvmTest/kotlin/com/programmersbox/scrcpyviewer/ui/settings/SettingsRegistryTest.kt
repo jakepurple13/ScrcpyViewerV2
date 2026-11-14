@@ -37,6 +37,17 @@ class SettingsRegistryTest {
     }
 
     @Test
+    fun `after a screenshot row follows the capture folder row as a segmented choice`() {
+        val entries = settingsCategories.flatMap { it.entries }
+        val i = entries.indexOfFirst { it.id == "capture-dir" }
+        val entry = entries[i + 1]
+        assertEquals("after-screenshot", entry.id)
+        assertEquals("After a screenshot", entry.title)
+        assertEquals(listOf("Show thumbnail", "Copy"), com.programmersbox.scrcpyviewer.state.AfterScreenshot.entries.map { it.label })
+        assertEquals(listOf("after-screenshot"), searchSettings(settingsCategories, "thumbnail").first().entries.map { it.id })
+    }
+
+    @Test
     fun `launch quit animation is the last appearance entry`() {
         val entry = settingsCategories.first { it.id == Appearance }.entries.last()
         assertEquals("launch-quit-animation", entry.id)

@@ -25,6 +25,7 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.state.appTheme
+import com.programmersbox.scrcpyviewer.state.afterShot
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.neonText
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
@@ -299,7 +300,7 @@ fun main() {
         }
         for ((serial, session) in mirrors) {
             key(serial) {
-                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.captureDir, animate = settings.animateMirrorWindows, adb = adbClient)
+                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.captureDir, afterScreenshot = settings.afterShot, animate = settings.animateMirrorWindows, adb = adbClient)
             }
         }
         if (shuttingDown?.finishingRecording == true && !quit.keepsWindow) FinishingRecordingWindow(settings.appTheme)

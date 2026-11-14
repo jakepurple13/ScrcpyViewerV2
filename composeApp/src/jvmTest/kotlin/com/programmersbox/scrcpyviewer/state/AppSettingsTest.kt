@@ -194,6 +194,18 @@ class AppSettingsTest {
     }
 
     @Test
+    fun `after screenshot defaults to thumbnail, falls back on unknown names and round trips`() {
+        assertEquals(AfterScreenshot.Thumbnail, Settings().afterShot)
+        assertEquals(AfterScreenshot.Thumbnail, AfterScreenshot.fromName("Sparkles"))
+        assertEquals(AfterScreenshot.Thumbnail, AfterScreenshot.fromName(null))
+        assertEquals(AfterScreenshot.Copy, AfterScreenshot.fromName("Copy"))
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertEquals(AfterScreenshot.Thumbnail, AppSettings(file).settings.value.afterShot)
+        AppSettings(file).update { it.copy(afterScreenshot = AfterScreenshot.Copy.name) }
+        assertEquals(AfterScreenshot.Copy, AppSettings(file).settings.value.afterShot)
+    }
+
+    @Test
     fun `deviceDetailTab defaults to Options and round-trips`() {
         assertEquals("Options", Settings().deviceDetailTab)
         Files.writeString(file, """{"themeMode":"Light"}""")

@@ -86,3 +86,29 @@ internal fun openWebUrl(
  */
 fun openWebUrl(url: String, run: (List<String>) -> Process? = ::startDetached): Boolean =
     openWebUrl(url, OpenPlatform.current(), run)
+
+/**
+ * The argv that shows [file] in the file manager: selected in Finder / Explorer; on Linux there is no portable select,
+ * so the parent folder opens. Never a shell string.
+ */
+internal fun revealCommand(file: String, platform: OpenPlatform): List<String> = when (platform) {
+    OpenPlatform.Mac -> listOf("open", "-R", file)
+    // "/select," apart: with the path in the same argument, Java quotes both together when the path has a space, and
+    // Explorer then opens its default folder instead.
+    OpenPlatform.Windows -> listOf("explorer.exe", "/select,", file)
+    // String operations, not Path: a Linux path always uses '/', whatever OS builds the command (tests run on Windows).
+    OpenPlatform.Linux -> listOf("xdg-open", file.substringBeforeLast('/', ".").ifEmpty { "/" })
+}
+
+internal fun revealInFolder(
+    file: java.nio.file.Path,
+    platform: OpenPlatform,
+    run: (List<String>) -> Process? = ::startDetached,
+): Boolean =
+    runCatching { run(revealCommand(file.toString(), platform)) != null }
+        .onFailure { log.log(System.Logger.Level.WARNING, "Could not reveal $file", it) }
+        .getOrDefault(false)
+
+/** Shows [file] in Finder / Explorer (selected) or opens its folder (Linux). False, logged, on failure; never throws. */
+fun revealInFolder(file: java.nio.file.Path, run: (List<String>) -> Process? = ::startDetached): Boolean =
+    revealInFolder(file, OpenPlatform.current(), run)
