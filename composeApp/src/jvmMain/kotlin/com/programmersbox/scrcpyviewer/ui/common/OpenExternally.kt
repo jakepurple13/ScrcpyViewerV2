@@ -93,7 +93,9 @@ fun openWebUrl(url: String, run: (List<String>) -> Process? = ::startDetached): 
  */
 internal fun revealCommand(file: String, platform: OpenPlatform): List<String> = when (platform) {
     OpenPlatform.Mac -> listOf("open", "-R", file)
-    OpenPlatform.Windows -> listOf("explorer.exe", "/select,$file")
+    // "/select," apart: with the path in the same argument, Java quotes both together when the path has a space, and
+    // Explorer then opens its default folder instead.
+    OpenPlatform.Windows -> listOf("explorer.exe", "/select,", file)
     OpenPlatform.Linux -> listOf("xdg-open", java.nio.file.Paths.get(file).parent?.toString() ?: ".")
 }
 
