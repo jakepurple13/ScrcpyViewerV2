@@ -103,4 +103,13 @@ class MarkupDocumentTest {
         assertTrue(doc.marks.isEmpty())
         assertFalse(doc.dirty)
     }
+
+    @Test
+    fun penPointsAreCopiedOnAdd() {
+        val doc = MarkupDocument(100, 100)
+        val points = mutableListOf(MarkPoint(0f, 0f), MarkPoint(10f, 0f))
+        assertTrue(doc.add(Mark.Pen(red.argb, points)))
+        points += MarkPoint(50f, 50f)
+        assertEquals(2, (doc.marks.single() as Mark.Pen).points.size)
+    }
 }

@@ -82,6 +82,7 @@ class ScreenshotThumbnailTest {
         val revealed = mutableListOf<Path>()
         val opened = mutableListOf<Path>()
         val osDrag = mutableListOf<Boolean>()
+        val edited = mutableListOf<Shot>()
     }
 
     private class FakeStarter(val dropped: Boolean) : OutboundDragStarter {
@@ -111,6 +112,7 @@ class ScreenshotThumbnailTest {
                         dragStarter = starter,
                         modifier = Modifier.align(Alignment.BottomEnd),
                         onOsDrag = { calls.osDrag.add(it) },
+                        onEdit = { calls.edited.add(it) },
                     )
                 }
             }
@@ -125,6 +127,10 @@ class ScreenshotThumbnailTest {
         }
         scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
         return all
+    }
+
+    private fun SceneDriver.texted(text: String): SemanticsNode? = nodes().firstOrNull { n ->
+        n.config.getOrNull(SemanticsProperties.Text)?.any { it.text == text } == true
     }
 
     private fun SceneDriver.described(description: String): SemanticsNode? = nodes().firstOrNull {
@@ -498,6 +504,84 @@ class ScreenshotThumbnailTest {
             d.frame()
         }
         assertEquals(true, heldDuringDrag)
+        d.scene.close()
+    }
+
+    // The markup editor's entry point.
+
+    @Test
+    fun `Edit sits between Copy and Show in folder and hands over the shot on show`() = onEdt {
+        val calls = Calls()
+        val d = scene(motion = true, calls = calls)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        val copy = d.described("Copy")!!.boundsInRoot
+        val edit = assertNotNull(d.described("Edit")).boundsInRoot
+        val reveal = d.described("Show in folder")!!.boundsInRoot
+        assertTrue(copy.right <= edit.left && edit.right <= reveal.left, "Copy, Edit, Show in folder: $copy $edit $reveal")
+        assertTrue(reveal.right <= areaRight - 16f + 1f, "all three fit the card: $reveal")
+        d.click(d.described("Edit")!!)
+        assertEquals(listOf(file), calls.edited.map { it.file })
+        assertTrue(calls.edited.single() === state.shown.value)
+        d.scene.close()
+    }
+
+    @Test
+    fun `an edited screenshot carries the EDITED tag at its top-left`() = onEdt {
+        val d = scene(motion = true)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        assertNull(d.texted("EDITED"))
+        val editedFile = Paths.get("/tmp/caps/Pixel 8 Pro #1-edited.png")
+        state.showEdited(editedFile, solid(Color.Blue), original = file)
+        d.frames(30)
+        val tag = assertNotNull(d.texted("EDITED")).boundsInRoot
+        val image = d.described("Screenshot")!!.boundsInRoot
+        assertTrue(tag.left >= image.left && tag.left < image.left + 12f && tag.top >= image.top && tag.top < image.top + 12f, "top-left: $tag in $image")
+        d.click(d.described("Screenshot")!!)
+        d.scene.close()
+    }
+
+    @Test
+    fun `Edit opens the editor over the window and holds the timer until it closes`() = onEdt {
+        val host = com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorHost(state)
+        val d = SceneDriver(ImageComposeScene(1000, 800, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize()) {
+                        Box(Modifier.fillMaxSize().padding(end = AREA_END.dp)) {
+                            ScreenshotThumbnail(
+                                state, motion = true, onCopy = { true }, onReveal = {}, onOpen = {},
+                                dragStarter = FakeStarter(dropped = false),
+                                modifier = Modifier.align(Alignment.BottomEnd),
+                                onEdit = host::open,
+                            )
+                        }
+                        com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditor(
+                            host.shot, motion = true, onCopy = { _, _ -> true }, onSave = { _, _ -> true },
+                            onClose = host::close, leases = state, modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }).also { it.frames(2) }
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        d.click(d.described("Edit")!!)
+        d.frames(40)
+        assertNotNull(d.texted("Edit screenshot"))
+        assertTrue(state.held.value)
+        advance(60_000)
+        d.frames(2)
+        assertNotNull(state.shown.value, "held while editing")
+        d.click(d.texted("Close")!!)
+        d.frames(30)
+        assertNull(d.texted("Edit screenshot"))
+        assertEquals(1f, state.remainingFraction, "restarts at 6 s")
+        advance(THUMBNAIL_MILLIS - 1)
+        assertNotNull(state.shown.value)
+        advance(1)
+        assertNull(state.shown.value)
         d.scene.close()
     }
 }

@@ -103,10 +103,11 @@ class MarkupDocument(val width: Int, val height: Int) {
     /** True when the marks differ from those at the last [markClean] (or from none): not yet saved or copied. */
     val dirty: Boolean get() = _marks.isNotEmpty() && _marks.toList() != cleanMarks
 
-    /** Adds [mark]; false (and nothing added) for a drag shorter than 2 px. */
+    /** Adds [mark]; false (and nothing added) for a drag shorter than 2 px. A pen's points are copied. */
     fun add(mark: Mark): Boolean {
         if (mark.isTooSmall()) return false
-        _marks.add(mark)
+        // The caller may keep adding to the list it built the stroke in.
+        _marks.add(if (mark is Mark.Pen) mark.copy(points = mark.points.toList()) else mark)
         return true
     }
 

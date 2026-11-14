@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -70,6 +72,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.mirror.files.OutboundDragStarter
@@ -104,6 +108,9 @@ private const val FROM_SCALE = 0.9f
 private val CARD_WIDTH = 150.dp
 private val IMAGE_MAX_HEIGHT = 260.dp
 private val EDGE = 16.dp
+
+/** The card's three action buttons fit its width. */
+private val ACTION_SIZE = 40.dp
 
 /** How far the close button sits out past the card's top-right corner (its centre is the corner). */
 private val CLOSE_SIZE = 24.dp
@@ -153,8 +160,9 @@ fun ScreenshotFlash(state: ScreenshotFlashState, motion: Boolean, modifier: Modi
 /**
  * The screenshot thumbnail: place it over the video area's bottom end; it keeps 16 dp from the edges itself.
  *
- * A 150 dp card with the screenshot and Copy / Show in folder buttons, and a close button on its top-right corner
- * ringed by the countdown. Clicking the image runs [onOpen]; dragging it starts [dragStarter]'s OS drag of the PNG
+ * A 150 dp card with the screenshot and Copy / Edit / Show in folder buttons, and a close button on its top-right
+ * corner ringed by the countdown. Edit runs [onEdit] (the window opens the markup editor, which holds the timer). An
+ * edited screenshot carries an "EDITED" tag at its top-left. Clicking the image runs [onOpen]; dragging it starts [dragStarter]'s OS drag of the PNG
  * (copy only), with [onOsDrag] told while it runs. [onCopy] copies the image off the UI thread and says whether it
  * worked (the button then shows a check). Copy, reveal and drag restart the timer; a drop elsewhere dismisses it.
  *
@@ -171,6 +179,7 @@ fun ScreenshotThumbnail(
     dragStarter: OutboundDragStarter,
     modifier: Modifier = Modifier,
     onOsDrag: (Boolean) -> Unit = {},
+    onEdit: (Shot) -> Unit = {},
 ) {
     val shot by state.shown.collectAsState()
     // The card keeps showing the last screenshot while it leaves. A plain holder.
@@ -195,7 +204,7 @@ fun ScreenshotThumbnail(
         },
     ) {
         val current = shot ?: last[0] ?: return@AnimatedVisibility
-        ThumbnailCard(state, current, motion, onCopy, onReveal, onOpen, dragStarter, onOsDrag)
+        ThumbnailCard(state, current, motion, onCopy, onReveal, onOpen, dragStarter, onOsDrag, onEdit)
     }
 }
 
@@ -210,6 +219,7 @@ private fun ThumbnailCard(
     onOpen: (Path) -> Unit,
     dragStarter: OutboundDragStarter,
     onOsDrag: (Boolean) -> Unit,
+    onEdit: (Shot) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
@@ -287,11 +297,12 @@ private fun ThumbnailCard(
                                 }
                                 .clickable(onClickLabel = "Open") { onOpen(currentShot.file) },
                         )
+                        if (open && s.edited) EditedTag(Modifier.align(Alignment.TopStart).padding(4.dp))
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     Tip(if (copied) "Copied" else "Copy") {
-                        IconButton(onClick = {
+                        IconButton(modifier = Modifier.size(ACTION_SIZE), onClick = {
                             val file = currentShot.file
                             state.touch()
                             scope.launch { if (onCopy(file)) state.markCopied() }
@@ -305,8 +316,13 @@ private fun ThumbnailCard(
                             }
                         }
                     }
+                    Tip("Edit") {
+                        IconButton(modifier = Modifier.size(ACTION_SIZE), onClick = { onEdit(currentShot) }) {
+                            Icon(Icons.Filled.Edit, contentDescription = "Edit", Modifier.size(20.dp))
+                        }
+                    }
                     Tip("Show in folder") {
-                        IconButton(onClick = {
+                        IconButton(modifier = Modifier.size(ACTION_SIZE), onClick = {
                             state.touch()
                             onReveal(currentShot.file)
                         }) {
@@ -404,8 +420,20 @@ private class HoverHold(private val state: ScreenshotThumbnailState) {
     private fun apply() = state.hover(parts > 0 || drag)
 }
 
+/** The small accent "EDITED" tag on an edited screenshot's corner. */
+@Composable
+private fun EditedTag(modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Text(
+        "EDITED",
+        modifier.background(colors.primary, RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp),
+        color = colors.onPrimary,
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 9.sp, letterSpacing = 0.5.sp, lineHeight = 12.sp),
+    )
+}
+
 /** One slot of the composition drawing [shot]: [ScreenshotThumbnailState.acquire]d while it is remembered. */
-private class ShotLease(private val state: ScreenshotThumbnailState, private val shot: Shot) : RememberObserver {
+internal class ShotLease(private val state: ScreenshotThumbnailState, private val shot: Shot) : RememberObserver {
     private var held = false
 
     override fun onRemembered() {
@@ -422,7 +450,7 @@ private class ShotLease(private val state: ScreenshotThumbnailState, private val
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Tip(label: String, content: @Composable () -> Unit) {
+internal fun Tip(label: String, content: @Composable () -> Unit) {
     TooltipArea(
         tooltip = {
             Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {

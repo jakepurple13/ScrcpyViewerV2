@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -76,7 +77,11 @@ internal fun AfterScreenshotControl(b: SettingsBindings) {
                 selected = current == choice,
                 onClick = { b.actions.onAfterScreenshot(choice) },
                 shape = styledSegmentShape(i, AfterScreenshot.entries.size),
-            ) { Text(choice.label) }
+            ) {
+                // The row sizes its segments by their min intrinsic width: make that the whole label, not its
+                // longest word, so "Show thumbnail" is not cut.
+                Text(choice.label, Modifier.width(IntrinsicSize.Max), maxLines = 1, softWrap = false)
+            }
         }
     }
 }

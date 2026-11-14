@@ -43,8 +43,9 @@ class SettingsRegistryTest {
         val entry = entries[i + 1]
         assertEquals("after-screenshot", entry.id)
         assertEquals("After a screenshot", entry.title)
-        assertEquals(listOf("Show thumbnail", "Copy"), com.programmersbox.scrcpyviewer.state.AfterScreenshot.entries.map { it.label })
+        assertEquals(listOf("Show thumbnail", "Copy", "Open editor"), com.programmersbox.scrcpyviewer.state.AfterScreenshot.entries.map { it.label })
         assertEquals(listOf("after-screenshot"), searchSettings(settingsCategories, "thumbnail").first().entries.map { it.id })
+        assertEquals(listOf("after-screenshot"), searchSettings(settingsCategories, "markup").first().entries.map { it.id })
     }
 
     @Test

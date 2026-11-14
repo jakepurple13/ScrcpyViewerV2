@@ -203,6 +203,9 @@ class AppSettingsTest {
         assertEquals(AfterScreenshot.Thumbnail, AppSettings(file).settings.value.afterShot)
         AppSettings(file).update { it.copy(afterScreenshot = AfterScreenshot.Copy.name) }
         assertEquals(AfterScreenshot.Copy, AppSettings(file).settings.value.afterShot)
+        AppSettings(file).update { it.copy(afterScreenshot = AfterScreenshot.OpenEditor.name) }
+        assertEquals(AfterScreenshot.OpenEditor, AppSettings(file).settings.value.afterShot)
+        assertEquals(AfterScreenshot.OpenEditor, AfterScreenshot.fromName("OpenEditor"))
     }
 
     @Test

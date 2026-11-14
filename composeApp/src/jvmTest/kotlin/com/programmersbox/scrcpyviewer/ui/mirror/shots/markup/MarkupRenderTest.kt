@@ -246,4 +246,55 @@ class MarkupRenderTest {
         file.setWritable(true)
         assertTrue(dir.listDirectoryEntries().isEmpty())
     }
+
+    @Test
+    fun aCommittedPixelatesBlocksAreAveragedOnce() {
+        val orig = gradient(200, 160)
+        val marks = listOf(Mark.Pixelate(MarkPoint(10f, 10f), MarkPoint(150f, 120f)))
+        val cache = PixelateCache()
+        val first = Bitmap().apply { allocN32Pixels(200, 160) }.also { closeables += it }
+        Canvas(first).use { drawMarks(it, orig, marks, cache) }
+        val averaged = cache.averaged
+        assertTrue(averaged > 0)
+        val second = Bitmap().apply { allocN32Pixels(200, 160) }.also { closeables += it }
+        repeat(3) { Canvas(second).use { drawMarks(it, orig, marks, cache) } }
+        assertEquals(averaged, cache.averaged, "no block is averaged again")
+        // The same pixels as without a cache.
+        val plain = Bitmap().apply { allocN32Pixels(200, 160) }.also { closeables += it }
+        Canvas(plain).use { drawMarks(it, orig, marks) }
+        assertContentEquals(pixels(plain), pixels(second))
+    }
+
+    @Test
+    fun aGrowingDragPreviewOnlyAveragesTheNewBlocks() {
+        val orig = gradient(400, 400)
+        val block = blockSize(400, 400) // 10
+        val cache = PixelateCache()
+        val bmp = Bitmap().apply { allocN32Pixels(400, 400) }.also { closeables += it }
+        Canvas(bmp).use { drawMarks(it, orig, listOf(Mark.Pixelate(MarkPoint(0f, 0f), MarkPoint(300f, 300f))), cache) }
+        val full = cache.averaged
+        assertEquals((300 / block) * (300 / block), full)
+        Canvas(bmp).use { drawMarks(it, orig, listOf(Mark.Pixelate(MarkPoint(0f, 0f), MarkPoint(305f, 300f))), cache) }
+        assertEquals(full + 300 / block, cache.averaged, "only the new partial column")
+    }
+
+    @Test
+    fun aCacheUsedWithAnotherOriginalStartsOver() {
+        val a = gradient(60, 60)
+        val b = Bitmap().apply { allocN32Pixels(60, 60); erase(0xFF0000FF.toInt()) }.also { closeables += it }
+        val mark = listOf(Mark.Pixelate(MarkPoint(0f, 0f), MarkPoint(40f, 40f)))
+        val cache = PixelateCache()
+        val out = Bitmap().apply { allocN32Pixels(60, 60) }.also { closeables += it }
+        Canvas(out).use { drawMarks(it, a, mark, cache) }
+        Canvas(out).use { drawMarks(it, b, mark, cache) }
+        assertEquals(0xFF0000FF.toInt(), out.getColor(5, 5))
+    }
+
+    @Test
+    fun savedFileIsReadableByAllOnPosix() {
+        val dir = tempDir()
+        if ("posix" !in dir.fileSystem.supportedFileAttributeViews()) return
+        val saved = saveMarked(gradient(20, 20).asComposeImageBitmap(), emptyList(), dir.resolve("shot.png"))
+        assertEquals("rw-r--r--", java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(saved)))
+    }
 }

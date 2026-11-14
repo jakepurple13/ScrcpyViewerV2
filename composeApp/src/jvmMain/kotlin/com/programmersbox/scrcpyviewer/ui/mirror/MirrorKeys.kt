@@ -51,7 +51,9 @@ fun awtKeyOf(event: KeyEvent): AwtKeyTuple? {
 
 /**
  * The mirror window's device keys, called from the window's `onPreviewKeyEvent` (it sees only its own window's keys)
- * and its focus events. A key goes, in order: to the quick actions sheet when it has focus ([keyTarget]: Compose gets
+ * and its focus events. While the markup editor is open ([editorOpen]) every key is Compose's (the editor's: Esc,
+ * Ctrl/Cmd+Z) and none reaches the device, the followers or the zoom. Otherwise a key goes, in order: to the quick
+ * actions sheet when it has focus ([keyTarget]: Compose gets
  * it), Esc to close the open sheet, the zoom shortcuts (never forwarded), then unless [noControl]: capture keys
  * ([captureKey]), and unless [keyboardDisabled]: Cmd+V (Ctrl+V off macOS) pastes the computer's clipboard on the
  * device, the [hidKeyboard] when there is one (always consumed: HID keys never become text), else the [mapper]
@@ -86,6 +88,8 @@ class MirrorKeys(
     private val followerSend: (List<ControlMessage>) -> Unit = {},
     /** False with the leader's `no-key-repeat`: followers get no repeated presses either. */
     followerKeyRepeat: Boolean = true,
+    /** The markup editor is open over the window: it gets every key. */
+    private val editorOpen: () -> Boolean = { false },
 ) {
     /** Keys only (no geometry needed); its own state, as [InputMapper] is stateful and not thread-safe. */
     private val followerMapper = InputMapper(
@@ -102,6 +106,7 @@ class MirrorKeys(
     }
 
     private fun onKey(ev: AwtKeyTuple): Boolean {
+        if (editorOpen()) return false
         when (keyTarget(sheetOpen(), sheetFocused(), ev.keyCode)) {
             // Typed into the quick actions sheet: Compose gets every key, the device none (keyTarget).
             KeyTarget.Sheet -> return false
@@ -171,7 +176,12 @@ class MirrorKeys(
      * Focus entered the quick actions sheet: keys held for the device, and the key held for followers, would never see
      * their release.
      */
-    fun onSheetFocusGained() {
+    fun onSheetFocusGained() = releaseHeld()
+
+    /** The markup editor opened: keys held for the device and the followers would never see their release. */
+    fun onEditorOpened() = releaseHeld()
+
+    private fun releaseHeld() {
         hidKeyboard?.let { send(it.releaseAll()) }
         followerSend(followerMapper.releaseKey())
     }
