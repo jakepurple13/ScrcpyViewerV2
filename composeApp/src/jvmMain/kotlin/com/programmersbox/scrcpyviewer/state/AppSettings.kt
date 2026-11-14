@@ -74,6 +74,8 @@ data class Settings(
     val animateMirrorWindows: Boolean = true,
     /** A [LaunchQuitAnimation] name; unknown or missing names fall back to IconUnfold. */
     val launchQuitAnimation: String = LaunchQuitAnimation.IconUnfold.name,
+    /** An [AfterScreenshot] name; unknown or missing names fall back to Thumbnail. */
+    val afterScreenshot: String = AfterScreenshot.Thumbnail.name,
     /** A newer release downloads in the background as soon as it is found, then waits for a restart. */
     val autoDownloadUpdates: Boolean = false,
     /** The menu bar (macOS) / system tray (Windows, Linux) icon listing the devices. */

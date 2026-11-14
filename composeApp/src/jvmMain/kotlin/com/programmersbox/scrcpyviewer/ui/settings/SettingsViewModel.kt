@@ -206,6 +206,9 @@ class SettingsViewModel(
     fun setLaunchQuitAnimation(value: com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation) =
         appSettings.update { it.copy(launchQuitAnimation = value.name) }
 
+    fun setAfterScreenshot(value: com.programmersbox.scrcpyviewer.state.AfterScreenshot) =
+        appSettings.update { it.copy(afterScreenshot = value.name) }
+
     /** Reopens the first-run guide; it marks itself seen again when closed. */
     fun showOnboarding() = appSettings.update { it.copy(onboardingSeen = false) }
 

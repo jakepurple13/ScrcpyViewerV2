@@ -86,3 +86,26 @@ internal fun openWebUrl(
  */
 fun openWebUrl(url: String, run: (List<String>) -> Process? = ::startDetached): Boolean =
     openWebUrl(url, OpenPlatform.current(), run)
+
+/**
+ * The argv that shows [file] in the file manager: selected in Finder / Explorer; on Linux there is no portable select,
+ * so the parent folder opens. Never a shell string.
+ */
+internal fun revealCommand(file: String, platform: OpenPlatform): List<String> = when (platform) {
+    OpenPlatform.Mac -> listOf("open", "-R", file)
+    OpenPlatform.Windows -> listOf("explorer.exe", "/select,$file")
+    OpenPlatform.Linux -> listOf("xdg-open", java.nio.file.Paths.get(file).parent?.toString() ?: ".")
+}
+
+internal fun revealInFolder(
+    file: java.nio.file.Path,
+    platform: OpenPlatform,
+    run: (List<String>) -> Process? = ::startDetached,
+): Boolean =
+    runCatching { run(revealCommand(file.toString(), platform)) != null }
+        .onFailure { log.log(System.Logger.Level.WARNING, "Could not reveal $file", it) }
+        .getOrDefault(false)
+
+/** Shows [file] in Finder / Explorer (selected) or opens its folder (Linux). False, logged, on failure; never throws. */
+fun revealInFolder(file: java.nio.file.Path, run: (List<String>) -> Process? = ::startDetached): Boolean =
+    revealInFolder(file, OpenPlatform.current(), run)
