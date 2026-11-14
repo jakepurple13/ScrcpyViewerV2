@@ -23,6 +23,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -101,6 +102,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -118,7 +120,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asComposeImageBitmap
-import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -230,6 +231,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.ImageClipboard
+import com.programmersbox.scrcpyviewer.ui.common.openExternally
+import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
+import com.programmersbox.scrcpyviewer.state.AfterScreenshot
+import com.programmersbox.scrcpyviewer.ui.mirror.files.ComposeDragOutStarter
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlash
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnail
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnailState
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishScreenshot
 
 /** Side toolbar buttons; [keycode] buttons send that Android key down and up. */
 enum class MirrorAction(val label: String, val keycode: Int? = null) {
@@ -371,6 +381,8 @@ fun MirrorWindow(
     theme: AppTheme,
     /** `Settings.captureDir`: where screenshots and recordings started from the toolbar go. */
     captureDir: String,
+    /** `Settings.afterScreenshot`: a toolbar screenshot shows the thumbnail, or copies the image. */
+    afterScreenshot: AfterScreenshot = AfterScreenshot.Thumbnail,
     /** `Settings.animateMirrorWindows`, read when the window opens: grow from the Mirror button, wake the screen. */
     animate: Boolean = false,
     /** Runs `adb install` / `adb push` for dropped files and the Install APK… / Push file… buttons; null disables them. */
@@ -413,6 +425,7 @@ fun MirrorWindow(
     val reconnectable by controller.reconnectable.collectAsState()
     val recording by session.recording.collectAsState()
     val currentCaptureDir by rememberUpdatedState(captureDir)
+    val currentAfterScreenshot by rememberUpdatedState(afterScreenshot)
     val currentModel by rememberUpdatedState(model)
     val snackbar = remember { SnackbarHostState() }
     val uiScope = rememberCoroutineScope()
@@ -438,24 +451,31 @@ fun MirrorWindow(
         }
     }
 
-    /** Copies the frame now (inside VideoFrame.use), encodes and writes the PNG on the IO dispatcher. */
+    // The thumbnail after a screenshot; it owns its bitmaps, released when the window closes.
+    val thumbnail = remember { ScreenshotThumbnailState(uiScope) }
+    DisposableEffect(thumbnail) { onDispose(thumbnail::dispose) }
+    val screenshotDragStarter = remember { ComposeDragOutStarter() }
+    /** Bumped per screenshot: the flash over the video. */
+    var screenshotFlashes by remember { mutableIntStateOf(0) }
+
+    /**
+     * Copies the frame now (inside VideoFrame.use), encodes and writes the PNG on the IO dispatcher, then shows the
+     * thumbnail or copies the image, by `Settings.afterScreenshot` ([finishScreenshot]).
+     */
     fun takeScreenshot() {
         val bitmap = Screenshot.copyLatest { session.frames.value }
         if (bitmap == null) {
             notify("No frame to capture yet")
             return
         }
+        screenshotFlashes++
         uiScope.launch {
-            try {
-                val file = withContext(Dispatchers.IO) {
-                    Screenshot.save(bitmap, Paths.get(currentCaptureDir), currentModel)
-                }
-                notify("Screenshot saved to $file")
-            } catch (e: Exception) {
-                notify("Could not save the screenshot: ${e.message ?: e}")
-            } finally {
-                bitmap.asSkiaBitmap().close() // the copy's native pixels
-            }
+            finishScreenshot(
+                bitmap, currentAfterScreenshot, thumbnail,
+                save = { withContext(Dispatchers.IO) { Screenshot.save(bitmap, Paths.get(currentCaptureDir), currentModel) } },
+                copy = { withContext(Dispatchers.IO) { ImageClipboard.copyPng(it) } }, // blocks up to 5 s
+                notify = ::notify,
+            )
         }
     }
 
@@ -1108,6 +1128,24 @@ fun MirrorWindow(
                         clickIndicator = clickIndicator,
                         followIndicator = followRings,
                         onSheetBounds = { sheetBounds[0] = it },
+                        stageOverlay = {
+                            ScreenshotFlash(screenshotFlashes, motion = !reduceMotion)
+                            ScreenshotThumbnail(
+                                thumbnail,
+                                motion = !reduceMotion,
+                                onCopy = { file ->
+                                    withContext(Dispatchers.IO) { ImageClipboard.copyPng(file) }
+                                        .onFailure { notify("Saved, but could not copy the image: ${it.message ?: it}") }
+                                        .isSuccess
+                                },
+                                onReveal = { file -> revealInFolder(file) },
+                                onOpen = { file -> openExternally(file.toString()) },
+                                dragStarter = screenshotDragStarter,
+                                modifier = Modifier.align(Alignment.BottomEnd),
+                                // Dropped back on this window it would be pushed to the device: the drop targets refuse it.
+                                onOsDrag = { transfers.draggingOut = it },
+                            )
+                        },
                     )
                     }
                 }
@@ -1259,6 +1297,8 @@ fun MirrorContent(
     onSheetBounds: (Rect?) -> Unit = {},
     /** Taps the leading window sent here: the same dot and click ring, at the spot they landed. */
     followIndicator: ClickIndicator? = null,
+    /** Drawn over the stage, above the video and its overlays (the screenshot flash and thumbnail). */
+    stageOverlay: @Composable BoxScope.() -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1340,6 +1380,7 @@ fun MirrorContent(
                 ) {
                     lastHint.hint?.let { DropOverlay(it) }
                 }
+                stageOverlay()
             }
             SideToolbar(state, onAction)
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.

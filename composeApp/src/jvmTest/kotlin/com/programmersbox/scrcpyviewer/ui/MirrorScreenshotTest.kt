@@ -84,6 +84,9 @@ import com.programmersbox.scrcpyviewer.ui.mirror.FileTransfers
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesBrowser
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
+import com.programmersbox.scrcpyviewer.ui.mirror.files.ComposeDragOutStarter
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnail
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnailState
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.styleBackdrop
 import kotlinx.coroutines.flow.emptyFlow
@@ -166,6 +169,48 @@ class MirrorScreenshotTest {
             }
         }
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    /** The window after a toolbar screenshot: the thumbnail in the video area's corner, its ring two thirds full. */
+    private fun renderThumbnail(name: String, mode: ThemeMode, copied: Boolean = false) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher()) // never advanced: nothing expires
+        var now = 0L
+        val thumbnail = ScreenshotThumbnailState(timers, clock = { now })
+        val bitmap = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
+        thumbnail.show(Paths.get("/tmp/Pixel 8 Pro.png"), bitmap)
+        if (copied) thumbnail.markCopied()
+        now = 2_000
+        try {
+            renderToPng(1280, 800, out, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                        MirrorContent(
+                            state, frame, {}, {}, {}, {}, {}, {}, showTopStrip = false,
+                            stageOverlay = {
+                                ScreenshotThumbnail(
+                                    thumbnail, motion = true, onCopy = { true }, onReveal = {}, onOpen = {},
+                                    dragStarter = ComposeDragOutStarter(),
+                                    modifier = Modifier.align(androidx.compose.ui.Alignment.BottomEnd),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        } finally {
+            thumbnail.dispose()
+            timers.cancel()
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror screenshot thumbnail`() {
+        renderThumbnail("mirror-thumbnail-light.png", ThemeMode.Light)
+        renderThumbnail("mirror-thumbnail-dark.png", ThemeMode.Dark)
+        renderThumbnail("mirror-thumbnail-copied-dark.png", ThemeMode.Dark, copied = true)
     }
 
     @Test
