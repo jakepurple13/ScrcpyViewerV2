@@ -1,6 +1,12 @@
 package com.programmersbox.scrcpyviewer.ui.devices
 
 import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -79,6 +85,10 @@ internal fun SimpleDevicePane(
     presetMenuOpen: Boolean = false,
     /** Animates the switch to and from the advanced view; null when there is no switch to animate. */
     motion: ViewSwitchMotion? = null,
+    /** An emulator's AVD name once the launcher knows it: the title then, as in its connected row. */
+    avdName: String? = null,
+    /** Animates the title's change to [avdName] (a crossfade); without it the title changes at once. */
+    titleMotion: Boolean = remember { !systemReducesMotion() },
 ) {
     val device = state.devices.firstOrNull { it.serial == state.selectedSerial } ?: return
     Column(modifier.fillMaxSize()) {
@@ -90,7 +100,7 @@ internal fun SimpleDevicePane(
                     .simpleContentMotion(motion),
                 verticalArrangement = Arrangement.spacedBy(22.dp),
             ) {
-                DeviceHeader(device)
+                DeviceHeader(device, avdName, titleMotion)
                 PresetSection(state, onPreset, presetMenuOpen, motion)
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
@@ -147,7 +157,7 @@ internal fun wifiButtonState(device: Device, state: DevicesUiState): WifiButtonS
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DeviceHeader(device: Device) {
+private fun DeviceHeader(device: Device, avdName: String?, motion: Boolean) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Icon(
             Icons.Filled.PhoneAndroid,
@@ -156,13 +166,28 @@ private fun DeviceHeader(device: Device) {
             modifier = Modifier.size(56.dp),
         )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                deviceTitle(device),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            val title = connectedTitle(device, avdName)
+            val titleText = @Composable { shown: String ->
+                Text(
+                    shown,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (isEmulatorSerial(device.serial)) {
+                // Model or serial, then the AVD's name once matched: a crossfade like its connected row's, the height
+                // following.
+                Crossfade(
+                    title,
+                    Modifier.then(if (motion) Modifier.animateContentSize(tween(EMULATOR_TITLE_MILLIS, easing = EmphasizedDecelerate)) else Modifier),
+                    animationSpec = if (motion) tween(EMULATOR_TITLE_MILLIS) else snap(),
+                    label = "emulatorDetailTitle",
+                ) { titleText(it) }
+            } else {
+                titleText(title)
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 val connection = when {
                     isEmulatorSerial(device.serial) -> "Emulator"

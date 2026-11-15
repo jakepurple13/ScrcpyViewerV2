@@ -61,6 +61,26 @@ internal const val BODY_SWAP_MILLIS = 300
 /** Reduced motion: a plain fade. */
 internal const val EMULATOR_REDUCED_MILLIS = 150
 
+/** A More menu item that comes or goes (Cold boot), and Wipe data's enabled state, crossfade. */
+internal const val MENU_ITEM_MILLIS = 200
+
+/** Wipe data's alpha while disabled. */
+internal const val MENU_ITEM_DISABLED_ALPHA = 0.38f
+
+/** The wipe dialog's scrim fades in over this long. */
+internal const val WIPE_SCRIM_MILLIS = 300
+
+/** The wipe dialog's card scales from [WIPE_CARD_FROM_SCALE] and rises [WIPE_CARD_RISE] over this long. */
+internal const val WIPE_OPEN_MILLIS = 450
+internal const val WIPE_CARD_FROM_SCALE = 0.88f
+internal val WIPE_CARD_RISE = 14.dp
+
+/** The card fades in over this long while it scales. */
+internal const val WIPE_CARD_FADE_MILLIS = 250
+
+/** Closing reverses the opening (scrim, scale, rise and fade) over this long. */
+internal const val WIPE_CLOSE_MILLIS = 150
+
 /** The progress track's estimate when this AVD has no saved warm boot. */
 internal const val DEFAULT_BOOT_MILLIS = 30_000L
 
@@ -190,6 +210,48 @@ internal fun trackExit(motion: Boolean): ExitTransition =
     } else {
         fadeOut(reduced())
     }
+
+/** A More menu item coming in: a 200 ms fade while its height grows; reduced motion fades only. */
+internal fun menuItemEnter(motion: Boolean): EnterTransition =
+    if (motion) {
+        fadeIn(tween(MENU_ITEM_MILLIS, easing = EmphasizedDecelerate)) +
+            expandVertically(tween(MENU_ITEM_MILLIS, easing = EmphasizedDecelerate), expandFrom = Alignment.Top)
+    } else {
+        fadeIn(reduced())
+    }
+
+internal fun menuItemExit(motion: Boolean): ExitTransition =
+    if (motion) {
+        fadeOut(tween(MENU_ITEM_MILLIS, easing = EmphasizedAccelerate)) +
+            shrinkVertically(tween(MENU_ITEM_MILLIS, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Top)
+    } else {
+        fadeOut(reduced())
+    }
+
+/** An item's enabled state crossfades over 200 ms (150 ms with reduced motion). */
+internal fun menuItemAlphaSpec(motion: Boolean): FiniteAnimationSpec<Float> =
+    if (motion) tween(MENU_ITEM_MILLIS, easing = EmphasizedDecelerate) else reduced()
+
+/** The wipe dialog's scrim: fades in over 300 ms, out over 150 ms; reduced motion 150 ms both ways. */
+internal fun wipeScrimSpec(motion: Boolean, opening: Boolean): FiniteAnimationSpec<Float> = when {
+    !motion -> reduced()
+    opening -> tween(WIPE_SCRIM_MILLIS, easing = LinearEasing)
+    else -> tween(WIPE_CLOSE_MILLIS, easing = EmphasizedAccelerate)
+}
+
+/** The card's scale and rise, 0 (closed) to 1 (open): 450 ms in, 150 ms back; reduced motion keeps it still. */
+internal fun wipeCardSpec(motion: Boolean, opening: Boolean): FiniteAnimationSpec<Float> = when {
+    !motion -> snap()
+    opening -> tween(WIPE_OPEN_MILLIS, easing = EmphasizedDecelerate)
+    else -> tween(WIPE_CLOSE_MILLIS, easing = EmphasizedAccelerate)
+}
+
+/** The card's opacity: 250 ms in, 150 ms out; reduced motion a 150 ms fade. */
+internal fun wipeCardFadeSpec(motion: Boolean, opening: Boolean): FiniteAnimationSpec<Float> = when {
+    !motion -> reduced()
+    opening -> tween(WIPE_CARD_FADE_MILLIS, easing = EmphasizedDecelerate)
+    else -> tween(WIPE_CLOSE_MILLIS, easing = EmphasizedAccelerate)
+}
 
 /** Each second's fill moves linearly; reduced motion jumps to it. */
 internal fun trackFillSpec(motion: Boolean): FiniteAnimationSpec<Float> =

@@ -59,6 +59,8 @@ import com.programmersbox.scrcpyviewer.state.EmulatorPrefs
 import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorMenu
 import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorRow
 import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsUiState
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.WipeDialog
+import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.test.Test
@@ -417,9 +419,9 @@ class DevicesScreenshotTest {
     fun `emulators narrow list dark`() = renderEmulators("emulators-dark-narrow-240.png", ThemeMode.Dark, allStates, listWidthPx = 240)
 
     /** Popups do not render offscreen, so the More menu's items are drawn on a menu-like surface instead. */
-    private fun renderEmulatorMenu(name: String, mode: ThemeMode, row: EmulatorRow) {
+    private fun renderEmulatorMenu(name: String, mode: ThemeMode, row: EmulatorRow, platform: OpenPlatform = OpenPlatform.Mac) {
         val out = outDir.resolve(name)
-        renderToPng(400, 240, out, settleMillis = 500) {
+        renderToPng(400, 360, out, settleMillis = 500) {
             ScrcpyViewerTheme(mode) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     Surface(
@@ -428,7 +430,9 @@ class DevicesScreenshotTest {
                         color = MaterialTheme.colorScheme.surfaceContainer,
                         shadowElevation = 3.dp,
                     ) {
-                        Column(Modifier.padding(vertical = 8.dp)) { EmulatorMenu(row, onEvent = {}, onDismiss = {}) }
+                        Column(Modifier.padding(vertical = 8.dp)) {
+                            EmulatorMenu(row, onEvent = {}, onDismiss = {}, motion = true, platform = platform)
+                        }
                     }
                 }
             }
@@ -447,6 +451,39 @@ class DevicesScreenshotTest {
         "emulators-dark-menu-running.png", ThemeMode.Dark,
         EmulatorRow(pixel9, AvdState.Running("emulator-5554"), null, EmulatorPrefs(showWindow = true)),
     )
+
+    /** Windows and Linux say Show in folder; a failed AVD can be wiped. */
+    @Test
+    fun `emulators more menu failed windows`() = renderEmulatorMenu(
+        "emulators-light-menu-failed-windows.png", ThemeMode.Light,
+        EmulatorRow(pixel9, AvdState.Failed("Emulator exited (code 1).", cold = false), null, EmulatorPrefs()),
+        platform = OpenPlatform.Windows,
+    )
+
+    private fun renderWipeDialog(name: String, mode: ThemeMode) {
+        val out = outDir.resolve(name)
+        renderToPng(1280, 800, out, settleMillis = 1_000) {
+            ScrcpyViewerTheme(mode) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        withEmulators, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        panes = screenshotPanes(460, false),
+                        emulators = allStates.copy(hiddenSerials = setOf("emulator-5556")), motion = true,
+                        emulatorNow = { emulatorNow },
+                    )
+                    // Pixel Tablet is the stopped one in [allStates].
+                    WipeDialog(visible = true, name = "Pixel Tablet", onConfirm = {}, onDismiss = {}, motion = true)
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `emulators wipe dialog light`() = renderWipeDialog("emulators-light-wipe-dialog.png", ThemeMode.Light)
+
+    @Test
+    fun `emulators wipe dialog dark`() = renderWipeDialog("emulators-dark-wipe-dialog.png", ThemeMode.Dark)
 
     private val pairing = WifiPairingState(
         qrName = "scrcpy-viewer-7QK2ab",

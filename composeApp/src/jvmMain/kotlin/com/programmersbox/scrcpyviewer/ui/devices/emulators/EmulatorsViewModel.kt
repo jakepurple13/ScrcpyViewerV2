@@ -14,6 +14,7 @@ import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.EmulatorPrefs
 import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
+import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,12 +30,16 @@ import org.koin.core.annotation.KoinViewModel
 import java.nio.file.Path
 import kotlin.coroutines.CoroutineContext
 
-/** One AVD in the Emulators section. [size] is null until its folder has been measured (or when that failed). */
+/**
+ * One AVD in the Emulators section. [size] is null until its folder has been measured (or when that failed). While
+ * [wiping], its data is being deleted: it cannot start or be wiped again.
+ */
 internal data class EmulatorRow(
     val avd: Avd,
     val state: AvdState,
     val size: Long?,
     val prefs: EmulatorPrefs,
+    val wiping: Boolean = false,
 )
 
 internal data class EmulatorsUiState(
@@ -72,6 +77,12 @@ internal sealed interface EmulatorEvent {
     data class Retry(val avdId: String) : EmulatorEvent
     data class ToggleMirror(val avdId: String) : EmulatorEvent
     data class ToggleWindow(val avdId: String) : EmulatorEvent
+
+    /** Show in Finder / Show in folder: the AVD's folder in the file manager. */
+    data class Reveal(val avdId: String) : EmulatorEvent
+
+    /** Wipe data, once confirmed in the dialog. */
+    data class Wipe(val avdId: String) : EmulatorEvent
     data class SetExpanded(val expanded: Boolean) : EmulatorEvent
     data class SdkChosen(val path: String) : EmulatorEvent
     data object Reload : EmulatorEvent
@@ -94,6 +105,8 @@ internal class EmulatorsViewModel(
     scope: CoroutineScope = defaultViewModelScope(),
     private val os: OpenPlatform = OpenPlatform.current(),
     private val io: CoroutineContext = Dispatchers.IO,
+    /** Shows an AVD folder in Finder / Explorer (its parent folder on Linux); tests record it instead. */
+    private val reveal: (Path) -> Unit = { revealInFolder(it, os) },
 ) : ViewModel(scope) {
     private val env = environment.env
     private val home = environment.home
@@ -105,13 +118,16 @@ internal class EmulatorsViewModel(
     private var measurePending = false
 
     val state: StateFlow<EmulatorsUiState> = combine(
-        catalog, sizes, launcher.states, launcher.bootingSerials, settings.settings,
-    ) { cat, sizes, states, booting, s ->
+        catalog, sizes, launcher.states.combine(launcher.wiping, ::Pair), launcher.bootingSerials, settings.settings,
+    ) { cat, sizes, (states, wiping), booting, s ->
         EmulatorsUiState(
             sdk = cat.sdk,
             // Only catalog AVDs: the launcher's map may hold others (an emulator of a Gradle managed device).
             rows = cat.avds.map { avd ->
-                EmulatorRow(avd, states[avd.id] ?: AvdState.Stopped, sizes[avd.id], s.emulatorPrefs[avd.id] ?: EmulatorPrefs())
+                EmulatorRow(
+                    avd, states[avd.id] ?: AvdState.Stopped, sizes[avd.id], s.emulatorPrefs[avd.id] ?: EmulatorPrefs(),
+                    wiping = avd.id in wiping,
+                )
             },
             expanded = s.emulatorsExpanded,
             hiddenSerials = booting,
@@ -139,6 +155,8 @@ internal class EmulatorsViewModel(
             is EmulatorEvent.Stop -> launcher.stop(event.avdId, row(event.avdId)?.avd?.name ?: event.avdId)
             is EmulatorEvent.ToggleMirror -> updatePrefs(event.avdId) { it.copy(mirrorWhenReady = !it.mirrorWhenReady) }
             is EmulatorEvent.ToggleWindow -> updatePrefs(event.avdId) { it.copy(showWindow = !it.showWindow) }
+            is EmulatorEvent.Reveal -> catalog.value.avds.firstOrNull { it.id == event.avdId }?.let { reveal(it.dir) }
+            is EmulatorEvent.Wipe -> wipe(event.avdId)
             is EmulatorEvent.SetExpanded -> settings.update { it.copy(emulatorsExpanded = event.expanded) }
             is EmulatorEvent.SdkChosen -> {
                 // Saved even when it is not an SDK: the section then says what it found there.
@@ -156,6 +174,14 @@ internal class EmulatorsViewModel(
         val avd = catalog.value.avds.firstOrNull { it.id == avdId } ?: return
         launcher.start(avd, sdk, cold)
         reload(measure = false)
+    }
+
+    /** The launcher refuses a running AVD and reports the result as a snackbar; a wipe frees space, so sizes are read again. */
+    private fun wipe(avdId: String) {
+        val avd = catalog.value.avds.firstOrNull { it.id == avdId } ?: return
+        viewModelScope.launch {
+            if (launcher.wipe(avd).isSuccess) reload()
+        }
     }
 
     private fun updatePrefs(avdId: String, change: (EmulatorPrefs) -> EmulatorPrefs) = settings.update { s ->

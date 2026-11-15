@@ -26,9 +26,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.IOException
+import java.nio.file.FileSystemException
+import java.nio.file.FileVisitResult
+import java.nio.file.LinkOption
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -103,6 +109,8 @@ class EmulatorLauncher(
      * bounds come from Compose layout coordinates. Tests pass their own.
      */
     private val uiContext: CoroutineContext = Dispatchers.Main,
+    /** Deletes an AVD folder's data for [wipe]: [wipeAvdData] off the main thread. Tests can hold a wipe midway. */
+    private val wipeData: suspend (Path) -> Unit = { withContext(Dispatchers.IO) { wipeAvdData(it) } },
 ) {
     private class Session(
         val avdId: String,
@@ -125,6 +133,8 @@ class EmulatorLauncher(
     private val _states = MutableStateFlow<Map<String, AvdState>>(emptyMap())
     private val _bootingSerials = MutableStateFlow<Set<String>>(emptySet())
     private val _notices = MutableSharedFlow<EmulatorNotice>(extraBufferCapacity = 16)
+    // Changed under [lock].
+    private val _wiping = MutableStateFlow<Set<String>>(emptySet())
 
     // All guarded by [lock].
     private val sessions = HashMap<String, Session>()
@@ -141,16 +151,26 @@ class EmulatorLauncher(
 
     val notices: SharedFlow<EmulatorNotice> = _notices.asSharedFlow()
 
+    /** AVD ids whose data is being wiped: they cannot start until it finishes. */
+    val wiping: StateFlow<Set<String>> = _wiping.asStateFlow()
+
     init {
         scope.launch { devices.collect(::onDevices) }
     }
 
     fun stateOf(avdId: String): AvdState = _states.value[avdId] ?: AvdState.Stopped
 
-    /** Starts [avd] unless it is already booting, running or stopping. [cold] adds `-no-snapshot-load`. */
+    /**
+     * Starts [avd] unless it is already booting, running or stopping. [cold] adds `-no-snapshot-load`. Refused, with a
+     * notice, while its data is being wiped: it would boot on half-deleted images.
+     */
     internal fun start(avd: Avd, sdk: AndroidSdk, cold: Boolean = false): Unit = synchronized(lock) {
         val current = stateOf(avd.id)
         if (current !is AvdState.Stopped && current !is AvdState.Failed) return
+        if (avd.id in _wiping.value) {
+            _notices.tryEmit(EmulatorNotice("${avd.name} is still being wiped. Start it once that finishes."))
+            return
+        }
         val taken = devices.value.map { it.serial }.toSet() + sessions.values.map { it.serial } + live
         val port = pickPort(taken, isPortFree) ?: run {
             set(avd.id, AvdState.Failed("Couldn't start the emulator: no free port from $FIRST_PORT to $LAST_PORT", cold))
@@ -199,6 +219,67 @@ class EmulatorLauncher(
         }
         set(avdId, AvdState.Stopping(serial))
         scope.launch { stopListed(avdId, session?.name ?: name, serial, session) }
+    }
+
+    /**
+     * Deletes [avd]'s user data, cache and snapshots ([WIPE_ENTRIES], with [wipeAvdData]), so its next start is a cold
+     * boot on fresh data, and says how it went in a notice. Refused while the AVD is Booting, Running or Stopping, or
+     * runs on any emulator adb lists: ours, one started elsewhere, or one not matched to an AVD yet (asked with `adb emu
+     * avd name`; one that cannot say refuses the wipe too). A Start of the AVD is refused until the wipe ends.
+     */
+    internal suspend fun wipe(avd: Avd): Result<Unit> {
+        val result = runWipe(avd)
+        val text = result.fold(
+            onSuccess = { "Wiped ${avd.name}. Next start is a cold boot." },
+            onFailure = { "Couldn't wipe ${avd.name}: ${wipeFailure(it)}" },
+        )
+        _notices.tryEmit(EmulatorNotice(text))
+        return result
+    }
+
+    private suspend fun runWipe(avd: Avd): Result<Unit> {
+        val asked = synchronized(lock) {
+            if (avd.id in _wiping.value) return Result.failure(WipeRefused("it's already being wiped"))
+            busyReason(avd.id)?.let { return Result.failure(WipeRefused(it)) }
+            _wiping.value += avd.id
+            unmatchedEmulators()
+        }
+        try {
+            for (serial in asked) {
+                val id = avdNameOf(serial) ?: return Result.failure(WipeRefused("couldn't tell which AVD $serial runs"))
+                if (id == avd.id) return Result.failure(WipeRefused("it's running"))
+            }
+            // Checked again: an emulator may have started (or been matched to it) while the others answered.
+            synchronized(lock) {
+                busyReason(avd.id)?.let { return Result.failure(WipeRefused(it)) }
+                if ((unmatchedEmulators() - asked).isNotEmpty()) return Result.failure(WipeRefused("an emulator is starting. Try again"))
+            }
+            wipeData(avd.dir)
+            return Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return Result.failure(e)
+        } finally {
+            synchronized(lock) { _wiping.value -= avd.id }
+        }
+    }
+
+    /** Why [avdId] cannot be wiped now, or null when it can. Callers hold [lock]. */
+    private fun busyReason(avdId: String): String? {
+        val state = stateOf(avdId)
+        return when {
+            state is AvdState.Stopping -> "it's still stopping"
+            state !is AvdState.Stopped && state !is AvdState.Failed -> "it's running"
+            sessions.containsKey(avdId) || avdId in external.values -> "it's running"
+            else -> null
+        }
+    }
+
+    /** Emulators adb lists that are neither ours nor matched to an AVD: any of them could be running one. */
+    private fun unmatchedEmulators(): Set<String> {
+        val ours = sessions.values.map { it.serial }.toSet()
+        return devices.value.map { it.serial }.filter { emulatorSerial.matches(it) && it !in external && it !in ours }.toSet()
     }
 
     private suspend fun boot(session: Session) {
@@ -373,15 +454,7 @@ class EmulatorLauncher(
 
     /** Maps an emulator we did not start (or started before a relaunch) to its AVD: it then shows as Running. */
     private suspend fun identify(device: Device) {
-        val result = try {
-            adb.execWithTimeout(AVD_NAME_TIMEOUT_MS, "-s", device.serial, "emu", "avd", "name")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            null
-        }
-        val id = result?.takeIf { it.exitCode == 0 }?.stdout?.lineSequence()?.map { it.trim() }
-            ?.firstOrNull { it.isNotEmpty() && it != "OK" }
+        val id = avdNameOf(device.serial)
         synchronized(lock) {
             if (id == null) {
                 asked.remove(device.serial to device.transportId)
@@ -399,6 +472,19 @@ class EmulatorLauncher(
         }
     }
 
+    /** The AVD id the emulator on [serial] runs (`adb emu avd name`), or null when it cannot say. */
+    private suspend fun avdNameOf(serial: String): String? {
+        val result = try {
+            adb.execWithTimeout(AVD_NAME_TIMEOUT_MS, "-s", serial, "emu", "avd", "name")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        return result?.takeIf { it.exitCode == 0 }?.stdout?.lineSequence()?.map { it.trim() }
+            ?.firstOrNull { it.isNotEmpty() && it != "OK" }
+    }
+
     /** After a session ends: emulators of its AVD it was hiding are matched again. The lock is reentrant. */
     private fun rematch() = onDevices(devices.value)
 
@@ -408,6 +494,75 @@ class EmulatorLauncher(
         _states.value = next
         _bootingSerials.value = next.values.filterIsInstance<AvdState.Booting>().map { it.serial }.toSet()
     }
+}
+
+/** What a wipe deletes inside an AVD folder: the user data and cache images (raw and qcow2 overlay) and the snapshots. */
+internal val WIPE_ENTRIES = listOf("userdata-qemu.img", "userdata-qemu.img.qcow2", "cache.img", "cache.img.qcow2", "snapshots")
+
+/** A wipe refused before anything was deleted; the message completes "Couldn't wipe <name>: …". */
+internal class WipeRefused(message: String) : Exception(message)
+
+/** The end of "Couldn't wipe <name>: …" for [e], with a full stop. */
+private fun wipeFailure(e: Throwable): String {
+    val text = when (e) {
+        is WipeRefused -> e.message.orEmpty()
+        is FileSystemException -> listOfNotNull(e.file?.let { runCatching { Path.of(it).fileName?.toString() }.getOrNull() ?: it }, e.reason)
+            .joinToString(": ")
+        else -> e.message.orEmpty()
+    }
+    return text.ifBlank { e::class.simpleName.orEmpty() }.removeSuffix(".") + "."
+}
+
+/**
+ * Deletes [WIPE_ENTRIES] inside [dir] (missing ones are fine) and nothing else. Every entry must resolve inside the
+ * folder's real path, or nothing is deleted and this throws [WipeRefused]. A symbolic link (or Windows junction)
+ * among them is deleted itself, never what it points at; `snapshots` is deleted file by file without following links.
+ */
+internal fun wipeAvdData(dir: Path) {
+    // A symlinked AVD folder is fine: where it points is the AVD.
+    val root = dir.toRealPath()
+    val entries = WIPE_ENTRIES.map { root.resolve(it) }.filter { Files.exists(it, LinkOption.NOFOLLOW_LINKS) }
+    // All checked before any is deleted: a wipe either refuses or deletes.
+    for (entry in entries) {
+        val real = try {
+            entry.toRealPath()
+        } catch (_: IOException) {
+            null
+        }
+        if (entry.parent != root || real == null || real == root || !real.startsWith(root)) {
+            throw WipeRefused("${entry.fileName} points outside its AVD folder. Nothing was deleted")
+        }
+    }
+    for (entry in entries) {
+        val attrs = Files.readAttributes(entry, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        if (attrs.isDirectory && !attrs.isOther && !attrs.isSymbolicLink) deleteTree(entry) else Files.delete(entry)
+    }
+}
+
+/** Deletes [start] and everything in it. Links are never followed: a link (or junction) inside is deleted itself. */
+private fun deleteTree(start: Path) {
+    // No FOLLOW_LINKS: a symbolic link is visited as a file, so deleting it removes only the link.
+    Files.walkFileTree(start, object : SimpleFileVisitor<Path>() {
+        override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+            // A Windows junction can read as a directory: delete the junction itself, never walk into it.
+            if (dir != start && (attrs.isOther || attrs.isSymbolicLink)) {
+                Files.delete(dir)
+                return FileVisitResult.SKIP_SUBTREE
+            }
+            return FileVisitResult.CONTINUE
+        }
+
+        override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+            Files.delete(file)
+            return FileVisitResult.CONTINUE
+        }
+
+        override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+            if (exc != null) throw exc
+            Files.delete(dir)
+            return FileVisitResult.CONTINUE
+        }
+    })
 }
 
 /** `<sdk>/emulator/emulator -avd <id> -port <port> [-no-window] [-no-snapshot-load]`. */

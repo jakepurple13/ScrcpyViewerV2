@@ -5,11 +5,33 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.rememberTransition
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MenuDefaults
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -80,11 +102,16 @@ import com.programmersbox.scrcpyviewer.emulator.AvdState
 import com.programmersbox.scrcpyviewer.emulator.BootStage
 import com.programmersbox.scrcpyviewer.emulator.SdkLookup
 import com.programmersbox.scrcpyviewer.emulator.formatSize
+import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
+import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
 import com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
+import com.programmersbox.scrcpyviewer.ui.theme.styleRaised
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import java.io.File
@@ -299,7 +326,7 @@ private fun AvdKind.icon(): ImageVector = when (this) {
 /** A row's subtitle: what the AVD is (Stopped), the boot stage, the serial, or the failure. */
 internal data class Subtitle(val text: String, val mono: Boolean = false, val error: Boolean = false)
 
-internal fun subtitle(row: EmulatorRow): Subtitle = when (val s = row.state) {
+internal fun subtitle(row: EmulatorRow): Subtitle = if (row.wiping) Subtitle("Wiping data…") else when (val s = row.state) {
     AvdState.Stopped -> Subtitle(
         listOfNotNull(
             row.avd.api?.let { "API $it" },
@@ -352,6 +379,17 @@ internal fun EmulatorRowItem(
     val shape = styledCorner(12.dp)
     val booting = row.state as? AvdState.Booting
     val elapsed = rememberElapsedSeconds(booting?.startedAt, now)
+    var confirmWipe by remember { mutableStateOf(false) }
+    WipeDialog(
+        visible = confirmWipe,
+        name = row.avd.name,
+        onConfirm = {
+            confirmWipe = false
+            onEvent(EmulatorEvent.Wipe(row.avd.id))
+        },
+        onDismiss = { confirmWipe = false },
+        motion = motion,
+    )
     EmulatorRowLayout(
         modifier = modifier.fillMaxWidth()
             .clip(shape)
@@ -369,7 +407,7 @@ internal fun EmulatorRowItem(
             }
         },
         controls = { RowControls(row, elapsed, onEvent, motion) },
-        more = { MoreButton(row, onEvent, menuInitiallyOpen) },
+        more = { MoreButton(row, onEvent, menuInitiallyOpen, motion, onWipe = { confirmWipe = true }) },
     )
 }
 
@@ -506,8 +544,9 @@ private fun RowControls(row: EmulatorRow, elapsed: State<Int>, onEvent: (Emulato
             label = "emulator button",
         ) { kind ->
             when (kind) {
-                ButtonKind.Start -> TonalAction("Start", Icons.Filled.PlayArrow) { onEvent(EmulatorEvent.Start(id)) }
-                ButtonKind.Retry -> TonalAction("Retry", Icons.Filled.Replay) { onEvent(EmulatorEvent.Retry(id)) }
+                // Held off while the AVD's data is being wiped (the launcher refuses it too).
+                ButtonKind.Start -> TonalAction("Start", Icons.Filled.PlayArrow, enabled = !row.wiping) { onEvent(EmulatorEvent.Start(id)) }
+                ButtonKind.Retry -> TonalAction("Retry", Icons.Filled.Replay, enabled = !row.wiping) { onEvent(EmulatorEvent.Retry(id)) }
                 ButtonKind.Stop -> Tooltip("Stop") {
                     IconButton(onClick = { onEvent(EmulatorEvent.Stop(id)) }, modifier = Modifier.size(32.dp)) {
                         Icon(Icons.Filled.Stop, contentDescription = "Stop", Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -520,9 +559,10 @@ private fun RowControls(row: EmulatorRow, elapsed: State<Int>, onEvent: (Emulato
 }
 
 @Composable
-private fun TonalAction(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun TonalAction(label: String, icon: ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
     FilledTonalButton(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier.height(32.dp),
         contentPadding = PaddingValues(start = 10.dp, end = 14.dp),
     ) {
@@ -580,7 +620,13 @@ private fun StateChip(kind: ChipKind, elapsed: State<Int>, motion: Boolean, rise
 }
 
 @Composable
-private fun MoreButton(row: EmulatorRow, onEvent: (EmulatorEvent) -> Unit, initiallyOpen: Boolean) {
+private fun MoreButton(
+    row: EmulatorRow,
+    onEvent: (EmulatorEvent) -> Unit,
+    initiallyOpen: Boolean,
+    motion: Boolean,
+    onWipe: () -> Unit,
+) {
     var open by remember { mutableStateOf(initiallyOpen) }
     Box {
         Tooltip("More") {
@@ -589,24 +635,42 @@ private fun MoreButton(row: EmulatorRow, onEvent: (EmulatorEvent) -> Unit, initi
             }
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            EmulatorMenu(row, onEvent, onDismiss = { open = false })
+            EmulatorMenu(row, onEvent, onDismiss = { open = false }, onWipe = onWipe, motion = motion)
         }
     }
 }
 
+/** The reveal item's label: Finder on macOS, the file manager elsewhere. */
+internal fun revealLabel(platform: OpenPlatform): String = if (platform == OpenPlatform.Mac) "Show in Finder" else "Show in folder"
+
+/** Wipe data… is offered only for an AVD that is not running (Stopped or Failed) and not being wiped already. */
+internal fun canWipe(row: EmulatorRow): Boolean =
+    (row.state is AvdState.Stopped || row.state is AvdState.Failed) && !row.wiping
+
 /**
- * The ⋮ menu's items: the AVD id, Cold boot (Stopped or Failed only), and the Mirror when ready and Show emulator
- * window checkboxes, which leave the menu open. Internal for screenshots (popups do not render offscreen).
+ * The ⋮ menu's items: the AVD id, Cold boot (Stopped or Failed only), the Mirror when ready and Show emulator window
+ * checkboxes (which leave the menu open), a divider, Show in Finder / Show in folder, and Wipe data… ([onWipe] opens
+ * its confirm dialog; enabled only when [canWipe]). Cold boot comes and goes, and Wipe data's enabled state changes,
+ * with a crossfade. Internal for screenshots (popups do not render offscreen).
  */
 @Composable
-internal fun EmulatorMenu(row: EmulatorRow, onEvent: (EmulatorEvent) -> Unit, onDismiss: () -> Unit) {
+internal fun EmulatorMenu(
+    row: EmulatorRow,
+    onEvent: (EmulatorEvent) -> Unit,
+    onDismiss: () -> Unit,
+    onWipe: () -> Unit = {},
+    motion: Boolean = remember { !systemReducesMotion() },
+    platform: OpenPlatform = OpenPlatform.current(),
+) {
     val id = row.avd.id
     Text(
         id, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
     )
-    if (row.state is AvdState.Stopped || row.state is AvdState.Failed) {
+    val coldBoot = remember { MutableTransitionState(canWipe(row)) }
+    coldBoot.targetState = canWipe(row)
+    AnimatedVisibility(coldBoot, enter = menuItemEnter(motion), exit = menuItemExit(motion)) {
         DropdownMenuItem(
             text = { Text("Cold boot") },
             onClick = { onDismiss(); onEvent(EmulatorEvent.ColdBoot(id)) },
@@ -623,6 +687,143 @@ internal fun EmulatorMenu(row: EmulatorRow, onEvent: (EmulatorEvent) -> Unit, on
         onClick = { onEvent(EmulatorEvent.ToggleWindow(id)) },
         leadingIcon = { Checkbox(checked = row.prefs.showWindow, onCheckedChange = null) },
     )
+    HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
+    DropdownMenuItem(
+        text = { Text(revealLabel(platform)) },
+        onClick = { onDismiss(); onEvent(EmulatorEvent.Reveal(id)) },
+        leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null, Modifier.size(18.dp)) },
+    )
+    val wipeEnabled = canWipe(row)
+    // Always error-coloured; disabled, it fades to 38 % rather than switching colour in one frame.
+    val wipeAlpha by animateFloatAsState(
+        if (wipeEnabled) 1f else MENU_ITEM_DISABLED_ALPHA, menuItemAlphaSpec(motion), label = "wipe item",
+    )
+    val error = MaterialTheme.colorScheme.error
+    DropdownMenuItem(
+        text = { Text("Wipe data…") },
+        onClick = { onDismiss(); onWipe() },
+        enabled = wipeEnabled,
+        leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null, Modifier.size(18.dp)) },
+        colors = MenuDefaults.itemColors(
+            textColor = error, leadingIconColor = error, disabledTextColor = error, disabledLeadingIconColor = error,
+        ),
+        modifier = Modifier.graphicsLayer { alpha = wipeAlpha },
+    )
+}
+
+/**
+ * Confirms Wipe data for [name]: "Wipe <name>?", what it erases, Cancel and an error-coloured Wipe data. The scrim
+ * fades in over 300 ms while the card scales from .88 and rises 14 dp over 450 ms; closing reverses over 150 ms
+ * (reduced motion: 150 ms fades). Esc, a click on the scrim and Cancel close it without wiping; focus starts on Cancel,
+ * so Enter there cancels, and Enter on Wipe data confirms. A real [Dialog] layer, so it covers the window and keeps
+ * keyboard focus inside.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+internal fun WipeDialog(
+    visible: Boolean,
+    name: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    motion: Boolean = remember { !systemReducesMotion() },
+) {
+    val shown = remember { MutableTransitionState(false) }
+    shown.targetState = visible
+    if (!shown.currentState && !shown.targetState) return
+    // Only the first click or key acts: while it closes, the rest do nothing.
+    val confirm = {
+        if (shown.targetState) {
+            shown.targetState = false
+            onConfirm()
+        }
+    }
+    val dismiss = {
+        if (shown.targetState) {
+            shown.targetState = false
+            onDismiss()
+        }
+    }
+    val scrimColor = remember { DialogProperties().scrimColor }
+    Dialog(
+        onDismissRequest = dismiss,
+        properties = DialogProperties(
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false,
+            usePlatformInsets = false,
+            scrimColor = Color.Transparent,
+            animateTransition = false,
+        ),
+    ) {
+        val transition = rememberTransition(shown, label = "wipe dialog")
+        val scrim by transition.animateFloat({ wipeScrimSpec(motion, targetState) }, label = "scrim") { if (it) 1f else 0f }
+        val card by transition.animateFloat({ wipeCardSpec(motion, targetState) }, label = "card") { if (it) 1f else 0f }
+        val fade by transition.animateFloat({ wipeCardFadeSpec(motion, targetState) }, label = "fade") { if (it) 1f else 0f }
+        val rise = with(LocalDensity.current) { WIPE_CARD_RISE.toPx() }
+        Box(
+            Modifier.fillMaxSize()
+                .drawBehind { drawRect(scrimColor, alpha = scrimColor.alpha * scrim) }
+                .pointerInput(Unit) { detectTapGestures { dismiss() } }
+                // Esc closes it wherever focus is inside (the dialog layer's own Esc handling may also call dismiss).
+                .onPreviewKeyEvent {
+                    if (it.key == Key.Escape && it.type == KeyEventType.KeyDown) {
+                        dismiss()
+                        true
+                    } else {
+                        false
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            WipeCard(
+                name, confirm, dismiss,
+                Modifier.padding(24.dp).graphicsLayer {
+                    val scale = WIPE_CARD_FROM_SCALE + (1f - WIPE_CARD_FROM_SCALE) * card
+                    scaleX = scale
+                    scaleY = scale
+                    translationY = (1f - card) * rise
+                    alpha = fade
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun WipeCard(name: String, onConfirm: () -> Unit, onDismiss: () -> Unit, modifier: Modifier) {
+    val style = currentStyle
+    val shape = if (style == ThemeStyle.Retro) RectangleShape else MaterialTheme.shapes.extraLarge
+    val cancelFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { cancelFocus.requestFocus() } }
+    Surface(
+        // Taps on the card stay off the scrim, which closes the dialog.
+        modifier.widthIn(max = 400.dp).pointerInput(Unit) { detectTapGestures { } }
+            .then(if (style == ThemeStyle.Material) Modifier else Modifier.styleRaised(shape)),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = if (style == ThemeStyle.Material) 6.dp else 0.dp,
+    ) {
+        Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Wipe $name?", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(
+                "This erases apps, accounts and files on the emulator. It can't be undone.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onDismiss, Modifier.focusRequester(cancelFocus)) { Text("Cancel") }
+                Button(
+                    onConfirm,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) { Text("Wipe data") }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

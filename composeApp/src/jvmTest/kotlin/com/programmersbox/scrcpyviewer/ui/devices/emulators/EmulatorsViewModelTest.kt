@@ -39,6 +39,7 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -119,18 +120,21 @@ class EmulatorsViewModelTest {
 
     private fun emulator(serial: String) = Device(serial, DeviceState.Device, "device", null, null, 1, false, DeviceInfo("sdk_gphone64_arm64", "16", 36))
 
-    private fun TestScope.launcher() = EmulatorLauncher(
+    private fun TestScope.launcher(wipeData: suspend (Path) -> Unit = { error("no wipe expected") }) = EmulatorLauncher(
         adb = adb, devices = devices, settings = settings, mirrors = MirrorRequests(requested),
         logDir = tmp.resolve("logs"), scope = backgroundScope, starter = starter,
         clock = { testScheduler.currentTime }, isPortFree = { true }, uiContext = EmptyCoroutineContext,
+        wipeData = wipeData,
     )
 
     private fun TestScope.viewModel(
         launcher: EmulatorLauncher = launcher(),
         io: CoroutineContext = UnconfinedTestDispatcher(testScheduler),
         sizeOf: (Path) -> Long? = { measured += it.fileName.toString(); 8_804_682_956L },
+        reveal: (Path) -> Unit = { error("no reveal expected") },
     ) = EmulatorsViewModel(
         launcher, settings, EmulatorEnvironment(env::get, home, sizeOf), backgroundScope, os = OpenPlatform.Linux, io = io,
+        reveal = reveal,
     ).also {
         it.onEvent(EmulatorEvent.Reload)
         runCurrent()
@@ -364,5 +368,59 @@ class EmulatorsViewModelTest {
         devices.value = listOf(emulator("emulator-5556"), emulator("emulator-5558"))
         runCurrent()
         assertEquals(null, vm.state.value.avdNames["emulator-5558"])
+    }
+
+    @Test
+    fun `reveal opens the avd folder`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        val revealed = mutableListOf<Path>()
+        val vm = viewModel(reveal = { revealed.add(it) })
+        vm.onEvent(EmulatorEvent.Reveal("Pixel_9_API_36"))
+        vm.onEvent(EmulatorEvent.Reveal("not_in_the_catalog"))
+        assertEquals(listOf(avdHome.resolve("Pixel_9_API_36.avd")), revealed)
+    }
+
+    @Test
+    fun `wipe marks the row wiping, holds off a start, then measures again`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        val hold = CompletableDeferred<Unit>()
+        val wiped = mutableListOf<Path>()
+        val launcher = launcher(wipeData = { wiped.add(it); hold.await() })
+        val notices = mutableListOf<EmulatorNotice>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { launcher.notices.toList(notices) }
+        val vm = viewModel(launcher)
+        measured.clear()
+
+        vm.onEvent(EmulatorEvent.Wipe("Pixel_9_API_36"))
+        runCurrent()
+        assertEquals(listOf(avdHome.resolve("Pixel_9_API_36.avd")), wiped)
+        assertTrue(vm.row("Pixel_9_API_36").wiping)
+        vm.onEvent(EmulatorEvent.Start("Pixel_9_API_36"))
+        runCurrent()
+        assertEquals(AvdState.Stopped, vm.row("Pixel_9_API_36").state)
+        assertTrue(starter.commands.isEmpty())
+
+        hold.complete(Unit)
+        runCurrent()
+        assertFalse(vm.row("Pixel_9_API_36").wiping)
+        assertEquals(listOf("Pixel_9_API_36.avd"), measured, "the freed space shows in the size")
+        assertEquals("Wiped Pixel 9. Next start is a cold boot.", notices.last().text)
+    }
+
+    @Test
+    fun `wipe of a running avd is refused with a snackbar and deletes nothing`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        val launcher = launcher()
+        val notices = mutableListOf<EmulatorNotice>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { launcher.notices.toList(notices) }
+        adb.avdNames["emulator-5554"] = "Pixel_9_API_36"
+        devices.value = listOf(emulator("emulator-5554"))
+        val vm = viewModel(launcher)
+        vm.onEvent(EmulatorEvent.Wipe("Pixel_9_API_36"))
+        runCurrent()
+        assertEquals(listOf("Couldn't wipe Pixel 9: it's running."), notices.map { it.text })
     }
 }
