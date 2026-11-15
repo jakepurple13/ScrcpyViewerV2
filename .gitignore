@@ -4,6 +4,10 @@ build/
 .gradle/
 .idea/
 .kotlin/
-composeApp/bundled/
+# Downloaded tools (downloadBundledTools); only the FFmpeg notice is checked in.
+composeApp/bundled/*
+!composeApp/bundled/common/
+composeApp/bundled/common/*
+!composeApp/bundled/common/FFMPEG-NOTICE.txt
 .hotswan/
 local.properties

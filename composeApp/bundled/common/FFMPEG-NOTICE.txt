@@ -1,0 +1,35 @@
+FFmpeg
+======
+
+Scrcpy Vwr uses FFmpeg 8.1.2 (https://ffmpeg.org/) to decode the mirrored video and, as a separate `ffmpeg`
+program, to make GIFs from recordings. FFmpeg comes from the JavaCPP Presets for FFmpeg by Bytedeco
+(org.bytedeco:ffmpeg 8.1.2-1.5.14), which ship it as shared libraries and an executable inside the app.
+
+This build of FFmpeg is licensed under the GNU Lesser General Public License version 3 or (at your option) any later
+version (LGPL v3+). It is configured with --enable-version3 and without --enable-gpl or --enable-nonfree.
+
+  FFmpeg is free software; you can redistribute it and/or modify it under the terms of the GNU Lesser General Public
+  License as published by the Free Software Foundation; either version 3 of the License, or (at your option) any
+  later version.
+
+  FFmpeg is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+  warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
+  details.
+
+  You should have received a copy of the GNU Lesser General Public License along with FFmpeg. If not, see
+  <https://www.gnu.org/licenses/>.
+
+The full licence texts:
+  GNU LGPL v3: https://www.gnu.org/licenses/lgpl-3.0.txt
+  GNU GPL v3 (which the LGPL v3 refers to): https://www.gnu.org/licenses/gpl-3.0.txt
+
+Source code
+-----------
+The source and build scripts used to make these FFmpeg binaries:
+  https://github.com/bytedeco/javacpp-presets/tree/1.5.14/ffmpeg
+FFmpeg's own source code: https://ffmpeg.org/download.html (release 8.1.2) and https://git.ffmpeg.org/ffmpeg.git
+
+FFmpeg is not statically linked into Scrcpy Vwr: it is loaded as separate shared libraries and run as a separate
+program, unmodified from the Bytedeco build above.
+
+FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
