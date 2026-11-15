@@ -745,19 +745,53 @@ class EmulatorLauncherTest {
     }
 
     @Test
-    fun `wipe refuses while the emulator's lock files are in the avd folder`() = runTest {
+    fun `stale lock files left by an exited emulator do not stop a wipe`() = runTest {
+        val launcher = launcher()
+        // Every AVD that ever booted keeps an empty multiinstance.lock; a crash leaves the pid lock behind.
+        for (pid in listOf(Long.MAX_VALUE.toString(), "not a pid", "")) {
+            val d = avdFolder(pixel)
+            Files.writeString(d.resolve(INSTANCE_LOCK), "")
+            Files.writeString(d.resolve(PID_LOCK), pid)
+            assertTrue(launcher.wipe(pixel).isSuccess, "pid '$pid'")
+            assertFalse(exists(d.resolve("userdata-qemu.img")))
+            // The lock files are not the wipe's to delete.
+            assertTrue(exists(d.resolve(INSTANCE_LOCK)) && exists(d.resolve(PID_LOCK)))
+        }
+    }
+
+    @Test
+    fun `a pid lock of a live process refuses a wipe`() = runTest {
         val launcher = launcher()
         val notices = notices(launcher)
         val d = avdFolder(pixel)
-        // An emulator started elsewhere that adb does not list yet holds these.
-        for (lock in AVD_LOCK_FILES) {
-            Files.writeString(d.resolve(lock), "")
-            assertTrue(launcher.wipe(pixel).isFailure, lock)
-            assertEquals("Couldn't wipe Pixel 9: it's running ($lock is in its folder).", notices.last().text)
-            assertTrue(exists(d.resolve("userdata-qemu.img")) && exists(d.resolve("snapshots")), "nothing deleted")
-            Files.delete(d.resolve(lock))
+        val live = ProcessHandle.current().pid().toString()
+        Files.writeString(d.resolve(PID_LOCK), live)
+        assertTrue(launcher.wipe(pixel).isFailure)
+        assertEquals("Couldn't wipe Pixel 9: it's running (hardware-qemu.ini.lock is held).", notices.last().text)
+        assertTrue(exists(d.resolve("userdata-qemu.img")) && exists(d.resolve("snapshots")), "nothing deleted")
+        // Windows writes it as a folder holding a pid file.
+        Files.delete(d.resolve(PID_LOCK))
+        Files.writeString(Files.createDirectories(d.resolve(PID_LOCK)).resolve("pid"), live)
+        assertTrue(launcher.wipe(pixel).isFailure)
+        assertEquals(null, heldAvdLock(d) { false })
+    }
+
+    @Test
+    fun `a held multiinstance lock refuses a wipe`() = runTest {
+        val launcher = launcher()
+        val notices = notices(launcher)
+        val d = avdFolder(pixel)
+        Files.writeString(d.resolve(INSTANCE_LOCK), "")
+        java.nio.channels.FileChannel.open(d.resolve(INSTANCE_LOCK), java.nio.file.StandardOpenOption.WRITE).use { channel ->
+            val lock = channel.lock()
+            assertTrue(launcher.wipe(pixel).isFailure)
+            assertEquals("Couldn't wipe Pixel 9: it's running (multiinstance.lock is held).", notices.last().text)
+            assertTrue(exists(d.resolve("userdata-qemu.img")), "nothing deleted")
+            lock.release()
         }
+        // Released: the wipe goes ahead.
         assertTrue(launcher.wipe(pixel).isSuccess)
+        assertFalse(exists(d.resolve("userdata-qemu.img")))
     }
 
     @Test

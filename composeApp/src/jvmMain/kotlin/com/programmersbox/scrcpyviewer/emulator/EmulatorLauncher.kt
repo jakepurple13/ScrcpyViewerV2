@@ -32,7 +32,10 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.FileSystemException
 import java.nio.file.FileVisitResult
+import java.nio.channels.FileChannel
+import java.nio.channels.OverlappingFileLockException
 import java.nio.file.LinkOption
+import java.nio.file.StandardOpenOption
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
 import java.net.InetAddress
@@ -521,8 +524,52 @@ class EmulatorLauncher(
  */
 internal val WIPE_ENTRIES = listOf("snapshots", "userdata-qemu.img", "userdata-qemu.img.qcow2", "cache.img", "cache.img.qcow2")
 
-/** Lock files a running emulator keeps in its AVD folder, also one started elsewhere that adb does not list yet. */
-internal val AVD_LOCK_FILES = listOf("hardware-qemu.ini.lock", "multiinstance.lock")
+/**
+ * A running emulator's lock files in its AVD folder (also one started elsewhere that adb does not list yet). Both stay
+ * behind after it exits (`multiinstance.lock` in every AVD that ever booted, `hardware-qemu.ini.lock` after a crash),
+ * so only a held one counts: see [heldAvdLock].
+ */
+internal const val PID_LOCK = "hardware-qemu.ini.lock"
+internal const val INSTANCE_LOCK = "multiinstance.lock"
+
+private val pidText = Regex("""\d+""")
+
+/** True while a process with [pid] runs. */
+private fun pidAlive(pid: Long): Boolean = ProcessHandle.of(pid).map { it.isAlive }.orElse(false)
+
+/**
+ * The name of a lock in [root] that a running emulator holds, or null when there is none (or only stale ones).
+ * [PID_LOCK] holds the emulator's pid (a file, or on Windows a folder with a `pid` file): held while that process is
+ * alive; unreadable or not a number counts as stale. [INSTANCE_LOCK] is held while another process has a file lock on
+ * it: a lock we get is released at once; when the platform cannot say, it does not refuse.
+ */
+internal fun heldAvdLock(root: Path, alive: (Long) -> Boolean = ::pidAlive): String? {
+    val pidLock = root.resolve(PID_LOCK)
+    val pidFile = if (Files.isDirectory(pidLock, LinkOption.NOFOLLOW_LINKS)) pidLock.resolve("pid") else pidLock
+    val pid = runCatching {
+        if (!Files.isRegularFile(pidFile, LinkOption.NOFOLLOW_LINKS)) null
+        else pidText.find(Files.readString(pidFile))?.value?.toLongOrNull()
+    }.getOrNull()
+    if (pid != null && alive(pid)) return PID_LOCK
+
+    val instance = root.resolve(INSTANCE_LOCK)
+    if (Files.isRegularFile(instance, LinkOption.NOFOLLOW_LINKS)) {
+        val held = try {
+            FileChannel.open(instance, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).use { channel ->
+                val lock = channel.tryLock()
+                lock?.release()
+                lock == null
+            }
+        } catch (_: OverlappingFileLockException) {
+            true
+        } catch (_: Exception) {
+            // No way to tell (no write access, locks unsupported): not counted as held.
+            false
+        }
+        if (held) return INSTANCE_LOCK
+    }
+    return null
+}
 
 /** A wipe refused before anything was deleted; the message completes "Couldn't wipe <name>: …". */
 internal class WipeRefused(message: String) : Exception(message)
@@ -550,9 +597,7 @@ internal fun wipeAvdData(dir: Path) {
     if (!Files.isRegularFile(root.resolve("config.ini"), LinkOption.NOFOLLOW_LINKS)) {
         throw WipeRefused("its folder has no config.ini. Nothing was deleted")
     }
-    AVD_LOCK_FILES.firstOrNull { Files.exists(root.resolve(it), LinkOption.NOFOLLOW_LINKS) }?.let {
-        throw WipeRefused("it's running ($it is in its folder)")
-    }
+    heldAvdLock(root)?.let { throw WipeRefused("it's running ($it is held)") }
     val entries = WIPE_ENTRIES.map { root.resolve(it) }.filter { Files.exists(it, LinkOption.NOFOLLOW_LINKS) }
     // All checked before any is deleted: a wipe either refuses or deletes.
     for (entry in entries) {

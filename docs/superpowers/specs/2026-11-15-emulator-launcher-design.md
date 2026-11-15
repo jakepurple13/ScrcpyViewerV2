@@ -147,15 +147,17 @@ cold boot." and the size is measured again; a failure says "Couldn't wipe <name>
 - Refused while an emulator process we started for it has not exited, though the row may read Stopped or Failed
   (a Stop before adb listed it, a Stop while it saves its Quick Boot snapshot, a boot timeout): "it's still
   stopping." Wipe data… stays disabled until the process exits, then fades in.
-- Refused while `hardware-qemu.ini.lock` or `multiinstance.lock` is in the AVD folder (an emulator started
-  elsewhere that adb does not list yet): "it's running (hardware-qemu.ini.lock is in its folder)."
+- Refused while a running emulator holds its lock in the AVD folder (also one started elsewhere that adb does not
+  list yet): `hardware-qemu.ini.lock` names a live pid, or another process has `multiinstance.lock` locked: "it's
+  running (hardware-qemu.ini.lock is held)." Both files stay behind after an emulator exits, so a stale one (dead or
+  unreadable pid, unlocked file) does not refuse; where the file lock cannot be checked, it does not refuse either.
 - Refused unless the AVD folder holds a `config.ini` (the outer ini's `path=` can name any folder): "its folder has
   no config.ini. Nothing was deleted."
 - `snapshots` is deleted first, so a wipe stopped by an error never leaves a snapshot to load over fresh data.
 - The wipe and its snackbar run in the launcher's app-wide scope, so both finish if the Devices screen goes away.
 - New copy (user approval on record pending, reviewed 2026-11-15), each after "Couldn't wipe <name>: ": "it's
   running.", "it's still stopping.", "it's already being wiped.", "couldn't tell which AVD <serial> runs.", "an
-  emulator is starting. Try again.", "it's running (<lock file> is in its folder).", "its folder has no config.ini.
+  emulator is starting. Try again.", "it's running (<lock file> is held).", "its folder has no config.ini.
   Nothing was deleted.", "<entry> points outside its AVD folder. Nothing was deleted."; and the Start refusal
   "<name> is still being wiped. Start it once that finishes."
 - Every entry must resolve inside the AVD folder's real path, or the wipe refuses before deleting anything
