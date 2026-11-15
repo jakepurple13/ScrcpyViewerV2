@@ -21,6 +21,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +49,7 @@ import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.outlined.CropSquare
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +58,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,6 +72,7 @@ import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -84,6 +90,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -91,11 +98,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.mirror.WakeStage
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.COPIED_MILLIS
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.COPY_ICON_MILLIS
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnailState
@@ -106,13 +114,13 @@ import kotlinx.coroutines.launch
 import org.jetbrains.skia.Paint
 import kotlin.math.roundToInt
 
-/** The scrim fades in over this long when the editor opens. */
+/** The scrim fades in over this long when the (temporary, in-window) editor host opens. */
 const val EDITOR_SCRIM_IN_MILLIS = 300
 
-/** The dialog grows from [EDITOR_FROM_SCALE] and rises [EDITOR_RISE] while it fades in. */
+/** The host's card grows from [EDITOR_FROM_SCALE] and rises [EDITOR_RISE] while it fades in. */
 const val EDITOR_IN_MILLIS = 450
 
-/** Closing: the dialog shrinks to [EDITOR_TO_SCALE] and fades, with the scrim. */
+/** Closing: the host's card shrinks to [EDITOR_TO_SCALE] and fades, with the scrim. */
 const val EDITOR_OUT_MILLIS = 200
 
 /** With reduced motion everything only fades, this long. */
@@ -136,18 +144,24 @@ const val EDITOR_TO_SCALE = 0.95f
 val EDITOR_RISE = 14.dp
 const val SWATCH_SCALE = 1.12f
 
-/** The screenshot takes at most this share of the window's height, and at least [MIN_IMAGE_HEIGHT]. */
-private const val IMAGE_HEIGHT_SHARE = 0.62f
-private val MIN_IMAGE_HEIGHT = 320.dp
-private val SIDE_WIDTH = 264.dp
-private val DIALOG_PADDING = 22.dp
-private val DIALOG_GAP = 18.dp
-private val WINDOW_MARGIN = 16.dp
+/** The footer's hint. */
+const val EDITOR_HINT = "Pixelate hides private text such as emails or order numbers."
 
-/** Material's standard easing: the dialog leaving. */
+/** The footer's image size: "1080 × 2340". */
+fun editorImageSize(width: Int, height: Int): String = "$width × $height"
+
+/** The canvas area's padding around the screenshot. */
+private val CANVAS_PADDING = 12.dp
+
+/** The temporary host's card keeps this far from the window's edges, and is at least [HOST_MIN_WIDTH] wide. */
+private val HOST_MARGIN = 24.dp
+private val HOST_MIN_WIDTH = 520.dp
+
+/** The host card's toolbar, footer and canvas padding, around the screenshot: sizes the card to its aspect ratio. */
+private val HOST_CHROME = 110.dp
+
+/** Material's standard easing: the host card leaving. */
 private val Standard = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-
-const val EDITOR_HINT = "Draw on the screenshot. Pixelate hides private text such as emails or order numbers."
 
 private val MarkupTool.label: String get() = name
 
@@ -160,17 +174,307 @@ private val MarkupTool.icon: ImageVector
     }
 
 /**
- * The markup editor: a dialog titled "Edit screenshot" over a scrim filling this composable's place (the mirror
- * window). Shown while [shot] is not null; it keeps the last shot while it animates out.
+ * One edit of [shot]: its marks, the picked tool and color, and whether "Discard your marks?" asks. Made by
+ * [rememberMarkupEditorState]; the window holding [MarkupEditorContent] calls [requestClose] for its close button.
+ * UI thread only.
+ */
+@Stable
+class MarkupEditorState internal constructor(val shot: Shot) {
+    internal val doc = MarkupDocument(shot.bitmap.width, shot.bitmap.height)
+
+    var tool by mutableStateOf(MarkupTool.Pen)
+        internal set
+    var color by mutableStateOf(MarkupColor.Red)
+        internal set
+
+    /** "Discard your marks?" shows. */
+    var confirming by mutableStateOf(false)
+        private set
+
+    /** A copy or save runs. */
+    internal var busy by mutableStateOf(false)
+
+    /** Set by [MarkupEditorContent]: false while it leaves (nothing acts any more), and what closes it. */
+    internal var active = true
+    internal var close: () -> Unit = {}
+
+    /** There are marks not saved or copied. */
+    val dirty: Boolean get() = doc.dirty
+
+    /**
+     * The window's close button, Esc, or the mirror window closing: with marks not saved or copied it asks "Discard
+     * your marks?" (Keep editing / Discard, which closes), else it closes at once. True when it closed at once. Does
+     * nothing (false) while a copy or save runs or the editor is leaving.
+     */
+    fun requestClose(): Boolean {
+        if (busy || !active) return false
+        if (doc.dirty) {
+            confirming = true
+            return false
+        }
+        close()
+        return true
+    }
+
+    internal fun keepEditing() {
+        confirming = false
+    }
+
+    internal fun discard() {
+        confirming = false
+        close()
+    }
+}
+
+/** The state of an edit of [shot]; a new one for each shot. */
+@Composable
+fun rememberMarkupEditorState(shot: Shot): MarkupEditorState = remember(shot) { MarkupEditorState(shot) }
+
+/**
+ * The markup editor's content, shaped for its own window: a toolbar (Pen, Arrow, Box, Pixelate | Undo | the four
+ * swatches, then Save and Copy at its right), the screenshot filling the rest at its aspect ratio, and a footer with
+ * the hint and the image size. "Discard your marks?" shows over it.
  *
- * The screenshot is drawn scaled to fit and marked with the pointer: Pen, Arrow, Box, Pixelate, in one of four colors,
- * Undo (also Ctrl/Cmd+Z). [onCopy] copies the marked image (true: the Copy button shows a check for 1.5 s), [onSave]
- * saves it (true: the editor asks to close through [onClose]; false: it stays open with its marks). Close and Esc ask
- * "Discard your marks?" while there are marks not saved or copied, else call [onClose]. Every key that reaches the
- * editor is consumed: none goes on to the device.
+ * The screenshot is marked with the pointer, in one of four colors; Undo (also Ctrl/Cmd+Z) takes the last mark back.
+ * [onCopy] copies the marked image (true: the Copy button shows a check for 1.5 s), [onSave] saves it (true: the
+ * editor closes through [onClose]; false: it stays open with its marks). Esc and the window's close button
+ * ([MarkupEditorState.requestClose] on [state]) ask "Discard your marks?" while there are marks not saved or copied,
+ * else call [onClose]. Esc and Ctrl/Cmd+Z are consumed.
  *
- * The shot's bitmap is [leases]'s: the editor acquires it while it draws it, so it is never closed under it.
+ * The canvas draws through [wake] (0 off, 1 on; read at draw time only): black, then the screen switching on as the
+ * mirror window's does ([WakeStage]). [active] false (the window is leaving): nothing acts any more.
+ *
+ * The shot's bitmap is [leases]'s: the content acquires it while it draws it, so it is never closed under it.
  * [motion] false (reduced motion): only 150 ms fades.
+ */
+@Composable
+fun MarkupEditorContent(
+    shot: Shot,
+    motion: Boolean,
+    onCopy: suspend (Shot, List<Mark>) -> Boolean,
+    onSave: suspend (Shot, List<Mark>) -> Boolean,
+    onClose: () -> Unit,
+    leases: ScreenshotThumbnailState,
+    modifier: Modifier = Modifier,
+    state: MarkupEditorState = rememberMarkupEditorState(shot),
+    wake: () -> Float = { 1f },
+    active: Boolean = true,
+) {
+    val colors = MaterialTheme.colorScheme
+    // This slot draws the shot's bitmap until it leaves the composition: only then may the thumbnail close it.
+    val drawable = !shot.bitmap.asSkiaBitmap().isClosed
+    remember(shot) { ShotLease(leases, shot) }
+    SideEffect {
+        state.active = active
+        state.close = onClose
+    }
+    val scope = rememberCoroutineScope()
+    val doc = state.doc
+    var copied by remember { mutableStateOf(false) }
+    var copies by remember { mutableIntStateOf(0) }
+    // The undone mark fading out, and its alpha (read at draw time).
+    var fading by remember { mutableStateOf<Mark?>(null) }
+    val fade = remember { Animatable(0f) }
+    val currentActive by rememberUpdatedState(active)
+    val currentOnCopy by rememberUpdatedState(onCopy)
+    val currentOnSave by rememberUpdatedState(onSave)
+
+    LaunchedEffect(copies) {
+        if (copies == 0) return@LaunchedEffect
+        copied = true
+        // On the frame clock, like the animations around it.
+        val start = withFrameMillis { it }
+        while (withFrameMillis { it } - start < COPIED_MILLIS) Unit
+        copied = false
+    }
+
+    fun undo() {
+        val removed = doc.undo() ?: return
+        fading = removed
+        scope.launch {
+            fade.snapTo(1f)
+            fade.animateTo(0f, tween(UNDO_FADE_MILLIS))
+            if (fading === removed) fading = null
+        }
+    }
+
+    fun copy() {
+        if (state.busy || !currentActive) return
+        state.busy = true
+        val marks = doc.marks.toList()
+        scope.launch {
+            try {
+                if (currentOnCopy(shot, marks)) {
+                    // Marks drawn meanwhile are not in the copy: they stay unsaved.
+                    if (doc.marks.toList() == marks) doc.markClean()
+                    copies++
+                }
+            } finally {
+                state.busy = false
+            }
+        }
+    }
+
+    fun save() {
+        if (state.busy || !currentActive) return
+        state.busy = true
+        val marks = doc.marks.toList()
+        scope.launch {
+            var saved = false
+            try {
+                if (currentOnSave(shot, marks)) {
+                    doc.markClean()
+                    saved = true
+                }
+            } finally {
+                state.busy = false
+            }
+            if (saved) state.close()
+        }
+    }
+
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+
+    Box(
+        modifier
+            .background(colors.surface)
+            .focusRequester(focus)
+            .focusable()
+            // Every key is the editor's while it is open: it never reaches the device.
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && currentActive) {
+                    when {
+                        event.key == Key.Escape -> if (state.confirming) state.keepEditing() else state.requestClose()
+                        event.key == Key.Z && (event.isMetaPressed || event.isCtrlPressed) && !event.isShiftPressed ->
+                            if (!state.confirming) undo()
+                    }
+                }
+                event.key == Key.Escape || event.key == Key.Z && (event.isMetaPressed || event.isCtrlPressed)
+            },
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            EditorToolbar(state, motion, copied, ::undo, ::copy, ::save)
+            HorizontalDivider(color = colors.outlineVariant)
+            // The screenshot, centred at its aspect ratio in whatever room is left: it scales with the window.
+            BoxWithConstraints(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clipToBounds()
+                    .background(colors.surfaceContainer)
+                    .padding(CANVAS_PADDING),
+                contentAlignment = Alignment.Center,
+            ) {
+                val aspect = shot.bitmap.width.toFloat() / shot.bitmap.height.coerceAtLeast(1)
+                var w = maxWidth
+                var h = w / aspect
+                if (h > maxHeight) {
+                    h = maxHeight
+                    w = h * aspect
+                }
+                Box(Modifier.size(w, h).clip(RoundedCornerShape(8.dp)).background(Color.Black)) {
+                    WakeStage(wake, standby = false) {
+                        MarkCanvas(shot, doc, drawable, state.tool, state.color, fading, { fade.value })
+                    }
+                }
+            }
+            HorizontalDivider(color = colors.outlineVariant)
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    EDITOR_HINT,
+                    Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    editorImageSize(shot.bitmap.width, shot.bitmap.height),
+                    maxLines = 1,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                )
+            }
+        }
+        DiscardPrompt(
+            visible = state.confirming,
+            motion = motion,
+            onKeep = state::keepEditing,
+            onDiscard = state::discard,
+            modifier = Modifier.matchParentSize(),
+        )
+    }
+}
+
+/**
+ * The top toolbar: the tools, Undo and the swatches scroll sideways (clipped) when the window is too narrow for them;
+ * Save and Copy stay at its right.
+ */
+@Composable
+private fun EditorToolbar(
+    state: MarkupEditorState,
+    motion: Boolean,
+    copied: Boolean,
+    onUndo: () -> Unit,
+    onCopy: () -> Unit,
+    onSave: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val mac = remember { Os.isMac }
+    Row(
+        Modifier.fillMaxWidth().clipToBounds().padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            Modifier.weight(1f).horizontalScroll(rememberScrollState()).semantics { contentDescription = "Markup tools" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            MarkupTool.entries.forEach { t ->
+                ToolButton(t, selected = t == state.tool, motion) { state.tool = t }
+            }
+            ToolbarSeparator()
+            Tip(if (mac) "Undo (⌘Z)" else "Undo (Ctrl+Z)") {
+                IconButton(onClick = onUndo, enabled = state.doc.canUndo, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", Modifier.size(20.dp))
+                }
+            }
+            ToolbarSeparator()
+            MarkupColor.entries.forEach { c -> Swatch(c, selected = c == state.color, motion) { state.color = c } }
+            Spacer(Modifier.width(4.dp)) // room for the picked swatch to grow
+        }
+        Spacer(Modifier.width(8.dp))
+        TextButton(onClick = onSave) { Text("Save", maxLines = 1) }
+        Spacer(Modifier.width(4.dp))
+        Button(onClick = onCopy, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
+            val iconMillis = if (motion) COPY_ICON_MILLIS else EDITOR_FADE_MILLIS
+            Crossfade(copied, animationSpec = tween(iconMillis), label = "editorCopyIcon") { done ->
+                if (done) {
+                    Icon(Icons.Filled.Check, null, Modifier.size(18.dp).testTag("copiedIcon"))
+                } else {
+                    Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp).testTag("copyIcon"))
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(if (copied) "Copied" else "Copy", maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun ToolbarSeparator() {
+    Box(Modifier.padding(horizontal = 6.dp).width(1.dp).height(20.dp).background(MaterialTheme.colorScheme.outlineVariant))
+}
+
+/**
+ * Temporary until the editor has its own window: [MarkupEditorContent] in a card over a scrim filling this
+ * composable's place (the mirror window). Shown while [shot] is not null; it keeps the last shot while it animates
+ * out. A click on the scrim asks to close, as Esc does.
  */
 @Composable
 fun MarkupEditor(
@@ -182,7 +486,7 @@ fun MarkupEditor(
     leases: ScreenshotThumbnailState,
     modifier: Modifier = Modifier,
 ) {
-    // The dialog keeps showing the last shot while it leaves. A plain holder.
+    // The card keeps showing the last shot while it leaves. A plain holder.
     val last = remember { arrayOfNulls<Shot>(1) }
     shot?.let { last[0] = it }
     AnimatedVisibility(
@@ -209,17 +513,20 @@ private fun AnimatedVisibilityScope.EditorScrim(
     leases: ScreenshotThumbnailState,
 ) {
     val colors = MaterialTheme.colorScheme
-    // This slot draws the shot's bitmap until it leaves the composition: only then may the thumbnail close it.
-    val drawable = !shot.bitmap.asSkiaBitmap().isClosed
-    remember(shot) { ShotLease(leases, shot) }
+    val state = rememberMarkupEditorState(shot)
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(colors.scrim.copy(alpha = 0.5f))
-            // The scrim takes every pointer event: nothing under it (the device's screen) gets one.
-            .pointerInput(Unit) {
+            // The scrim takes every pointer event: nothing under it (the device's screen) gets one. A press asks to close.
+            .pointerInput(state) {
                 awaitPointerEventScope {
-                    while (true) awaitPointerEvent().changes.forEach { it.consume() }
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.type == PointerEventType.Press && event.changes.none { it.isConsumed }
+                        event.changes.forEach { it.consume() }
+                        if (pressed) state.requestClose()
+                    }
                 }
             },
         contentAlignment = Alignment.Center,
@@ -239,176 +546,34 @@ private fun AnimatedVisibilityScope.EditorScrim(
             exit = fadeOut(tween(EDITOR_FADE_MILLIS))
         }
         val aspect = shot.bitmap.width.toFloat() / shot.bitmap.height.coerceAtLeast(1)
-        val maxImageWidth = maxWidth - WINDOW_MARGIN * 2 - DIALOG_PADDING * 2 - DIALOG_GAP - SIDE_WIDTH
-        var imageHeight = maxOf(maxHeight * IMAGE_HEIGHT_SHARE, MIN_IMAGE_HEIGHT)
-        if (imageHeight * aspect > maxImageWidth) imageHeight = maxOf(maxImageWidth, 1.dp) / aspect
-        EditorDialog(
-            shot, open, motion, drawable, imageHeight * aspect, imageHeight, onCopy, onSave, onClose,
-            Modifier.animateEnterExit(enter = enter, exit = exit),
-        )
+        val height = maxOf(maxHeight - HOST_MARGIN * 2, 0.dp)
+        val room = maxOf(maxWidth - HOST_MARGIN * 2, 0.dp)
+        val width = minOf(maxOf((height - HOST_CHROME) * aspect + CANVAS_PADDING * 2, HOST_MIN_WIDTH), room)
+        Surface(
+            Modifier
+                .size(width, height)
+                .animateEnterExit(enter = enter, exit = exit)
+                // Presses on the card are the card's: they do not close it.
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                },
+            shape = RoundedCornerShape(26.dp),
+            color = colors.surface,
+            shadowElevation = 8.dp,
+        ) {
+            MarkupEditorContent(
+                shot, motion, onCopy, onSave, onClose, leases,
+                modifier = Modifier.fillMaxSize(),
+                state = state,
+                active = open,
+            )
+        }
     }
 }
 
-@Composable
-private fun EditorDialog(
-    shot: Shot,
-    open: Boolean,
-    motion: Boolean,
-    drawable: Boolean,
-    imageWidth: Dp,
-    imageHeight: Dp,
-    onCopy: suspend (Shot, List<Mark>) -> Boolean,
-    onSave: suspend (Shot, List<Mark>) -> Boolean,
-    onClose: () -> Unit,
-    modifier: Modifier,
-) {
-    val colors = MaterialTheme.colorScheme
-    val scope = rememberCoroutineScope()
-    val doc = remember { MarkupDocument(shot.bitmap.width, shot.bitmap.height) }
-    var tool by remember { mutableStateOf(MarkupTool.Pen) }
-    var color by remember { mutableStateOf(MarkupColor.Red) }
-    var confirming by remember { mutableStateOf(false) }
-    var copied by remember { mutableStateOf(false) }
-    var copies by remember { mutableIntStateOf(0) }
-    /** A copy or save runs. */
-    var busy by remember { mutableStateOf(false) }
-    // The undone mark fading out, and its alpha (read at draw time).
-    var fading by remember { mutableStateOf<Mark?>(null) }
-    val fade = remember { Animatable(0f) }
-    val currentOpen by rememberUpdatedState(open)
-
-    LaunchedEffect(copies) {
-        if (copies == 0) return@LaunchedEffect
-        copied = true
-        // On the frame clock, like the animations around it.
-        val start = withFrameMillis { it }
-        while (withFrameMillis { it } - start < COPIED_MILLIS) Unit
-        copied = false
-    }
-
-    fun undo() {
-        val removed = doc.undo() ?: return
-        fading = removed
-        scope.launch {
-            fade.snapTo(1f)
-            fade.animateTo(0f, tween(UNDO_FADE_MILLIS))
-            if (fading === removed) fading = null
-        }
-    }
-
-    fun copy() {
-        if (busy || !currentOpen) return
-        busy = true
-        val marks = doc.marks.toList()
-        scope.launch {
-            try {
-                if (onCopy(shot, marks)) {
-                    // Marks drawn meanwhile are not in the copy: they stay unsaved.
-                    if (doc.marks.toList() == marks) doc.markClean()
-                    copies++
-                }
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    fun save() {
-        if (busy || !currentOpen) return
-        busy = true
-        val marks = doc.marks.toList()
-        scope.launch {
-            try {
-                if (onSave(shot, marks)) {
-                    doc.markClean()
-                    onClose()
-                }
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    fun requestClose() {
-        if (busy || !currentOpen) return
-        if (doc.dirty) confirming = true else onClose()
-    }
-
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
-    val mac = remember { Os.isMac }
-
-    Box(
-        modifier
-            .focusRequester(focus)
-            .focusable()
-            // Every key is the editor's while it is open: it never reaches the device.
-            .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && currentOpen) {
-                    when {
-                        event.key == Key.Escape -> if (confirming) confirming = false else requestClose()
-                        event.key == Key.Z && (event.isMetaPressed || event.isCtrlPressed) && !event.isShiftPressed ->
-                            if (!confirming) undo()
-                    }
-                }
-                event.key == Key.Escape || event.key == Key.Z && (event.isMetaPressed || event.isCtrlPressed)
-            },
-    ) {
-        Surface(shape = RoundedCornerShape(26.dp), color = colors.surfaceContainerHigh, shadowElevation = 8.dp) {
-            Row(Modifier.padding(DIALOG_PADDING), horizontalArrangement = Arrangement.spacedBy(DIALOG_GAP)) {
-                MarkCanvas(shot, doc, drawable, tool, color, fading, { fade.value }, imageWidth, imageHeight)
-                Column(Modifier.width(SIDE_WIDTH), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text("Edit screenshot", style = MaterialTheme.typography.titleLarge)
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        MarkupTool.entries.forEach { t ->
-                            ToolButton(t, selected = t == tool, motion) { tool = t }
-                        }
-                        Box(Modifier.padding(horizontal = 6.dp).width(1.dp).height(22.dp).background(colors.outlineVariant))
-                        Tip(if (mac) "Undo (⌘Z)" else "Undo (Ctrl+Z)") {
-                            IconButton(onClick = ::undo, enabled = doc.canUndo, modifier = Modifier.size(40.dp)) {
-                                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", Modifier.size(20.dp))
-                            }
-                        }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MarkupColor.entries.forEach { c -> Swatch(c, selected = c == color, motion) { color = c } }
-                    }
-                    Text(EDITOR_HINT, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Button(onClick = ::copy, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
-                            val iconMillis = if (motion) COPY_ICON_MILLIS else EDITOR_FADE_MILLIS
-                            Crossfade(copied, animationSpec = tween(iconMillis), label = "editorCopyIcon") { done ->
-                                if (done) {
-                                    Icon(Icons.Filled.Check, null, Modifier.size(18.dp).testTag("copiedIcon"))
-                                } else {
-                                    Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp).testTag("copyIcon"))
-                                }
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (copied) "Copied" else "Copy")
-                        }
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(onClick = ::save) { Text("Save") }
-                        Spacer(Modifier.weight(1f))
-                        TextButton(onClick = ::requestClose) { Text("Close") }
-                    }
-                }
-            }
-        }
-        DiscardPrompt(
-            visible = confirming,
-            motion = motion,
-            onKeep = { confirming = false },
-            onDiscard = {
-                confirming = false
-                onClose()
-            },
-            modifier = Modifier.matchParentSize(),
-        )
-    }
-}
-
-/** The screenshot at [width] x [height] with its marks; drags draw the current [tool]. */
+/** The screenshot filling its place, with its marks; drags draw the current [tool]. */
 @Composable
 private fun MarkCanvas(
     shot: Shot,
@@ -418,8 +583,6 @@ private fun MarkCanvas(
     color: MarkupColor,
     fading: Mark?,
     fadeAlpha: () -> Float,
-    width: Dp,
-    height: Dp,
 ) {
     val currentTool by rememberUpdatedState(tool)
     val currentColor by rememberUpdatedState(color)
@@ -430,8 +593,7 @@ private fun MarkCanvas(
     val imageH = shot.bitmap.height.toFloat()
     Canvas(
         Modifier
-            .size(width, height)
-            .clip(RoundedCornerShape(10.dp))
+            .fillMaxSize()
             .semantics { contentDescription = "Screenshot" }
             .pointerInput(shot) {
                 awaitEachGesture {
@@ -508,7 +670,7 @@ private fun ToolButton(tool: MarkupTool, selected: Boolean, motion: Boolean, onC
     Tip(tool.label) {
         Box(
             Modifier
-                .size(40.dp)
+                .size(36.dp)
                 .clip(CircleShape)
                 .background(background)
                 .selectable(selected, role = Role.RadioButton, onClick = onClick)
@@ -533,7 +695,7 @@ private fun Swatch(color: MarkupColor, selected: Boolean, motion: Boolean, onCli
     )
     Box(
         Modifier
-            .size(30.dp)
+            .size(26.dp)
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -543,11 +705,13 @@ private fun Swatch(color: MarkupColor, selected: Boolean, motion: Boolean, onCli
             .selectable(selected, role = Role.RadioButton, onClick = onClick)
             .semantics { contentDescription = color.label }
             .padding(4.dp)
-            .background(Color(color.argb), CircleShape),
+            .background(Color(color.argb), CircleShape)
+            // A hairline, so Black shows on a dark toolbar.
+            .border(1.dp, colors.outline.copy(alpha = 0.5f), CircleShape),
     )
 }
 
-/** "Discard your marks?" over the dialog, with its own scrim. */
+/** "Discard your marks?" over the editor, with its own scrim. */
 @Composable
 private fun DiscardPrompt(visible: Boolean, motion: Boolean, onKeep: () -> Unit, onDiscard: () -> Unit, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
@@ -560,7 +724,6 @@ private fun DiscardPrompt(visible: Boolean, motion: Boolean, onKeep: () -> Unit,
         Box(
             Modifier
                 .fillMaxSize()
-                .clip(RoundedCornerShape(26.dp))
                 .background(colors.scrim.copy(alpha = 0.4f))
                 .pointerInput(Unit) {
                     awaitPointerEventScope {

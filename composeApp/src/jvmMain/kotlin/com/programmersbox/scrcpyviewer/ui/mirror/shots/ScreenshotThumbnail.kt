@@ -97,6 +97,9 @@ const val THUMBNAIL_FADE_MILLIS = 150
 /** A new screenshot's image crossfades over the old one. */
 const val THUMBNAIL_SWAP_MILLIS = 250
 
+/** The "EDITING" dim over the image fades in and out while the markup editor is open. */
+const val EDITING_FADE_MILLIS = 250
+
 /** The countdown ring refills when the time left jumps up. */
 const val RING_REFILL_MILLIS = 300
 
@@ -162,7 +165,8 @@ fun ScreenshotFlash(state: ScreenshotFlashState, motion: Boolean, modifier: Modi
  *
  * A 150 dp card with the screenshot and Copy / Edit / Show in folder buttons, and a close button on its top-right
  * corner ringed by the countdown. Edit runs [onEdit] (the window opens the markup editor, which holds the timer). An
- * edited screenshot carries an "EDITED" tag at its top-left. Clicking the image runs [onOpen]; dragging it starts [dragStarter]'s OS drag of the PNG
+ * edited screenshot carries an "EDITED" tag at its top-left. While the editor is open the image dims under an "EDITING"
+ * label (250 ms fade) and the countdown holds. Clicking the image runs [onOpen]; dragging it starts [dragStarter]'s OS drag of the PNG
  * (copy only), with [onOsDrag] told while it runs. [onCopy] copies the image off the UI thread and says whether it
  * worked (the button then shows a check). Copy, reveal and drag restart the timer; a drop elsewhere dismisses it.
  *
@@ -224,6 +228,7 @@ private fun ThumbnailCard(
     val colors = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val copied by state.copied.collectAsState()
+    val editing by state.isEditing.collectAsState()
     val currentShot by rememberUpdatedState(shot)
     val hold = remember(state) { HoverHold(state) }
     // A card that leaves with the pointer on it gets no Exit: it must not hold the next one.
@@ -263,40 +268,46 @@ private fun ThumbnailCard(
                     val open = !s.bitmap.asSkiaBitmap().isClosed
                     remember(s) { ShotLease(state, s) }
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        if (open) Image(
-                            s.bitmap,
-                            contentDescription = "Screenshot",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
+                        if (open) Box(
+                            Modifier
                                 .heightIn(max = IMAGE_MAX_HEIGHT)
                                 .aspectRatio(s.bitmap.width.toFloat() / s.bitmap.height.coerceAtLeast(1))
-                                .clip(RoundedCornerShape(8.dp))
-                                .dragOutSource(dragStarter)
-                                .pointerInput(dragStarter, drags) {
-                                    detectDragGestures(
-                                        onDragStart = { at ->
-                                            val file = currentShot.file
-                                            state.touch()
-                                            // Out of the gesture: the OS drag blocks until the drop. The timer is
-                                            // held for the whole drag.
-                                            scope.launch {
-                                                hold.dragging(true)
-                                                onOsDrag(true)
-                                                try {
-                                                    dragStarter.start(listOf(file.toFile()), at) { dropped ->
-                                                        if (dropped) state.dismiss() else state.touch()
+                                .clip(RoundedCornerShape(8.dp)),
+                        ) {
+                            Image(
+                                s.bitmap,
+                                contentDescription = "Screenshot",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .dragOutSource(dragStarter)
+                                    .pointerInput(dragStarter, drags) {
+                                        detectDragGestures(
+                                            onDragStart = { at ->
+                                                val file = currentShot.file
+                                                state.touch()
+                                                // Out of the gesture: the OS drag blocks until the drop. The timer is
+                                                // held for the whole drag.
+                                                scope.launch {
+                                                    hold.dragging(true)
+                                                    onOsDrag(true)
+                                                    try {
+                                                        dragStarter.start(listOf(file.toFile()), at) { dropped ->
+                                                            if (dropped) state.dismiss() else state.touch()
+                                                        }
+                                                    } finally {
+                                                        onOsDrag(false)
+                                                        hold.dragging(false)
+                                                        drags++
                                                     }
-                                                } finally {
-                                                    onOsDrag(false)
-                                                    hold.dragging(false)
-                                                    drags++
                                                 }
-                                            }
-                                        },
-                                    ) { change, _ -> change.consume() }
-                                }
-                                .clickable(onClickLabel = "Open") { onOpen(currentShot.file) },
-                        )
+                                            },
+                                        ) { change, _ -> change.consume() }
+                                    }
+                                    .clickable(onClickLabel = "Open") { onOpen(currentShot.file) },
+                            )
+                            EditingDim(editing, Modifier.matchParentSize())
+                        }
                         if (open && s.edited) EditedTag(Modifier.align(Alignment.TopStart).padding(4.dp))
                     }
                 }
@@ -418,6 +429,25 @@ private class HoverHold(private val state: ScreenshotThumbnailState) {
     }
 
     private fun apply() = state.hover(parts > 0 || drag)
+}
+
+/** While the markup editor is open: the image dims under "EDITING", fading in and out. It takes no input. */
+@Composable
+private fun EditingDim(visible: Boolean, modifier: Modifier) {
+    AnimatedVisibility(
+        visible,
+        modifier,
+        enter = fadeIn(tween(EDITING_FADE_MILLIS)),
+        exit = fadeOut(tween(EDITING_FADE_MILLIS)),
+    ) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
+            Text(
+                "EDITING",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.8.sp),
+            )
+        }
+    }
 }
 
 /** The small accent "EDITED" tag on an edited screenshot's corner. */

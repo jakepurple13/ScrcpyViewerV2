@@ -173,28 +173,27 @@ class MirrorScreenshotTest {
     }
 
     /**
-     * The markup editor over the window, with a pen stroke, an arrow, a box and a pixelated line, drawn with the pointer
-     * (the scene's frames are virtual, so the animations settle).
+     * The markup editor's window content at [width] x [height], with a pen stroke, an arrow, a box and a pixelated
+     * line, drawn with the pointer unless not [draw] (the scene's frames are virtual, so the animations settle).
+     * [confirm] shows the discard prompt.
      */
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-    private fun renderEditor(name: String, mode: ThemeMode) {
+    private fun renderEditor(name: String, mode: ThemeMode, width: Int = 560, height: Int = 980, confirm: Boolean = false, draw: Boolean = true) {
         val out = outDir.resolve(name)
         val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
         val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher())
         val thumbnail = ScreenshotThumbnailState(timers, clock = { 0L })
         val bitmap = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
         val shot = checkNotNull(thumbnail.keep(Paths.get("/tmp/Pixel 8 Pro.png"), bitmap, thumbnail.begin()))
-        val scene = androidx.compose.ui.ImageComposeScene(1280, 800, androidx.compose.ui.unit.Density(1f)) {
+        var editor: com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorState? = null
+        val scene = androidx.compose.ui.ImageComposeScene(width, height, androidx.compose.ui.unit.Density(1f)) {
             ScrcpyViewerTheme(AppTheme(mode)) {
-                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    Box(Modifier.fillMaxSize()) {
-                        MirrorContent(state, frame, {}, {}, {}, {}, {}, {}, showTopStrip = false)
-                        com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditor(
-                            shot, motion = true, onCopy = { _, _ -> true }, onSave = { _, _ -> true }, onClose = {},
-                            leases = thumbnail, modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                }
+                val s = com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.rememberMarkupEditorState(shot)
+                editor = s
+                com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorContent(
+                    shot, motion = true, onCopy = { _, _ -> true }, onSave = { _, _ -> true }, onClose = {},
+                    leases = thumbnail, modifier = Modifier.fillMaxSize(), state = s,
+                )
             }
         }
         try {
@@ -209,7 +208,6 @@ class MirrorScreenshotTest {
                 scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
                 return all
             }
-            // The last match: the editor is over the window (the toolbar has a "Screenshot" button too).
             fun described(label: String) = nodes().last {
                 it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription)?.contains(label) == true
             }
@@ -237,6 +235,7 @@ class MirrorScreenshotTest {
                 }
                 release(points.last())
             }
+            if (draw) {
             // Pixelate the date, box the clock, an arrow at it in yellow, and a pen loop around an icon in blue.
             click("Pixelate")
             drag(listOf(at(0.06f, 0.18f), at(0.62f, 0.23f)))
@@ -251,8 +250,10 @@ class MirrorScreenshotTest {
                 val a = i / 24f * 2 * Math.PI
                 at(0.165f + 0.11f * kotlin.math.cos(a).toFloat(), 0.77f + 0.05f * kotlin.math.sin(a).toFloat())
             })
+            }
             // Pointer off the tools, so no tooltip shows.
-            scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, Offset(5f, 5f), type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+            scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, at(0.5f, 0.6f), type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+            if (confirm) checkNotNull(editor).requestClose()
             d.frames(60)
             val image = scene.render(10_000_000_000L)
             val data = checkNotNull(image.encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG))
@@ -270,10 +271,12 @@ class MirrorScreenshotTest {
     fun `mirror screenshot markup editor`() = onEdt {
         renderEditor("mirror-markup-editor-light.png", ThemeMode.Light)
         renderEditor("mirror-markup-editor-dark.png", ThemeMode.Dark)
+        renderEditor("mirror-markup-editor-discard-light.png", ThemeMode.Light, confirm = true)
+        renderEditor("mirror-markup-editor-small-dark.png", ThemeMode.Dark, width = 360, height = 420, draw = false)
     }
 
     /** The window after a toolbar screenshot: the thumbnail in the video area's corner, its ring two thirds full. */
-    private fun renderThumbnail(name: String, mode: ThemeMode, copied: Boolean = false, edited: Boolean = false) {
+    private fun renderThumbnail(name: String, mode: ThemeMode, copied: Boolean = false, edited: Boolean = false, editing: Boolean = false) {
         val out = outDir.resolve(name)
         val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
         val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher()) // never advanced: nothing expires
@@ -287,6 +290,7 @@ class MirrorScreenshotTest {
         }
         if (copied) thumbnail.markCopied()
         now = 2_000
+        if (editing) thumbnail.editing(true)
         try {
             renderToPng(1280, 800, out, settleMillis = 1_000) {
                 ScrcpyViewerTheme(AppTheme(mode)) {
@@ -317,6 +321,8 @@ class MirrorScreenshotTest {
         renderThumbnail("mirror-thumbnail-dark.png", ThemeMode.Dark)
         renderThumbnail("mirror-thumbnail-copied-dark.png", ThemeMode.Dark, copied = true)
         renderThumbnail("mirror-thumbnail-edited-light.png", ThemeMode.Light, edited = true)
+        renderThumbnail("mirror-thumbnail-editing-light.png", ThemeMode.Light, editing = true)
+        renderThumbnail("mirror-thumbnail-editing-dark.png", ThemeMode.Dark, editing = true)
     }
 
     @Test

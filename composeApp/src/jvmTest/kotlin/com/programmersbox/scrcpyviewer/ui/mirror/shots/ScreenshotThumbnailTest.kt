@@ -569,19 +569,86 @@ class ScreenshotThumbnailTest {
         d.frames(30)
         d.click(d.described("Edit")!!)
         d.frames(40)
-        assertNotNull(d.texted("Edit screenshot"))
+        val hint = com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.EDITOR_HINT
+        assertNotNull(d.texted(hint))
         assertTrue(state.held.value)
+        assertTrue(state.isEditing.value)
         advance(60_000)
         d.frames(2)
         assertNotNull(state.shown.value, "held while editing")
-        d.click(d.texted("Close")!!)
+        // A click on the scrim closes it (no marks).
+        val corner = Offset(5f, 5f)
+        d.scene.sendPointerEvent(PointerEventType.Move, corner, type = PointerType.Mouse)
+        d.scene.sendPointerEvent(PointerEventType.Press, corner, type = PointerType.Mouse, button = PointerButton.Primary)
+        d.scene.sendPointerEvent(PointerEventType.Release, corner, type = PointerType.Mouse, button = PointerButton.Primary)
         d.frames(30)
-        assertNull(d.texted("Edit screenshot"))
+        assertNull(d.texted(hint))
+        assertFalse(state.isEditing.value)
         assertEquals(1f, state.remainingFraction, "restarts at 6 s")
         advance(THUMBNAIL_MILLIS - 1)
         assertNotNull(state.shown.value)
         advance(1)
         assertNull(state.shown.value)
+        d.scene.close()
+    }
+
+    // The EDITING state.
+
+    @Test
+    fun `while the editor is open the image dims under EDITING, fading in and out in 250 ms`() = onEdt {
+        val d = scene(motion = true)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        assertNull(d.texted("EDITING"))
+        val image = d.described("Screenshot")!!.boundsInRoot
+        fun center() = d.snapshot()[image.center.x.toInt(), (image.top + image.height * 0.2f).toInt()]
+        val bright = center()
+        state.editing(true)
+        val fadingIn = (1..20).map { center().red }
+        val label = assertNotNull(d.texted("EDITING")).boundsInRoot
+        assertTrue(image.contains(label.center), "over the image: $label in $image")
+        assertTrue(fadingIn.zipWithNext().all { (a, b) -> b <= a + 0.01f }, "only darkens: $fadingIn")
+        assertTrue(fadingIn.any { it < bright.red - 0.1f && it > fadingIn.last() + 0.05f }, "fades, not snaps: $fadingIn")
+        assertEquals(fadingIn.last(), fadingIn[17], 0.01f, "done by 250 ms: $fadingIn")
+        assertTrue(fadingIn.last() < bright.red * 0.7f, "dimmed: $fadingIn")
+        state.editing(false)
+        val fadingOut = (1..20).map { center().red }
+        assertTrue(fadingOut.any { it > fadingIn.last() + 0.05f && it < bright.red - 0.05f }, "fades out: $fadingOut")
+        assertEquals(bright.red, fadingOut.last(), 0.01f)
+        assertNull(d.texted("EDITING"))
+        d.scene.close()
+    }
+
+    @Test
+    fun `the countdown holds while editing, with the EDITING label up`() = onEdt {
+        val d = scene(motion = true)
+        state.show(file, solid(Color.Red))
+        d.frames(10)
+        advance(1_000)
+        state.editing(true)
+        d.frames(20)
+        val held = state.remainingFraction
+        advance(30_000)
+        d.frames(5)
+        assertEquals(held, state.remainingFraction, "the ring stands still")
+        assertNotNull(state.shown.value)
+        assertNotNull(d.texted("EDITING"))
+        state.editing(false)
+        d.frames(20)
+        assertEquals(1f, state.remainingFraction, "restarts at 6 s")
+        d.scene.close()
+    }
+
+    @Test
+    fun `the EDITING dim takes no input, the image still opens`() = onEdt {
+        val calls = Calls()
+        val d = scene(motion = true, calls = calls)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        state.editing(true)
+        d.frames(20)
+        d.click(d.described("Screenshot")!!)
+        assertEquals(listOf(file), calls.opened)
         d.scene.close()
     }
 }

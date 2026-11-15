@@ -75,6 +75,11 @@ class ScreenshotThumbnailState(
     /** The timer is held (pointer on the card, an OS drag, the editor open): the countdown ring need not redraw. */
     val held: StateFlow<Boolean> = _held.asStateFlow()
 
+    private val _editing = MutableStateFlow(false)
+
+    /** The markup editor is open: the card dims its image under an "EDITING" label (and its timer is held). */
+    val isEditing: StateFlow<Boolean> = _editing.asStateFlow()
+
     private var nextId = 0L
     private var disposed = false
 
@@ -100,7 +105,11 @@ class ScreenshotThumbnailState(
     private var pointerOn = false
 
     /** The markup editor is open. */
-    private var editorOpen = false
+    private var editorOpen: Boolean
+        get() = _editing.value
+        set(value) {
+            _editing.value = value
+        }
 
     /** The timer is held, by the pointer or the editor. */
     private var hovered: Boolean
