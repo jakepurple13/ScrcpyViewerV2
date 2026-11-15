@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.setValue
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -13,7 +14,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /** The drawing tools of the markup editor. */
-enum class MarkupTool { Pen, Arrow, Box, Pixelate }
+enum class MarkupTool { Pen, Arrow, Box, Circle, Pixelate }
 
 /** The four mark colors; [argb] is opaque. Red is the default. */
 enum class MarkupColor(val argb: Int, val label: String) {
@@ -36,6 +37,9 @@ sealed interface Mark {
 
     /** Stroked rectangle between two opposite corners. */
     data class Box(val color: Int, val from: MarkPoint, val to: MarkPoint) : Mark
+
+    /** Stroked ellipse inscribed in the rectangle between two opposite corners. */
+    data class Circle(val color: Int, val from: MarkPoint, val to: MarkPoint) : Mark
 
     /** The rectangle between two opposite corners replaced by blocks of the original's average color. */
     data class Pixelate(val from: MarkPoint, val to: MarkPoint) : Mark
@@ -78,11 +82,23 @@ fun arrowHead(from: MarkPoint, to: MarkPoint, stroke: Float): ArrowHead {
     return ArrowHead(to, wing(1f), wing(-1f))
 }
 
+/**
+ * The corner opposite [from] for a square drag (Shift held with Box or Circle): [to] moved so both sides are as long
+ * as the longer one, in the direction it was dragged.
+ */
+fun squareCorner(from: MarkPoint, to: MarkPoint): MarkPoint {
+    val dx = to.x - from.x
+    val dy = to.y - from.y
+    val side = max(abs(dx), abs(dy))
+    return MarkPoint(from.x + if (dx < 0) -side else side, from.y + if (dy < 0) -side else side)
+}
+
 /** Whether [this] is too small to keep: a drag shorter than [MIN_DRAG_PX]. */
 internal fun Mark.isTooSmall(): Boolean = when (this) {
     is Mark.Pen -> points.isEmpty() || points.maxOf { hypot(it.x - points[0].x, it.y - points[0].y) } < MIN_DRAG_PX
     is Mark.Arrow -> hypot(to.x - from.x, to.y - from.y) < MIN_DRAG_PX
     is Mark.Box -> hypot(to.x - from.x, to.y - from.y) < MIN_DRAG_PX
+    is Mark.Circle -> hypot(to.x - from.x, to.y - from.y) < MIN_DRAG_PX
     is Mark.Pixelate -> hypot(to.x - from.x, to.y - from.y) < MIN_DRAG_PX
 }
 

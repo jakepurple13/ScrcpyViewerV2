@@ -178,7 +178,14 @@ class MirrorScreenshotTest {
      * [confirm] shows the discard prompt.
      */
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-    private fun renderEditor(name: String, mode: ThemeMode, width: Int = 560, height: Int = 980, confirm: Boolean = false, draw: Boolean = true) {
+    private fun renderEditor(
+        name: String,
+        mode: ThemeMode,
+        width: Int = com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.EDITOR_TOOLBAR_WIDTH,
+        height: Int = 980,
+        confirm: Boolean = false,
+        draw: Boolean = true,
+    ) {
         val out = outDir.resolve(name)
         val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
         val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher())
@@ -244,6 +251,9 @@ class MirrorScreenshotTest {
             click("Arrow")
             click("Yellow")
             drag(listOf(at(0.85f, 0.45f), at(0.6f, 0.2f)))
+            click("Circle")
+            click("Red")
+            drag(listOf(at(0.55f, 0.5f), at(0.7f, 0.56f), at(0.9f, 0.62f)))
             click("Pen")
             click("Blue")
             drag((0..24).map { i ->

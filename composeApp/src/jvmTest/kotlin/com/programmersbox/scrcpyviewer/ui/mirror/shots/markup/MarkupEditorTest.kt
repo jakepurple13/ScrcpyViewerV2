@@ -25,6 +25,7 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -202,24 +203,23 @@ class MarkupEditorTest {
     // Layout.
 
     @Test
-    fun `the toolbar reads Pen, Arrow, Box, Pixelate, Undo, the four swatches, then Save and Copy at its right`() = onEdt {
+    fun `the toolbar reads Pen, Arrow, Box, Circle, Pixelate, Undo, the four swatches, then Save and Copy at its right`() = onEdt {
         val e = Content(motion = true)
         val d = e.d
-        val order = listOf("Pen", "Arrow", "Box", "Pixelate", "Undo", "Red", "Yellow", "Blue", "Black")
-            .map { assertNotNull(d.described(it), it).boundsInRoot } +
-            listOf("Save", "Copy").map { assertNotNull(d.texted(it), it).boundsInRoot }
+        val order = d.toolbarItems()
         assertTrue(order.zipWithNext().all { (a, b) -> a.right <= b.left + 0.5f }, "left to right: $order")
         val row = order.first().center.y
         assertTrue(order.all { abs(it.center.y - row) < 4f }, "one row: $order")
         // Save and Copy sit at the right, past a gap after the swatches.
         assertTrue(order.last().right > width - 40f, "Copy at the right edge: ${order.last()}")
-        assertTrue(order[9].left - order[8].right > 100f, "a spacer before Save: $order")
+        // Relative, not in px: fonts differ between runners.
+        assertTrue(order[10].left - order[9].right > order[0].width * 2, "a spacer before Save: $order")
         // Above the canvas; no title and no Close button in the content (the window has them).
         assertTrue(order.all { it.bottom <= d.canvas().top }, "above the canvas")
         assertNull(d.texted("Close"))
         assertNull(d.texted("Edit screenshot"))
         assertTrue(d.described("Pen")!!.selected())
-        assertTrue(listOf("Arrow", "Box", "Pixelate").none { d.described(it)!!.selected() })
+        assertTrue(listOf("Arrow", "Box", "Circle", "Pixelate").none { d.described(it)!!.selected() })
         assertTrue(d.described("Red")!!.selected())
         e.close()
     }
@@ -247,7 +247,8 @@ class MarkupEditorTest {
             d.frames(3)
             val c = d.canvas()
             assertEquals(0.5f, c.width / c.height, 0.01f, "aspect at $w x $h: $c")
-            val toolbarBottom = d.described("Pen")!!.boundsInRoot.bottom
+            // Its last row: the toolbar wraps when the window is narrow.
+            val toolbarBottom = d.toolbarItems().maxOf { it.bottom }
             val footerTop = d.texted("400 × 800")!!.boundsInRoot.top
             assertTrue(c.top >= toolbarBottom && c.bottom <= footerTop, "between toolbar and footer at $w x $h: $c")
             assertEquals(w / 2f, c.center.x, 1f, "centred across at $w x $h")
@@ -260,33 +261,61 @@ class MarkupEditorTest {
         e.close()
     }
 
+    private val toolbarNames = listOf("Pen", "Arrow", "Box", "Circle", "Pixelate", "Undo", "Red", "Yellow", "Blue", "Black")
+
+    /** Every toolbar item's bounds: the tools, Undo, the swatches, Save and Copy. */
+    private fun SceneDriver.toolbarItems(): List<Rect> =
+        toolbarNames.map { assertNotNull(described(it), it).boundsInRoot } +
+            listOf("Save", "Copy").map { assertNotNull(texted(it), it).boundsInRoot }
+
     @Test
-    fun `a very small window keeps the toolbar off the canvas and Save and Copy on screen`() = onEdt {
+    fun `at the window's opening width the whole toolbar shows on one row`() = onEdt {
+        val e = Content(motion = true, w = EDITOR_TOOLBAR_WIDTH, h = 900)
+        val d = e.d
+        val items = d.toolbarItems()
+        assertTrue(items.all { it.left >= 0f && it.right <= EDITOR_TOOLBAR_WIDTH + 0.5f && it.width > 1f }, "inside: $items")
+        val row = items.first().center.y
+        assertTrue(items.all { abs(it.center.y - row) < 4f }, "one row: $items")
+        assertTrue(items.zipWithNext().all { (a, b) -> a.right <= b.left + 0.5f }, "none overlap: $items")
+        e.close()
+    }
+
+    @Test
+    fun `a narrow window wraps the toolbar onto a second row, Save and Copy at its right end, nothing hidden`() = onEdt {
         val e = Content(motion = true)
         val d = e.d
-        for ((w, h) in listOf(360 to 420, 240 to 200)) {
+        val min = EDITOR_WINDOW_MIN_SIZE.width.value.toInt() to EDITOR_WINDOW_MIN_SIZE.height.value.toInt()
+        for ((w, h) in listOf(min, 480 to 600)) {
             e.w = w
             e.h = h
-            d.frames(3)
+            d.frames(30)
+            val items = d.toolbarItems()
+            assertTrue(items.all { it.left >= 0f && it.right <= w + 0.5f && it.width > 1f }, "all inside at $w: $items")
+            val rows = items.map { it.center.y }.distinctBy { (it / 8f).toInt() }
+            assertTrue(rows.size >= 2, "wrapped at $w: $items")
             val c = d.canvas()
-            val copy = d.texted("Copy")!!.boundsInRoot
-            val save = d.texted("Save")!!.boundsInRoot
-            assertTrue(c.top >= d.described("Pen")!!.boundsInRoot.bottom - 0.5f, "toolbar above the canvas at $w x $h: $c")
-            assertTrue(c.top >= copy.bottom - 0.5f, "Copy above the canvas at $w x $h")
-            assertTrue(copy.right <= w + 0.5f && save.right <= copy.left, "Save and Copy in the window at $w x $h: $save $copy")
-            assertTrue(c.left >= 0f && c.right <= w + 0.5f && c.bottom <= h + 0.5f, "inside at $w x $h: $c")
-            if (c.height > 1f) assertEquals(0.5f, c.width / c.height, 0.02f)
+            assertTrue(items.all { it.bottom <= c.top + 0.5f }, "the canvas never overlaps the toolbar at $w: $c $items")
+            assertTrue(c.height > 1f, "the canvas still shows at $w x $h: $c")
+            // Save and Copy end the last row, at its right.
+            val copy = items.last()
+            val save = items[items.size - 2]
+            assertTrue(copy.center.y >= items.maxOf { it.center.y } - 4f, "Copy on the last row at $w")
+            assertTrue(copy.right > w * 0.85f && save.right <= copy.left + 0.5f, "Save, Copy at the right at $w: $save $copy")
+            assertEquals(0.5f, c.width / c.height, 0.02f)
         }
-        // At 360 the tools and swatches do not all fit: they scroll, clipped before Save, rather than overlap it.
-        e.w = 360
-        e.h = 420
-        d.frames(3)
-        val px = d.snapshot()
-        val save = d.texted("Save")!!.boundsInRoot
-        val black = d.described("Black")!!.boundsInRoot // clipped bounds
-        assertTrue(black.right <= save.left + 0.5f, "clipped before Save: $black $save")
-        val spot = px[(save.left - 2).toInt(), save.center.y.toInt()]
-        assertTrue(spot.red > 0.8f && spot.green > 0.8f, "nothing drawn over Save's side: $spot")
+        e.close()
+    }
+
+    @Test
+    fun `the toolbar's height follows a wrap with a tween`() = onEdt {
+        val e = Content(motion = true)
+        val d = e.d
+        val oneRow = d.canvas().top
+        e.w = EDITOR_WINDOW_MIN_SIZE.width.value.toInt()
+        val tops = (1..24).map { d.frame(); d.canvas().top }
+        assertTrue(tops.last() > oneRow + 20f, "a row more: $tops")
+        assertTrue(tops.any { it > tops.first() + 2f && it < tops.last() - 2f }, "moves down over frames, not a snap: $tops")
+        assertEquals(tops.last(), tops[18], 0.5f, "done by about 250 ms: $tops")
         e.close()
     }
 
@@ -360,6 +389,73 @@ class MarkupEditorTest {
     }
 
     @Test
+    fun `drawing a circle marks a ring in image pixels, not its inside`() = onEdt {
+        val e = Content(motion = true)
+        val d = e.d
+        d.click(d.described("Circle")!!)
+        d.drawOn(Offset(0.2f, 0.2f), Offset(0.8f, 0.5f))
+        val c = d.canvas()
+        val px = d.snapshot()
+        // The ellipse touches the drag rectangle's sides at their middles; its center is untouched.
+        val top = px[(c.left + c.width * 0.5f).toInt(), (c.top + c.height * 0.2f).toInt()]
+        assertTrue(top.red > 0.7f && top.green < 0.4f, "the ring's top is red: $top")
+        val left = px[(c.left + c.width * 0.2f).toInt(), (c.top + c.height * 0.35f).toInt()]
+        assertTrue(left.red > 0.7f && left.green < 0.4f, "the ring's left is red: $left")
+        val center = px[(c.left + c.width * 0.5f).toInt(), (c.top + c.height * 0.35f).toInt()]
+        assertEquals(gray.green, center.green, 0.02f, "not filled: $center")
+        // The drag rectangle's corner is off the ellipse.
+        val corner = px[(c.left + c.width * 0.2f).toInt() + 3, (c.top + c.height * 0.2f).toInt() + 3]
+        assertEquals(gray.green, corner.green, 0.02f, "corners stay clear: $corner")
+        d.click(d.texted("Save")!!)
+        val circle = assertIs<Mark.Circle>(e.saves.single().single())
+        assertEquals(MarkupColor.Red.argb, circle.color)
+        assertEquals(80f, circle.from.x, 2f)
+        assertEquals(160f, circle.from.y, 2f)
+        assertEquals(320f, circle.to.x, 2f)
+        assertEquals(400f, circle.to.y, 2f)
+        e.close()
+    }
+
+    @Test
+    fun `holding Shift makes a circle round and a box square`() = onEdt {
+        val e = Content(motion = true)
+        val d = e.d
+        for (tool in listOf("Circle", "Box")) {
+            d.click(d.described(tool)!!)
+            val c = d.canvas()
+            fun at(fx: Float, fy: Float) = Offset(c.left + c.width * fx, c.top + c.height * fy)
+            val shift = PointerKeyboardModifiers(isShiftPressed = true)
+            d.scene.sendPointerEvent(PointerEventType.Move, at(0.2f, 0.2f), type = PointerType.Mouse)
+            d.scene.sendPointerEvent(PointerEventType.Press, at(0.2f, 0.2f), type = PointerType.Mouse, button = PointerButton.Primary)
+            d.frame()
+            for (i in 1..6) {
+                d.scene.sendPointerEvent(
+                    PointerEventType.Move, at(0.2f + 0.1f * i, 0.2f + 0.05f * i), type = PointerType.Mouse, keyboardModifiers = shift,
+                )
+                d.frame()
+            }
+            d.scene.sendPointerEvent(
+                PointerEventType.Release, at(0.8f, 0.5f), type = PointerType.Mouse, button = PointerButton.Primary, keyboardModifiers = shift,
+            )
+            d.frames(2)
+        }
+        d.click(d.texted("Save")!!)
+        val (circle, box) = e.saves.single()
+        for (m in listOf(circle, box)) {
+            val (from, to) = when (m) {
+                is Mark.Circle -> m.from to m.to
+                is Mark.Box -> m.from to m.to
+                else -> error("$m")
+            }
+            assertEquals(abs(to.x - from.x), abs(to.y - from.y), 0.5f, "square: $m")
+            assertEquals(240f, to.x - from.x, 3f, "as long as the longer side (0.6 of 400 px): $m")
+        }
+        assertIs<Mark.Circle>(circle)
+        assertIs<Mark.Box>(box)
+        e.close()
+    }
+
+    @Test
     fun `a pen stroke shows while it is drawn, before the button is released`() = onEdt {
         val e = Content(motion = true)
         val d = e.d
@@ -385,7 +481,7 @@ class MarkupEditorTest {
     fun `each tool adds its mark`() = onEdt {
         val e = Content(motion = true)
         val d = e.d
-        for (tool in listOf("Pen", "Arrow", "Box", "Pixelate")) {
+        for (tool in listOf("Pen", "Arrow", "Box", "Circle", "Pixelate")) {
             d.click(d.described(tool)!!)
             d.drawOn(Offset(0.2f, 0.2f), Offset(0.6f, 0.4f))
         }
@@ -395,7 +491,8 @@ class MarkupEditorTest {
         assertTrue((marks[0] as Mark.Pen).points.size > 2)
         assertIs<Mark.Arrow>(marks[1])
         assertIs<Mark.Box>(marks[2])
-        assertIs<Mark.Pixelate>(marks[3])
+        assertIs<Mark.Circle>(marks[3])
+        assertIs<Mark.Pixelate>(marks[4])
         e.close()
     }
 

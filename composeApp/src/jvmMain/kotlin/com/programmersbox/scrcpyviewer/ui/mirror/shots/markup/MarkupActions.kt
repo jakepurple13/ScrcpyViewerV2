@@ -47,8 +47,8 @@ internal suspend fun copyMarked(
 /**
  * Saves [shot] with [marks] next to its original (`<name>-edited.png`, …): rendered here, written on [io]. On success
  * the [thumbnail] shows the edited file (it takes the render), [notify] says "Saved <file name>" and the result is
- * true. On failure [notify] says "Could not save: <reason>" and the result is false. A cancelled save (the window
- * closed) closes the render; the file is either fully written or not there (see [saveEdited]).
+ * true. On failure [failed] (default [notify]) says "Could not save: <reason>" and the result is false. A cancelled
+ * save (the window closed) closes the render; the file is either fully written or not there (see [saveEdited]).
  */
 internal suspend fun saveMarkedShot(
     shot: Shot,
@@ -56,11 +56,12 @@ internal suspend fun saveMarkedShot(
     thumbnail: ScreenshotThumbnailState,
     notify: (String) -> Unit,
     io: CoroutineContext = Dispatchers.IO,
+    failed: (String) -> Unit = notify,
 ): Boolean {
     val rendered = try {
         renderMarked(shot.bitmap, marks)
     } catch (e: Exception) {
-        notify("Could not save: ${e.message ?: e}")
+        failed("Could not save: ${e.message ?: e}")
         return false
     }
     val file = try {
@@ -70,7 +71,7 @@ internal suspend fun saveMarkedShot(
         throw e
     } catch (e: Exception) {
         rendered.asSkiaBitmap().close()
-        notify("Could not save: ${e.message ?: e}")
+        failed("Could not save: ${e.message ?: e}")
         return false
     }
     thumbnail.showEdited(file, rendered, shot.original) // takes the render

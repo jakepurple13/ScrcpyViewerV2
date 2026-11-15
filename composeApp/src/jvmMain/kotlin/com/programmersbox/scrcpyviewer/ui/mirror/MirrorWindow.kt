@@ -1166,12 +1166,13 @@ fun MirrorWindow(
         motion = !reduceMotion,
         near = { windowHandle?.bounds },
         thumbnail = { thumbnailCard.current()?.takeIf { thumbnail.shown.value != null } },
-        onCopy = { shot, marks ->
+        // Failures show in the editor window (it stays open); "Saved …" here, where the editor closes into the thumbnail.
+        onCopy = { shot, marks, say ->
             copyMarked(shot, marks, ImageClipboard::copyPng) // the copy blocks up to 5 s: on IO in there
-                .onFailure { notify("Could not copy the image: ${it.message ?: it}") }
+                .onFailure { say("Could not copy the image: ${it.message ?: it}") }
                 .isSuccess
         },
-        onSave = { shot, marks -> saveMarkedShot(shot, marks, thumbnail, ::notify) },
+        onSave = { shot, marks, say -> saveMarkedShot(shot, marks, thumbnail, ::notify, failed = say) },
         leases = thumbnail,
         screenGeometry = screenGeometry,
     )

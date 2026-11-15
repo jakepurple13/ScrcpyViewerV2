@@ -150,13 +150,22 @@ class MarkupEditorWindowTest {
 
     @Test
     fun `it opens at the screenshot's aspect ratio, the canvas 80 percent of the screen's height, centred`() {
-        val r = editorWindowBounds(1600, 2560, screen)
+        // A tablet shot wide enough to set the width itself.
+        val r = editorWindowBounds(2560, 2560, screen)
         val canvasH = r.height - EDITOR_CHROME_HEIGHT
         val canvasW = r.width - EDITOR_CHROME_WIDTH
         assertEquals(screen.height * 0.8f, canvasH.toFloat(), 1f)
-        assertEquals(1600f / 2560f, canvasW.toFloat() / canvasH, 0.01f)
+        assertEquals(1f, canvasW.toFloat() / canvasH, 0.01f)
         assertEquals(screen.x + (screen.width - r.width) / 2, r.x)
         assertEquals(screen.y + (screen.height - r.height) / 2, r.y)
+    }
+
+    @Test
+    fun `a phone screenshot opens as wide as the toolbar, its canvas letterboxed, at 80 percent of the height`() {
+        val r = editorWindowBounds(1080, 2340, screen)
+        assertEquals(EDITOR_TOOLBAR_WIDTH, r.width, "the whole toolbar fits")
+        assertEquals(screen.height * 0.8f, (r.height - EDITOR_CHROME_HEIGHT).toFloat(), 1f)
+        assertEquals(screen.x + (screen.width - r.width) / 2, r.x)
     }
 
     @Test
@@ -165,10 +174,10 @@ class MarkupEditorWindowTest {
         assertTrue(wide.width <= screen.width, "fits: $wide")
         assertEquals(2340f / 1080f, (wide.width - EDITOR_CHROME_WIDTH).toFloat() / (wide.height - EDITOR_CHROME_HEIGHT), 0.02f)
         val tiny = editorWindowBounds(1080, 2340, Rectangle(0, 0, 500, 400))
-        assertEquals(420, tiny.width)
+        assertEquals(500, tiny.width, "held to the screen")
         assertTrue(tiny.height <= 400, "never past the screen: $tiny")
         val small = editorWindowBounds(100, 100, Rectangle(0, 0, 1920, 400))
-        assertEquals(Rectangle((1920 - 420) / 2, 0, 420, 400), small)
+        assertEquals(Rectangle((1920 - EDITOR_TOOLBAR_WIDTH) / 2, 0, EDITOR_TOOLBAR_WIDTH, 400), small)
     }
 
     // One editor per mirror window.
@@ -344,8 +353,10 @@ class MarkupEditorWindowTest {
 
     // The window's content, its close paths and the mirror window's close.
 
-    private inner class Window(full: Boolean = true, val saveWorks: Boolean = true) {
+    private inner class Window(full: Boolean = true, val saveWorks: Boolean = true, val copyWorks: Boolean = true) {
         val editor = MarkupEditorWindowState(thumbnail)
+        /** The window's moves and minimum-size changes, in order. */
+        val events = mutableListOf<String>()
         val window = FakeWindow(target)
         val moves = mutableListOf<Move>()
         val saves = mutableListOf<List<Mark>>()
@@ -363,16 +374,24 @@ class MarkupEditorWindowTest {
                         state = s
                         MarkupEditorWindowBody(
                             editor, shot, s, window, plan, motion = true,
-                            show = {}, alpha = {}, floating = { true }, thumbnail = { thumbAt },
-                            onCopy = { _, _ -> true },
-                            onSave = { original, marks ->
+                            show = {}, alpha = {}, floating = { true }, minimum = { events += "min $it" }, thumbnail = { thumbAt },
+                            onCopy = { _, _, say ->
+                                if (!copyWorks) say("Could not copy the image: Install xclip")
+                                copyWorks
+                            },
+                            onSave = { original, marks, say ->
                                 saves += marks
-                                if (saveWorks) thumbnail.showEdited(Paths.get("caps", "Pixel 8 Pro-edited.png"), solid(Color.Blue), original.original)
+                                if (saveWorks) {
+                                    thumbnail.showEdited(Paths.get("caps", "Pixel 8 Pro-edited.png"), solid(Color.Blue), original.original)
+                                } else {
+                                    say("Could not save: Disk full")
+                                }
                                 saveWorks
                             },
                             leases = thumbnail,
                             animateBounds = { w, to, millis, grow ->
                                 moves += Move(to, millis, grow)
+                                events += if (grow) "grow" else "shrink"
                                 w.bounds = to
                             },
                         )
@@ -523,7 +542,7 @@ class MarkupEditorWindowTest {
     }
 
     @Test
-    fun `a failed Save keeps it open with its marks`() = onEdt {
+    fun `a failed Save keeps it open with its marks and says why in the editor window`() = onEdt {
         val w = Window(saveWorks = false)
         w.open()
         w.mark()
@@ -531,6 +550,32 @@ class MarkupEditorWindowTest {
         w.d.frames(40)
         assertTrue(w.editor.isOpen)
         assertTrue(assertNotNull(w.state).dirty)
+        val message = assertNotNull(w.texted("Could not save: Disk full"), "in the editor window")
+        val hint = assertNotNull(w.texted(EDITOR_HINT)).boundsInRoot
+        assertTrue(message.boundsInRoot.bottom <= hint.top, "above the footer: ${message.boundsInRoot} $hint")
+        w.close()
+    }
+
+    @Test
+    fun `a failed Copy says why in the editor window`() = onEdt {
+        val w = Window(copyWorks = false)
+        w.open()
+        w.mark()
+        w.click(assertNotNull(w.texted("Copy")))
+        w.d.frames(40)
+        assertNotNull(w.texted("Could not copy the image: Install xclip"))
+        assertTrue(w.editor.isOpen)
+        w.close()
+    }
+
+    @Test
+    fun `the minimum size holds only while it is open, never during the grow or the shrink`() = onEdt {
+        val w = Window()
+        w.open()
+        assertEquals(listOf("grow", "min true"), w.events, "set once it has grown")
+        w.esc()
+        w.d.frames(40)
+        assertEquals(listOf("grow", "min true", "min false", "shrink"), w.events, "lifted before it shrinks")
         w.close()
     }
 

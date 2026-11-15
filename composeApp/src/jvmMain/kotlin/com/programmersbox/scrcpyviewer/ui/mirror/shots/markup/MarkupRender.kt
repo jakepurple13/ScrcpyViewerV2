@@ -83,6 +83,16 @@ fun drawMarks(canvas: Canvas, original: Bitmap, marks: List<Mark>, cache: Pixela
                 )
             }
 
+            is Mark.Circle -> strokePaint(mark.color, stroke).use { paint ->
+                canvas.drawOval(
+                    Rect.makeLTRB(
+                        min(mark.from.x, mark.to.x), min(mark.from.y, mark.to.y),
+                        max(mark.from.x, mark.to.x), max(mark.from.y, mark.to.y),
+                    ),
+                    paint,
+                )
+            }
+
             is Mark.Pixelate -> pixelate(canvas, original, mark, cache)
         }
     }

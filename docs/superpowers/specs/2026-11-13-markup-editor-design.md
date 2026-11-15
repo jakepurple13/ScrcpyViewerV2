@@ -20,7 +20,7 @@ Builds on the screenshot thumbnail (#56).
 A dialog over the mirror window (scrim), titled "Edit screenshot":
 
 - Left: the screenshot, scaled to fit (at most 62% of the window height, at least 320 dp tall), drawn on directly.
-- Right: tool buttons **Pen**, **Arrow**, **Box**, **Pixelate** (one selected, tooltips), then **Undo** (also
+- Right: tool buttons **Pen**, **Arrow**, **Box**, **Circle**, **Pixelate** (one selected, tooltips), then **Undo** (also
   Ctrl/Cmd+Z; disabled when nothing to undo). Four color swatches: Red `#E53935` (default), Yellow `#FBC02D`, Blue
   `#1E88E5`, Black `#111111`. Hint: "Draw on the screenshot. Pixelate hides private text such as emails or order
   numbers."
@@ -28,7 +28,9 @@ A dialog over the mirror window (scrim), titled "Edit screenshot":
 
 Drawing (in image pixels, so a mark looks the same at any zoom): stroke width = 0.8% of the image's shorter side
 (min 3 px), round caps and joins. Pen follows the pointer; Arrow is a line with a filled head (length 4× stroke, 26°
-each side); Box is a stroked rectangle from drag start to end; Pixelate replaces the dragged rectangle with blocks of
+each side); Box is a stroked rectangle from drag start to end; Circle (added 2026-11-15, outlined circle icon) is a
+stroked ellipse inscribed in that rectangle; holding Shift makes a Box a square and a Circle a circle (both sides as
+long as the longer one, in the drag's direction); Pixelate replaces the dragged rectangle with blocks of
 2.5% of the shorter side (min 8 px), each the average color of the original pixels under it (always from the original,
 so pixelating twice never reveals anything). A drag shorter than 2 px adds nothing.
 

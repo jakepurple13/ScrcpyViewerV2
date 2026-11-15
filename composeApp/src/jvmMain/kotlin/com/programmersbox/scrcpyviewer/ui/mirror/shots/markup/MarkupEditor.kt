@@ -1,6 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.shots.markup
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -17,7 +21,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -31,7 +34,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.NorthEast
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CropSquare
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -85,6 +88,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -109,6 +113,9 @@ import kotlin.math.roundToInt
 
 /** With reduced motion everything only fades, this long. */
 const val EDITOR_FADE_MILLIS = 150
+
+/** The toolbar's height follows a wrap onto another row (or back) over this long. */
+const val TOOLBAR_ROWS_MILLIS = 250
 
 /** A tool's selection background crossfades. */
 const val TOOL_SELECT_MILLIS = 200
@@ -141,6 +148,7 @@ private val MarkupTool.icon: ImageVector
         MarkupTool.Pen -> Icons.Filled.Edit
         MarkupTool.Arrow -> Icons.Filled.NorthEast
         MarkupTool.Box -> Icons.Outlined.CropSquare
+        MarkupTool.Circle -> Icons.Outlined.Circle
         MarkupTool.Pixelate -> Icons.Filled.BlurOn
     }
 
@@ -396,9 +404,11 @@ fun MarkupEditorContent(
 }
 
 /**
- * The top toolbar: the tools, Undo and the swatches scroll sideways (clipped) when the window is too narrow for them;
- * Save and Copy stay at its right.
+ * The top toolbar: the tools, Undo, the swatches, then Save and Copy at the right end of its last row. Nothing is ever
+ * hidden: when the window is narrower than the toolbar, it wraps onto a second row (whole groups move: the tools,
+ * "| Undo", "| swatches", and Save + Copy, which stay right-aligned), and its height animates to the new rows.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EditorToolbar(
     state: MarkupEditorState,
@@ -408,46 +418,64 @@ private fun EditorToolbar(
     onCopy: () -> Unit,
     onSave: () -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
     val mac = remember { Os.isMac }
-    Row(
-        Modifier.fillMaxWidth().clipToBounds().padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    FlowRow(
+        Modifier
+            .fillMaxWidth()
+            .animateContentSize(if (motion) tween(TOOLBAR_ROWS_MILLIS, easing = EmphasizedDecelerate) else snap())
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .semantics { contentDescription = "Markup tools" },
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        itemVerticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            Modifier.weight(1f).horizontalScroll(rememberScrollState()).semantics { contentDescription = "Markup tools" },
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+        ToolbarGroup {
             MarkupTool.entries.forEach { t ->
                 ToolButton(t, selected = t == state.tool, motion) { state.tool = t }
             }
+        }
+        ToolbarGroup {
             ToolbarSeparator()
             Tip(if (mac) "Undo (⌘Z)" else "Undo (Ctrl+Z)") {
                 IconButton(onClick = onUndo, enabled = state.doc.canUndo, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", Modifier.size(20.dp))
                 }
             }
+        }
+        ToolbarGroup {
             ToolbarSeparator()
             MarkupColor.entries.forEach { c -> Swatch(c, selected = c == state.color, motion) { state.color = c } }
             Spacer(Modifier.width(4.dp)) // room for the picked swatch to grow
         }
-        Spacer(Modifier.width(8.dp))
-        TextButton(onClick = onSave) { Text("Save", maxLines = 1) }
-        Spacer(Modifier.width(4.dp))
-        Button(onClick = onCopy, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
-            val iconMillis = if (motion) COPY_ICON_MILLIS else EDITOR_FADE_MILLIS
-            Crossfade(copied, animationSpec = tween(iconMillis), label = "editorCopyIcon") { done ->
-                if (done) {
-                    Icon(Icons.Filled.Check, null, Modifier.size(18.dp).testTag("copiedIcon"))
-                } else {
-                    Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp).testTag("copyIcon"))
+        // Fills what is left of its row, so Save and Copy sit at its right end (on a row of their own when need be).
+        Row(
+            Modifier.weight(1f),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.width(4.dp))
+            TextButton(onClick = onSave) { Text("Save", maxLines = 1) }
+            Spacer(Modifier.width(4.dp))
+            Button(onClick = onCopy, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
+                val iconMillis = if (motion) COPY_ICON_MILLIS else EDITOR_FADE_MILLIS
+                Crossfade(copied, animationSpec = tween(iconMillis), label = "editorCopyIcon") { done ->
+                    if (done) {
+                        Icon(Icons.Filled.Check, null, Modifier.size(18.dp).testTag("copiedIcon"))
+                    } else {
+                        Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp).testTag("copyIcon"))
+                    }
                 }
+                Spacer(Modifier.width(8.dp))
+                Text(if (copied) "Copied" else "Copy", maxLines = 1)
             }
-            Spacer(Modifier.width(8.dp))
-            Text(if (copied) "Copied" else "Copy", maxLines = 1)
         }
     }
+}
+
+/** Toolbar items that wrap together. */
+@Composable
+private fun ToolbarGroup(content: @Composable () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { content() }
 }
 
 @Composable
@@ -488,23 +516,29 @@ private fun MarkCanvas(
                     fun image(at: androidx.compose.ui.geometry.Offset) = MarkPoint(at.x * sx, at.y * sy)
                     val start = image(down.position)
                     val points = ArrayList<MarkPoint>().apply { add(start) }
-                    fun mark(end: MarkPoint): Mark = when (t) {
+                    fun mark(at: MarkPoint, square: Boolean = false): Mark {
+                        // Shift makes a Box a square and a Circle a circle.
+                        val end = if (square && (t == MarkupTool.Box || t == MarkupTool.Circle)) squareCorner(start, at) else at
+                        return when (t) {
                         // A copy: with the live list, each new Pen equals the last (same list), so the state
                         // write is skipped and the stroke only showed on release.
                         MarkupTool.Pen -> Mark.Pen(argb, points.toList())
                         MarkupTool.Arrow -> Mark.Arrow(argb, start, end)
                         MarkupTool.Box -> Mark.Box(argb, start, end)
+                        MarkupTool.Circle -> Mark.Circle(argb, start, end)
                         MarkupTool.Pixelate -> Mark.Pixelate(start, end)
+                        }
                     }
                     preview = mark(start)
                     try {
                         while (true) {
-                            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (!change.pressed) break
                             change.consume()
                             val at = image(change.position)
                             if (t == MarkupTool.Pen) points += at
-                            preview = mark(at)
+                            preview = mark(at, square = event.keyboardModifiers.isShiftPressed)
                         }
                         preview?.let(doc::add) // copies the pen's points; nothing for a drag under 2 px
                     } finally {

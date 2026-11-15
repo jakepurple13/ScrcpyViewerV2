@@ -3,11 +3,14 @@ package com.programmersbox.scrcpyviewer.ui.mirror.shots.markup
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -19,6 +22,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -67,6 +71,12 @@ val EDITOR_WINDOW_MIN_SIZE = DpSize(360.dp, 420.dp)
 /** The editor window opens at least this large. */
 val EDITOR_WINDOW_OPEN_MIN_SIZE = DpSize(420.dp, 480.dp)
 
+/**
+ * The toolbar's width on one row (window units): Pen, Arrow, Box, Circle, Pixelate, Undo, the four swatches, Save and
+ * Copy, with their gaps and padding, plus room for wider platform fonts. The window opens at least this wide.
+ */
+const val EDITOR_TOOLBAR_WIDTH = 640
+
 /** It opens with the canvas this share of the usable screen's height (less, when that would be too wide). */
 const val EDITOR_CANVAS_SCREEN_SHARE = 0.8f
 
@@ -94,7 +104,12 @@ internal fun editorWindowBounds(imageWidth: Int, imageHeight: Int, screen: Recta
         canvasW = maxW
         canvasH = canvasW / aspect
     }
-    val w = maxOf((canvasW + EDITOR_CHROME_WIDTH).roundToInt(), EDITOR_WINDOW_OPEN_MIN_SIZE.width.value.roundToInt())
+    // Never narrower than the toolbar on one row: every button shows (the canvas is letterboxed if need be).
+    val w = maxOf(
+        (canvasW + EDITOR_CHROME_WIDTH).roundToInt(),
+        EDITOR_WINDOW_OPEN_MIN_SIZE.width.value.roundToInt(),
+        EDITOR_TOOLBAR_WIDTH,
+    )
     val h = maxOf((canvasH + EDITOR_CHROME_HEIGHT).roundToInt(), EDITOR_WINDOW_OPEN_MIN_SIZE.height.value.roundToInt())
     return zoomTarget(null, null, w, h, screen)
 }
@@ -148,9 +163,9 @@ class MarkupEditorWindowState(private val thumbnail: ScreenshotThumbnailState) {
         thumbnail.editing(shot)
     }
 
-    /** Brings the open window to the front. */
+    /** Brings the open window to the front (not while it closes). */
     fun raise() {
-        if (shot != null) raises++
+        if (shot != null && !leaving) raises++
     }
 
     /** The content closed (Save, Discard, no marks): the window plays its close, then calls [closed]. */
@@ -227,6 +242,12 @@ class MarkupEditorWindowState(private val thumbnail: ScreenshotThumbnailState) {
         }
     }
 }
+
+/**
+ * Copy or Save from the editor window: true when it worked. [say] shows a message in the editor window's own snackbar
+ * (a failure, while the editor stays open).
+ */
+typealias EditorAction = suspend (shot: Shot, marks: List<Mark>, say: (String) -> Unit) -> Boolean
 
 /** How the editor window opens: from [from] (a button's screen bounds, null: it appears) to [to]; [full] motion or fades. */
 internal class EditorWindowPlan(val from: Rectangle?, val to: Rectangle, val full: Boolean)
@@ -323,8 +344,8 @@ fun MarkupEditorWindow(
     motion: Boolean,
     near: () -> Rectangle?,
     thumbnail: () -> Rectangle?,
-    onCopy: suspend (Shot, List<Mark>) -> Boolean,
-    onSave: suspend (Shot, List<Mark>) -> Boolean,
+    onCopy: EditorAction,
+    onSave: EditorAction,
     leases: ScreenshotThumbnailState,
     screenGeometry: ScreenGeometry,
 ) {
@@ -344,8 +365,8 @@ private fun EditorWindow(
     motion: Boolean,
     near: () -> Rectangle?,
     thumbnail: () -> Rectangle?,
-    onCopy: suspend (Shot, List<Mark>) -> Boolean,
-    onSave: suspend (Shot, List<Mark>) -> Boolean,
+    onCopy: EditorAction,
+    onSave: EditorAction,
     leases: ScreenshotThumbnailState,
     screenGeometry: ScreenGeometry,
 ) {
@@ -383,11 +404,6 @@ private fun EditorWindow(
     ) {
         val window = nucleusWindow
         val handle = remember(window) { TaoMirrorWindowHandle(window, screenGeometry) }
-        LaunchedEffect(window) {
-            window.unsafe.taoWindow?.setMinimumSize(
-                EDITOR_WINDOW_MIN_SIZE.width.value.toDouble(), EDITOR_WINDOW_MIN_SIZE.height.value.toDouble(),
-            )
-        }
         LaunchedEffect(editor) {
             // A request from before this window is not one to it.
             snapshotFlow { editor.raises }.drop(1).collect { bringToFront(window) }
@@ -398,6 +414,10 @@ private fun EditorWindow(
                 show = { shown = true },
                 alpha = { a -> handle.nsWindow?.let { setMacAlpha(it, a.toDouble()) } },
                 floating = { windowState.placement == WindowPlacement.Floating },
+                minimum = { on ->
+                    val min = EDITOR_WINDOW_MIN_SIZE.takeIf { on }
+                    window.unsafe.taoWindow?.setMinimumSize(min?.width?.value?.toDouble(), min?.height?.value?.toDouble())
+                },
                 thumbnail = thumbnail,
                 onCopy = onCopy,
                 onSave = onSave,
@@ -424,14 +444,22 @@ internal fun MarkupEditorWindowBody(
     show: () -> Unit,
     alpha: (Float) -> Unit,
     floating: () -> Boolean,
+    /**
+     * Sets (true) or lifts (false) the window's minimum size, [EDITOR_WINDOW_MIN_SIZE]. Only while it is open: a
+     * minimum would clamp the grow from a button and the shrink into the thumbnail (Windows applies it to every move).
+     */
+    minimum: (Boolean) -> Unit,
     thumbnail: () -> Rectangle?,
-    onCopy: suspend (Shot, List<Mark>) -> Boolean,
-    onSave: suspend (Shot, List<Mark>) -> Boolean,
+    onCopy: EditorAction,
+    onSave: EditorAction,
     leases: ScreenshotThumbnailState,
     animateBounds: AnimateBounds,
     modifier: Modifier = Modifier.fillMaxSize(),
 ) {
     val wake = remember { Animatable(0f) }
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val say: (String) -> Unit = { message -> scope.launch { snackbar.showSnackbar(message) } }
     DisposableEffect(editor, state) {
         if (editor.shot === shot) editor.editor = state
         // Gone with the mirror window: nothing waits on it any more.
@@ -441,21 +469,29 @@ internal fun MarkupEditorWindowBody(
     LaunchedEffect(leaving) {
         if (!leaving) {
             openEditorWindow(window, plan, wake, show, alpha, animateBounds)
+            minimum(true)
         } else {
             show() // closed before it showed
+            minimum(false)
             closeEditorWindow(window, plan.full, floating(), thumbnail, wake, alpha, animateBounds)
             editor.closed(shot)
         }
     }
-    MarkupEditorContent(
-        shot, motion, onCopy, onSave,
-        onClose = editor::leave,
-        leases = leases,
-        modifier = modifier,
-        state = state,
-        wake = { wake.value },
-        active = !leaving,
-        onCloseDeclined = editor::declined,
-        wakeFades = !plan.full,
-    )
+    Box(modifier) {
+        MarkupEditorContent(
+            shot, motion,
+            onCopy = { s, marks -> onCopy(s, marks, say) },
+            onSave = { s, marks -> onSave(s, marks, say) },
+            onClose = editor::leave,
+            leases = leases,
+            modifier = Modifier.fillMaxSize(),
+            state = state,
+            wake = { wake.value },
+            active = !leaving,
+            onCloseDeclined = editor::declined,
+            wakeFades = !plan.full,
+        )
+        // Copy and Save failures, in this window (it covers the mirror window's snackbar); above the footer.
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 16.dp, bottom = 40.dp))
+    }
 }
