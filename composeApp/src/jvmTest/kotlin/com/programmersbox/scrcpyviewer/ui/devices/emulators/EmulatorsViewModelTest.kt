@@ -7,6 +7,7 @@ import com.programmersbox.scrcpyviewer.adb.DeviceState
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.emulator.AvdState
 import com.programmersbox.scrcpyviewer.emulator.BootStage
+import com.programmersbox.scrcpyviewer.emulator.EmulatorEnvironment
 import com.programmersbox.scrcpyviewer.emulator.EmulatorLauncher
 import com.programmersbox.scrcpyviewer.emulator.EmulatorNotice
 import com.programmersbox.scrcpyviewer.emulator.EmulatorProcess
@@ -129,7 +130,7 @@ class EmulatorsViewModelTest {
         io: CoroutineContext = UnconfinedTestDispatcher(testScheduler),
         sizeOf: (Path) -> Long? = { measured += it.fileName.toString(); 8_804_682_956L },
     ) = EmulatorsViewModel(
-        launcher, settings, backgroundScope, env = env::get, home = home, os = OpenPlatform.Linux, io = io, sizeOf = sizeOf,
+        launcher, settings, EmulatorEnvironment(env::get, home, sizeOf), backgroundScope, os = OpenPlatform.Linux, io = io,
     ).also {
         it.onEvent(EmulatorEvent.Reload)
         runCurrent()

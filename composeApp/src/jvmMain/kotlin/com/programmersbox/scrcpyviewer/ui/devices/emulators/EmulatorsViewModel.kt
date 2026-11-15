@@ -7,7 +7,7 @@ import com.programmersbox.scrcpyviewer.emulator.AvdState
 import com.programmersbox.scrcpyviewer.emulator.EmulatorLauncher
 import com.programmersbox.scrcpyviewer.emulator.SdkLookup
 import com.programmersbox.scrcpyviewer.emulator.avdHome
-import com.programmersbox.scrcpyviewer.emulator.avdSize
+import com.programmersbox.scrcpyviewer.emulator.EmulatorEnvironment
 import com.programmersbox.scrcpyviewer.emulator.findSdk
 import com.programmersbox.scrcpyviewer.emulator.readAvds
 import com.programmersbox.scrcpyviewer.state.AppSettings
@@ -27,7 +27,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.koin.core.annotation.KoinViewModel
 import java.nio.file.Path
-import java.nio.file.Paths
 import kotlin.coroutines.CoroutineContext
 
 /** One AVD in the Emulators section. [size] is null until its folder has been measured (or when that failed). */
@@ -73,13 +72,15 @@ private data class Catalog(val sdk: SdkLookup?, val avds: List<Avd>)
 internal class EmulatorsViewModel(
     private val launcher: EmulatorLauncher,
     private val settings: AppSettings,
+    /** Env, home and folder sizes: the machine's in the app, fakes in tests (no real SDK read, no `du`). */
+    environment: EmulatorEnvironment,
     scope: CoroutineScope = defaultViewModelScope(),
-    private val env: (String) -> String? = System::getenv,
-    private val home: Path = Paths.get(System.getProperty("user.home")),
     private val os: OpenPlatform = OpenPlatform.current(),
     private val io: CoroutineContext = Dispatchers.IO,
-    private val sizeOf: (Path) -> Long? = { avdSize(it) },
 ) : ViewModel(scope) {
+    private val env = environment.env
+    private val home = environment.home
+    private val sizeOf = environment.sizeOf
     private val catalog = MutableStateFlow(Catalog(null, emptyList()))
     private val sizes = MutableStateFlow<Map<String, Long>>(emptyMap())
     private var loadJob: Job? = null

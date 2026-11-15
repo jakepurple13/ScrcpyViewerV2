@@ -5,6 +5,7 @@ import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.di.AppScope
 import com.programmersbox.scrcpyviewer.di.startAppKoin
+import com.programmersbox.scrcpyviewer.emulator.EmulatorEnvironment
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.update.FakeUpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateBackend
@@ -45,6 +46,13 @@ class FakeAdbClient(private val payload: String = FAKE_DEVICES_PAYLOAD) : AdbCli
 }
 
 /**
+ * An emulator environment that reads nothing on this machine: no env vars, a home folder inside [dataDir] that holds
+ * no SDK and no AVDs (the Emulators section shows No SDK on every machine), and no `du`.
+ */
+fun fakeEmulatorEnvironment(dataDir: Path): EmulatorEnvironment =
+    EmulatorEnvironment(env = { null }, home = dataDir.resolve("home"), sizeOf = { error("no du in tests") })
+
+/**
  * Starts the app's Koin graph on a fresh temp data dir with [FakeAdbClient], runs [block] once the fake devices are
  * listed, then stops it. The first-run guide is marked seen so it does not cover the app. The default
  * [updateBackend] never answers a check, so no update check reaches the network.
@@ -54,7 +62,7 @@ fun withFakeAppKoin(
     updateBackend: UpdateBackend = FakeUpdateBackend(),
     block: (Koin) -> Unit,
 ) {
-    val koin = startAppKoin(dataDir, adbClientFactory = { FakeAdbClient() }, updateBackend = updateBackend)
+    val koin = startAppKoin(dataDir, adbClientFactory = { FakeAdbClient() }, updateBackend = updateBackend, emulatorEnvironment = fakeEmulatorEnvironment(dataDir))
     try {
         koin.get<AppSettings>().update { it.copy(onboardingSeen = true, actionsIntroSeen = true) }
         runBlocking { withTimeout(5_000) { koin.get<DeviceTracker>().devices.first { it.size == 3 } } }
