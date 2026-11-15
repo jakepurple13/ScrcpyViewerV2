@@ -48,7 +48,9 @@ left by deleted AVDs) is skipped. From `<id>.avd/config.ini` (keys may be writte
 | Kind (icon) | Watch when `tag.id` contains `wear`; TV when it contains `tv`; Tablet when `hw.device.name` contains `tablet` or the shorter screen side (`hw.lcd.width`/`height` at `hw.lcd.density`) is at least 600 dp; else Phone |
 | Size | the `.avd` folder's size on disk (`du -sk` on macOS/Linux, sum of file sizes on Windows), read in the background; "8.2 GB" (one decimal, GB or MB) |
 
-The list is read when the Devices screen opens, after a new SDK folder is chosen, and after a start or stop.
+The list is read when the Devices screen opens, after a new SDK folder is chosen, and after a start or stop. Sizes
+are measured on those reads except after a start (as built: a running emulator's size need not refresh; the Stop
+measures again), so a Start never runs `du`.
 Rows sort by name (case-insensitive) and never reorder while their state changes.
 
 **Running emulators**: every connected device whose serial is `emulator-<port>` is matched to its AVD once per
@@ -69,6 +71,21 @@ Connected device rows change in two ways:
 - An emulator the launcher is still booting is left out of the connected rows. It enters (the existing
   `AnimatedDeviceItem` arrival: slide, expand, glow) once it is ready, instead of showing as "offline" with the
   cable hint while it boots.
+
+As built (follow-ups, 2026-11-15), emulator rows only; a real device's row, menu, hints and selection are unchanged:
+
+- **Title**: a connected emulator whose AVD is known (launcher state Booting/Running/Stopping, ours or one started
+  elsewhere once matched) is titled with the AVD's display name ("heads_up_api34", "Pixel 9") instead of the system
+  model ("sdk_gphone64_arm64"); the serial subtitle is unchanged. Until matched it keeps the existing title; the
+  change crossfades the whole title block (250 ms, the row's height following; at once under reduced motion),
+  including a serial-only title becoming name over serial.
+- **No Wi-Fi**: an emulator's right-click menu has Mirror only, and the detail pane (simple view and the advanced
+  footer) shows no "Connect over Wi-Fi" button or hint for it.
+- **Offline hint**: an offline emulator row shows "Emulator offline. Stop and start it again from Emulators." instead
+  of the cable hint.
+- **Selection**: with no user choice, an emulator never takes the default over from another ready device already
+  shown as selected (one that finishes booting, or one started elsewhere, does not move the selection to it); with
+  no other device it is selected as before.
 
 ## Emulators section
 

@@ -22,7 +22,10 @@ device screen.
 - Layout for a window: a top toolbar with Pen, Arrow, Box, Circle, Pixelate | Undo | the four swatches, then Save (text
   button) and Copy (filled) at its right. Nothing in it is ever hidden: in a window narrower than the toolbar it wraps
   onto a second row (the tools, "| Undo", "| swatches" move as groups; Save and Copy stay at the right end of the last
-  row), and its height follows in 250 ms (emphasized decelerate; at once under reduced motion). The screenshot fills the
+  row), and its height follows in 250 ms (emphasized decelerate; at once under reduced motion). As built: each group
+  glides to its new place over the same 250 ms (`LookaheadScope` + `animateBounds` in a custom flow layout; Save and
+  Copy follow the right edge at once while the window is resized and glide only when they change row), and a
+  separator that would start a row is left out (it fades out; no row starts with "|"). The screenshot fills the
   rest, centred at its aspect ratio, and scales with the window.
   A footer shows the hint "Pixelate hides private text such as emails or order numbers." and the image size
   ("1080 × 2340").

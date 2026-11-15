@@ -47,7 +47,23 @@ internal data class EmulatorsUiState(
     val hiddenSerials: Set<String> = emptySet(),
     /** The user's home folder, shown as `~` in the SDK line. */
     val home: Path? = null,
-)
+) {
+    /**
+     * By serial, the display name of each catalog AVD with an emulator on it (ours, or one started elsewhere once
+     * matched): the connected rows title an emulator with it instead of its system model.
+     */
+    val avdNames: Map<String, String> by lazy {
+        rows.mapNotNull { row ->
+            val serial = when (val st = row.state) {
+                is AvdState.Booting -> st.serial
+                is AvdState.Running -> st.serial
+                is AvdState.Stopping -> st.serial
+                else -> null
+            }
+            serial?.let { it to row.avd.name }
+        }.toMap()
+    }
+}
 
 internal sealed interface EmulatorEvent {
     data class Start(val avdId: String) : EmulatorEvent
@@ -66,7 +82,8 @@ private data class Catalog(val sdk: SdkLookup?, val avds: List<Avd>)
 /**
  * The Devices screen's Emulators section: the SDK and AVD catalog (read off the main thread), each AVD's launcher state,
  * and its saved preferences. The catalog is read when the screen opens (it sends [EmulatorEvent.Reload]), after a new
- * SDK folder is chosen, and after a start or stop. AVD folder sizes (`du`, up to 30 s each) are measured in the background.
+ * SDK folder is chosen, and after a start or stop. AVD folder sizes (`du`, up to 30 s each) are measured in the
+ * background on those reads except after a start: a running emulator's size need not refresh, and a Stop measures again.
  */
 @KoinViewModel
 internal class EmulatorsViewModel(
@@ -85,6 +102,7 @@ internal class EmulatorsViewModel(
     private val sizes = MutableStateFlow<Map<String, Long>>(emptyMap())
     private var loadJob: Job? = null
     private var sizeJob: Job? = null
+    private var measurePending = false
 
     val state: StateFlow<EmulatorsUiState> = combine(
         catalog, sizes, launcher.states, launcher.bootingSerials, settings.settings,
@@ -137,22 +155,30 @@ internal class EmulatorsViewModel(
         val sdk = (catalog.value.sdk as? SdkLookup.Found)?.sdk ?: return
         val avd = catalog.value.avds.firstOrNull { it.id == avdId } ?: return
         launcher.start(avd, sdk, cold)
-        reload()
+        reload(measure = false)
     }
 
     private fun updatePrefs(avdId: String, change: (EmulatorPrefs) -> EmulatorPrefs) = settings.update { s ->
         s.copy(emulatorPrefs = s.emulatorPrefs + (avdId to change(s.emulatorPrefs[avdId] ?: EmulatorPrefs())))
     }
 
-    /** Reads the SDK and the AVD list off the main thread, then measures each AVD folder; a newer read replaces it. */
-    private fun reload() {
+    /**
+     * Reads the SDK and the AVD list off the main thread, then measures each AVD folder unless [measure] is false (the
+     * sizes already known stay, and a measuring read still in progress carries on); a newer read replaces it.
+     */
+    private fun reload(measure: Boolean = true) {
         loadJob?.cancel()
+        // A measuring read this one replaces before it got to measure still measures.
+        val measuring = measure || measurePending
+        measurePending = measuring
         loadJob = viewModelScope.launch {
             val next = withContext(io) {
                 val sdk = findSdk(settings.settings.value.androidSdkPath, env, home, os)
                 Catalog(sdk, if (sdk is SdkLookup.Found) readAvds(avdHome(env, home)) else emptyList())
             }
             catalog.value = next
+            measurePending = false
+            if (!measuring) return@launch
             sizeJob?.cancel()
             sizeJob = viewModelScope.launch {
                 for (avd in next.avds) {

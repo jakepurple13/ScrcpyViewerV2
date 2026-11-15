@@ -63,8 +63,8 @@ import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 
 /**
- * The detail pane's default view: the device's basics, its preset, Mirror and Connect over Wi-Fi, with a way into every
- * option. Internal for screenshots.
+ * The detail pane's default view: the device's basics, its preset, Mirror and Connect over Wi-Fi (not for an emulator),
+ * with a way into every option. Internal for screenshots.
  */
 @Composable
 internal fun SimpleDevicePane(
@@ -102,8 +102,9 @@ internal fun SimpleDevicePane(
                         Spacer(Modifier.width(8.dp))
                         Text("Mirror", style = MaterialTheme.typography.titleMedium)
                     }
-                    val wifi = wifiButtonState(device, state)
-                    OutlinedButton(
+                    // An emulator has no Wi-Fi to switch to: no button and no hint.
+                    val wifi = if (isEmulatorSerial(device.serial)) null else wifiButtonState(device, state)
+                    if (wifi != null) OutlinedButton(
                         onClick = { onConnectWifi(device.serial) },
                         enabled = wifi.enabled,
                         modifier = Modifier.sharedPart(motion, SharedPart.Wifi).fillMaxWidth().height(44.dp),
@@ -112,7 +113,7 @@ internal fun SimpleDevicePane(
                         Spacer(Modifier.width(8.dp))
                         Text(wifi.label)
                     }
-                    wifi.hint?.let {
+                    wifi?.hint?.let {
                         Text(
                             it,
                             style = MaterialTheme.typography.bodySmall,
@@ -163,7 +164,11 @@ private fun DeviceHeader(device: Device) {
                 overflow = TextOverflow.Ellipsis,
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val connection = if (device.isTcp) "Wi-Fi" else "USB"
+                val connection = when {
+                    isEmulatorSerial(device.serial) -> "Emulator"
+                    device.isTcp -> "Wi-Fi"
+                    else -> "USB"
+                }
                 when (device.state) {
                     DeviceState.Device -> Fact(
                         "Connected · $connection",

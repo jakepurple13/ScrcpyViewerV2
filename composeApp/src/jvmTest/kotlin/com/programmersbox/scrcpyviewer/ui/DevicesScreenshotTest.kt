@@ -339,6 +339,40 @@ class DevicesScreenshotTest {
     private fun renderEmulators(name: String, mode: ThemeMode, emulators: EmulatorsUiState, listWidthPx: Int = 460, width: Int = 1280) =
         render(name, mode, withEmulators, width = width, listWidthPx = listWidthPx, emulators = emulators.copy(hiddenSerials = setOf("emulator-5556")))
 
+    /** An emulator's right-click menu: Mirror only, no Wi-Fi item. */
+    @Test
+    fun `devices context menu emulator`() =
+        renderMenu("devices-light-menu-emulator.png", ThemeMode.Light, "emulator-5554", withEmulators)
+
+    /** A selected emulator's simple and advanced views: Mirror, no Connect over Wi-Fi. */
+    @Test
+    fun `emulator selected has no wifi button`() {
+        val selected = withEmulators.copy(selectedSerial = "emulator-5554", canMirror = true, errors = emptyMap())
+        render("emulators-light-selected-simple.png", ThemeMode.Light, selected.copy(advanced = false), emulators = allStates)
+        render("emulators-light-selected-advanced.png", ThemeMode.Light, selected, emulators = allStates)
+    }
+
+    /**
+     * heads_up_api34 running on emulator-5554 is titled with its AVD name, not its system model; an offline emulator
+     * (emulator-5560) says to stop and start it again instead of the cable hint, beside the real devices' rows.
+     */
+    @Test
+    fun `emulators avd name and offline hint`() = render(
+        "emulators-light-avd-name-offline.png", ThemeMode.Light,
+        state.copy(
+            devices = state.devices + listOf(
+                Device("emulator-5554", DeviceState.Device, "device", "sdk_gphone64_arm64", null, 7, false, DeviceInfo("sdk_gphone64_arm64", "14", 34)),
+                Device("emulator-5560", DeviceState.Offline, "offline", null, null, 9, false),
+                Device("R5CX12GDWPZ", DeviceState.Offline, "offline", "SM_A156U1", null, 10, false),
+            ),
+        ),
+        listWidthPx = 460,
+        emulators = allStates.copy(
+            rows = listOf(emuRow(headsUp, AvdState.Running("emulator-5554")), emuRow(pixel9, AvdState.Stopped)),
+            hiddenSerials = emptySet(),
+        ),
+    )
+
     @Test
     fun `emulators every state light`() = renderEmulators("emulators-light.png", ThemeMode.Light, allStates)
 

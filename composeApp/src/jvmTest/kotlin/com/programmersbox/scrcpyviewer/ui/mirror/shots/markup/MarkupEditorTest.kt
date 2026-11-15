@@ -260,8 +260,8 @@ class MarkupEditorTest {
             d.frames(3)
             val c = d.canvas()
             assertEquals(0.5f, c.width / c.height, 0.01f, "aspect at $w x $h: $c")
-            // Its last row: the toolbar wraps when the window is narrow.
-            val toolbarBottom = d.toolbarItems().maxOf { it.bottom }
+            // The toolbar's bottom (it wraps when the window is narrow; a wrapping group may still be gliding to its row).
+            val toolbarBottom = assertNotNull(d.described("Markup tools")).boundsInRoot.bottom
             val footerTop = d.texted("400 × 800")!!.boundsInRoot.top
             assertTrue(c.top >= toolbarBottom && c.bottom <= footerTop, "between toolbar and footer at $w x $h: $c")
             assertEquals(w / 2f, c.center.x, 1f, "centred across at $w x $h")
@@ -329,6 +329,93 @@ class MarkupEditorTest {
         assertTrue(tops.last() > oneRow + 20f, "a row more: $tops")
         assertTrue(tops.any { it > tops.first() + 2f && it < tops.last() - 2f }, "moves down over frames, not a snap: $tops")
         assertEquals(tops.last(), tops[18], 0.5f, "done by about 250 ms: $tops")
+        e.close()
+    }
+
+    /** Each frame's unclipped position of the toolbar group tagged [tag] while the window narrows from 1000 to [narrow] (or back). */
+    private fun groupPath(motion: Boolean, tag: String, narrow: Int = EDITOR_WINDOW_MIN_SIZE.width.value.toInt(), widen: Boolean = false): List<Offset> {
+        val e = Content(motion = motion, w = if (widen) narrow else width)
+        try {
+            val d = e.d
+            d.frames(30)
+            val before = assertNotNull(d.tagged(tag), tag).positionInRoot
+            e.w = if (widen) width else narrow
+            return listOf(before) + (1..24).map { d.frame(); assertNotNull(d.tagged(tag), tag).positionInRoot }
+        } finally {
+            e.close()
+        }
+    }
+
+    private fun List<Offset>.distance(a: Int, b: Int) = (this[a] - this[b]).getDistance()
+
+    @Test
+    fun `a wrapping group glides to its new row over several frames`() = onEdt {
+        for ((tag, widen) in listOf(TOOLBAR_SWATCHES_TAG to false, TOOLBAR_ACTIONS_TAG to false, TOOLBAR_SWATCHES_TAG to true)) {
+            val path = groupPath(motion = true, tag = tag, widen = widen)
+            val total = path.distance(0, path.size - 1)
+            assertTrue(total > 20f, "$tag moves to another row (widen $widen): $path")
+            // In between for several frames, never most of the way in one frame, landed by about 250 ms.
+            val between = path.indices.count { i -> path.distance(0, i) > total * 0.1f && path.distance(i, path.size - 1) > total * 0.1f }
+            assertTrue(between >= 4, "$tag glides over several frames (widen $widen): $path")
+            assertTrue((1 until path.size).all { path.distance(it - 1, it) < total * 0.6f }, "$tag no jump (widen $widen): $path")
+            assertTrue(path.distance(18, path.size - 1) < 0.5f, "$tag lands by about 250 ms (widen $widen): $path")
+        }
+    }
+
+    @Test
+    fun `dragging the window narrower and back, the groups keep up with no jump and land`() = onEdt {
+        val e = Content(motion = true)
+        val d = e.d
+        d.frames(30)
+        val tags = listOf(TOOLBAR_TOOLS_TAG, TOOLBAR_UNDO_TAG, TOOLBAR_SWATCHES_TAG, TOOLBAR_ACTIONS_TAG)
+        fun positions() = tags.map { assertNotNull(d.tagged(it), it).positionInRoot }
+        val min = EDITOR_WINDOW_MIN_SIZE.width.value.toInt()
+        val sweep = (width downTo min step 8) + (min..width step 8)
+        var last = positions()
+        for (w in sweep) {
+            e.w = w
+            d.frame()
+            val now = positions()
+            now.zip(last).forEachIndexed { i, (a, b) ->
+                // A wrap moves a group a whole row's width: never in one frame. Following the edge moves 8 px.
+                assertTrue((a - b).getDistance() < 200f, "${tags[i]} jumped at $w: $b -> $a")
+            }
+            last = now
+        }
+        d.frames(20)
+        val settled = positions()
+        d.frames(10)
+        assertEquals(settled, positions(), "landed, nothing stuck moving")
+        val actions = assertNotNull(d.tagged(TOOLBAR_ACTIONS_TAG))
+        assertEquals(width - 10f, actions.positionInRoot.x + actions.size.width, 0.5f, "Save + Copy back at the right end")
+        e.close()
+    }
+
+    @Test
+    fun `without motion a wrapping group lands at once`() = onEdt {
+        for (tag in listOf(TOOLBAR_SWATCHES_TAG, TOOLBAR_ACTIONS_TAG)) {
+            val path = groupPath(motion = false, tag = tag)
+            assertTrue(path.distance(0, path.size - 1) > 20f, "$tag moves: $path")
+            assertTrue(path.distance(1, path.size - 1) < 0.5f, "$tag lands in the first frame: $path")
+        }
+    }
+
+    @Test
+    fun `no toolbar row starts with a separator`() = onEdt {
+        val e = Content(motion = true)
+        val d = e.d
+        for (w in listOf(width, 640, 560, 480, 420, EDITOR_WINDOW_MIN_SIZE.width.value.toInt())) {
+            e.w = w
+            d.frames(30)
+            val groups = listOf(TOOLBAR_TOOLS_TAG, TOOLBAR_UNDO_TAG, TOOLBAR_SWATCHES_TAG).map { assertNotNull(d.tagged(it), it).boundsInRoot }
+            // A group that starts a row sits at the toolbar's left inset (10 dp), not after a "|" (6 + 1 + 6 dp + gaps).
+            val rowStarts = groups.filterIndexed { i, g -> i == 0 || abs(g.center.y - groups[i - 1].center.y) > 4f }
+            assertTrue(rowStarts.all { it.left < 12f }, "rows start with a group, not a separator, at $w: $groups")
+            // On one row, the separator sits between groups: more than the 4 dp gap between them.
+            groups.zipWithNext().filter { (a, b) -> abs(a.center.y - b.center.y) <= 4f }.forEach { (a, b) ->
+                assertTrue(b.left - a.right > 15f, "a separator between groups on a row at $w: $a $b")
+            }
+        }
         e.close()
     }
 
