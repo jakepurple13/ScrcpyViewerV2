@@ -44,6 +44,26 @@ class GifExporterTest {
     private fun recording(name: String = "Pixel 8-20261115-101500.mp4"): Path =
         recordings.resolve(name).also { Files.write(it, byteArrayOf(1, 2, 3)) }
 
+    // ---- process ----
+
+    @Test
+    fun onLinuxFfmpegsFolderGoesOnTheLibraryPathAheadOfAnyExistingOne() {
+        val dir = Paths.get("cache", "linux-x86_64").toAbsolutePath()
+        val argv = listOf(dir.resolve("ffmpeg").toString(), "-version")
+        val env = ffmpegProcess(argv, linux = true).environment()
+        val path = env.getValue("LD_LIBRARY_PATH")
+        assertTrue(path.startsWith(dir.toString()), path)
+        assertEquals(System.getenv("LD_LIBRARY_PATH")?.takeIf { it.isNotBlank() }?.let { "$dir:$it" } ?: dir.toString(), path)
+        assertEquals(System.getenv("LD_LIBRARY_PATH"), ffmpegProcess(argv, linux = false).environment()["LD_LIBRARY_PATH"])
+    }
+
+    @Test
+    fun aSharedLibraryErrorFromFfmpegOnLinuxNamesTheLibrariesToInstall() {
+        val e = IllegalStateException("ffmpeg: error while loading shared libraries: libva.so.2: cannot open shared object file")
+        assertEquals(LINUX_FFMPEG_MESSAGE, ffmpegUnavailableReason(e, linux = true))
+        assertTrue(ffmpegUnavailableReason(e, linux = false).startsWith("FFmpeg isn't available: "))
+    }
+
     // ---- argv ----
 
     @Test

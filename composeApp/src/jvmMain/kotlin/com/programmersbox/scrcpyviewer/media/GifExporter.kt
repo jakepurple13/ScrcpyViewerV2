@@ -71,7 +71,9 @@ internal const val LINUX_FFMPEG_MESSAGE = "FFmpeg needs a few system libraries: 
  * [e]'s causes) is nearly always a missing system library, so the message names the ones to install.
  */
 internal fun ffmpegUnavailableReason(e: Throwable, linux: Boolean = com.programmersbox.scrcpyviewer.Os.isLinux): String {
-    val nativeLoad = generateSequence(e) { it.cause }.any { it is UnsatisfiedLinkError || it is NoClassDefFoundError }
+    val nativeLoad = generateSequence(e) { it.cause }.any {
+        it is UnsatisfiedLinkError || it is NoClassDefFoundError || it.message?.contains("error while loading shared libraries") == true
+    }
     return if (linux && nativeLoad) {
         LINUX_FFMPEG_MESSAGE
     } else {
@@ -158,7 +160,20 @@ fun interface GifProcessStarter {
     fun start(argv: List<String>): Process
 }
 
-private val SystemStarter = GifProcessStarter { argv -> ProcessBuilder(argv).start() }
+/**
+ * The real FFmpeg process. On Linux the executable's RUNPATH ($ORIGIN) covers only its own NEEDED libraries, not
+ * theirs (libavutil needs libva.so.2, bundled next to it), so its folder goes on LD_LIBRARY_PATH.
+ */
+internal fun ffmpegProcess(argv: List<String>, linux: Boolean = com.programmersbox.scrcpyviewer.Os.isLinux): ProcessBuilder =
+    ProcessBuilder(argv).apply {
+        val dir = argv.firstOrNull()?.let { Paths.get(it).parent }?.toString()
+        if (linux && dir != null) {
+            val env = environment()
+            env["LD_LIBRARY_PATH"] = listOfNotNull(dir, env["LD_LIBRARY_PATH"]?.takeIf { it.isNotBlank() }).joinToString(":")
+        }
+    }
+
+internal val SystemStarter = GifProcessStarter { argv -> ffmpegProcess(argv).start() }
 
 /**
  * The `ffmpeg` executable inside the `org.bytedeco:ffmpeg` native jar, extracted by JavaCPP (its cache) on first use.

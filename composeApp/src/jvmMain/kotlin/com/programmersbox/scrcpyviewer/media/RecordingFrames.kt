@@ -106,7 +106,7 @@ fun framesArgv(ffmpeg: Path, input: Path, startMs: Long, endMs: Long, count: Int
  */
 class RecordingFrames(
     private val ffmpegPath: () -> Path = ::bundledFfmpeg,
-    private val starter: GifProcessStarter = GifProcessStarter { argv -> ProcessBuilder(argv).start() },
+    private val starter: GifProcessStarter = SystemStarter,
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     /**
