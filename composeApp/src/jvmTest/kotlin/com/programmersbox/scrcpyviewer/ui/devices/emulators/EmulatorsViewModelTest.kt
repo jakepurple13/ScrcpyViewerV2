@@ -308,4 +308,61 @@ class EmulatorsViewModelTest {
         assertEquals(AvdState.Stopped, vm.row("Pixel_9_API_36").state)
         assertEquals(2, measured.size)
     }
+
+    @Test
+    fun `a start reads the catalog without measuring sizes again, a stop measures`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        val vm = viewModel()
+        assertEquals(listOf("Pixel_9_API_36.avd"), measured)
+        vm.onEvent(EmulatorEvent.Start("Pixel_9_API_36"))
+        runCurrent()
+        assertIs<AvdState.Booting>(vm.row("Pixel_9_API_36").state)
+        assertEquals(1, measured.size, "no du on Start")
+        assertEquals(8_804_682_956L, vm.row("Pixel_9_API_36").size, "the size already known stays")
+        vm.onEvent(EmulatorEvent.Stop("Pixel_9_API_36"))
+        runCurrent()
+        assertEquals(AvdState.Stopped, vm.row("Pixel_9_API_36").state)
+        assertEquals(2, measured.size, "measured again after the Stop")
+    }
+
+    @Test
+    fun `a start that replaces a measuring read still measures`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        // The first read's catalog step waits on a dispatcher that has not run yet.
+        val io = kotlinx.coroutines.test.StandardTestDispatcher(testScheduler)
+        val vm = EmulatorsViewModel(
+            launcher(), settings, EmulatorEnvironment(env::get, home) { measured += it.fileName.toString(); 1L },
+            backgroundScope, os = OpenPlatform.Linux, io = io,
+        )
+        vm.onEvent(EmulatorEvent.Reload)
+        vm.onEvent(EmulatorEvent.Reload) // the screen opened: its read is pending
+        runCurrent()
+        assertEquals(1, measured.size)
+        measured.clear()
+        vm.onEvent(EmulatorEvent.SdkChosen(sdkRoot.toString()))
+        vm.onEvent(EmulatorEvent.Start("Pixel_9_API_36"))
+        runCurrent()
+        assertEquals(listOf("Pixel_9_API_36.avd"), measured, "the SDK change's read still measures")
+    }
+
+    @Test
+    fun `avd names by serial for the connected rows, ours and matched ones`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        avd("heads_up_api34", "heads_up_api34", api = 34)
+        adb.avdNames["emulator-5556"] = "heads_up_api34"
+        devices.value = listOf(emulator("emulator-5556"))
+        val vm = viewModel()
+        // Started elsewhere, matched with `emu avd name`.
+        assertEquals(mapOf("emulator-5556" to "heads_up_api34"), vm.state.value.avdNames)
+        vm.onEvent(EmulatorEvent.Start("Pixel_9_API_36"))
+        runCurrent()
+        assertEquals(mapOf("emulator-5556" to "heads_up_api34", "emulator-5554" to "Pixel 9"), vm.state.value.avdNames)
+        // Not yet matched (or not in the catalog): no name, the row keeps its model title.
+        devices.value = listOf(emulator("emulator-5556"), emulator("emulator-5558"))
+        runCurrent()
+        assertEquals(null, vm.state.value.avdNames["emulator-5558"])
+    }
 }

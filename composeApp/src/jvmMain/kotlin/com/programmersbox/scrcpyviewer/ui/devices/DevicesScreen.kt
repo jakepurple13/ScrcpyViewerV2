@@ -7,6 +7,10 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -420,6 +424,8 @@ private fun DeviceColumn(
                             interactive = entry.present,
                             status = chipStatus(device, switching = device.serial in state.switching),
                             glow = glow,
+                            avdName = emulators?.avdNames?.get(device.serial),
+                            motion = motion,
                             // Icon unfold's launch: the rows fade up in a stagger as the window appears.
                             modifier = Modifier.launchEntrance(index).padding(bottom = 6.dp),
                         )
@@ -448,7 +454,10 @@ private fun DeviceColumn(
 internal fun connectedRows(devices: List<Device>, hidden: Set<String>): List<Device> =
     if (hidden.isEmpty()) devices else devices.filter { it.serial !in hidden }
 
-/** The right-click menu's items: Mirror, plus Connect over Wi-Fi (USB) or Disconnect (Wi-Fi). Internal for screenshots. */
+/**
+ * The right-click menu's items: Mirror, plus Connect over Wi-Fi (USB) or Disconnect (Wi-Fi); an emulator gets no Wi-Fi
+ * item. Internal for screenshots.
+ */
 @Composable
 internal fun DeviceMenu(device: Device, state: DevicesUiState, actions: RowActions, onDismiss: () -> Unit) {
     DropdownMenuItem(
@@ -464,7 +473,8 @@ internal fun DeviceMenu(device: Device, state: DevicesUiState, actions: RowActio
             onClick = { onDismiss(); actions.onDisconnect(device.serial) },
             leadingIcon = { Icon(Icons.Filled.LinkOff, contentDescription = null, Modifier.size(18.dp)) },
         )
-    } else {
+    } else if (!isEmulatorSerial(device.serial)) {
+        // An emulator is reached over its own adb port: it has no Wi-Fi to switch to.
         val switching = device.serial in state.switching
         val onWifi = isOnWifi(device, state.devices)
         DropdownMenuItem(
@@ -500,20 +510,19 @@ private fun DeviceRow(
     modifier: Modifier = Modifier,
     /** False while the row plays its exit: it ignores clicks and opens no menu. */
     interactive: Boolean = true,
+    /** An emulator's AVD display name once the launcher knows it: its title instead of the system model. */
+    avdName: String? = null,
+    motion: Boolean = true,
 ) {
     var menuAt by remember { mutableStateOf(if (menuInitiallyOpen) Offset(120f, 40f) else null) }
     val shape = styledCorner(12.dp)
+    val emulator = isEmulatorSerial(device.serial)
     val dot = when (device.state) {
         DeviceState.Device -> MaterialTheme.colorScheme.primary
         DeviceState.Unauthorized -> warnColor()
         DeviceState.Offline, DeviceState.Other -> MaterialTheme.colorScheme.error
     }
-    val hint = when (device.state) {
-        DeviceState.Device -> null
-        DeviceState.Unauthorized -> "Accept the USB debugging prompt on the device"
-        DeviceState.Offline -> "Reconnect the cable or run adb reconnect"
-        DeviceState.Other -> device.rawState
-    }
+    val hint = deviceHint(device)
     Box(modifier) {
     Row(
         Modifier
@@ -533,8 +542,13 @@ private fun DeviceRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
-        Column(Modifier.weight(1f)) {
-            val title = deviceTitle(device)
+        Column(
+            Modifier.weight(1f).then(
+                // An emulator's title can change while it shows (its AVD is matched): the row's height follows.
+                if (emulator && motion) Modifier.animateContentSize(tween(EMULATOR_TITLE_MILLIS, easing = EmphasizedDecelerate)) else Modifier,
+            ),
+        ) {
+            val title = connectedTitle(device, avdName)
             val serialText = @Composable { modifier: Modifier ->
                 Text(
                     device.serial,
@@ -547,13 +561,23 @@ private fun DeviceRow(
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (title != device.serial) {
+                if (emulator && title != device.serial) {
+                    // Model, then the AVD's name once matched: a crossfade, not a swap.
+                    Crossfade(
+                        title,
+                        animationSpec = if (motion) tween(EMULATOR_TITLE_MILLIS) else snap(),
+                        label = "emulatorTitle",
+                        modifier = Modifier.weight(1f, fill = false),
+                    ) { shownTitle ->
+                        Text(shownTitle, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                } else if (title != device.serial) {
                     Text(title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 } else {
                     serialText(Modifier.weight(1f, fill = false))
                 }
                 // An emulator's connection is no USB cable: its tag says what it is (the dot gives its state).
-                if (device.serial.startsWith("emulator-")) EmulatorTag() else StatusChip(status)
+                if (emulator) EmulatorTag() else StatusChip(status)
             }
             if (title != device.serial) serialText(Modifier)
             if (hint != null) {
@@ -568,6 +592,24 @@ private fun DeviceRow(
         }
     }
     }
+}
+
+/** An emulator row's title crossfades to its AVD's name (and its row's height follows) over this long. */
+internal const val EMULATOR_TITLE_MILLIS = 250
+
+/** The hint an offline emulator shows instead of the cable hint. */
+internal const val EMULATOR_OFFLINE_HINT = "Emulator offline. Stop and start it again from Emulators."
+
+/** A connected row's title: an emulator's AVD name once known, else [deviceTitle]. */
+internal fun connectedTitle(device: Device, avdName: String?): String =
+    avdName?.takeIf { isEmulatorSerial(device.serial) && it.isNotBlank() } ?: deviceTitle(device)
+
+/** The line under a connected row that needs attention; null for a ready device. */
+internal fun deviceHint(device: Device): String? = when (device.state) {
+    DeviceState.Device -> null
+    DeviceState.Unauthorized -> "Accept the USB debugging prompt on the device"
+    DeviceState.Offline -> if (isEmulatorSerial(device.serial)) EMULATOR_OFFLINE_HINT else "Reconnect the cable or run adb reconnect"
+    DeviceState.Other -> device.rawState
 }
 
 /** The "Emulator" pill after an emulator's name in the connected rows. */

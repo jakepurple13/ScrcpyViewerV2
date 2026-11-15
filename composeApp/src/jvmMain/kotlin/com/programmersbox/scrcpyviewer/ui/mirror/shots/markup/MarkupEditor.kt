@@ -3,8 +3,14 @@ package com.programmersbox.scrcpyviewer.ui.mirror.shots.markup
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.animation.BoundsTransform
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.layout.layoutId
+import kotlinx.coroutines.CoroutineScope
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -407,9 +413,10 @@ fun MarkupEditorContent(
 /**
  * The top toolbar: the tools, Undo, the swatches, then Save and Copy at the right end of its last row. Nothing is ever
  * hidden: when the window is narrower than the toolbar, it wraps onto a second row (whole groups move: the tools,
- * "| Undo", "| swatches", and Save + Copy, which stay right-aligned), and its height animates to the new rows.
+ * "| Undo", "| swatches", and Save + Copy, which stay right-aligned), and its height animates to the new rows. Each
+ * group glides to its new place over [TOOLBAR_ROWS_MILLIS] (at once under reduced motion), and a separator that would
+ * start a row is left out (it fades).
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EditorToolbar(
     state: MarkupEditorState,
@@ -420,79 +427,238 @@ private fun EditorToolbar(
     onSave: () -> Unit,
 ) {
     val mac = remember { Os.isMac }
-    FlowRow(
+    Box(
         Modifier
             .fillMaxWidth()
             .animateContentSize(if (motion) tween(TOOLBAR_ROWS_MILLIS, easing = EmphasizedDecelerate) else snap())
             .padding(horizontal = 10.dp, vertical = 6.dp)
             .semantics { contentDescription = "Markup tools" },
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-        itemVerticalAlignment = Alignment.CenterVertically,
     ) {
-        ToolbarGroup {
-            MarkupTool.entries.forEach { t ->
-                ToolButton(t, selected = t == state.tool, motion) { state.tool = t }
-            }
-        }
-        ToolbarGroup {
-            ToolbarSeparator()
-            Tip(if (mac) "Undo (⌘Z)" else "Undo (Ctrl+Z)") {
-                // Its own colors, as the tool buttons: the window has no Surface around the toolbar, so the default
-                // content color is black, unreadable on the dark theme.
-                val variant = MaterialTheme.colorScheme.onSurfaceVariant
-                IconButton(
-                    onClick = onUndo,
-                    enabled = state.doc.canUndo,
-                    modifier = Modifier.size(36.dp),
-                    colors = IconButtonDefaults.iconButtonColors(
-                        contentColor = variant,
-                        disabledContentColor = variant.copy(alpha = 0.38f),
-                    ),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", Modifier.size(20.dp))
+        ToolbarFlow(motion) { glides ->
+            ToolbarGroup(glides.group.testTag(TOOLBAR_TOOLS_TAG)) {
+                MarkupTool.entries.forEach { t ->
+                    ToolButton(t, selected = t == state.tool, motion) { state.tool = t }
                 }
             }
-        }
-        ToolbarGroup {
             ToolbarSeparator()
-            MarkupColor.entries.forEach { c -> Swatch(c, selected = c == state.color, motion) { state.color = c } }
-            Spacer(Modifier.width(4.dp)) // room for the picked swatch to grow
-        }
-        // Fills what is left of its row, so Save and Copy sit at its right end (on a row of their own when need be).
-        Row(
-            Modifier.weight(1f),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Spacer(Modifier.width(4.dp))
-            TextButton(onClick = onSave) { Text("Save", maxLines = 1) }
-            Spacer(Modifier.width(4.dp))
-            Button(onClick = onCopy, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
-                val iconMillis = if (motion) COPY_ICON_MILLIS else EDITOR_FADE_MILLIS
-                Crossfade(copied, animationSpec = tween(iconMillis), label = "editorCopyIcon") { done ->
-                    if (done) {
-                        Icon(Icons.Filled.Check, null, Modifier.size(18.dp).testTag("copiedIcon"))
-                    } else {
-                        Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp).testTag("copyIcon"))
+            ToolbarGroup(glides.group.testTag(TOOLBAR_UNDO_TAG)) {
+                Tip(if (mac) "Undo (⌘Z)" else "Undo (Ctrl+Z)") {
+                    // Its own colors, as the tool buttons: the window has no Surface around the toolbar, so the default
+                    // content color is black, unreadable on the dark theme.
+                    val variant = MaterialTheme.colorScheme.onSurfaceVariant
+                    IconButton(
+                        onClick = onUndo,
+                        enabled = state.doc.canUndo,
+                        modifier = Modifier.size(36.dp),
+                        colors = IconButtonDefaults.iconButtonColors(
+                            contentColor = variant,
+                            disabledContentColor = variant.copy(alpha = 0.38f),
+                        ),
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", Modifier.size(20.dp))
                     }
                 }
-                Spacer(Modifier.width(8.dp))
-                Text(if (copied) "Copied" else "Copy", maxLines = 1)
+            }
+            ToolbarSeparator()
+            ToolbarGroup(glides.group.testTag(TOOLBAR_SWATCHES_TAG)) {
+                MarkupColor.entries.forEach { c -> Swatch(c, selected = c == state.color, motion) { state.color = c } }
+                Spacer(Modifier.width(4.dp)) // room for the picked swatch to grow
+            }
+            // At the right end of its row: after the swatches when they fit there, else on a row of their own.
+            Row(
+                Modifier.layoutId(ToolbarSlot.End).then(glides.actions).testTag(TOOLBAR_ACTIONS_TAG),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Spacer(Modifier.width(4.dp))
+                TextButton(onClick = onSave) { Text("Save", maxLines = 1) }
+                Spacer(Modifier.width(4.dp))
+                Button(onClick = onCopy, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
+                    val iconMillis = if (motion) COPY_ICON_MILLIS else EDITOR_FADE_MILLIS
+                    Crossfade(copied, animationSpec = tween(iconMillis), label = "editorCopyIcon") { done ->
+                        if (done) {
+                            Icon(Icons.Filled.Check, null, Modifier.size(18.dp).testTag("copiedIcon"))
+                        } else {
+                            Icon(Icons.Filled.ContentCopy, null, Modifier.size(18.dp).testTag("copyIcon"))
+                        }
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (copied) "Copied" else "Copy", maxLines = 1)
+                }
             }
         }
     }
 }
 
+/** Test tags of the toolbar's groups: the tools, "| Undo", "| swatches", and Save + Copy. */
+internal const val TOOLBAR_TOOLS_TAG = "toolbarTools"
+internal const val TOOLBAR_UNDO_TAG = "toolbarUndo"
+internal const val TOOLBAR_SWATCHES_TAG = "toolbarSwatches"
+internal const val TOOLBAR_ACTIONS_TAG = "toolbarActions"
+
 /** Toolbar items that wrap together. */
 @Composable
-private fun ToolbarGroup(content: @Composable () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { content() }
+private fun ToolbarGroup(modifier: Modifier, content: @Composable () -> Unit) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) { content() }
 }
 
+/** The "|" before a group; [ToolbarFlow] leaves it out when its group starts a row. */
 @Composable
 private fun ToolbarSeparator() {
-    Box(Modifier.padding(horizontal = 6.dp).width(1.dp).height(20.dp).background(MaterialTheme.colorScheme.outlineVariant))
+    Box(
+        Modifier.layoutId(ToolbarSlot.Separator).padding(horizontal = 6.dp).width(1.dp).height(20.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant),
+    )
+}
+
+/** What a toolbar child is to [ToolbarFlow]; a child with no layout id is a group. */
+private enum class ToolbarSlot { Group, Separator, End }
+
+/** The modifiers that make the toolbar's children glide: none under reduced motion. */
+private class ToolbarGlides(val group: Modifier, val actions: Modifier)
+
+/** A group moves only when the toolbar wraps or unwraps: it always glides there. */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private val GroupGlide = BoundsTransform { _, _ -> tween(TOOLBAR_ROWS_MILLIS, easing = EmphasizedDecelerate) }
+
+/**
+ * Save + Copy also follow the window's right edge while it is resized: on the same row that keeps up at once, and only
+ * a change of row glides.
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private val ActionsGlide = BoundsTransform { initial, target ->
+    if (initial.top == target.top) snap() else tween(TOOLBAR_ROWS_MILLIS, easing = EmphasizedDecelerate)
+}
+
+/**
+ * Lays the toolbar's children (groups, a separator before each one but the first, then Save + Copy) out in rows, left
+ * to right, 4 dp apart, each row's items centred on it. A group that doesn't fit what is left of its row starts the
+ * next one without its separator, so no row starts with "|" (the separator fades out where it was); Save + Copy sit at
+ * the right end of the last row. With [motion], each group glides to its new place (`LookaheadScope` +
+ * `animateBounds`); without, everything moves at once.
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+private fun ToolbarFlow(motion: Boolean, content: @Composable (ToolbarGlides) -> Unit) {
+    val fades = remember { SeparatorFades() }
+    fades.motion = motion
+    fades.scope = rememberCoroutineScope()
+    LookaheadScope {
+        val glides = if (motion) {
+            ToolbarGlides(
+                Modifier.animateBounds(this, boundsTransform = GroupGlide),
+                Modifier.animateBounds(this, boundsTransform = ActionsGlide),
+            )
+        } else {
+            ToolbarGlides(Modifier, Modifier)
+        }
+        Layout(content = { content(glides) }, modifier = Modifier.fillMaxWidth()) { measurables, constraints ->
+            val gap = 4.dp.roundToPx()
+            val loose = constraints.copy(minWidth = 0, minHeight = 0)
+            val placeables = measurables.map { it.measure(loose) }
+            val slots = measurables.map { it.layoutId as? ToolbarSlot ?: ToolbarSlot.Group }
+            val maxW = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
+            val n = placeables.size
+            val xs = IntArray(n)
+            val rows = IntArray(n) { -1 }
+            val shown = BooleanArray(n) { true }
+            var x = 0
+            var row = 0
+            var rowEmpty = true
+            for (i in 0 until n) {
+                val w = placeables[i].width
+                when (slots[i]) {
+                    ToolbarSlot.Separator -> Unit // laid out with the group after it
+                    ToolbarSlot.Group -> {
+                        val sep = if (i > 0 && slots[i - 1] == ToolbarSlot.Separator) i - 1 else -1
+                        val sepW = if (sep >= 0) placeables[sep].width + gap else 0
+                        if (!rowEmpty && x + gap + sepW + w > maxW) {
+                            // The group starts the next row: its separator stays after the group before, hidden.
+                            if (sep >= 0) {
+                                xs[sep] = x + gap
+                                rows[sep] = row
+                                shown[sep] = false
+                            }
+                            row++
+                            x = 0
+                            rowEmpty = true
+                        }
+                        if (rowEmpty) {
+                            xs[i] = 0
+                        } else {
+                            if (sep >= 0) {
+                                xs[sep] = x + gap
+                                rows[sep] = row
+                            }
+                            xs[i] = x + gap + sepW
+                        }
+                        rows[i] = row
+                        x = xs[i] + w
+                        rowEmpty = false
+                    }
+                    ToolbarSlot.End -> {
+                        if (!rowEmpty && x + gap + w > maxW) {
+                            row++
+                            x = 0
+                            rowEmpty = true
+                        }
+                        val start = if (rowEmpty) 0 else x + gap
+                        xs[i] = if (maxW == Int.MAX_VALUE) start else (maxW - w).coerceAtLeast(start)
+                        rows[i] = row
+                        x = xs[i] + w
+                        rowEmpty = false
+                    }
+                }
+            }
+            val rowCount = row + 1
+            val rowHeights = IntArray(rowCount)
+            for (i in 0 until n) {
+                if (rows[i] >= 0 && shown[i]) rowHeights[rows[i]] = maxOf(rowHeights[rows[i]], placeables[i].height)
+            }
+            val rowTops = IntArray(rowCount)
+            for (r in 1 until rowCount) rowTops[r] = rowTops[r - 1] + rowHeights[r - 1] + gap
+            val height = rowTops[rowCount - 1] + rowHeights[rowCount - 1]
+            val width = if (maxW == Int.MAX_VALUE) (0 until n).maxOfOrNull { xs[it] + placeables[it].width } ?: 0 else maxW
+            val mainPass = !isLookingAhead
+            layout(
+                width.coerceIn(constraints.minWidth, constraints.maxWidth),
+                height.coerceIn(constraints.minHeight, constraints.maxHeight),
+            ) {
+                for (i in 0 until n) {
+                    val r = rows[i]
+                    if (r < 0) continue
+                    val p = placeables[i]
+                    val y = rowTops[r] + (rowHeights[r] - p.height) / 2
+                    if (slots[i] == ToolbarSlot.Separator) {
+                        val alpha = fades.alpha(i, shown[i], start = mainPass)
+                        p.placeWithLayer(xs[i], y) { this.alpha = alpha() }
+                    } else {
+                        p.place(xs[i], y)
+                    }
+                }
+                if (mainPass) fades.laidOut = true
+            }
+        }
+    }
+}
+
+/** Each separator's opacity: 1 between two groups on a row, 0 once its group starts a row; it fades with [motion]. */
+private class SeparatorFades {
+    var motion = true
+    lateinit var scope: CoroutineScope
+    var laidOut = false
+    private val alphas = HashMap<Int, Animatable<Float, AnimationVector1D>>()
+    private val targets = HashMap<Int, Boolean>()
+
+    /** Separator [index]'s opacity; [start] (the main pass) starts its fade when [shown] changed after the first layout. */
+    fun alpha(index: Int, shown: Boolean, start: Boolean): () -> Float {
+        val to = if (shown) 1f else 0f
+        val anim = alphas.getOrPut(index) { Animatable(to) }
+        if (start && targets.put(index, shown) != shown && laidOut) {
+            scope.launch { if (motion) anim.animateTo(to, tween(TOOLBAR_ROWS_MILLIS)) else anim.snapTo(to) }
+        }
+        // Reduced motion: at once, not a frame later when the snap runs.
+        return if (motion) ({ anim.value }) else ({ to })
+    }
 }
 
 /** The screenshot filling its place, with its marks; drags draw the current [tool]. */

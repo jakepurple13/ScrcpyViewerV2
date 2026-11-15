@@ -52,13 +52,85 @@ class DevicesScreenTest {
         devices.value = listOf(waiting, phone)
         runCurrent()
         assertEquals("R5CX12GDWPZ", selection.state.value.serial)
-        // Ready: the emulator shows, and with no user choice the normal rule picks the first ready device, now it.
+        // Ready: the emulator shows, listed first, but the phone already shown as selected stays: no jump.
+        hidden.value = emptySet()
+        runCurrent()
+        assertEquals("R5CX12GDWPZ", selection.state.value.serial)
+        selection.select("emulator-5554")
+        runCurrent()
+        assertEquals("emulator-5554", selection.state.value.serial)
+    }
+
+    @Test
+    fun `an emulator that finishes booting with no other device is selected`() = runTest {
+        val devices = MutableStateFlow(listOf(emulator(DeviceState.Offline, info = false)))
+        val hidden = MutableStateFlow(setOf("emulator-5554"))
+        val selection = DeviceSelection(devices, MutableStateFlow(true), backgroundScope, hidden)
+        runCurrent()
+        assertNull(selection.state.value.serial)
+        devices.value = listOf(emulator(DeviceState.Device, info = true))
         hidden.value = emptySet()
         runCurrent()
         assertEquals("emulator-5554", selection.state.value.serial)
-        selection.select("R5CX12GDWPZ")
+    }
+
+    @Test
+    fun `an emulator started elsewhere does not take the default from a shown phone`() = runTest {
+        val devices = MutableStateFlow(listOf(phone))
+        val selection = DeviceSelection(devices, MutableStateFlow(true), backgroundScope)
         runCurrent()
         assertEquals("R5CX12GDWPZ", selection.state.value.serial)
+        devices.value = listOf(emulator(DeviceState.Device, info = true), phone)
+        runCurrent()
+        assertEquals("R5CX12GDWPZ", selection.state.value.serial)
+        // The phone goes: the emulator is the default now, and stays when the phone is back.
+        devices.value = listOf(emulator(DeviceState.Device, info = true))
+        runCurrent()
+        assertEquals("emulator-5554", selection.state.value.serial)
+        devices.value = listOf(emulator(DeviceState.Device, info = true), phone)
+        runCurrent()
+        assertEquals("emulator-5554", selection.state.value.serial)
+    }
+
+    private val tablet = Device("R52W70ABCDE", DeviceState.Device, "device", "SM_X710", null, 3, false)
+
+    @Test
+    fun `a real device's default selection is unchanged - the first ready device, even when a new one is listed first`() = runTest {
+        val devices = MutableStateFlow(listOf(phone))
+        val selection = DeviceSelection(devices, MutableStateFlow(true), backgroundScope)
+        runCurrent()
+        assertEquals("R5CX12GDWPZ", selection.state.value.serial)
+        devices.value = listOf(tablet, phone)
+        runCurrent()
+        assertEquals("R52W70ABCDE", selection.state.value.serial)
+        // Not ready: the next ready one.
+        devices.value = listOf(tablet.copy(state = DeviceState.Offline), phone)
+        runCurrent()
+        assertEquals("R5CX12GDWPZ", selection.state.value.serial)
+        assertEquals(phone, defaultDevice(listOf(phone, tablet), previous = "R52W70ABCDE"))
+        assertNull(defaultDevice(listOf(phone.copy(state = DeviceState.Unauthorized)), previous = null))
+    }
+
+    @Test
+    fun `a connected emulator is titled with its AVD name once known, a real device by its model`() {
+        val booted = emulator(DeviceState.Device, info = true)
+        assertEquals("sdk_gphone64_arm64", connectedTitle(booted, avdName = null))
+        assertEquals("heads_up_api34", connectedTitle(booted, avdName = "heads_up_api34"))
+        assertEquals("Pixel 9", connectedTitle(emulator(DeviceState.Offline, info = false), avdName = "Pixel 9"))
+        assertEquals("emulator-5554", connectedTitle(emulator(DeviceState.Offline, info = false), avdName = null))
+        // A real device never takes an AVD name, and keeps its title.
+        assertEquals("SM A156U1", connectedTitle(phone, avdName = "Pixel 9"))
+        assertEquals(deviceTitle(phone), connectedTitle(phone, avdName = null))
+    }
+
+    @Test
+    fun `an offline emulator says to stop and start it, a real device keeps its hints`() {
+        assertEquals("Emulator offline. Stop and start it again from Emulators.", deviceHint(emulator(DeviceState.Offline, info = false)))
+        assertNull(deviceHint(emulator(DeviceState.Device, info = true)))
+        assertEquals("Reconnect the cable or run adb reconnect", deviceHint(phone.copy(state = DeviceState.Offline, rawState = "offline")))
+        assertEquals("Accept the USB debugging prompt on the device", deviceHint(phone.copy(state = DeviceState.Unauthorized)))
+        assertEquals("recovery", deviceHint(phone.copy(state = DeviceState.Other, rawState = "recovery")))
+        assertNull(deviceHint(phone))
     }
 
     @Test
