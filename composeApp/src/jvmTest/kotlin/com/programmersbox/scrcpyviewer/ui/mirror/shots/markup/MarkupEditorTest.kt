@@ -4,6 +4,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,6 +68,12 @@ import kotlin.test.assertTrue
  */
 @OptIn(ExperimentalComposeUiApi::class, InternalComposeUiApi::class)
 class MarkupEditorTest {
+    @Composable
+    private fun MaybeSurface(surface: Boolean, content: @Composable () -> Unit) {
+        if (surface) Surface(Modifier.fillMaxSize(), content = content)
+        else Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) { content() }
+    }
+
     private val scheduler = TestCoroutineScheduler()
     private val timerScope = CoroutineScope(StandardTestDispatcher(scheduler))
     private val leases = ScreenshotThumbnailState(timerScope, clock = { scheduler.currentTime })
@@ -89,6 +99,9 @@ class MarkupEditorTest {
         bitmap: ImageBitmap = solid(gray),
         val copyWorks: Boolean = true,
         val saveWorks: Boolean = true,
+        dark: Boolean = false,
+        /** False: no Surface around the content, as in the editor window (whose root sets no content color). */
+        surface: Boolean = true,
     ) {
         val shot: Shot = assertNotNull(leases.keep(file, bitmap, leases.begin()))
         var w by mutableIntStateOf(w)
@@ -101,9 +114,9 @@ class MarkupEditorTest {
         var closes = 0
         var state: MarkupEditorState? = null
         val d = SceneDriver(ImageComposeScene(1400, 1000, Density(1f)) {
-            ScrcpyViewerTheme(ThemeMode.Light) {
+            ScrcpyViewerTheme(if (dark) ThemeMode.Dark else ThemeMode.Light) {
                 // Not straight in the Surface: it would stretch the content to the scene (min constraints).
-                Surface(Modifier.fillMaxSize()) {
+                MaybeSurface(surface) {
                     Box(Modifier.fillMaxSize()) {
                     Box(Modifier.size(this@Content.w.dp, this@Content.h.dp)) {
                         if (shown) {
@@ -452,6 +465,46 @@ class MarkupEditorTest {
         }
         assertIs<Mark.Circle>(circle)
         assertIs<Mark.Box>(box)
+        e.close()
+    }
+
+    @Test
+    fun `Undo is drawn light on the dark theme, without a Surface around the content as in the window`() = onEdt {
+        val e = Content(motion = true, dark = true, surface = false)
+        val d = e.d
+        d.click(d.described("Box")!!)
+        d.drawOn(Offset(0.2f, 0.2f), Offset(0.6f, 0.4f))
+        assertTrue(d.undoButton().enabled())
+        val r = assertNotNull(d.described("Undo")).boundsInRoot
+        val px = d.snapshot()
+        var brightest = 0f
+        for (x in r.left.toInt() until r.right.toInt()) for (y in r.top.toInt() until r.bottom.toInt()) {
+            brightest = maxOf(brightest, px[x, y].luminance())
+        }
+        assertTrue(brightest > 0.4f, "the Undo icon is readable on the dark toolbar, brightest luminance $brightest")
+        e.close()
+    }
+
+    @Test
+    fun `Shift held only at the release still squares the mark`() = onEdt {
+        val e = Content(motion = true)
+        val d = e.d
+        d.click(d.described("Box")!!)
+        val c = d.canvas()
+        fun at(fx: Float, fy: Float) = Offset(c.left + c.width * fx, c.top + c.height * fy)
+        d.scene.sendPointerEvent(PointerEventType.Move, at(0.2f, 0.2f), type = PointerType.Mouse)
+        d.scene.sendPointerEvent(PointerEventType.Press, at(0.2f, 0.2f), type = PointerType.Mouse, button = PointerButton.Primary)
+        d.frame()
+        d.scene.sendPointerEvent(PointerEventType.Move, at(0.8f, 0.5f), type = PointerType.Mouse)
+        d.frame()
+        d.scene.sendPointerEvent(
+            PointerEventType.Release, at(0.8f, 0.5f), type = PointerType.Mouse, button = PointerButton.Primary,
+            keyboardModifiers = PointerKeyboardModifiers(isShiftPressed = true),
+        )
+        d.frames(2)
+        d.click(d.texted("Save")!!)
+        val box = assertIs<Mark.Box>(e.saves.single().single())
+        assertEquals(abs(box.to.x - box.from.x), abs(box.to.y - box.from.y), 0.5f, "square: $box")
         e.close()
     }
 

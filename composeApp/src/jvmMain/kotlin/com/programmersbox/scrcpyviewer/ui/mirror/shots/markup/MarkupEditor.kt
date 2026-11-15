@@ -51,6 +51,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -437,7 +438,18 @@ private fun EditorToolbar(
         ToolbarGroup {
             ToolbarSeparator()
             Tip(if (mac) "Undo (⌘Z)" else "Undo (Ctrl+Z)") {
-                IconButton(onClick = onUndo, enabled = state.doc.canUndo, modifier = Modifier.size(36.dp)) {
+                // Its own colors, as the tool buttons: the window has no Surface around the toolbar, so the default
+                // content color is black, unreadable on the dark theme.
+                val variant = MaterialTheme.colorScheme.onSurfaceVariant
+                IconButton(
+                    onClick = onUndo,
+                    enabled = state.doc.canUndo,
+                    modifier = Modifier.size(36.dp),
+                    colors = IconButtonDefaults.iconButtonColors(
+                        contentColor = variant,
+                        disabledContentColor = variant.copy(alpha = 0.38f),
+                    ),
+                ) {
                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo", Modifier.size(20.dp))
                 }
             }
@@ -534,7 +546,13 @@ private fun MarkCanvas(
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!change.pressed) break
+                            if (!change.pressed) {
+                                // Shift pressed or let go without a move since: the release decides the shape.
+                                if (t != MarkupTool.Pen) {
+                                    preview = mark(image(change.position), square = event.keyboardModifiers.isShiftPressed)
+                                }
+                                break
+                            }
                             change.consume()
                             val at = image(change.position)
                             if (t == MarkupTool.Pen) points += at
