@@ -11,7 +11,6 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -124,6 +123,8 @@ class EmulatorLauncher(
     private val sessions = HashMap<String, Session>()
     private val external = HashMap<String, String>()
     private val asked = HashSet<Pair<String, Long?>>()
+    // Serials of processes we started that have not exited yet: their ports stay taken even after the row is Stopped.
+    private val live = HashSet<String>()
 
     /** By AVD id; Stopped AVDs are absent. */
     val states: StateFlow<Map<String, AvdState>> = _states.asStateFlow()
@@ -143,7 +144,7 @@ class EmulatorLauncher(
     internal fun start(avd: Avd, sdk: AndroidSdk, cold: Boolean = false): Unit = synchronized(lock) {
         val current = stateOf(avd.id)
         if (current !is AvdState.Stopped && current !is AvdState.Failed) return
-        val taken = devices.value.map { it.serial }.toSet() + sessions.values.map { it.serial }
+        val taken = devices.value.map { it.serial }.toSet() + sessions.values.map { it.serial } + live
         val port = pickPort(taken, isPortFree) ?: run {
             set(avd.id, AvdState.Failed("Couldn't start the emulator: no free port from $FIRST_PORT to $LAST_PORT", cold))
             return
@@ -159,8 +160,13 @@ class EmulatorLauncher(
         }
         val session = Session(avd.id, avd.name, "emulator-$port", cold, clock(), log, process)
         sessions[avd.id] = session
+        live += session.serial
         set(avd.id, AvdState.Booting(session.serial, BootStage.Starting, session.startedAt, cold))
-        session.job = scope.launch(start = CoroutineStart.LAZY) { boot(session) }.also { it.start() }
+        session.job = scope.launch { boot(session) }
+        scope.launch {
+            process.exit.await()
+            synchronized(lock) { live -= session.serial }
+        }
     }
 
     /**
@@ -181,6 +187,7 @@ class EmulatorLauncher(
             sessions.remove(avdId)
             set(avdId, AvdState.Stopped)
             scope.launch { destroy(session.process) }
+            rematch()
             return
         }
         set(avdId, AvdState.Stopping(serial))
@@ -199,10 +206,7 @@ class EmulatorLauncher(
         }
         when (outcome) {
             Outcome.Ready -> ready(session)
-            is Outcome.Exited -> {
-                val reason = failureReason(session.log)
-                fail(session, "Emulator exited (code ${outcome.code})." + (reason?.let { " $it" } ?: ""))
-            }
+            is Outcome.Exited -> fail(session, exitReason(session, outcome.code))
             null -> {
                 synchronized(lock) {
                     if (sessions[session.avdId] !== session) return
@@ -210,7 +214,7 @@ class EmulatorLauncher(
                 }
                 val listed = devices.value.any { it.serial == session.serial }
                 if (!listed || !killAndWait(session.serial)) destroy(session.process)
-                fail(session, BOOT_TIMEOUT_REASON)
+                fail(session, BOOT_TIMEOUT_REASON, timedOut = true)
             }
         }
     }
@@ -240,15 +244,34 @@ class EmulatorLauncher(
         }
     }
 
+    /** Test seam for the ready/stop race: what the boot does once [avdId]'s emulator is ready. */
+    internal fun onReady(avdId: String) {
+        synchronized(lock) { sessions[avdId] }?.let(::ready)
+    }
+
+    /** Test seam for the exit/stop race: what the boot does when [avdId]'s process exits with [code]. */
+    internal fun onExited(avdId: String, code: Int) {
+        synchronized(lock) { sessions[avdId] }?.let { fail(it, exitReason(it, code)) }
+    }
+
+    private fun exitReason(session: Session, code: Int): String {
+        val reason = failureReason(session.log)
+        return "Emulator exited (code $code)." + (reason?.let { " $it" } ?: "")
+    }
+
+    /** Only a session still booting becomes Running: a Stop that got in first wins. */
     private fun ready(session: Session) {
         synchronized(lock) {
-            if (sessions[session.avdId] !== session) return
+            if (sessions[session.avdId] !== session || stateOf(session.avdId) !is AvdState.Booting) return
             set(session.avdId, AvdState.Running(session.serial))
         }
-        val took = clock() - session.startedAt
-        settings.update { s ->
-            val prefs = s.emulatorPrefs[session.avdId] ?: EmulatorPrefs()
-            s.copy(emulatorPrefs = s.emulatorPrefs + (session.avdId to prefs.copy(lastBootMillis = took)))
+        // Only warm boots feed the progress estimate; a cold boot's time would overstate the next warm one.
+        if (!session.cold) {
+            val took = clock() - session.startedAt
+            settings.update { s ->
+                val prefs = s.emulatorPrefs[session.avdId] ?: EmulatorPrefs()
+                s.copy(emulatorPrefs = s.emulatorPrefs + (session.avdId to prefs.copy(lastBootMillis = took)))
+            }
         }
         if (settings.settings.value.emulatorPrefs[session.avdId]?.mirrorWhenReady == true) {
             // The window grows out of the emulator's row when it is on screen.
@@ -260,11 +283,18 @@ class EmulatorLauncher(
         }
     }
 
-    private fun fail(session: Session, reason: String) {
+    /**
+     * Only a session still booting fails, so a user Stop never ends as Failed. [timedOut]: the boot timeout set
+     * Stopping itself before stopping the emulator, so that Stopping is accepted too.
+     */
+    private fun fail(session: Session, reason: String, timedOut: Boolean = false) {
         synchronized(lock) {
             if (sessions[session.avdId] !== session) return
+            val state = stateOf(session.avdId)
+            if (state !is AvdState.Booting && !(timedOut && state == AvdState.Stopping(session.serial))) return
             sessions.remove(session.avdId)
             set(session.avdId, AvdState.Failed(reason, session.cold))
+            rematch()
         }
         _notices.tryEmit(EmulatorNotice("${session.name} didn't start.", logFile = session.log))
     }
@@ -273,7 +303,10 @@ class EmulatorLauncher(
         val gone = killAndWait(serial)
         if (!gone && session != null) destroy(session.process)
         val couldNotStop = synchronized(lock) {
-            if (session != null && sessions[avdId] === session) sessions.remove(avdId)
+            if (session != null && sessions[avdId] === session) {
+                sessions.remove(avdId)
+                rematch()
+            }
             if (stateOf(avdId) != AvdState.Stopping(serial)) return
             if (gone || session != null) {
                 set(avdId, AvdState.Stopped)
@@ -345,12 +378,19 @@ class EmulatorLauncher(
                 return
             }
             if (devices.value.none { it.serial == device.serial }) return
-            if (sessions.containsKey(id) || sessions.values.any { it.serial == device.serial }) return
+            if (sessions.containsKey(id) || sessions.values.any { it.serial == device.serial }) {
+                // Ours is booting this AVD (or owns the serial): ask again once that session ends.
+                asked.remove(device.serial to device.transportId)
+                return
+            }
             external[device.serial] = id
             val current = stateOf(id)
             if (current is AvdState.Stopped || current is AvdState.Failed) set(id, AvdState.Running(device.serial))
         }
     }
+
+    /** After a session ends: emulators of its AVD it was hiding are matched again. The lock is reentrant. */
+    private fun rematch() = onDevices(devices.value)
 
     /** Callers hold [lock]. */
     private fun set(avdId: String, state: AvdState) {
@@ -414,17 +454,31 @@ object SystemProcessStarter : ProcessStarter {
             .redirectErrorStream(true)
             .redirectOutput(log.toFile())
             .start()
-        val exit = CompletableDeferred<Int>()
-        process.onExit().whenComplete { p, _ -> exit.complete(p?.exitValue() ?: -1) }
-        return object : EmulatorProcess {
-            override val exit: Deferred<Int> = exit
-            override fun destroy() {
-                process.destroy()
-            }
+        return SystemEmulatorProcess(process)
+    }
+}
 
-            override fun destroyForcibly() {
-                process.destroyForcibly()
-            }
-        }
+/**
+ * Destroys the process tree, not just the launcher: on Windows `emulator.exe` runs qemu as a child, which
+ * `Process.destroy` alone leaves running. Children are listed before the parent dies (then they are re-parented and
+ * no longer its descendants) and kept, so [destroyForcibly] still reaches them after the grace period.
+ */
+internal class SystemEmulatorProcess(private val process: Process) : EmulatorProcess {
+    private val children = java.util.concurrent.ConcurrentHashMap.newKeySet<ProcessHandle>()
+
+    override val exit: Deferred<Int> = CompletableDeferred<Int>().also { exit ->
+        process.onExit().whenComplete { p, _ -> exit.complete(p?.exitValue() ?: -1) }
+    }
+
+    override fun destroy() {
+        process.descendants().forEach { children += it }
+        children.forEach { it.destroy() }
+        process.destroy()
+    }
+
+    override fun destroyForcibly() {
+        process.descendants().forEach { children += it }
+        children.forEach { it.destroyForcibly() }
+        process.destroyForcibly()
     }
 }

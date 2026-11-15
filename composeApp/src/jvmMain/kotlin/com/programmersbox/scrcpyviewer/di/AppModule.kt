@@ -141,8 +141,11 @@ class AdbModule {
     fun deviceInfoReaderFactory(client: AdbClient): DeviceInfoReaderFactory =
         DeviceInfoReaderFactory { DeviceInfoReader(client, it) }
 
-    /** Starts, watches and stops emulators; app-wide so a boot carries on (and still mirrors) on any screen. */
-    @Singleton
+    /**
+     * Starts, watches and stops emulators; app-wide so a boot carries on (and still mirrors) on any screen. Created at
+     * start so emulators left running by the last quit are matched (and listed as Running) right away.
+     */
+    @Singleton(createdAtStart = true)
     fun emulatorLauncher(
         client: AdbClient,
         tracker: DeviceTracker,

@@ -438,4 +438,101 @@ class EmulatorLauncherTest {
         runCurrent()
         assertEquals(AvdState.Stopped, launcher.stateOf(pixel.id))
     }
+
+    @Test
+    fun `stop during the ready handoff ends stopped`() = runTest {
+        adb.onKill = {}
+        settings.update { it.copy(emulatorPrefs = mapOf(pixel.id to EmulatorPrefs(mirrorWhenReady = true))) }
+        val launcher = launcher()
+        val notices = notices(launcher)
+        launcher.start(pixel, sdk)
+        runCurrent()
+        devices.value = listOf(emulator("emulator-5554", DeviceState.Offline, info = false))
+        adb.bootCompleted["emulator-5554"] = "1\n"
+        runCurrent()
+        // Ready arrives, and Stop is pressed before the boot coroutine runs.
+        devices.value = listOf(emulator("emulator-5554"))
+        launcher.stop(pixel.id)
+        runCurrent()
+        assertEquals(AvdState.Stopping("emulator-5554"), launcher.stateOf(pixel.id))
+        // Even when the boot gets to ready or exit after the Stop (another thread), the Stop wins.
+        launcher.onReady(pixel.id)
+        launcher.onExited(pixel.id, 1)
+        assertEquals(AvdState.Stopping("emulator-5554"), launcher.stateOf(pixel.id))
+        devices.value = emptyList()
+        runCurrent()
+        assertEquals(AvdState.Stopped, launcher.stateOf(pixel.id))
+        assertTrue(notices.isEmpty())
+        assertTrue(requested.replayCache.isEmpty())
+        assertNull(settings.settings.value.emulatorPrefs.getValue(pixel.id).lastBootMillis)
+    }
+
+    @Test
+    fun `cold boot does not save the boot time`() = runTest {
+        val launcher = launcher()
+        launcher.start(pixel, sdk, cold = true)
+        runCurrent()
+        devices.value = listOf(emulator("emulator-5554", DeviceState.Offline, info = false))
+        adb.bootCompleted["emulator-5554"] = "1\n"
+        runCurrent()
+        advanceTimeBy(40_000)
+        devices.value = listOf(emulator("emulator-5554"))
+        runCurrent()
+        assertEquals(AvdState.Running("emulator-5554"), launcher.stateOf(pixel.id))
+        assertNull(settings.settings.value.emulatorPrefs[pixel.id]?.lastBootMillis)
+    }
+
+    @Test
+    fun `a stopped port stays taken until its process exits`() = runTest {
+        val launcher = launcher()
+        launcher.start(pixel, sdk)
+        runCurrent()
+        val first = starter.started.single().process
+        first.exitOnDestroy = false
+        launcher.stop(pixel.id)
+        runCurrent()
+        launcher.start(tablet, sdk)
+        runCurrent()
+        assertEquals("5556", starter.started[1].command[4])
+        // Forced after the grace period: the exit frees 5554.
+        advanceTimeBy(5_001)
+        assertTrue(first.forced)
+        launcher.start(pixel, sdk)
+        runCurrent()
+        assertEquals("5554", starter.started[2].command[4])
+    }
+
+    @Test
+    fun `an emulator of the same avd is matched once our start fails`() = runTest {
+        adb.avdNames["emulator-5556"] = pixel.id
+        val launcher = launcher()
+        launcher.start(pixel, sdk)
+        runCurrent()
+        // The AVD was already running elsewhere; adb lists it while ours boots.
+        devices.value = listOf(emulator("emulator-5556"))
+        runCurrent()
+        assertTrue(launcher.stateOf(pixel.id) is AvdState.Booting)
+        starter.started.single().process.exit.complete(1)
+        runCurrent()
+        assertEquals(AvdState.Running("emulator-5556"), launcher.stateOf(pixel.id))
+        assertEquals(2, adb.execs.count { it == listOf("-s", "emulator-5556", "emu", "avd", "name") })
+    }
+
+    @Test
+    fun `system process destroy reaches its children`() {
+        if (com.programmersbox.scrcpyviewer.Os.isWindows) return
+        val raw = ProcessBuilder("sh", "-c", "sleep 30 & sleep 30").start()
+        val process = SystemEmulatorProcess(raw)
+        var children = emptyList<ProcessHandle>()
+        val deadline = System.currentTimeMillis() + 5_000
+        while (children.size < 2 && System.currentTimeMillis() < deadline) {
+            children = raw.descendants().toList()
+            Thread.sleep(20)
+        }
+        assertTrue(children.isNotEmpty(), "sh started no child")
+        process.destroy()
+        children.forEach { it.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS) }
+        assertTrue(children.none { it.isAlive })
+        raw.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS)
+    }
 }

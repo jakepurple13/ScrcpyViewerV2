@@ -91,7 +91,7 @@ Chip colours follow the mockup: Booting uses the warn colours (`warnColor()`), R
 the connected "Ready" chip), Stopping surfaceVariant, Failed errorContainer.
 
 The progress track has no real progress to show. It fills towards 96 % over the expected boot time (the last
-successful boot of this AVD, `EmulatorPrefs.lastBootMillis`, else 30 s; 1.6× that for a cold boot), easing out so it
+successful warm boot of this AVD, `EmulatorPrefs.lastBootMillis`, else 30 s; 1.6× that for a cold boot), easing out so it
 slows near the end, then fills to 100 % on ready.
 
 **Below the rows**, the SDK line: folder icon, the SDK path (monospace, home shown as `~`), "· emulator 37.3.9",
@@ -143,7 +143,7 @@ Boot stages, checked every second against the device tracker and adb:
 3. **Waiting for adb…** until the tracker shows the serial as `device` with its info read (the model and Android
    version the connected row and mirror window need).
 
-Then the row is Running, `lastBootMillis` is saved, and the snackbar says "<name> is ready." With "Mirror when
+Then the row is Running, `lastBootMillis` is saved (warm boots only; a cold boot does not change it), and the snackbar says "<name> is ready." With "Mirror when
 ready" on, it says "<name> is ready. Opening its mirror window…" and `MirrorRequests.request(serial)` opens it. The
 window grows out of the emulator's row: the row carries `Modifier.mirrorOrigin(serial)` while Running, and the
 launcher calls `MirrorOrigins.buttonOnScreen(serial)?.let(MirrorOrigins::record)` just before the request (when
