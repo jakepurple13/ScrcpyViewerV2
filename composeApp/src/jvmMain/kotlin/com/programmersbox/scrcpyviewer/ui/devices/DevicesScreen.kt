@@ -549,37 +549,41 @@ private fun DeviceRow(
             ),
         ) {
             val title = connectedTitle(device, avdName)
-            val serialText = @Composable { modifier: Modifier ->
-                Text(
-                    device.serial,
-                    style = if (title == device.serial) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = modifier,
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (emulator && title != device.serial) {
-                    // Model, then the AVD's name once matched: a crossfade, not a swap.
-                    Crossfade(
-                        title,
-                        animationSpec = if (motion) tween(EMULATOR_TITLE_MILLIS) else snap(),
-                        label = "emulatorTitle",
-                        modifier = Modifier.weight(1f, fill = false),
-                    ) { shownTitle ->
-                        Text(shownTitle, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // The title line (name and tag) and the serial under it; the serial is the title when there is no name.
+            val titleBlock = @Composable { shownTitle: String ->
+                Column {
+                    val serialText = @Composable { modifier: Modifier ->
+                        Text(
+                            device.serial,
+                            style = if (shownTitle == device.serial) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = modifier,
+                        )
                     }
-                } else if (title != device.serial) {
-                    Text(title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                } else {
-                    serialText(Modifier.weight(1f, fill = false))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (shownTitle != device.serial) {
+                            Text(shownTitle, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        } else {
+                            serialText(Modifier.weight(1f, fill = false))
+                        }
+                        // An emulator's connection is no USB cable: its tag says what it is (the dot gives its state).
+                        if (emulator) EmulatorTag() else StatusChip(status)
+                    }
+                    if (shownTitle != device.serial) serialText(Modifier)
                 }
-                // An emulator's connection is no USB cable: its tag says what it is (the dot gives its state).
-                if (emulator) EmulatorTag() else StatusChip(status)
             }
-            if (title != device.serial) serialText(Modifier)
+            if (emulator) {
+                // Serial or model, then the AVD's name once matched: the whole title block crossfades (the column's
+                // height follows), never a swap.
+                Crossfade(title, animationSpec = if (motion) tween(EMULATOR_TITLE_MILLIS) else snap(), label = "emulatorTitle") {
+                    titleBlock(it)
+                }
+            } else {
+                titleBlock(title)
+            }
             if (hint != null) {
                 Text(hint, style = MaterialTheme.typography.labelSmall, color = dot)
             }
@@ -814,7 +818,8 @@ private fun Footer(
                 TextButton({ naming = true }, Modifier.advancedContentMotion(motion)) { Text("Save as new preset") }
             }
             Spacer(Modifier.weight(1f))
-            state.devices.firstOrNull { it.serial == state.selectedSerial }?.let { device ->
+            // An emulator has no Wi-Fi to switch to: no button.
+            state.devices.firstOrNull { it.serial == state.selectedSerial && !isEmulatorSerial(it.serial) }?.let { device ->
                 val wifi = wifiButtonState(device, state)
                 OutlinedButton(
                     onClick = { onConnectWifi(device.serial) },

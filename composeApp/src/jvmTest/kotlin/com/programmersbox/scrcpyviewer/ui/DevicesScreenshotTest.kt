@@ -344,6 +344,14 @@ class DevicesScreenshotTest {
     fun `devices context menu emulator`() =
         renderMenu("devices-light-menu-emulator.png", ThemeMode.Light, "emulator-5554", withEmulators)
 
+    /** A selected emulator's simple and advanced views: Mirror, no Connect over Wi-Fi. */
+    @Test
+    fun `emulator selected has no wifi button`() {
+        val selected = withEmulators.copy(selectedSerial = "emulator-5554", canMirror = true, errors = emptyMap())
+        render("emulators-light-selected-simple.png", ThemeMode.Light, selected.copy(advanced = false), emulators = allStates)
+        render("emulators-light-selected-advanced.png", ThemeMode.Light, selected, emulators = allStates)
+    }
+
     /**
      * heads_up_api34 running on emulator-5554 is titled with its AVD name, not its system model; an offline emulator
      * (emulator-5560) says to stop and start it again instead of the cable hint, beside the real devices' rows.

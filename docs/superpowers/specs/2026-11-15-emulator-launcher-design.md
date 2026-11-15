@@ -77,8 +77,10 @@ As built (follow-ups, 2026-11-15), emulator rows only; a real device's row, menu
 - **Title**: a connected emulator whose AVD is known (launcher state Booting/Running/Stopping, ours or one started
   elsewhere once matched) is titled with the AVD's display name ("heads_up_api34", "Pixel 9") instead of the system
   model ("sdk_gphone64_arm64"); the serial subtitle is unchanged. Until matched it keeps the existing title; the
-  change crossfades (250 ms, the row's height following; at once under reduced motion).
-- **Menu**: an emulator's right-click menu has Mirror only, no "Connect over Wi-Fi".
+  change crossfades the whole title block (250 ms, the row's height following; at once under reduced motion),
+  including a serial-only title becoming name over serial.
+- **No Wi-Fi**: an emulator's right-click menu has Mirror only, and the detail pane (simple view and the advanced
+  footer) shows no "Connect over Wi-Fi" button or hint for it.
 - **Offline hint**: an offline emulator row shows "Emulator offline. Stop and start it again from Emulators." instead
   of the cable hint.
 - **Selection**: with no user choice, an emulator never takes the default over from another ready device already
