@@ -72,3 +72,15 @@ thumbnail and window states (idle, exporting, done) light/dark.
 ## Out of scope
 
 GIF from screenshots or files, MP4 trimming/export, more sizes or rates, looping options.
+
+## Linux system libraries (added 2026-11-15, user)
+
+The bundled FFmpeg's libavdevice links libasound, libpulse, libxcb, libxcb-shm and libdrm. When they are missing
+(a minimal Linux install), loading fails; the app says what to install instead of a generic error:
+
+- Export failure: "Couldn't make the GIF: FFmpeg needs a few system libraries: install libasound2, libpulse0, libxcb1,
+  libxcb-shm0 and libdrm2, then try again".
+- Recording stop (no thumbnail, so no Export GIF): "Recording saved to <file>. To export GIFs, install libasound2,
+  libpulse0, libxcb1, libxcb-shm0 and libdrm2".
+
+CI's Linux runner installs them (`.github/workflows/build.yml`).

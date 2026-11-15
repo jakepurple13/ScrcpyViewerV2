@@ -60,6 +60,25 @@ fun gifHeight(width: Int, srcW: Int, srcH: Int): Int {
     return maxOf(2, (halves * 2).toInt())
 }
 
+/** The Linux system libraries the bundled FFmpeg's libavdevice links; a desktop has them, a minimal install may not. */
+internal const val LINUX_FFMPEG_LIBRARIES = "libasound2, libpulse0, libxcb1, libxcb-shm0 and libdrm2"
+
+/** What the user is told when they are missing on Linux. */
+internal const val LINUX_FFMPEG_MESSAGE = "FFmpeg needs a few system libraries: install $LINUX_FFMPEG_LIBRARIES, then try again"
+
+/**
+ * Why the bundled FFmpeg can't be used, for the user. On Linux a native library that fails to load (anywhere in
+ * [e]'s causes) is nearly always a missing system library, so the message names the ones to install.
+ */
+internal fun ffmpegUnavailableReason(e: Throwable, linux: Boolean = com.programmersbox.scrcpyviewer.Os.isLinux): String {
+    val nativeLoad = generateSequence(e) { it.cause }.any { it is UnsatisfiedLinkError || it is NoClassDefFoundError }
+    return if (linux && nativeLoad) {
+        LINUX_FFMPEG_MESSAGE
+    } else {
+        "FFmpeg isn't available: ${e.message ?: e.javaClass.simpleName}"
+    }
+}
+
 /** The rough size of the GIF [o] makes from a [srcW] × [srcH] recording, in bytes. */
 fun estimateBytes(o: GifOptions, srcW: Int, srcH: Int): Long {
     val seconds = o.durationMs.coerceAtLeast(0) / 1000.0
@@ -190,7 +209,7 @@ class GifExporter(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                return@withContext failure("FFmpeg isn't available: ${e.message ?: e.javaClass.simpleName}", e)
+                return@withContext failure(ffmpegUnavailableReason(e), e)
             }
             if (!Files.isRegularFile(ffmpeg)) return@withContext failure("FFmpeg isn't available at $ffmpeg")
 

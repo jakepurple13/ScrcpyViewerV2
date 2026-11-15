@@ -446,6 +446,14 @@ internal suspend fun finishRecording(
     } catch (e: RecordingGoneException) {
         notify(e.message ?: "The recording is no longer at ${result.file}")
     } catch (e: Exception) {
-        notify(recordResultMessage(result))
+        // On Linux without the libraries FFmpeg needs there's no thumbnail (so no Export GIF): say what to install.
+        val missing = e.message == com.programmersbox.scrcpyviewer.media.LINUX_FFMPEG_MESSAGE
+        notify(
+            if (missing) {
+                "${recordResultMessage(result)}. To export GIFs, install ${com.programmersbox.scrcpyviewer.media.LINUX_FFMPEG_LIBRARIES}"
+            } else {
+                recordResultMessage(result)
+            },
+        )
     }
 }

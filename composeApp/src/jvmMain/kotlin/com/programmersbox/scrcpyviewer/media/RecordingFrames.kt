@@ -139,7 +139,7 @@ class RecordingFrames(
     } catch (e: CancellationException) {
         throw e
     } catch (e: Throwable) {
-        throw GifExportException("FFmpeg isn't available: ${e.message ?: e.javaClass.simpleName}", e)
+        throw GifExportException(ffmpegUnavailableReason(e), e)
     }
 
     /** One run: all of stdout, and stderr as text. A failed run throws with its last stderr line. */

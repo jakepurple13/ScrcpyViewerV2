@@ -530,6 +530,31 @@ class ScreenshotThumbnailStateTest {
     }
 
     @Test
+    fun `on Linux without FFmpeg's libraries the saved message says which to install`() = kotlinx.coroutines.runBlocking {
+        val messages = mutableListOf<String>()
+        val missing = com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(UnsatisfiedLinkError("no jniavdevice"), linux = true)
+        finishRecording(RecordResult.Saved(recording), state, { throw GifExportException(missing) }, { messages += it })
+        assertEquals(
+            listOf("Recording saved to $recording. To export GIFs, install libasound2, libpulse0, libxcb1, libxcb-shm0 and libdrm2"),
+            messages,
+        )
+    }
+
+    @Test
+    fun `the FFmpeg reason names the Linux libraries only for a native load failure on Linux`() {
+        val link = RuntimeException("load", UnsatisfiedLinkError("no jniavdevice"))
+        assertEquals(
+            "FFmpeg needs a few system libraries: install libasound2, libpulse0, libxcb1, libxcb-shm0 and libdrm2, then try again",
+            com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(link, linux = true),
+        )
+        assertEquals("FFmpeg isn't available: load", com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(link, linux = false))
+        assertEquals(
+            "FFmpeg isn't available: no jar",
+            com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(IllegalStateException("no jar"), linux = true),
+        )
+    }
+
+    @Test
     fun `a recording probed after a later screenshot does not replace it, and its frame is closed`() = kotlinx.coroutines.runBlocking {
         val ticket = state.begin()
         state.show(file, bitmap())
