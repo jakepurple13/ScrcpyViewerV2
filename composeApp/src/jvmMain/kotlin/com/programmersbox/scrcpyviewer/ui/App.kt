@@ -100,6 +100,11 @@ import com.programmersbox.scrcpyviewer.ui.theme.LocalStyleTokens
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.drawBevel
 import org.koin.compose.viewmodel.koinViewModel
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
+import com.programmersbox.scrcpyviewer.emulator.EmulatorLauncher
+import com.programmersbox.scrcpyviewer.ui.common.openExternally
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsViewModel
 
 private val TopLevelRoute.label: String
     get() = when (this) {
@@ -261,6 +266,21 @@ fun App(
     val fileDialogs = remember { NativePresetFileDialogs(nativeDialogs) }
     val actionFileDialogs = remember { NativePresetFileDialogs(nativeDialogs, what = "actions") }
     val settingsDialogs = remember { NativeSettingsFileDialogs(nativeDialogs) }
+    // Held here, with the other screens' ViewModels, so the Emulators section's state survives tab switches.
+    val emulatorsViewModel: EmulatorsViewModel = koinViewModel()
+    val emulatorLauncher: EmulatorLauncher = koinInject()
+    // The launcher's results, from any screen: ready, didn't start (with its log), couldn't stop.
+    LaunchedEffect(emulatorLauncher) {
+        emulatorLauncher.notices.collect { notice ->
+            val log = notice.logFile
+            val result = snackbar.showSnackbar(
+                notice.text,
+                actionLabel = if (log != null) "Show log" else null,
+                duration = if (log != null) SnackbarDuration.Long else SnackbarDuration.Short,
+            )
+            if (result == SnackbarResult.ActionPerformed && log != null) openExternally(log.toString())
+        }
+    }
     // Recordings that end with no mirror window open for their device (closed window, app-wide view).
     LaunchedEffect(mirrorController) {
         mirrorController.recordingResults
@@ -298,6 +318,8 @@ fun App(
                             when (route) {
                                 TopLevelRoute.Devices -> DevicesScreen(
                                     devicesViewModel,
+                                    emulatorsViewModel,
+                                    chooseSdkFolder = { settingsDialogs.chooseFolder("Choose SDK folder") },
                                     panes = devicesPanes,
                                     detailTab = detailTab,
                                     onDetailTab = deviceInfoViewModel::setTab,

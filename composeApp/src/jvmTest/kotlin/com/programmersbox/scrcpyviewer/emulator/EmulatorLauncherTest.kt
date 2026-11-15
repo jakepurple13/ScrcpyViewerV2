@@ -11,7 +11,17 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import com.programmersbox.scrcpyviewer.ui.mirror.MirrorOrigins
+import java.awt.Rectangle
+import java.util.concurrent.Executors
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -39,6 +49,7 @@ class EmulatorLauncherTest {
     private val adb = FakeAdb()
     private val starter = FakeStarter()
     private var busyPorts = emptySet<Int>()
+    private var uiContext: CoroutineContext = EmptyCoroutineContext
 
     private class FakeProcess(var exitOnDestroy: Boolean = true) : EmulatorProcess {
         override val exit = CompletableDeferred<Int>()
@@ -110,6 +121,7 @@ class EmulatorLauncherTest {
         starter = starter,
         clock = { testScheduler.currentTime },
         isPortFree = { it !in busyPorts },
+        uiContext = uiContext,
     ).also { runCurrent() }
 
     private fun TestScope.notices(launcher: EmulatorLauncher): List<EmulatorNotice> {
@@ -247,6 +259,34 @@ class EmulatorLauncherTest {
         )
         // The saved boot time keeps the mirror preference.
         assertTrue(settings.settings.value.emulatorPrefs.getValue(pixel.id).mirrorWhenReady)
+    }
+
+    @Test
+    fun `mirror when ready finds the row and requests the mirror on the ui thread`() = runTest {
+        val ui = Executors.newSingleThreadExecutor { Thread(it, "test-ui") }
+        try {
+            uiContext = ui.asCoroutineDispatcher()
+            settings.update { it.copy(emulatorPrefs = mapOf(pixel.id to EmulatorPrefs(mirrorWhenReady = true))) }
+            val row = Rectangle(40, 300, 220, 56)
+            val located = mutableListOf<String>()
+            val locate: () -> Rectangle? = { located += Thread.currentThread().name.substringBefore(" @"); row }
+            MirrorOrigins.take()
+            // The row registers its bounds while Booting, so they are there when the boot ends.
+            MirrorOrigins.registerButton("emulator-5554", locate)
+            try {
+                val launcher = launcher()
+                bootPixel(launcher)
+                val serial = withContext(Dispatchers.Default) { withTimeout(5_000) { requested.first() } }
+                assertEquals("emulator-5554", serial)
+                assertEquals(listOf("test-ui"), located)
+                // The row's bounds are where the mirror window grows from.
+                assertEquals(row, MirrorOrigins.take())
+            } finally {
+                MirrorOrigins.unregisterButton("emulator-5554", locate)
+            }
+        } finally {
+            ui.shutdownNow()
+        }
     }
 
     @Test

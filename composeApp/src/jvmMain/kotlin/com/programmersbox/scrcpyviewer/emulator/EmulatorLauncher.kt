@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -33,6 +34,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.coroutines.CoroutineContext
 
 /** Starts the emulator process; tests swap in a fake so no emulator ever runs. */
 fun interface ProcessStarter {
@@ -96,6 +98,11 @@ class EmulatorLauncher(
     private val starter: ProcessStarter = SystemProcessStarter,
     private val clock: () -> Long = System::currentTimeMillis,
     private val isPortFree: (Int) -> Boolean = ::loopbackPortFree,
+    /**
+     * Where "Mirror when ready" finds the row on screen and requests the mirror: the UI thread, since the row's
+     * bounds come from Compose layout coordinates. Tests pass their own.
+     */
+    private val uiContext: CoroutineContext = Dispatchers.Main,
 ) {
     private class Session(
         val avdId: String,
@@ -274,9 +281,12 @@ class EmulatorLauncher(
             }
         }
         if (settings.settings.value.emulatorPrefs[session.avdId]?.mirrorWhenReady == true) {
-            // The window grows out of the emulator's row when it is on screen.
-            MirrorOrigins.buttonOnScreen(session.serial)?.let { MirrorOrigins.record(it) }
-            mirrors.request(session.serial)
+            // The window grows out of the emulator's row when it is on screen. The row's bounds are read on the UI
+            // thread, where Compose lays it out; the row registers them while Booting, so they are there already.
+            scope.launch(uiContext) {
+                MirrorOrigins.buttonOnScreen(session.serial)?.let { MirrorOrigins.record(it) }
+                mirrors.request(session.serial)
+            }
             _notices.tryEmit(EmulatorNotice("${session.name} is ready. Opening its mirror window…", mirrorSerial = session.serial))
         } else {
             _notices.tryEmit(EmulatorNotice("${session.name} is ready."))
