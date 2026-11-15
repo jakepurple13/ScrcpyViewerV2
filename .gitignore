@@ -9,5 +9,7 @@ composeApp/bundled/*
 !composeApp/bundled/common/
 composeApp/bundled/common/*
 !composeApp/bundled/common/FFMPEG-NOTICE.txt
+!composeApp/bundled/common/LGPL-3.0.txt
+!composeApp/bundled/common/GPL-3.0.txt
 .hotswan/
 local.properties

@@ -83,6 +83,7 @@ class ScreenshotThumbnailTest {
         val opened = mutableListOf<Path>()
         val osDrag = mutableListOf<Boolean>()
         val edited = mutableListOf<Shot>()
+        val gif = mutableListOf<Shot>()
     }
 
     private class FakeStarter(val dropped: Boolean) : OutboundDragStarter {
@@ -113,6 +114,7 @@ class ScreenshotThumbnailTest {
                         modifier = Modifier.align(Alignment.BottomEnd),
                         onOsDrag = { calls.osDrag.add(it) },
                         onEdit = { calls.edited.add(it) },
+                        onExportGif = { calls.gif.add(it) },
                     )
                 }
             }
@@ -669,4 +671,75 @@ class ScreenshotThumbnailTest {
         assertEquals(listOf(file), calls.opened)
         d.scene.close()
     }
+
+    // The recording thumbnail.
+
+    private val recording: Path = Paths.get("/tmp/caps/Pixel 8 Pro #2 ü.mp4")
+    private val info = com.programmersbox.scrcpyviewer.media.RecordingInfo(18_030, 1080, 2340)
+
+    @Test
+    fun `a recording shows its first frame, its length, Export GIF and Show in folder`() = onEdt {
+        val calls = Calls()
+        val d = scene(motion = true, calls = calls)
+        state.showRecording(recording, solid(Color.Blue, 54, 117), info)
+        d.frames(30)
+        assertNotNull(d.described("Recording"))
+        assertNull(d.described("Screenshot"))
+        val length = assertNotNull(d.texted("0:18")).boundsInRoot
+        val image = d.described("Recording")!!.boundsInRoot
+        assertTrue(image.contains(length.center) && length.center.x < image.center.x && length.center.y > image.center.y, "bottom-left of the image: $length in $image")
+        assertNull(d.described("Copy"))
+        assertNull(d.described("Edit"))
+        d.click(assertNotNull(d.described("Export GIF")))
+        assertEquals(listOf(state.shown.value!!), calls.gif)
+        d.click(d.described("Show in folder")!!)
+        assertEquals(listOf(recording), calls.revealed)
+        d.click(d.described("Recording")!!)
+        assertEquals(listOf(recording), calls.opened, "opens with the default app")
+        d.scene.close()
+    }
+
+    @Test
+    fun `a recording slides in from the right like a screenshot, and leaves on the timer`() = onEdt {
+        val d = scene(motion = true)
+        state.showRecording(recording, solid(Color.Blue, 54, 117), info)
+        val xs = (1..26).mapNotNull { d.frame(); d.corner()?.x?.takeIf { it > 0f } }
+        val end = areaRight - 16f
+        assertTrue(xs.first() > end + 15f, "starts to the right: $xs")
+        assertTrue(xs.zipWithNext().all { (a, b) -> b <= a + 0.5f }, "only moves left: $xs")
+        assertTrue(xs.count { it > end + 1f && it < xs.first() - 1f } >= 5, "slides, not snaps: $xs")
+        assertEquals(end, xs[22], 0.5f)
+        d.scene.move(Offset(10f, 10f))
+        advance(THUMBNAIL_MILLIS)
+        d.frames(30)
+        assertNull(d.described("Recording"))
+        d.scene.close()
+    }
+
+    @Test
+    fun `while its Export GIF window is open the image dims under MAKING GIF, fading, and the timer holds`() = onEdt {
+        val d = scene(motion = true)
+        state.showRecording(recording, solid(Color.White, 54, 117), info)
+        d.frames(30)
+        val image = d.described("Recording")!!.boundsInRoot
+        fun probe() = d.snapshot()[image.center.x.toInt(), (image.top + image.height * 0.2f).toInt()].red
+        val bright = probe()
+        state.makingGif(state.shown.value!!.id, true)
+        val fading = (1..20).map { probe() }
+        assertNotNull(d.texted("MAKING GIF"))
+        assertNull(d.texted("EDITING"))
+        assertTrue(fading.any { it < bright - 0.1f && it > fading.last() + 0.05f }, "fades, not snaps: $fading")
+        assertEquals(fading.last(), fading[17], 0.01f, "done by 250 ms: $fading")
+        advance(60_000)
+        d.frames(2)
+        assertNotNull(d.described("Recording"), "held")
+        state.makingGif(state.shown.value!!.id, false)
+        d.frames(20)
+        assertNull(d.texted("MAKING GIF"))
+        d.scene.close()
+    }
 }
+
+/** Moves the mouse to [at], off the card. */
+@OptIn(ExperimentalComposeUiApi::class)
+private fun ImageComposeScene.move(at: Offset) = sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)

@@ -27,7 +27,10 @@ Turn a screen recording into a GIF: trim it, pick a size and frame rate, export.
   **Export again**. The window stays open.
 - File: next to the recording, `<recording name>.gif`, then `-2`, …; never overwrites. Cancel stops FFmpeg and deletes
   the partial file and the palette; snackbar "Export cancelled. The partial GIF was deleted." Failure keeps the window
-  with "Couldn't make the GIF: <reason>".
+  with "Couldn't make the GIF: <reason>". A folder the app can't write to gives the reason "Can't write next to the
+  recording (<dir>)".
+- The partial GIF (`.gif-export-*.part`) is written next to the recording, not in the cache, so the finished file is
+  moved into place with a same-folder (atomic) rename; only the palette goes to the app's cache dir.
 - Clips longer than 60 s: Export is disabled until the trimmed part is 60 s or less; the range line says "Trim to 60 s
   or less to export" in the error colour.
 - Uses the FFmpeg already in the app: the `ffmpeg` executable in the `org.bytedeco:ffmpeg` native jar

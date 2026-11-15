@@ -64,6 +64,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import org.jetbrains.skia.Bitmap
+import androidx.compose.ui.graphics.asSkiaBitmap
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.Font
 import org.jetbrains.skia.Paint
@@ -323,6 +324,153 @@ class MirrorScreenshotTest {
             timers.cancel()
         }
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    /** The window after a recording: the recording thumbnail (first frame, length, Export GIF), [makingGif] dimmed. */
+    private fun renderRecordingThumbnail(name: String, mode: ThemeMode, makingGif: Boolean = false) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher()) // never advanced: nothing expires
+        var now = 0L
+        val thumbnail = ScreenshotThumbnailState(timers, clock = { now })
+        val bitmap = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
+        thumbnail.showRecording(
+            Paths.get("/tmp/Pixel 8 Pro.mp4"), bitmap,
+            com.programmersbox.scrcpyviewer.media.RecordingInfo(18_030, 1344, 2992),
+        )
+        now = 2_000
+        if (makingGif) thumbnail.makingGif(thumbnail.shown.value!!.id, true)
+        try {
+            renderToPng(1280, 800, out, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                        MirrorContent(
+                            state, frame, {}, {}, {}, {}, {}, {}, showTopStrip = false,
+                            stageOverlay = {
+                                ScreenshotThumbnail(
+                                    thumbnail, motion = true, onCopy = { true }, onReveal = {}, onOpen = {},
+                                    dragStarter = ComposeDragOutStarter(),
+                                    modifier = Modifier.align(androidx.compose.ui.Alignment.BottomEnd),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        } finally {
+            thumbnail.dispose()
+            timers.cancel()
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror recording thumbnail`() {
+        renderRecordingThumbnail("mirror-recording-thumbnail-light.png", ThemeMode.Light)
+        renderRecordingThumbnail("mirror-recording-thumbnail-dark.png", ThemeMode.Dark)
+        renderRecordingThumbnail("mirror-recording-thumbnail-making-gif-light.png", ThemeMode.Light, makingGif = true)
+        renderRecordingThumbnail("mirror-recording-thumbnail-making-gif-dark.png", ThemeMode.Dark, makingGif = true)
+    }
+
+    private enum class GifStage { Idle, Exporting, Done, TooLong }
+
+    /**
+     * The Export GIF window's content at its opening size (less the title bar): the synthetic frame as the preview, a
+     * strip of tinted copies, trimmed to 0:03.0–0:12.0; then exporting at 42%, or done, or a clip over 60 s.
+     */
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+    private fun renderGifWindow(name: String, mode: ThemeMode, stage: GifStage) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        val first = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
+        val tmp = Files.createTempDirectory("gif-shot")
+        val duration = if (stage == GifStage.TooLong) 84_000L else 18_000L
+        val state = com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportState(
+            tmp.resolve("Pixel 8 Pro-20261115-114210.mp4"),
+            com.programmersbox.scrcpyviewer.media.RecordingInfo(duration, 1344, 2992),
+        )
+        if (stage != GifStage.TooLong) {
+            state.trimStart(3_000)
+            state.trimEnd(12_000)
+        }
+        // The strip: the frame, each tinted a little differently.
+        fun png(i: Int): ByteArray {
+            val w = 120
+            val h = 267
+            val b = Bitmap().apply { allocN32Pixels(w, h) }
+            val c = Canvas(b)
+            c.drawImageRect(org.jetbrains.skia.Image.makeFromBitmap(first.asSkiaBitmap()), org.jetbrains.skia.Rect.makeWH(w.toFloat(), h.toFloat()))
+            c.drawRect(org.jetbrains.skia.Rect.makeXYWH(0f, h * (i / 12f), w.toFloat(), 18f), Paint().apply { color = 0x66FFFFFF })
+            return org.jetbrains.skia.Image.makeFromBitmap(b).encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG)!!.bytes
+        }
+        val frames = com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.FakeFrames { n -> (0 until n.coerceAtMost(12)).map(::png) }
+        val export = com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.FakeExport()
+        val scene = androidx.compose.ui.ImageComposeScene(665, 502, androidx.compose.ui.unit.Density(1f)) {
+            ScrcpyViewerTheme(AppTheme(mode)) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportContent(
+                        state, motion = true, export = export.fn, frames = frames,
+                        onClose = {}, onReveal = {}, say = {},
+                        modifier = Modifier.fillMaxSize(),
+                        firstFrame = first,
+                        decode = kotlin.coroutines.EmptyCoroutineContext,
+                    )
+                }
+            }
+        }
+        try {
+            val d = SceneDriver(scene)
+            d.frames(30)
+            if (stage == GifStage.Exporting || stage == GifStage.Done) {
+                val export0 = checkNotNull(scene.semanticsOwners.flatMap { o ->
+                    val all = mutableListOf<androidx.compose.ui.semantics.SemanticsNode>()
+                    fun walk(n: androidx.compose.ui.semantics.SemanticsNode) {
+                        all += n
+                        n.children.forEach(::walk)
+                    }
+                    walk(o.unmergedRootSemanticsNode)
+                    all
+                }.firstOrNull { n -> n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.any { it.text == "Export" } == true })
+                val at = export0.boundsInRoot.center
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Press, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse, button = androidx.compose.ui.input.pointer.PointerButton.Primary)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Release, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse, button = androidx.compose.ui.input.pointer.PointerButton.Primary)
+                d.frames(4)
+                export.progress!!(com.programmersbox.scrcpyviewer.media.GifExporter.Phase.Encode, 0.275f)
+                if (stage == GifStage.Done) {
+                    val gif = Files.write(tmp.resolve("Pixel 8 Pro-20261115-114210.gif"), ByteArray(4_300_000))
+                    export.gate.complete(Result.success(gif))
+                    repeat(200) {
+                        if (state.done != null) return@repeat
+                        d.frame()
+                        Thread.sleep(10)
+                    }
+                }
+                // Pointer off the button, so no hover shows.
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, Offset(5f, 5f), type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+            }
+            d.frames(60)
+            val image = scene.render(10_000_000_000L)
+            val data = checkNotNull(image.encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG))
+            Files.createDirectories(out.parent)
+            Files.write(out, data.bytes)
+        } finally {
+            scene.close()
+            first.asSkiaBitmap().close()
+            tmp.toFile().deleteRecursively()
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror export gif window`() = onEdt {
+        renderGifWindow("mirror-gif-window-light.png", ThemeMode.Light, GifStage.Idle)
+        renderGifWindow("mirror-gif-window-dark.png", ThemeMode.Dark, GifStage.Idle)
+        renderGifWindow("mirror-gif-window-exporting-light.png", ThemeMode.Light, GifStage.Exporting)
+        renderGifWindow("mirror-gif-window-exporting-dark.png", ThemeMode.Dark, GifStage.Exporting)
+        renderGifWindow("mirror-gif-window-done-light.png", ThemeMode.Light, GifStage.Done)
+        renderGifWindow("mirror-gif-window-done-dark.png", ThemeMode.Dark, GifStage.Done)
+        renderGifWindow("mirror-gif-window-too-long-light.png", ThemeMode.Light, GifStage.TooLong)
     }
 
     @Test

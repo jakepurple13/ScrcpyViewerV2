@@ -19,9 +19,9 @@ version (LGPL v3+). It is configured with --enable-version3 and without --enable
   You should have received a copy of the GNU Lesser General Public License along with FFmpeg. If not, see
   <https://www.gnu.org/licenses/>.
 
-The full licence texts:
-  GNU LGPL v3: https://www.gnu.org/licenses/lgpl-3.0.txt
-  GNU GPL v3 (which the LGPL v3 refers to): https://www.gnu.org/licenses/gpl-3.0.txt
+The full licence texts ship next to this file:
+  GNU LGPL v3: LGPL-3.0.txt (https://www.gnu.org/licenses/lgpl-3.0.txt)
+  GNU GPL v3 (which the LGPL v3 refers to): GPL-3.0.txt (https://www.gnu.org/licenses/gpl-3.0.txt)
 
 Source code
 -----------

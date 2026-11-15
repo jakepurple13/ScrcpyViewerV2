@@ -27,6 +27,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.fail
+import org.junit.Assume.assumeTrue
 
 @OptIn(ExperimentalPathApi::class)
 class GifExporterTest {
@@ -312,12 +314,28 @@ class GifExporterTest {
         assertTrue(starter.runs.isEmpty())
     }
 
+    @Test
+    fun aRecordingFolderThatCantBeWrittenIsAClearError() = runBlocking {
+        com.programmersbox.scrcpyviewer.assumePosix()
+        val rec = recording()
+        Files.setPosixFilePermissions(recordings, java.nio.file.attribute.PosixFilePermissions.fromString("r-xr-xr-x"))
+        try {
+            val starter = FakeStarter { _, _ -> FakeProcess() }
+            val result = exporter(starter).export(rec, GifOptions(0, 1_000))
+            assertEquals("Can't write next to the recording (${rec.toAbsolutePath().parent})", result.exceptionOrNull()?.message)
+            assertTrue(starter.runs.isEmpty())
+            assertTrue(cache.listDirectoryEntries().isEmpty(), "palette deleted")
+        } finally {
+            Files.setPosixFilePermissions(recordings, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
+        }
+    }
+
     // ---- the real bundled ffmpeg ----
 
     @Test
     fun realTwoPassRunWithTheBundledFfmpeg() = runBlocking {
         val ffmpeg = runCatching { bundledFfmpeg() }.getOrElse {
-            println("SKIPPED realTwoPassRunWithTheBundledFfmpeg: the bundled ffmpeg isn't available here ($it)")
+            skipOrFailOnCi("the bundled ffmpeg isn't available here ($it)")
             return@runBlocking
         }
         val clip = recordings.resolve("tiny clip 'q' #1 ü.mp4")
@@ -332,7 +350,7 @@ class GifExporterTest {
             }
         }
         if (gen.isFailure) {
-            println("SKIPPED realTwoPassRunWithTheBundledFfmpeg: the bundled ffmpeg can't run on this OS (${gen.exceptionOrNull()})")
+            skipOrFailOnCi("the bundled ffmpeg can't run on this OS (${gen.exceptionOrNull()})")
             return@runBlocking
         }
         val progress = CopyOnWriteArrayList<Pair<GifExporter.Phase, Float>>()
@@ -350,5 +368,15 @@ class GifExporterTest {
         assertEquals(GifExporter.Phase.Encode to 1f, progress.last())
         assertEquals(listOf("tiny clip 'q' #1 ü.gif", "tiny clip 'q' #1 ü.mp4"), recordings.listDirectoryEntries().map { it.name }.sorted())
         assertTrue(cache.listDirectoryEntries().isEmpty(), "palette deleted")
+    }
+
+    /**
+     * The real run can't go ahead: on CI (`CI` set) that is a failure, as every CI OS should run the bundled binary;
+     * locally the test is reported as skipped (a JUnit assumption), with the reason.
+     */
+    private fun skipOrFailOnCi(reason: String) {
+        if (System.getenv("CI") != null) fail("realTwoPassRunWithTheBundledFfmpeg: $reason")
+        println("SKIPPED realTwoPassRunWithTheBundledFfmpeg: $reason")
+        assumeTrue(reason, false)
     }
 }

@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.media
 
+import com.programmersbox.scrcpyviewer.files.ensurePrivateDir
 import com.programmersbox.scrcpyviewer.files.transferCacheRoot
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +12,7 @@ import kotlinx.coroutines.withContext
 import org.bytedeco.javacpp.Loader
 import java.io.IOException
 import java.io.InputStream
+import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.Path
@@ -80,7 +82,7 @@ fun gifFile(recording: Path): Path {
 }
 
 /** [ms] as FFmpeg seconds, `12.345`; never locale formatted. */
-private fun seconds(ms: Long): String {
+internal fun seconds(ms: Long): String {
     val v = ms.coerceAtLeast(0)
     return "${v / 1000}.${(v % 1000).toString().padStart(3, '0')}"
 }
@@ -127,7 +129,10 @@ fun parseProgress(line: String, durationUs: Long): Float? {
 }
 
 /** Why a GIF couldn't be made; [message] is the reason shown after "Couldn't make the GIF: ". */
-class GifExportException(message: String, cause: Throwable? = null) : IOException(message, cause)
+open class GifExportException(message: String, cause: Throwable? = null) : IOException(message, cause)
+
+/** The recording was moved or deleted. */
+class RecordingGoneException(val file: Path) : GifExportException("The recording is no longer at $file")
 
 /** Starts one FFmpeg run; tests pass a fake. */
 fun interface GifProcessStarter {
@@ -148,8 +153,11 @@ fun bundledFfmpeg(): Path {
     return file
 }
 
-/** The GIF temp folder in the app's cache (palettes). */
-fun gifCacheDir(): Path = transferCacheRoot().resolve("gif")
+/**
+ * The GIF temp folder in the app's cache (palettes), inside the cache root made private to this user
+ * ([ensurePrivateDir]). Does file I/O: call it off the UI thread.
+ */
+fun gifCacheDir(): Path = ensurePrivateDir(transferCacheRoot()).resolve("gif")
 
 /**
  * Turns a recording into a GIF with the bundled FFmpeg in two passes (palette, then encode), as separate processes.
@@ -176,7 +184,7 @@ class GifExporter(
         if (o.durationMs <= 0) return failure("The trimmed part is empty")
         if (o.width <= 0 || o.fps <= 0) return failure("Pick a width and a frame rate")
         return withContext(io) {
-            if (!Files.isRegularFile(input)) return@withContext failure("The recording is no longer at $input")
+            if (!Files.isRegularFile(input)) return@withContext Result.failure(RecordingGoneException(input))
             val ffmpeg = try {
                 ffmpegPath()
             } catch (e: CancellationException) {
@@ -192,7 +200,12 @@ class GifExporter(
             try {
                 val dir = input.toAbsolutePath().parent
                 palette = Files.createTempFile(Files.createDirectories(cacheDir()), "palette-", ".png")
-                partial = Files.createTempFile(dir, ".gif-export-", ".part")
+                // The partial GIF lives next to the recording, so the final move is an atomic rename in one folder.
+                partial = try {
+                    Files.createTempFile(dir, ".gif-export-", ".part")
+                } catch (e: AccessDeniedException) {
+                    throw GifExportException("Can't write next to the recording ($dir)", e)
+                }
                 val (paletteArgv, encodeArgv) = gifArgv(ffmpeg, input.toAbsolutePath(), palette, partial, o)
                 val durationUs = o.durationMs * 1000
                 onProgress(Phase.Palette, 0f)
@@ -213,8 +226,9 @@ class GifExporter(
                 failure(e.message ?: e.javaClass.simpleName, e)
             } finally {
                 withContext(NonCancellable) {
-                    palette?.let { Files.deleteIfExists(it) }
-                    if (!done) partial?.let { Files.deleteIfExists(it) }
+                    // A delete that fails (a file still locked on Windows) must not hide the result or the cancel.
+                    palette?.let { runCatching { Files.deleteIfExists(it) } }
+                    if (!done) partial?.let { runCatching { Files.deleteIfExists(it) } }
                 }
             }
         }
@@ -288,12 +302,14 @@ class GifExporter(
             }
         }
 
-        /** Destroys [process]'s descendants, then the process, and waits briefly for it to go. */
-        fun kill(process: Process) {
-            val children = runCatching { process.descendants().toList() }.getOrDefault(emptyList())
-            children.forEach { it.destroyForcibly() }
-            process.destroyForcibly()
-            runCatching { process.waitFor(5, TimeUnit.SECONDS) }
-        }
+        fun kill(process: Process) = killProcessTree(process)
     }
+}
+
+/** Destroys [process]'s descendants, then the process, and waits briefly for it to go. */
+internal fun killProcessTree(process: Process) {
+    val children = runCatching { process.descendants().toList() }.getOrDefault(emptyList())
+    children.forEach { it.destroyForcibly() }
+    process.destroyForcibly()
+    runCatching { process.waitFor(5, TimeUnit.SECONDS) }
 }

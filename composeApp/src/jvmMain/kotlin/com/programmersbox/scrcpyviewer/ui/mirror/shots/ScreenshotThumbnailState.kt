@@ -3,7 +3,12 @@ package com.programmersbox.scrcpyviewer.ui.mirror.shots
 import androidx.compose.runtime.Stable
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
+import com.programmersbox.scrcpyviewer.media.RecordResult
+import com.programmersbox.scrcpyviewer.media.RecordingGoneException
+import com.programmersbox.scrcpyviewer.media.RecordingInfo
+import com.programmersbox.scrcpyviewer.media.RecordingProbe
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
+import com.programmersbox.scrcpyviewer.ui.mirror.recordResultMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -26,6 +31,9 @@ const val COPIED_MILLIS = 1_500L
 /**
  * A screenshot on show: its saved PNG and the copy of the frame it was made from. [id] is new for every screenshot.
  * An [edited] one is the markup editor's saved copy of [original] (the file an edit of it is named after).
+ *
+ * A recording's thumbnail is a shot too: [file] is the recording, [bitmap] its first frame and [video] its length and
+ * picture size (null for a screenshot).
  */
 class Shot(
     val file: Path,
@@ -33,15 +41,19 @@ class Shot(
     val id: Long,
     val edited: Boolean = false,
     val original: Path = file,
-)
+    val video: RecordingInfo? = null,
+) {
+    val isRecording: Boolean get() = video != null
+}
 
 /**
  * The mirror window's screenshot thumbnail: which screenshot shows and for how long.
  *
  * It stays [THUMBNAIL_MILLIS]; [hover] holds the timer, and leaving resumes it with at least
  * [THUMBNAIL_RESUME_MIN_MILLIS] left. [editing] holds it while the markup editor is open and restarts it at
- * [THUMBNAIL_MILLIS] when the editor closes. [touch] (copy, reveal, drag) restarts it at [THUMBNAIL_MILLIS]. A new
- * [show] replaces the screenshot and restarts the timer.
+ * [THUMBNAIL_MILLIS] when the editor closes; [makingGif] does the same for the Export GIF windows. [touch] (copy,
+ * reveal, drag) restarts it at [THUMBNAIL_MILLIS]. A new [show] (or [showRecording]) replaces the screenshot and
+ * restarts the timer.
  *
  * The thumbnail owns its bitmaps. A replaced or dismissed screenshot is retired: its bitmap is closed once no slot of
  * the composition draws it any more ([acquire] / [release], tied to the slot's composition, so a stalled or minimized
@@ -88,6 +100,14 @@ class ScreenshotThumbnailState(
      */
     val editingShotId: StateFlow<Long?> = _editingShotId.asStateFlow()
 
+    private val _gifShotIds = MutableStateFlow<Set<Long>>(emptySet())
+
+    /**
+     * The recordings ([Shot.id]s) with an Export GIF window open. While any is open the timer is held; only those
+     * recordings' images dim under "MAKING GIF".
+     */
+    val gifShotIds: StateFlow<Set<Long>> = _gifShotIds.asStateFlow()
+
     private var nextId = 0L
     private var disposed = false
 
@@ -119,15 +139,21 @@ class ScreenshotThumbnailState(
             _editing.value = value
         }
 
-    /** The timer is held, by the pointer or the editor. */
+    /** The timer is held, by the pointer, the editor or an Export GIF window. */
     private var hovered: Boolean
         get() = _held.value
         set(value) {
             _held.value = value
         }
 
+    /** An Export GIF window is open. */
+    private val gifOpen: Boolean get() = _gifShotIds.value.isNotEmpty()
+
+    /** A window (the markup editor, an Export GIF window) holds the timer. */
+    private val windowOpen: Boolean get() = editorOpen || gifOpen
+
     private fun syncHeld() {
-        hovered = pointerOn || editorOpen
+        hovered = pointerOn || windowOpen
     }
 
     /** The time left, in milliseconds. */
@@ -153,14 +179,21 @@ class ScreenshotThumbnailState(
     /** The markup editor saved [file], drawn from [bitmap] (now the thumbnail's), as an edit of [original]. */
     fun showEdited(file: Path, bitmap: ImageBitmap, original: Path) = show(file, bitmap, begin(), edited = true, original = original)
 
-    private fun show(file: Path, bitmap: ImageBitmap, ticket: Long, edited: Boolean, original: Path) {
+    /**
+     * Shows the finished recording [file]'s thumbnail: its first frame [bitmap] (now the thumbnail's) and [video], its
+     * length and size. Like [show], an older [ticket] than the one on show closes [bitmap] instead.
+     */
+    fun showRecording(file: Path, bitmap: ImageBitmap, video: RecordingInfo, ticket: Long = begin()) =
+        show(file, bitmap, ticket, edited = false, original = file, video = video)
+
+    private fun show(file: Path, bitmap: ImageBitmap, ticket: Long, edited: Boolean, original: Path, video: RecordingInfo? = null) {
         if (disposed || ticket < shownTicket) {
             close(bitmap)
             return
         }
         shownTicket = ticket
         _shown.value?.let(::retire)
-        _shown.value = Shot(file, bitmap, ++nextId, edited, original)
+        _shown.value = Shot(file, bitmap, ++nextId, edited, original, video)
         clearCopied()
         restart()
     }
@@ -194,7 +227,7 @@ class ScreenshotThumbnailState(
         } else {
             pointerOn = false
             syncHeld()
-            if (editorOpen) return // still held by the editor
+            if (windowOpen) return // still held by the editor or an Export GIF window
             if (heldMillis < THUMBNAIL_RESUME_MIN_MILLIS) _refills.value++
             schedule(heldMillis.coerceAtLeast(THUMBNAIL_RESUME_MIN_MILLIS))
         }
@@ -217,6 +250,20 @@ class ScreenshotThumbnailState(
             syncHeld()
             if (_shown.value != null) restart()
         }
+    }
+
+    /**
+     * An Export GIF window opened ([open]) or closed on the recording [shotId]. While any is open the timer is held;
+     * when the last one closes it restarts at [THUMBNAIL_MILLIS] (held on while the pointer is on the card).
+     */
+    fun makingGif(shotId: Long, open: Boolean) {
+        val before = _gifShotIds.value
+        val after = if (open) before + shotId else before - shotId
+        if (after == before) return
+        if (before.isEmpty()) freeze()
+        _gifShotIds.value = after
+        syncHeld()
+        if (after.isEmpty() && _shown.value != null) restart()
     }
 
     /** Holds the time left now, unless it is held already. */
@@ -371,5 +418,34 @@ internal suspend fun finishScreenshot(
         notify("Could not save the screenshot: ${e.message ?: e}")
     } finally {
         if (!kept) bitmap.asSkiaBitmap().close() // the copy's native pixels
+    }
+}
+
+/**
+ * A recording ended ([result] comes once the recorder has closed the file): a saved one shows the recording thumbnail,
+ * its first frame and length from [probe] (off the UI thread). A failed recording says "Recording failed: …"; a
+ * recording gone by the time it is probed says "The recording is no longer at …"; one that can't be probed (no video,
+ * FFmpeg missing) says "Recording saved to …" as before. [ticket] orders it with screenshots: a later one wins.
+ */
+internal suspend fun finishRecording(
+    result: RecordResult,
+    thumbnail: ScreenshotThumbnailState,
+    probe: suspend (Path) -> RecordingProbe,
+    notify: (String) -> Unit,
+    ticket: Long = thumbnail.begin(),
+) {
+    if (result !is RecordResult.Saved) {
+        notify(recordResultMessage(result))
+        return
+    }
+    try {
+        val p = probe(result.file)
+        thumbnail.showRecording(result.file, p.firstFrame, p.info, ticket)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: RecordingGoneException) {
+        notify(e.message ?: "The recording is no longer at ${result.file}")
+    } catch (e: Exception) {
+        notify(recordResultMessage(result))
     }
 }

@@ -2,6 +2,9 @@ package com.programmersbox.scrcpyviewer.ui.mirror.shots
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Animatable
@@ -38,6 +41,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Gif
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -72,6 +77,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
@@ -109,6 +115,9 @@ const val RING_REFILL_MILLIS = 300
 const val COPY_ICON_MILLIS = 200
 
 private val SLIDE = 40.dp
+
+/** The tint behind a recording's Export GIF button while its window is open. */
+private val HOT_RADIUS = 16.dp
 private const val FROM_SCALE = 0.9f
 private val CARD_WIDTH = 150.dp
 private val IMAGE_MAX_HEIGHT = 260.dp
@@ -173,6 +182,11 @@ fun ScreenshotFlash(state: ScreenshotFlashState, motion: Boolean, modifier: Modi
  * (copy only), with [onOsDrag] told while it runs. [onCopy] copies the image off the UI thread and says whether it
  * worked (the button then shows a check). Copy, reveal and drag restart the timer; a drop elsewhere dismisses it.
  *
+ * A recording ([Shot.video]) shows its first frame with a play glyph and its length ("0:18"), and Export GIF / Show in
+ * folder: Export GIF runs [onExportGif] ([gifButton] tells its window where to grow from); while a recording's
+ * Export GIF window is open its image dims under "MAKING GIF" and the button is tinted. Clicking it opens the
+ * recording ([onOpen]).
+ *
  * [motion] false (the OS reduces motion): it fades in and out in 150 ms, the ring jumps instead of refilling.
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -191,6 +205,10 @@ fun ScreenshotThumbnail(
     editButton: ScreenBoundsRef? = null,
     /** Where the card is on screen (the editor window shrinks into it). */
     card: ScreenBoundsRef? = null,
+    /** A recording's Export GIF: the window opens its Export GIF window (which holds the timer). */
+    onExportGif: (Shot) -> Unit = {},
+    /** Where a recording's Export GIF button is on screen (its window grows from it). */
+    gifButton: ScreenBoundsRef? = null,
 ) {
     val shot by state.shown.collectAsState()
     // The card keeps showing the last screenshot while it leaves. A plain holder.
@@ -215,7 +233,10 @@ fun ScreenshotThumbnail(
         },
     ) {
         val current = shot ?: last[0] ?: return@AnimatedVisibility
-        ThumbnailCard(state, current, motion, onCopy, onReveal, onOpen, dragStarter, onOsDrag, onEdit, editButton, card)
+        ThumbnailCard(
+            state, current, motion, onCopy, onReveal, onOpen, dragStarter, onOsDrag, onEdit, editButton, card,
+            onExportGif, gifButton,
+        )
     }
 }
 
@@ -233,11 +254,14 @@ private fun ThumbnailCard(
     onEdit: (Shot) -> Unit,
     editButton: ScreenBoundsRef?,
     card: ScreenBoundsRef?,
+    onExportGif: (Shot) -> Unit,
+    gifButton: ScreenBoundsRef?,
 ) {
     val colors = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val copied by state.copied.collectAsState()
     val editingId by state.editingShotId.collectAsState()
+    val gifIds by state.gifShotIds.collectAsState()
     val currentShot by rememberUpdatedState(shot)
     val hold = remember(state) { HoverHold(state) }
     // A card that leaves with the pointer on it gets no Exit: it must not hold the next one.
@@ -289,7 +313,7 @@ private fun ThumbnailCard(
                         ) {
                             Image(
                                 s.bitmap,
-                                contentDescription = "Screenshot",
+                                contentDescription = if (s.isRecording) "Recording" else "Screenshot",
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -319,10 +343,47 @@ private fun ThumbnailCard(
                                     }
                                     .clickable(onClickLabel = "Open") { onOpen(currentShot.file) },
                             )
-                            EditingDim(editingId == s.id, Modifier.matchParentSize())
+                            val dimmed = editingId == s.id || s.id in gifIds
+                            s.video?.let { RecordingMarks(it.durationMs, dimmed, Modifier.matchParentSize()) }
+                            EditingDim(
+                                dimmed,
+                                if (s.isRecording) "MAKING GIF" else "EDITING",
+                                Modifier.matchParentSize(),
+                            )
                         }
                         if (open && s.edited) EditedTag(Modifier.align(Alignment.TopStart).padding(4.dp))
                     }
+                }
+                // A recording's actions differ from a screenshot's: the row crossfades when one replaces the other.
+                Crossfade(shot.isRecording, animationSpec = tween(THUMBNAIL_SWAP_MILLIS), label = "thumbnailActions") { recording ->
+                if (recording) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        val hot = currentShot.id in gifIds
+                        val hotColor by animateColorAsState(
+                            if (hot) colors.secondaryContainer else Color.Transparent,
+                            tween(EDITING_FADE_MILLIS),
+                            label = "gifButton",
+                        )
+                        Tip("Export GIF") {
+                            IconButton(
+                                modifier = Modifier.size(ACTION_SIZE)
+                                    .then(if (gifButton != null) Modifier.screenBoundsOf(gifButton) else Modifier)
+                                    .drawBehind { drawCircle(hotColor, radius = HOT_RADIUS.toPx()) },
+                                onClick = { onExportGif(currentShot) },
+                            ) {
+                                Icon(Icons.Filled.Gif, contentDescription = "Export GIF", Modifier.size(22.dp))
+                            }
+                        }
+                        Tip("Show in folder") {
+                            IconButton(modifier = Modifier.size(ACTION_SIZE), onClick = {
+                                state.touch()
+                                onReveal(currentShot.file)
+                            }) {
+                                Icon(Icons.Filled.FolderOpen, contentDescription = "Show in folder", Modifier.size(20.dp))
+                            }
+                        }
+                    }
+                    return@Crossfade
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     Tip(if (copied) "Copied" else "Copy") {
@@ -356,6 +417,7 @@ private fun ThumbnailCard(
                             Icon(Icons.Filled.FolderOpen, contentDescription = "Show in folder", Modifier.size(20.dp))
                         }
                     }
+                }
                 }
             }
         }
@@ -447,9 +509,12 @@ private class HoverHold(private val state: ScreenshotThumbnailState) {
     private fun apply() = state.hover(parts > 0 || drag)
 }
 
-/** While the markup editor is open: the image dims under "EDITING", fading in and out. It takes no input. */
+/**
+ * While the markup editor (or a recording's Export GIF window) is open: the image dims under [label] ("EDITING",
+ * "MAKING GIF"), fading in and out. It takes no input.
+ */
 @Composable
-private fun EditingDim(visible: Boolean, modifier: Modifier) {
+private fun EditingDim(visible: Boolean, label: String, modifier: Modifier) {
     AnimatedVisibility(
         visible,
         modifier,
@@ -458,11 +523,46 @@ private fun EditingDim(visible: Boolean, modifier: Modifier) {
     ) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)), contentAlignment = Alignment.Center) {
             Text(
-                "EDITING",
+                label,
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.8.sp),
             )
         }
+    }
+}
+
+/** A clip's length as the thumbnail shows it, "0:18" (minutes and whole seconds, rounded down). */
+fun clipLength(durationMs: Long): String {
+    val s = durationMs.coerceAtLeast(0) / 1000
+    return "${s / 60}:${(s % 60).toString().padStart(2, '0')}"
+}
+
+/**
+ * Over a recording's first frame: a play glyph in the middle (fading out while [dimmed], so the dim's label reads)
+ * and its length at the bottom-left. Takes no input.
+ */
+@Composable
+private fun RecordingMarks(durationMs: Long, dimmed: Boolean, modifier: Modifier) {
+    val glyph by animateFloatAsState(if (dimmed) 0f else 0.85f, tween(EDITING_FADE_MILLIS), label = "playGlyph")
+    Box(modifier) {
+        Icon(
+            Icons.Filled.PlayArrow,
+            contentDescription = null,
+            Modifier.align(Alignment.Center).size(30.dp).graphicsLayer { alpha = glyph },
+            tint = Color.White,
+        )
+        Text(
+            clipLength(durationMs),
+            Modifier
+                .align(Alignment.BottomStart)
+                .padding(4.dp)
+                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(3.dp))
+                .padding(horizontal = 4.dp, vertical = 1.dp),
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium, fontSize = 10.sp, lineHeight = 12.sp,
+            ),
+        )
     }
 }
 
