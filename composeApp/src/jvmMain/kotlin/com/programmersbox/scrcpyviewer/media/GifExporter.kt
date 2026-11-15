@@ -184,8 +184,17 @@ fun bundledFfmpeg(): Path {
         ?: throw GifExportException("FFmpeg isn't available on this computer")
     val file = Paths.get(path)
     if (!Files.isExecutable(file)) file.toFile().setExecutable(true)
+    if (com.programmersbox.scrcpyviewer.Os.isLinux) {
+        // libavutil needs these, bundled in the jar; make sure they sit next to the executable (LD_LIBRARY_PATH points there).
+        for (lib in LINUX_BUNDLED_LIBRARIES) {
+            runCatching { Loader.cacheResource(org.bytedeco.ffmpeg.ffmpeg::class.java, "${Loader.getPlatform()}/$lib") }
+        }
+    }
     return file
 }
+
+/** Shared libraries in the Linux jar that the bundled libraries need but JavaCPP may not extract by itself. */
+internal val LINUX_BUNDLED_LIBRARIES = listOf("libva.so.2", "libva-drm.so.2", "libdrm.so.2")
 
 /**
  * The GIF temp folder in the app's cache (palettes), inside the cache root made private to this user

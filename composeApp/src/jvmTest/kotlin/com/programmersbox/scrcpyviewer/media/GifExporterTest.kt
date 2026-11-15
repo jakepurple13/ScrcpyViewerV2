@@ -360,11 +360,11 @@ class GifExporterTest {
         }
         val clip = recordings.resolve("tiny clip 'q' #1 ü.mp4")
         val gen = runCatching {
-            ProcessBuilder(
+            ffmpegProcess(listOf(
                 ffmpeg.toString(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                 "-f", "lavfi", "-i", "testsrc=size=320x640:rate=30", "-t", "2",
                 "-c:v", "mpeg4", "-pix_fmt", "yuv420p", clip.toString(),
-            ).redirectErrorStream(true).start().let { p ->
+            )).redirectErrorStream(true).start().let { p ->
                 val out = p.inputStream.readAllBytes().decodeToString()
                 check(p.waitFor(60, TimeUnit.SECONDS) && p.exitValue() == 0) { out }
             }
