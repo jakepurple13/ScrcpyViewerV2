@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.emulator
 
+import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -111,5 +112,25 @@ class AvdCatalogTest {
         val size = avdSize(dir)!!
         assertTrue(size >= 300_000, "size $size")
         assertNull(avdSize(home.resolve("missing")))
+    }
+
+    @Test
+    fun `size gives up when du hangs`() {
+        if (OpenPlatform.current() == OpenPlatform.Windows) return
+        val dir = Files.createDirectories(home.resolve("slow"))
+        val started = System.nanoTime()
+        assertNull(avdSize(dir, timeoutMs = 300, du = { listOf("sleep", "20") }))
+        assertTrue(System.nanoTime() - started < 10_000_000_000L, "returned after the timeout, not after du")
+    }
+
+    @Test
+    fun `unreadable config still lists the avd`() {
+        val dir = Files.createDirectories(home.resolve("Bad.avd"))
+        Files.write(dir.resolve("config.ini"), byteArrayOf(0xFF.toByte(), 0xFE.toByte(), 0x41, 0x0A))
+        Files.writeString(home.resolve("Bad.ini"), "path=$dir\n")
+        val avd = readAvds(home).single()
+        assertEquals("Bad", avd.id)
+        assertEquals("Bad", avd.name)
+        assertEquals(AvdKind.Phone, avd.kind)
     }
 }

@@ -10,6 +10,7 @@ import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.adb.optionsKey
+import com.programmersbox.scrcpyviewer.emulator.EmulatorLauncher
 import com.programmersbox.scrcpyviewer.info.DeviceInfoReader
 import com.programmersbox.scrcpyviewer.links.LinkStore
 import com.programmersbox.scrcpyviewer.media.AudioPlayer
@@ -139,6 +140,24 @@ class AdbModule {
     @Singleton
     fun deviceInfoReaderFactory(client: AdbClient): DeviceInfoReaderFactory =
         DeviceInfoReaderFactory { DeviceInfoReader(client, it) }
+
+    /** Starts, watches and stops emulators; app-wide so a boot carries on (and still mirrors) on any screen. */
+    @Singleton
+    fun emulatorLauncher(
+        client: AdbClient,
+        tracker: DeviceTracker,
+        settings: AppSettings,
+        mirrors: MirrorRequests,
+        dataDir: DataDir,
+        scope: AppScope,
+    ): EmulatorLauncher = EmulatorLauncher(
+        adb = client,
+        devices = tracker.devices,
+        settings = settings,
+        mirrors = mirrors,
+        logDir = dataDir.path.resolve("emulator-logs"),
+        scope = scope,
+    )
 
     @Singleton
     fun wirelessAdb(client: AdbClient, mirrors: Lazy<MirrorController>): WirelessAdb = WirelessAdb(

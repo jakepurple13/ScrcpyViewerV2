@@ -80,6 +80,20 @@ data class Settings(
     val autoDownloadUpdates: Boolean = false,
     /** The menu bar (macOS) / system tray (Windows, Linux) icon listing the devices. */
     val showTrayIcon: Boolean = true,
+    /** The Android SDK folder chosen in the Emulators section; null looks in ANDROID_HOME, ANDROID_SDK_ROOT, the default. */
+    val androidSdkPath: String? = null,
+    /** Whether the Devices screen's Emulators section is unfolded. */
+    val emulatorsExpanded: Boolean = true,
+    /** Per-AVD launcher options, keyed by AVD id. */
+    val emulatorPrefs: Map<String, EmulatorPrefs> = emptyMap(),
+)
+
+/** One AVD's launcher options. [lastBootMillis] is how long its last successful boot took (the progress estimate). */
+@Serializable
+data class EmulatorPrefs(
+    val mirrorWhenReady: Boolean = false,
+    val showWindow: Boolean = false,
+    val lastBootMillis: Long? = null,
 )
 
 /** Everything the theme reads from [Settings]. */

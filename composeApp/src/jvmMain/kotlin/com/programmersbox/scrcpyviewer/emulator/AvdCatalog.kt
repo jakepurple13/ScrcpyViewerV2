@@ -69,7 +69,12 @@ internal fun readAvds(avdHome: Path): List<Avd> {
                 ?: return@runCatching null
             if (!Files.isDirectory(dir)) return@runCatching null
             val configFile = dir.resolve("config.ini")
-            val config = if (Files.isRegularFile(configFile)) parseIni(Files.readString(configFile)) else emptyMap()
+            // An unreadable config.ini (not UTF-8, no permission) still lists the AVD, under its id.
+            val config = if (Files.isRegularFile(configFile)) {
+                runCatching { parseIni(Files.readString(configFile)) }.getOrDefault(emptyMap())
+            } else {
+                emptyMap()
+            }
             val api = apiOf(config)
             Avd(
                 id = id,
@@ -83,20 +88,32 @@ internal fun readAvds(avdHome: Path): List<Avd> {
     }.sortedWith(compareBy<Avd, String>(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.id })
 }
 
-/** Size on disk of [dir]: `du -sk` on macOS and Linux, the sum of file sizes on Windows. Null when unreadable. */
-internal fun avdSize(dir: Path): Long? {
+/**
+ * Size on disk of [dir]: `du -sk` on macOS and Linux, the sum of file sizes on Windows. Null when unreadable, or
+ * when `du` takes longer than [timeoutMs] (it is then killed). [du] builds the command (tests swap in a slow one).
+ */
+internal fun avdSize(
+    dir: Path,
+    timeoutMs: Long = 30_000,
+    du: (Path) -> List<String> = { listOf("du", "-sk", it.toString()) },
+): Long? {
     if (!Files.isDirectory(dir)) return null
     return runCatching {
         if (OpenPlatform.current() == OpenPlatform.Windows) {
             Files.walk(dir).use { s -> s.filter { Files.isRegularFile(it) }.mapToLong { Files.size(it) }.sum() }
         } else {
-            val p = ProcessBuilder("du", "-sk", dir.toString()).redirectErrorStream(true).start()
-            val out = p.inputStream.bufferedReader().readText()
-            if (!p.waitFor(30, TimeUnit.SECONDS)) {
-                p.destroyForcibly()
-                return@runCatching null
+            // Output to a file, so the wait below is what bounds the call (reading a pipe first would block on du).
+            val out = Files.createTempFile("avd-size", ".txt")
+            try {
+                val p = ProcessBuilder(du(dir)).redirectErrorStream(true).redirectOutput(out.toFile()).start()
+                if (!p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+                    p.destroyForcibly()
+                    return@runCatching null
+                }
+                Files.readString(out).trim().substringBefore('\t').substringBefore(' ').toLongOrNull()?.times(1024)
+            } finally {
+                Files.deleteIfExists(out)
             }
-            out.trim().substringBefore('\t').substringBefore(' ').toLongOrNull()?.times(1024)
         }
     }.getOrNull()
 }
