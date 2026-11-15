@@ -642,8 +642,10 @@ private fun TrimStrip(
                 }
             }
             Box(Modifier.fillMaxWidth().height(HANDLE_HEIGHT)) {
-                Handle("Trim start", trimColor) { (state.startMs.toFloat() / duration * widthPx - handlePx / 2).coerceIn(0f, widthPx - handlePx) }
-                Handle("Trim end", trimColor) { (state.endMs.toFloat() / duration * widthPx - handlePx / 2).coerceIn(0f, widthPx - handlePx) }
+                // While the window grows out of its button the strip can be narrower than a handle: never a negative range.
+                val maxX = (widthPx - handlePx).coerceAtLeast(0f)
+                Handle("Trim start", trimColor) { (state.startMs.toFloat() / duration * widthPx - handlePx / 2).coerceIn(0f, maxX) }
+                Handle("Trim end", trimColor) { (state.endMs.toFloat() / duration * widthPx - handlePx / 2).coerceIn(0f, maxX) }
             }
         }
     }

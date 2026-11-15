@@ -139,12 +139,14 @@ class GifExportContentTest {
         val motion: Boolean,
         val state: GifExportState = GifExportState(file, video),
         val frames: FakeFrames = FakeFrames(),
+        w: Int = 720,
+        h: Int = 520,
     ) {
         val export = FakeExport()
         val said = mutableListOf<String>()
         val revealed = mutableListOf<Path>()
         var closed = 0
-        val d = SceneDriver(ImageComposeScene(720, 520, Density(1f)) {
+        val d = SceneDriver(ImageComposeScene(w, h, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 Surface(Modifier.fillMaxSize()) {
                     GifExportContent(
@@ -200,6 +202,16 @@ class GifExportContentTest {
         }
 
         fun close() = d.scene.close()
+    }
+
+    @Test
+    fun `a window still growing out of its button, narrower than a trim handle, lays out without crashing`() = onEdt {
+        // The window grows from the GIF button's size: early frames give the strip less room than a handle.
+        for ((w, h) in listOf(24 to 24, 60 to 40, 120 to 90)) {
+            val ui = Ui(motion = true, w = w, h = h)
+            ui.d.frames(4)
+            ui.close()
+        }
     }
 
     @Test
