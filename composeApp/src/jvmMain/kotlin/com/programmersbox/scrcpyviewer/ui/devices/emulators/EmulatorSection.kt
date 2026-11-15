@@ -643,9 +643,12 @@ private fun MoreButton(
 /** The reveal item's label: Finder on macOS, the file manager elsewhere. */
 internal fun revealLabel(platform: OpenPlatform): String = if (platform == OpenPlatform.Mac) "Show in Finder" else "Show in folder"
 
-/** Wipe data… is offered only for an AVD that is not running (Stopped or Failed) and not being wiped already. */
+/**
+ * Wipe data… is offered only for an AVD that is not running (Stopped or Failed), whose emulator process has exited,
+ * and that is not being wiped already.
+ */
 internal fun canWipe(row: EmulatorRow): Boolean =
-    (row.state is AvdState.Stopped || row.state is AvdState.Failed) && !row.wiping
+    (row.state is AvdState.Stopped || row.state is AvdState.Failed) && !row.wiping && !row.exiting
 
 /**
  * The ⋮ menu's items: the AVD id, Cold boot (Stopped or Failed only), the Mirror when ready and Show emulator window
@@ -668,8 +671,9 @@ internal fun EmulatorMenu(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
     )
-    val coldBoot = remember { MutableTransitionState(canWipe(row)) }
-    coldBoot.targetState = canWipe(row)
+    val canColdBoot = (row.state is AvdState.Stopped || row.state is AvdState.Failed) && !row.wiping
+    val coldBoot = remember { MutableTransitionState(canColdBoot) }
+    coldBoot.targetState = canColdBoot
     AnimatedVisibility(coldBoot, enter = menuItemEnter(motion), exit = menuItemExit(motion)) {
         DropdownMenuItem(
             text = { Text("Cold boot") },

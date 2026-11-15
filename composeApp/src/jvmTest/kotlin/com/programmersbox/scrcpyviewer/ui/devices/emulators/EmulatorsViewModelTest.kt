@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -407,6 +408,42 @@ class EmulatorsViewModelTest {
         assertFalse(vm.row("Pixel_9_API_36").wiping)
         assertEquals(listOf("Pixel_9_API_36.avd"), measured, "the freed space shows in the size")
         assertEquals("Wiped Pixel 9. Next start is a cold boot.", notices.last().text)
+    }
+
+    @Test
+    fun `a wipe still reports its result after the view model is cleared`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        val hold = CompletableDeferred<Unit>()
+        val launcher = launcher(wipeData = { hold.await() })
+        val notices = mutableListOf<EmulatorNotice>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { launcher.notices.toList(notices) }
+        val vmScope = kotlinx.coroutines.CoroutineScope(backgroundScope.coroutineContext + kotlinx.coroutines.Job())
+        val vm = EmulatorsViewModel(
+            launcher, settings, EmulatorEnvironment(env::get, home) { 1L }, vmScope, os = OpenPlatform.Linux,
+            io = UnconfinedTestDispatcher(testScheduler), reveal = {},
+        )
+        vm.onEvent(EmulatorEvent.Reload)
+        runCurrent()
+        vm.onEvent(EmulatorEvent.Wipe("Pixel_9_API_36"))
+        runCurrent()
+        vmScope.cancel()
+        hold.complete(Unit)
+        runCurrent()
+        assertEquals(listOf("Wiped Pixel 9. Next start is a cold boot."), notices.map { it.text })
+    }
+
+    @Test
+    fun `a row whose emulator process is still exiting is marked`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        val vm = viewModel()
+        vm.onEvent(EmulatorEvent.Start("Pixel_9_API_36"))
+        runCurrent()
+        assertTrue(vm.row("Pixel_9_API_36").exiting)
+        starter.processes.single().exit.complete(0)
+        runCurrent()
+        assertFalse(vm.row("Pixel_9_API_36").exiting)
     }
 
     @Test

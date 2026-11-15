@@ -40,6 +40,8 @@ internal data class EmulatorRow(
     val size: Long?,
     val prefs: EmulatorPrefs,
     val wiping: Boolean = false,
+    /** An emulator process of ours for it has not exited yet (the row may already read Stopped): no wipe until then. */
+    val exiting: Boolean = false,
 )
 
 internal data class EmulatorsUiState(
@@ -118,8 +120,9 @@ internal class EmulatorsViewModel(
     private var measurePending = false
 
     val state: StateFlow<EmulatorsUiState> = combine(
-        catalog, sizes, launcher.states.combine(launcher.wiping, ::Pair), launcher.bootingSerials, settings.settings,
-    ) { cat, sizes, (states, wiping), booting, s ->
+        catalog, sizes, combine(launcher.states, launcher.wiping, launcher.processAlive, ::Triple), launcher.bootingSerials,
+        settings.settings,
+    ) { cat, sizes, (states, wiping, alive), booting, s ->
         EmulatorsUiState(
             sdk = cat.sdk,
             // Only catalog AVDs: the launcher's map may hold others (an emulator of a Gradle managed device).
@@ -127,6 +130,7 @@ internal class EmulatorsViewModel(
                 EmulatorRow(
                     avd, states[avd.id] ?: AvdState.Stopped, sizes[avd.id], s.emulatorPrefs[avd.id] ?: EmulatorPrefs(),
                     wiping = avd.id in wiping,
+                    exiting = avd.id in alive,
                 )
             },
             expanded = s.emulatorsExpanded,
@@ -176,11 +180,15 @@ internal class EmulatorsViewModel(
         reload(measure = false)
     }
 
-    /** The launcher refuses a running AVD and reports the result as a snackbar; a wipe frees space, so sizes are read again. */
+    /**
+     * The launcher refuses a running AVD and reports the result as a snackbar, in its own scope so both happen even if
+     * this view model is cleared midway; a wipe frees space, so sizes are read again.
+     */
     private fun wipe(avdId: String) {
         val avd = catalog.value.avds.firstOrNull { it.id == avdId } ?: return
+        val result = launcher.launchWipe(avd)
         viewModelScope.launch {
-            if (launcher.wipe(avd).isSuccess) reload()
+            if (result.await().isSuccess) reload()
         }
     }
 

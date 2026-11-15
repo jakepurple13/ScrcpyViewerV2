@@ -360,13 +360,15 @@ class EmulatorSectionTest {
                 d.scene.close()
             }
         }
-        // Not while its data is already being wiped.
-        val d = menuScene(row(pixel).copy(wiping = true))
-        try {
-            d.frames(20)
-            assertTrue(assertNotNull(d.node("Wipe data…")).config.contains(SemanticsProperties.Disabled))
-        } finally {
-            d.scene.close()
+        // Not while its data is already being wiped, nor while our emulator process is still exiting.
+        for (row in listOf(row(pixel).copy(wiping = true), row(pixel).copy(exiting = true))) {
+            val d = menuScene(row)
+            try {
+                d.frames(20)
+                assertTrue(assertNotNull(d.node("Wipe data…")).config.contains(SemanticsProperties.Disabled), "$row")
+            } finally {
+                d.scene.close()
+            }
         }
     }
 
@@ -388,10 +390,14 @@ class EmulatorSectionTest {
         }
     }
 
-    /** How much each frame of the menu changed after its row went from Stopped to Running. */
+    /** How much each frame of the menu changed after its row went from [from] to [to] (Stopped to Running by default). */
     @OptIn(ExperimentalComposeUiApi::class)
-    private fun menuSteps(motion: Boolean): List<Long> {
-        var row by mutableStateOf(row(pixel))
+    private fun menuSteps(
+        motion: Boolean,
+        from: EmulatorRow = row(pixel),
+        to: EmulatorRow = row(pixel, AvdState.Running("emulator-5554")),
+    ): List<Long> {
+        var row by mutableStateOf(from)
         val scene = ImageComposeScene(320, 360, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 Surface(Modifier.fillMaxSize()) {
@@ -403,7 +409,7 @@ class EmulatorSectionTest {
             val d = SceneDriver(scene)
             d.frames(30)
             var last = d.snapshot()
-            row = row(pixel, AvdState.Running("emulator-5554"))
+            row = to
             Snapshot.sendApplyNotifications()
             return List(40) {
                 val next = d.snapshot()
@@ -420,6 +426,14 @@ class EmulatorSectionTest {
         val moving = menuSteps(motion = true)
         assertMoves(moving, "menu items")
         assertLandsQuickly(menuSteps(motion = false), "menu items")
+    }
+
+    @Test
+    fun `Wipe data fades in when the emulator process has exited`() {
+        // Only Wipe data's enabled state changes (Cold boot stays).
+        val exiting = row(pixel).copy(exiting = true)
+        assertMoves(menuSteps(motion = true, from = exiting, to = row(pixel)), "wipe enabled")
+        assertLandsQuickly(menuSteps(motion = false, from = exiting, to = row(pixel)), "wipe enabled")
     }
 
     /** How much each frame changed after the wipe dialog opened (or closed, from open). */

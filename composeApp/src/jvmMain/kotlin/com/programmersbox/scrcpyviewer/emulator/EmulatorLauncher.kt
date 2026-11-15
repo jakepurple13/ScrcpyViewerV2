@@ -140,8 +140,10 @@ class EmulatorLauncher(
     private val sessions = HashMap<String, Session>()
     private val external = HashMap<String, String>()
     private val asked = HashSet<Pair<String, Long?>>()
-    // Serials of processes we started that have not exited yet: their ports stay taken even after the row is Stopped.
-    private val live = HashSet<String>()
+    // Processes we started that have not exited yet, serial to AVD id: their ports stay taken even after the row is
+    // Stopped, and their AVD cannot be wiped (the emulator may still be saving its snapshot).
+    private val live = HashMap<String, String>()
+    private val _alive = MutableStateFlow<Set<String>>(emptySet())
 
     /** By AVD id; Stopped AVDs are absent. */
     val states: StateFlow<Map<String, AvdState>> = _states.asStateFlow()
@@ -153,6 +155,12 @@ class EmulatorLauncher(
 
     /** AVD ids whose data is being wiped: they cannot start until it finishes. */
     val wiping: StateFlow<Set<String>> = _wiping.asStateFlow()
+
+    /**
+     * AVD ids with an emulator process we started that has not exited yet. Its row can read Stopped or Failed before
+     * then (a Stop before adb listed it, a Stop while it saves its snapshot, a boot timeout): it cannot be wiped yet.
+     */
+    val processAlive: StateFlow<Set<String>> = _alive.asStateFlow()
 
     init {
         scope.launch { devices.collect(::onDevices) }
@@ -171,7 +179,7 @@ class EmulatorLauncher(
             _notices.tryEmit(EmulatorNotice("${avd.name} is still being wiped. Start it once that finishes."))
             return
         }
-        val taken = devices.value.map { it.serial }.toSet() + sessions.values.map { it.serial } + live
+        val taken = devices.value.map { it.serial }.toSet() + sessions.values.map { it.serial } + live.keys
         val port = pickPort(taken, isPortFree) ?: run {
             set(avd.id, AvdState.Failed("Couldn't start the emulator: no free port from $FIRST_PORT to $LAST_PORT", cold))
             return
@@ -187,12 +195,16 @@ class EmulatorLauncher(
         }
         val session = Session(avd.id, avd.name, "emulator-$port", cold, clock(), log, process)
         sessions[avd.id] = session
-        live += session.serial
+        live[session.serial] = avd.id
+        _alive.value = live.values.toSet()
         set(avd.id, AvdState.Booting(session.serial, BootStage.Starting, session.startedAt, cold))
         session.job = scope.launch { boot(session) }
         scope.launch {
             process.exit.await()
-            synchronized(lock) { live -= session.serial }
+            synchronized(lock) {
+                live -= session.serial
+                _alive.value = live.values.toSet()
+            }
         }
     }
 
@@ -237,6 +249,12 @@ class EmulatorLauncher(
         return result
     }
 
+    /**
+     * [wipe] in the launcher's app-wide scope: the wipe and its snackbar finish even when the screen that asked for it
+     * goes away.
+     */
+    internal fun launchWipe(avd: Avd): Deferred<Result<Unit>> = scope.async { wipe(avd) }
+
     private suspend fun runWipe(avd: Avd): Result<Unit> {
         val asked = synchronized(lock) {
             if (avd.id in _wiping.value) return Result.failure(WipeRefused("it's already being wiped"))
@@ -272,6 +290,7 @@ class EmulatorLauncher(
             state is AvdState.Stopping -> "it's still stopping"
             state !is AvdState.Stopped && state !is AvdState.Failed -> "it's running"
             sessions.containsKey(avdId) || avdId in external.values -> "it's running"
+            avdId in live.values -> "it's still stopping"
             else -> null
         }
     }
@@ -496,8 +515,14 @@ class EmulatorLauncher(
     }
 }
 
-/** What a wipe deletes inside an AVD folder: the user data and cache images (raw and qcow2 overlay) and the snapshots. */
-internal val WIPE_ENTRIES = listOf("userdata-qemu.img", "userdata-qemu.img.qcow2", "cache.img", "cache.img.qcow2", "snapshots")
+/**
+ * What a wipe deletes inside an AVD folder: the snapshots (first, so a wipe stopped by an error never leaves a
+ * snapshot to load over fresh data), then the user data and cache images (raw and qcow2 overlay).
+ */
+internal val WIPE_ENTRIES = listOf("snapshots", "userdata-qemu.img", "userdata-qemu.img.qcow2", "cache.img", "cache.img.qcow2")
+
+/** Lock files a running emulator keeps in its AVD folder, also one started elsewhere that adb does not list yet. */
+internal val AVD_LOCK_FILES = listOf("hardware-qemu.ini.lock", "multiinstance.lock")
 
 /** A wipe refused before anything was deleted; the message completes "Couldn't wipe <name>: …". */
 internal class WipeRefused(message: String) : Exception(message)
@@ -521,6 +546,13 @@ private fun wipeFailure(e: Throwable): String {
 internal fun wipeAvdData(dir: Path) {
     // A symlinked AVD folder is fine: where it points is the AVD.
     val root = dir.toRealPath()
+    // The catalog's `path=` can name any folder: only one with an AVD's config.ini is wiped.
+    if (!Files.isRegularFile(root.resolve("config.ini"), LinkOption.NOFOLLOW_LINKS)) {
+        throw WipeRefused("its folder has no config.ini. Nothing was deleted")
+    }
+    AVD_LOCK_FILES.firstOrNull { Files.exists(root.resolve(it), LinkOption.NOFOLLOW_LINKS) }?.let {
+        throw WipeRefused("it's running ($it is in its folder)")
+    }
     val entries = WIPE_ENTRIES.map { root.resolve(it) }.filter { Files.exists(it, LinkOption.NOFOLLOW_LINKS) }
     // All checked before any is deleted: a wipe either refuses or deletes.
     for (entry in entries) {
