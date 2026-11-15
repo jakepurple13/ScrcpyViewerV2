@@ -232,6 +232,14 @@ class DeviceRowTest {
     }
 
     @Test
+    fun `the simple view says Connected · Emulator for an emulator and Connected · USB for a phone`() = onEdt {
+        val emu = detailTexts(emulator, advanced = false)
+        assertTrue("Connected · Emulator" in emu, "$emu")
+        assertFalse("Connected · USB" in emu, "$emu")
+        assertTrue("Connected · USB" in detailTexts(phone, advanced = false))
+    }
+
+    @Test
     fun `without motion an emulator's title changes at once`() = onEdt {
         val titles = titlesAfterMatch(motion = false)
         val first = titles.frames[1]

@@ -164,7 +164,11 @@ private fun DeviceHeader(device: Device) {
                 overflow = TextOverflow.Ellipsis,
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val connection = if (device.isTcp) "Wi-Fi" else "USB"
+                val connection = when {
+                    isEmulatorSerial(device.serial) -> "Emulator"
+                    device.isTcp -> "Wi-Fi"
+                    else -> "USB"
+                }
                 when (device.state) {
                     DeviceState.Device -> Fact(
                         "Connected · $connection",
