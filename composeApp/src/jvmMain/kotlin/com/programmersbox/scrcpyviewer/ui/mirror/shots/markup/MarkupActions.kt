@@ -1,9 +1,5 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.shots.markup
 
-import androidx.compose.runtime.Stable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.asSkiaBitmap
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnailState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.Shot
@@ -13,31 +9,6 @@ import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.coroutines.CoroutineContext
-
-/**
- * The mirror window's markup editor: which screenshot it edits ([shot], null when closed). Opening it holds the
- * [thumbnail]'s timer; closing it restarts the timer at 6 s. One edit at a time. UI thread only.
- */
-@Stable
-class MarkupEditorHost(private val thumbnail: ScreenshotThumbnailState) {
-    var shot by mutableStateOf<Shot?>(null)
-        private set
-
-    val isOpen: Boolean get() = shot != null
-
-    /** Opens the editor on [shot] (its bitmap is the thumbnail's: the editor leases it while it draws it). */
-    fun open(shot: Shot) {
-        if (this.shot != null) return
-        this.shot = shot
-        thumbnail.editing(true)
-    }
-
-    fun close() {
-        if (shot == null) return
-        shot = null
-        thumbnail.editing(false)
-    }
-}
 
 /**
  * Copies [shot] with [marks] to the clipboard: rendered here (UI thread, while the editor holds the bitmap), then

@@ -31,8 +31,12 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.withFrameNanos
 import com.programmersbox.scrcpyviewer.ui.window.animateMacFrame
+import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
+import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
@@ -127,8 +131,52 @@ internal fun shrunkAroundCenter(r: Rectangle, scale: Float): Rectangle {
 /** With no Mirror button to land on, a closing window shrinks to this share of its size before it goes. */
 const val MIRROR_SHRINK_IN_PLACE = 0.9f
 
+/**
+ * Shows a hidden [window] at [from], ready to grow from there: [show] makes it visible. A hidden window is held to the
+ * screen it was made on (macOS moves one meant for another screen to that screen's edge, and narrows it, until it is
+ * shown), so it shows see-through, is put at [from] once on screen, and only then becomes visible. macOS's own appear
+ * zoom is turned off, as it would play on top of the growth.
+ */
+internal suspend fun showWindowAt(window: MirrorWindowHandle, from: Rectangle, show: () -> Unit) {
+    window.nsWindow?.let(::disableMacAppearAnimation)
+    val masked = window.nsWindow?.let { setMacAlpha(it, 0.0) } == true
+    show()
+    // Compose shows the window from a job of its own: wait until it is really on screen.
+    withTimeoutOrNull(1_000) { while (!window.isShowing) delay(8) }
+    if (window.bounds != from) {
+        window.bounds = from
+        withTimeoutOrNull(300) { while (window.bounds != from) delay(8) }
+    }
+    repeat(2) { withFrameNanos { } }
+    if (masked) window.nsWindow?.let { setMacAlpha(it, 1.0) }
+}
+
+/**
+ * Where a composable marked with [screenBoundsOf] is on screen now (window units), read on demand: the bounds a window
+ * grows from (a pressed button) or shrinks into (a thumbnail). A plain holder.
+ */
+class ScreenBoundsRef {
+    internal var tracker: OriginTracker? = null
+
+    /** The marked composable's screen bounds, or null while it is not on screen. */
+    fun current(): Rectangle? = tracker?.screenBounds()?.takeIf { it.width > 1 && it.height > 1 }
+}
+
+/** Marks this composable as [ref]'s: [ScreenBoundsRef.current] reads its screen bounds while it is composed. */
+@Composable
+fun Modifier.screenBoundsOf(ref: ScreenBoundsRef): Modifier {
+    val window = LocalMirrorWindowHandle.current
+    val density = LocalDensity.current.density
+    val tracker = remember(window, density) { OriginTracker(window, density) }
+    DisposableEffect(ref, tracker) {
+        ref.tracker = tracker
+        onDispose { if (ref.tracker === tracker) ref.tracker = null }
+    }
+    return onGloballyPositioned { tracker.coordinates = it }
+}
+
 /** Holds a composable's layout so its screen bounds can be read on press. A plain holder: never read in composition. */
-private class OriginTracker(val window: MirrorWindowHandle?, val density: Float) {
+internal class OriginTracker(val window: MirrorWindowHandle?, val density: Float) {
     var coordinates: LayoutCoordinates? = null
 
     fun screenBounds(): Rectangle? = try {

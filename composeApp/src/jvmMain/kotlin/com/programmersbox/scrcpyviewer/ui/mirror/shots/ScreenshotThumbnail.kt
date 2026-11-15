@@ -76,6 +76,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.mirror.ScreenBoundsRef
+import com.programmersbox.scrcpyviewer.ui.mirror.screenBoundsOf
 import com.programmersbox.scrcpyviewer.ui.mirror.files.OutboundDragStarter
 import com.programmersbox.scrcpyviewer.ui.mirror.files.dragOutSource
 import kotlinx.coroutines.launch
@@ -165,8 +167,9 @@ fun ScreenshotFlash(state: ScreenshotFlashState, motion: Boolean, modifier: Modi
  *
  * A 150 dp card with the screenshot and Copy / Edit / Show in folder buttons, and a close button on its top-right
  * corner ringed by the countdown. Edit runs [onEdit] (the window opens the markup editor, which holds the timer). An
- * edited screenshot carries an "EDITED" tag at its top-left. While the editor is open the image dims under an "EDITING"
- * label (250 ms fade) and the countdown holds. Clicking the image runs [onOpen]; dragging it starts [dragStarter]'s OS drag of the PNG
+ * edited screenshot carries an "EDITED" tag at its top-left. While the editor is open on this screenshot the image dims
+ * under an "EDITING" label (250 ms fade); while it is open at all the countdown holds. [editButton] and [card] tell
+ * the editor window where to grow from and shrink into. Clicking the image runs [onOpen]; dragging it starts [dragStarter]'s OS drag of the PNG
  * (copy only), with [onOsDrag] told while it runs. [onCopy] copies the image off the UI thread and says whether it
  * worked (the button then shows a check). Copy, reveal and drag restart the timer; a drop elsewhere dismisses it.
  *
@@ -184,6 +187,10 @@ fun ScreenshotThumbnail(
     modifier: Modifier = Modifier,
     onOsDrag: (Boolean) -> Unit = {},
     onEdit: (Shot) -> Unit = {},
+    /** Where the Edit button is on screen (the editor window grows from it). */
+    editButton: ScreenBoundsRef? = null,
+    /** Where the card is on screen (the editor window shrinks into it). */
+    card: ScreenBoundsRef? = null,
 ) {
     val shot by state.shown.collectAsState()
     // The card keeps showing the last screenshot while it leaves. A plain holder.
@@ -208,7 +215,7 @@ fun ScreenshotThumbnail(
         },
     ) {
         val current = shot ?: last[0] ?: return@AnimatedVisibility
-        ThumbnailCard(state, current, motion, onCopy, onReveal, onOpen, dragStarter, onOsDrag, onEdit)
+        ThumbnailCard(state, current, motion, onCopy, onReveal, onOpen, dragStarter, onOsDrag, onEdit, editButton, card)
     }
 }
 
@@ -224,11 +231,13 @@ private fun ThumbnailCard(
     dragStarter: OutboundDragStarter,
     onOsDrag: (Boolean) -> Unit,
     onEdit: (Shot) -> Unit,
+    editButton: ScreenBoundsRef?,
+    card: ScreenBoundsRef?,
 ) {
     val colors = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val copied by state.copied.collectAsState()
-    val editing by state.isEditing.collectAsState()
+    val editingId by state.editingShotId.collectAsState()
     val currentShot by rememberUpdatedState(shot)
     val hold = remember(state) { HoverHold(state) }
     // A card that leaves with the pointer on it gets no Exit: it must not hold the next one.
@@ -246,7 +255,11 @@ private fun ThumbnailCard(
     }
     Box {
         Surface(
-            Modifier.padding(top = CLOSE_OVERHANG, end = CLOSE_OVERHANG).width(CARD_WIDTH).then(hoverModifier),
+            Modifier
+                .padding(top = CLOSE_OVERHANG, end = CLOSE_OVERHANG)
+                .width(CARD_WIDTH)
+                .then(if (card != null) Modifier.screenBoundsOf(card) else Modifier)
+                .then(hoverModifier),
             shape = RoundedCornerShape(12.dp),
             color = colors.surfaceContainerHigh,
             shadowElevation = 6.dp,
@@ -306,7 +319,7 @@ private fun ThumbnailCard(
                                     }
                                     .clickable(onClickLabel = "Open") { onOpen(currentShot.file) },
                             )
-                            EditingDim(editing, Modifier.matchParentSize())
+                            EditingDim(editingId == s.id, Modifier.matchParentSize())
                         }
                         if (open && s.edited) EditedTag(Modifier.align(Alignment.TopStart).padding(4.dp))
                     }
@@ -328,7 +341,10 @@ private fun ThumbnailCard(
                         }
                     }
                     Tip("Edit") {
-                        IconButton(modifier = Modifier.size(ACTION_SIZE), onClick = { onEdit(currentShot) }) {
+                        IconButton(
+                            modifier = Modifier.size(ACTION_SIZE).then(if (editButton != null) Modifier.screenBoundsOf(editButton) else Modifier),
+                            onClick = { onEdit(currentShot) },
+                        ) {
                             Icon(Icons.Filled.Edit, contentDescription = "Edit", Modifier.size(20.dp))
                         }
                     }

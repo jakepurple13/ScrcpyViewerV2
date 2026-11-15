@@ -290,7 +290,7 @@ class MirrorScreenshotTest {
         }
         if (copied) thumbnail.markCopied()
         now = 2_000
-        if (editing) thumbnail.editing(true)
+        if (editing) thumbnail.editing(thumbnail.shown.value)
         try {
             renderToPng(1280, 800, out, settleMillis = 1_000) {
                 ScrcpyViewerTheme(AppTheme(mode)) {

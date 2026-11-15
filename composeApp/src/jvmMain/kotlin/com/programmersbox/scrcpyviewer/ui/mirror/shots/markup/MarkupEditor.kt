@@ -1,20 +1,16 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.shots.markup
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -61,7 +57,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,9 +85,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -114,15 +107,6 @@ import kotlinx.coroutines.launch
 import org.jetbrains.skia.Paint
 import kotlin.math.roundToInt
 
-/** The scrim fades in over this long when the (temporary, in-window) editor host opens. */
-const val EDITOR_SCRIM_IN_MILLIS = 300
-
-/** The host's card grows from [EDITOR_FROM_SCALE] and rises [EDITOR_RISE] while it fades in. */
-const val EDITOR_IN_MILLIS = 450
-
-/** Closing: the host's card shrinks to [EDITOR_TO_SCALE] and fades, with the scrim. */
-const val EDITOR_OUT_MILLIS = 200
-
 /** With reduced motion everything only fades, this long. */
 const val EDITOR_FADE_MILLIS = 150
 
@@ -139,9 +123,6 @@ const val UNDO_FADE_MILLIS = 150
 const val PROMPT_IN_MILLIS = 300
 const val PROMPT_FADE_MILLIS = 200
 
-const val EDITOR_FROM_SCALE = 0.88f
-const val EDITOR_TO_SCALE = 0.95f
-val EDITOR_RISE = 14.dp
 const val SWATCH_SCALE = 1.12f
 
 /** The footer's hint. */
@@ -152,16 +133,6 @@ fun editorImageSize(width: Int, height: Int): String = "$width × $height"
 
 /** The canvas area's padding around the screenshot. */
 private val CANVAS_PADDING = 12.dp
-
-/** The temporary host's card keeps this far from the window's edges, and is at least [HOST_MIN_WIDTH] wide. */
-private val HOST_MARGIN = 24.dp
-private val HOST_MIN_WIDTH = 520.dp
-
-/** The host card's toolbar, footer and canvas padding, around the screenshot: sizes the card to its aspect ratio. */
-private val HOST_CHROME = 110.dp
-
-/** Material's standard easing: the host card leaving. */
-private val Standard = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 private val MarkupTool.label: String get() = name
 
@@ -194,9 +165,10 @@ class MarkupEditorState internal constructor(val shot: Shot) {
     /** A copy or save runs. */
     internal var busy by mutableStateOf(false)
 
-    /** Set by [MarkupEditorContent]: false while it leaves (nothing acts any more), and what closes it. */
+    /** Set by [MarkupEditorContent]: false while it leaves (nothing acts any more), what closes it, and Keep editing. */
     internal var active = true
     internal var close: () -> Unit = {}
+    internal var declined: () -> Unit = {}
 
     /** There are marks not saved or copied. */
     val dirty: Boolean get() = doc.dirty
@@ -218,6 +190,7 @@ class MarkupEditorState internal constructor(val shot: Shot) {
 
     internal fun keepEditing() {
         confirming = false
+        declined()
     }
 
     internal fun discard() {
@@ -239,10 +212,12 @@ fun rememberMarkupEditorState(shot: Shot): MarkupEditorState = remember(shot) { 
  * [onCopy] copies the marked image (true: the Copy button shows a check for 1.5 s), [onSave] saves it (true: the
  * editor closes through [onClose]; false: it stays open with its marks). Esc and the window's close button
  * ([MarkupEditorState.requestClose] on [state]) ask "Discard your marks?" while there are marks not saved or copied,
- * else call [onClose]. Esc and Ctrl/Cmd+Z are consumed.
+ * else call [onClose]. Keep editing in that prompt calls [onCloseDeclined] (a close the mirror window asked for is
+ * off). Esc and Ctrl/Cmd+Z are consumed.
  *
  * The canvas draws through [wake] (0 off, 1 on; read at draw time only): black, then the screen switching on as the
- * mirror window's does ([WakeStage]). [active] false (the window is leaving): nothing acts any more.
+ * mirror window's does ([WakeStage]), or with [wakeFades] a plain fade in. [active] false (the window is leaving):
+ * nothing acts any more.
  *
  * The shot's bitmap is [leases]'s: the content acquires it while it draws it, so it is never closed under it.
  * [motion] false (reduced motion): only 150 ms fades.
@@ -259,6 +234,8 @@ fun MarkupEditorContent(
     state: MarkupEditorState = rememberMarkupEditorState(shot),
     wake: () -> Float = { 1f },
     active: Boolean = true,
+    onCloseDeclined: () -> Unit = {},
+    wakeFades: Boolean = !motion,
 ) {
     val colors = MaterialTheme.colorScheme
     // This slot draws the shot's bitmap until it leaves the composition: only then may the thumbnail close it.
@@ -267,6 +244,7 @@ fun MarkupEditorContent(
     SideEffect {
         state.active = active
         state.close = onClose
+        state.declined = onCloseDeclined
     }
     val scope = rememberCoroutineScope()
     val doc = state.doc
@@ -341,7 +319,7 @@ fun MarkupEditorContent(
             .background(colors.surface)
             .focusRequester(focus)
             .focusable()
-            // Every key is the editor's while it is open: it never reaches the device.
+            // The editor's keys stay in its own window: the mirror window's device keys never see them.
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && currentActive) {
                     when {
@@ -374,8 +352,14 @@ fun MarkupEditorContent(
                     w = h * aspect
                 }
                 Box(Modifier.size(w, h).clip(RoundedCornerShape(8.dp)).background(Color.Black)) {
-                    WakeStage(wake, standby = false) {
-                        MarkCanvas(shot, doc, drawable, state.tool, state.color, fading, { fade.value })
+                    if (wakeFades) {
+                        Box(Modifier.matchParentSize().graphicsLayer { alpha = wake().coerceIn(0f, 1f) }) {
+                            MarkCanvas(shot, doc, drawable, state.tool, state.color, fading, { fade.value })
+                        }
+                    } else {
+                        WakeStage(wake, standby = false) {
+                            MarkCanvas(shot, doc, drawable, state.tool, state.color, fading, { fade.value })
+                        }
                     }
                 }
             }
@@ -471,108 +455,6 @@ private fun ToolbarSeparator() {
     Box(Modifier.padding(horizontal = 6.dp).width(1.dp).height(20.dp).background(MaterialTheme.colorScheme.outlineVariant))
 }
 
-/**
- * Temporary until the editor has its own window: [MarkupEditorContent] in a card over a scrim filling this
- * composable's place (the mirror window). Shown while [shot] is not null; it keeps the last shot while it animates
- * out. A click on the scrim asks to close, as Esc does.
- */
-@Composable
-fun MarkupEditor(
-    shot: Shot?,
-    motion: Boolean,
-    onCopy: suspend (Shot, List<Mark>) -> Boolean,
-    onSave: suspend (Shot, List<Mark>) -> Boolean,
-    onClose: () -> Unit,
-    leases: ScreenshotThumbnailState,
-    modifier: Modifier = Modifier,
-) {
-    // The card keeps showing the last shot while it leaves. A plain holder.
-    val last = remember { arrayOfNulls<Shot>(1) }
-    shot?.let { last[0] = it }
-    AnimatedVisibility(
-        visible = shot != null,
-        modifier = modifier,
-        enter = fadeIn(tween(if (motion) EDITOR_SCRIM_IN_MILLIS else EDITOR_FADE_MILLIS)),
-        exit = fadeOut(tween(if (motion) EDITOR_OUT_MILLIS else EDITOR_FADE_MILLIS)),
-    ) {
-        val current = shot ?: last[0] ?: return@AnimatedVisibility
-        key(current.id) {
-            EditorScrim(current, open = shot != null, motion, onCopy, onSave, onClose, leases)
-        }
-    }
-}
-
-@Composable
-private fun AnimatedVisibilityScope.EditorScrim(
-    shot: Shot,
-    open: Boolean,
-    motion: Boolean,
-    onCopy: suspend (Shot, List<Mark>) -> Boolean,
-    onSave: suspend (Shot, List<Mark>) -> Boolean,
-    onClose: () -> Unit,
-    leases: ScreenshotThumbnailState,
-) {
-    val colors = MaterialTheme.colorScheme
-    val state = rememberMarkupEditorState(shot)
-    BoxWithConstraints(
-        Modifier
-            .fillMaxSize()
-            .background(colors.scrim.copy(alpha = 0.5f))
-            // The scrim takes every pointer event: nothing under it (the device's screen) gets one. A press asks to close.
-            .pointerInput(state) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val pressed = event.type == PointerEventType.Press && event.changes.none { it.isConsumed }
-                        event.changes.forEach { it.consume() }
-                        if (pressed) state.requestClose()
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        val rise = with(LocalDensity.current) { EDITOR_RISE.roundToPx() }
-        val enter: EnterTransition
-        val exit: ExitTransition
-        if (motion) {
-            val spec = tween<Float>(EDITOR_IN_MILLIS, easing = EmphasizedDecelerate)
-            enter = scaleIn(spec, initialScale = EDITOR_FROM_SCALE) +
-                slideInVertically(tween(EDITOR_IN_MILLIS, easing = EmphasizedDecelerate)) { rise } +
-                fadeIn(spec)
-            exit = scaleOut(tween(EDITOR_OUT_MILLIS, easing = Standard), targetScale = EDITOR_TO_SCALE) +
-                fadeOut(tween(EDITOR_OUT_MILLIS, easing = Standard))
-        } else {
-            enter = fadeIn(tween(EDITOR_FADE_MILLIS))
-            exit = fadeOut(tween(EDITOR_FADE_MILLIS))
-        }
-        val aspect = shot.bitmap.width.toFloat() / shot.bitmap.height.coerceAtLeast(1)
-        val height = maxOf(maxHeight - HOST_MARGIN * 2, 0.dp)
-        val room = maxOf(maxWidth - HOST_MARGIN * 2, 0.dp)
-        val width = minOf(maxOf((height - HOST_CHROME) * aspect + CANVAS_PADDING * 2, HOST_MIN_WIDTH), room)
-        Surface(
-            Modifier
-                .size(width, height)
-                .animateEnterExit(enter = enter, exit = exit)
-                // Presses on the card are the card's: they do not close it.
-                .pointerInput(Unit) {
-                    awaitPointerEventScope {
-                        while (true) awaitPointerEvent().changes.forEach { it.consume() }
-                    }
-                },
-            shape = RoundedCornerShape(26.dp),
-            color = colors.surface,
-            shadowElevation = 8.dp,
-        ) {
-            MarkupEditorContent(
-                shot, motion, onCopy, onSave, onClose, leases,
-                modifier = Modifier.fillMaxSize(),
-                state = state,
-                active = open,
-            )
-        }
-    }
-}
-
 /** The screenshot filling its place, with its marks; drags draw the current [tool]. */
 @Composable
 private fun MarkCanvas(
@@ -631,7 +513,8 @@ private fun MarkCanvas(
                 }
             },
     ) {
-        if (!drawable) return@Canvas
+        // Checked again at draw time: a closed native bitmap must never be drawn.
+        if (!drawable || shot.bitmap.asSkiaBitmap().isClosed) return@Canvas
         drawImage(
             shot.bitmap,
             dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()),

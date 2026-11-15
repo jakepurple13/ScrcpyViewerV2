@@ -26,7 +26,6 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -59,7 +58,7 @@ import kotlin.test.assertTrue
 /**
  * The editor's window content: toolbar, canvas fitted at the screenshot's aspect ratio, footer, tools, swatches,
  * drawing, undo, Copy, Save, closing and the discard prompt, Esc and Ctrl/Cmd+Z, the wake, and each motion row
- * sampled frame by frame (16 ms). Then the temporary host over the mirror window. Motion tests pass `motion = true`
+ * sampled frame by frame (16 ms). Motion tests pass `motion = true`
  * themselves: CI's macOS and Windows runners report reduce motion on.
  */
 @OptIn(ExperimentalComposeUiApi::class, InternalComposeUiApi::class)
@@ -706,169 +705,6 @@ class MarkupEditorTest {
         d.click(d.texted("Keep editing")!!)
         val gone = (1..20).map { d.frame(); d.texted("Discard your marks?") }
         assertNull(gone.last())
-        e.close()
-    }
-
-    // The temporary host over the mirror window (until the editor has its own window).
-
-    private inner class Host(motion: Boolean, shot: Shot? = null) {
-        var shot by mutableStateOf(shot)
-        var closes = 0
-        val d = SceneDriver(ImageComposeScene(width, height, Density(1f)) {
-            ScrcpyViewerTheme(ThemeMode.Light) {
-                Surface(Modifier.fillMaxSize()) {
-                    MarkupEditor(
-                        this.shot, motion,
-                        onCopy = { _, _ -> true },
-                        onSave = { _, _ -> true },
-                        onClose = {
-                            closes++
-                            this.shot = null
-                        },
-                        leases = leases,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            }
-        }).also { it.frames(2) }
-
-        fun open(bitmap: ImageBitmap = solid(gray)): Shot {
-            val s = assertNotNull(leases.keep(file, bitmap, leases.begin()))
-            shot = s
-            return s
-        }
-
-        fun opened(): Host {
-            open()
-            d.frames(40)
-            return this
-        }
-
-        fun close() = d.scene.close()
-    }
-
-    @Test
-    fun `the host shows the content in a card, and a click on the scrim asks to close`() = onEdt {
-        val e = Host(motion = true)
-        assertNull(e.d.texted(EDITOR_HINT))
-        e.opened()
-        val d = e.d
-        assertNotNull(d.texted(EDITOR_HINT))
-        val c = d.canvas()
-        assertEquals(0.5f, c.width / c.height, 0.01f)
-        assertTrue(d.texted("Copy")!!.boundsInRoot.right < width - 20f, "the card stays inside the window")
-        // A click on the card does not close it.
-        d.click(d.texted(EDITOR_HINT)!!)
-        assertEquals(0, e.closes)
-        // A click on the scrim, with marks: the prompt asks.
-        d.drawOn(Offset(0.2f, 0.2f), Offset(0.6f, 0.4f))
-        d.click(Offset(5f, 5f))
-        d.frames(30)
-        assertNotNull(d.texted("Discard your marks?"))
-        d.click(d.texted("Discard")!!)
-        assertEquals(1, e.closes)
-        d.frames(30)
-        assertNull(d.texted(EDITOR_HINT))
-        e.close()
-    }
-
-    @Test
-    fun `the host's scrim takes the pointer, nothing under the editor is clicked`() = onEdt {
-        var clicked = 0
-        val shot = assertNotNull(leases.keep(file, solid(gray), leases.begin()))
-        val scene = ImageComposeScene(width, height, Density(1f)) {
-            ScrcpyViewerTheme(ThemeMode.Light) {
-                Box(Modifier.fillMaxSize()) {
-                    Box(
-                        Modifier.fillMaxSize().pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) if (awaitPointerEvent().type == PointerEventType.Press) clicked++
-                            }
-                        },
-                    )
-                    MarkupEditor(shot, true, { _, _ -> true }, { _, _ -> true }, {}, leases, Modifier.fillMaxSize())
-                }
-            }
-        }
-        val d = SceneDriver(scene)
-        d.frames(40)
-        d.click(Offset(10f, 10f))
-        assertEquals(0, clicked)
-        scene.close()
-    }
-
-    @Test
-    fun `the shot's bitmap stays open while the host animates out, and is closed once it has left`() = onEdt {
-        val e = Host(motion = true)
-        val bitmap = solid(gray)
-        e.open(bitmap)
-        e.d.frames(40)
-        assertTrue(e.d.key(Key.Escape))
-        assertEquals(1, e.closes)
-        assertFalse(bitmap.asSkiaBitmap().isClosed, "still drawn while it animates out")
-        e.d.frames(30)
-        assertTrue(bitmap.asSkiaBitmap().isClosed)
-        e.close()
-    }
-
-    @Test
-    fun `the host opens fading the scrim in over 300 ms and growing the card from 88 percent while it rises, 450 ms`() = onEdt {
-        val e = Host(motion = true)
-        e.open()
-        val d = e.d
-        val widths = mutableListOf<Float>()
-        val tops = mutableListOf<Float>()
-        val scrim = mutableListOf<Float>()
-        repeat(32) {
-            val px = d.snapshot()
-            scrim += px[5, 5].red
-            d.described("Screenshot")?.boundsInRoot?.let {
-                widths += it.width
-                tops += it.top
-            }
-        }
-        val full = widths.last()
-        assertTrue(widths.first() < full * 0.92f && widths.first() > full * 0.85f, "starts near 88%: $widths")
-        assertTrue(widths.zipWithNext().all { (a, b) -> b >= a - 0.01f }, "only grows: $widths")
-        assertTrue(widths[10] > full * 0.97f, "emphasized decelerate: most of it early: $widths")
-        assertEquals(full, widths[28], 0.5f)
-        val settledTop = tops.last()
-        assertTrue(tops.first() > settledTop + 3f, "rises: $tops")
-        // The scrim darkens the white surface, done by 300 ms.
-        assertTrue(scrim[2] < 0.99f && scrim[2] > scrim[20] + 0.05f, "fades in: $scrim")
-        assertEquals(scrim[22], scrim.last(), 0.01f)
-        e.close()
-    }
-
-    @Test
-    fun `the host closes shrinking the card toward 95 percent and fading it with the scrim in 200 ms`() = onEdt {
-        val e = Host(motion = true).opened()
-        val d = e.d
-        val full = d.canvas().width
-        e.shot = null
-        val widths = (1..20).map { d.frame(); d.described("Screenshot")?.boundsInRoot?.width }
-        val moving = widths.filterNotNull()
-        assertTrue(moving.zipWithNext().all { (a, b) -> b <= a + 0.01f }, "only shrinks: $widths")
-        assertTrue(moving.last() < full * 0.97f && moving.last() >= full * 0.94f, "toward 95%: $widths")
-        assertTrue(moving.size in 11..16, "about 200 ms (plus the frames until the change composes): $widths")
-        assertNull(widths.last())
-        e.close()
-    }
-
-    @Test
-    fun `the host under reduced motion only fades, in 150 ms`() = onEdt {
-        val e = Host(motion = false)
-        e.open()
-        val d = e.d
-        val widths = (1..14).mapNotNull { d.frame(); d.described("Screenshot")?.boundsInRoot?.width }
-        assertTrue(widths.distinct().size == 1, "no scale: $widths")
-        val corner = (1..3).map { d.snapshot()[5, 5].red }
-        d.frames(10)
-        assertEquals(corner.last(), d.snapshot()[5, 5].red, 0.01f)
-        e.shot = null
-        val gone = (1..16).map { d.frame(); d.described("Screenshot")?.boundsInRoot?.width }
-        assertTrue(gone.filterNotNull().distinct().size <= 1, "no scale out: $gone")
-        assertTrue(gone.count { it != null } <= 13, "gone in 150 ms: $gone")
         e.close()
     }
 }
