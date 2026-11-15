@@ -279,6 +279,9 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
     // On CI, log each test as it starts: when a job hangs and times out, the last STARTED line names the test.
     if (System.getenv("CI") == "true") {
         testLogging { events("started", "failed", "skipped") }
+        // A fixed heap instead of a quarter of the runner's memory: with Gradle, xvfb, native Skia surfaces and
+        // FFmpeg processes alongside, an uncapped test JVM ran the Linux runner out of memory.
+        (this as Test).maxHeapSize = "2g"
     }
     if (deviceTests) {
         systemProperty("scrcpyviewer.bundledDir", layout.projectDirectory.dir("bundled").asFile.absolutePath)
