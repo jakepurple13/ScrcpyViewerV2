@@ -363,13 +363,13 @@ class ScreenshotThumbnailStateTest {
     fun `editing holds the timer and closing the editor restarts it at 6 seconds`() {
         state.show(file, bitmap())
         advance(4_000)
-        state.editing(true)
+        state.editing(state.shown.value)
         assertTrue(state.held.value)
         advance(60_000)
         assertNotNull(state.shown.value)
         assertEquals(2_000f / 6_000f, state.remainingFraction, 0.001f)
         val refills = state.refills.value
-        state.editing(false)
+        state.editing(null)
         assertFalse(state.held.value)
         assertEquals(1f, state.remainingFraction)
         assertEquals(refills + 1, state.refills.value)
@@ -383,12 +383,12 @@ class ScreenshotThumbnailStateTest {
     fun `hovering out while editing keeps the timer held`() {
         state.show(file, bitmap())
         state.hover(true)
-        state.editing(true)
+        state.editing(state.shown.value)
         state.hover(false)
         advance(60_000)
         assertNotNull(state.shown.value)
         assertTrue(state.held.value)
-        state.editing(false)
+        state.editing(null)
         advance(THUMBNAIL_MILLIS)
         assertNull(state.shown.value)
     }
@@ -396,9 +396,9 @@ class ScreenshotThumbnailStateTest {
     @Test
     fun `the pointer left on the card after editing holds the 6 seconds until it leaves`() {
         state.show(file, bitmap())
-        state.editing(true)
+        state.editing(state.shown.value)
         state.hover(true)
-        state.editing(false)
+        state.editing(null)
         assertTrue(state.held.value)
         advance(60_000)
         assertEquals(1f, state.remainingFraction)
@@ -409,11 +409,11 @@ class ScreenshotThumbnailStateTest {
 
     @Test
     fun `a screenshot shown while editing is held until the editor closes`() {
-        state.editing(true)
+        state.editing(Shot(file, bitmap(), id = -1))
         state.show(file, bitmap())
         advance(60_000)
         assertNotNull(state.shown.value)
-        state.editing(false)
+        state.editing(null)
         advance(THUMBNAIL_MILLIS)
         assertNull(state.shown.value)
     }

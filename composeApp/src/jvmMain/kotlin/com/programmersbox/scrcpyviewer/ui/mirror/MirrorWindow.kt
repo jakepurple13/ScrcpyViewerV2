@@ -213,8 +213,6 @@ import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import dev.nucleusframework.application.LocalNucleusApplicationScope
-import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
-import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
 import java.nio.file.Paths
 import kotlin.math.abs
 import kotlin.math.min
@@ -228,14 +226,13 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.common.ImageClipboard
 import com.programmersbox.scrcpyviewer.ui.common.openExternally
 import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
-import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditor
-import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorHost
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorWindow
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorWindowState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.copyMarked
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.saveMarkedShot
 import com.programmersbox.scrcpyviewer.ui.mirror.files.ComposeDragOutStarter
@@ -459,7 +456,11 @@ fun MirrorWindow(
     val thumbnail = remember { ScreenshotThumbnailState(uiScope) }
     DisposableEffect(thumbnail) { onDispose(thumbnail::dispose) }
     // The markup editor over the window: opened from the thumbnail's Edit or right after a screenshot (by setting).
-    val markupEditor = remember { MarkupEditorHost(thumbnail) }
+    val markupEditor = remember { MarkupEditorWindowState(thumbnail) }
+    // Where the editor window grows from (the thumbnail's Edit button, the toolbar's camera button) and shrinks into.
+    val editButton = remember { ScreenBoundsRef() }
+    val cameraButton = remember { ScreenBoundsRef() }
+    val thumbnailCard = remember { ScreenBoundsRef() }
     val screenshotDragStarter = remember { ComposeDragOutStarter() }
     /** The flash over the video, once per screenshot. Out here, so the content re-entering does not replay it. */
     val screenshotFlash = remember { ScreenshotFlashState() }
@@ -485,7 +486,7 @@ fun MirrorWindow(
                 notify = ::notify,
                 ticket = ticket,
                 canOpenEditor = { !markupEditor.isOpen },
-                openEditor = markupEditor::open,
+                openEditor = { markupEditor.open(it, cameraButton.current()) },
             )
         }
     }
@@ -733,7 +734,7 @@ fun MirrorWindow(
 
     // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now
     // (or a little, in place, when the main window does not show it), then it closes.
-    val requestClose: () -> Unit = close@{
+    val closeWindow: () -> Unit = close@{
         val w = windowHandle
         if (wake == null || w == null) return@close controller.close(serial)
         if (closing) return@close
@@ -751,6 +752,8 @@ fun MirrorWindow(
             }
         }
     }
+    // The markup editor window closes first: with marks not saved or copied it asks, and Keep editing keeps both open.
+    val requestClose: () -> Unit = { markupEditor.closeThen(uiScope, closeWindow) }
 
     val currentQuickActions by rememberUpdatedState(quickActions)
     // The device's keys: this window's key events before its content sees them (the sheet's fields get theirs back).
@@ -772,7 +775,6 @@ fun MirrorWindow(
             legacyPaste = "legacy-paste" in e,
             followerSend = follow::send,
             followerKeyRepeat = "no-key-repeat" !in e,
-            editorOpen = { markupEditor.isOpen },
         ).also { follow.heldKeyUp = it::followerHeldKeyUp }
     }
 
@@ -814,15 +816,6 @@ fun MirrorWindow(
             handle.focusEvents.collect {
                 keys.onFocusChanged(it)
                 if (!it) follow.releaseAll() // a release in another window never reaches the followers either
-            }
-        }
-        // The markup editor takes the keys and the pointer: release what the device holds, and the mouse capture.
-        LaunchedEffect(keys) {
-            snapshotFlow { markupEditor.isOpen }.collect { open ->
-                if (open) {
-                    keys.onEditorOpened()
-                    capture?.focusLost()
-                }
             }
         }
         DisposableEffect(keys) {
@@ -994,21 +987,7 @@ fun MirrorWindow(
         if (wake != null) {
             LaunchedEffect(Unit) {
                 if (zoomFrom != null && zoomTo != null) {
-                    // macOS would play its own zoom as the window appears, on top of this one.
-                    handle.nsWindow?.let(::disableMacAppearAnimation)
-                    // A hidden window is held to the screen it was made on: macOS moves one meant for another screen
-                    // to that screen's edge (and narrows it) until it is shown. So it shows see-through, is put at
-                    // the button once on screen, and only then becomes visible.
-                    val masked = handle.nsWindow?.let { setMacAlpha(it, 0.0) } == true
-                    shown = true
-                    // Compose shows the window from a job of its own: wait until it is really on screen.
-                    withTimeoutOrNull(1_000) { while (!handle.isShowing) delay(8) }
-                    if (handle.bounds != zoomFrom) {
-                        handle.bounds = zoomFrom
-                        withTimeoutOrNull(300) { while (handle.bounds != zoomFrom) delay(8) }
-                    }
-                    repeat(2) { withFrameNanos { } }
-                    if (masked) handle.nsWindow?.let { setMacAlpha(it, 1.0) }
+                    showWindowAt(handle, zoomFrom) { shown = true }
                     animateWindowBounds(handle, zoomTo, MIRROR_ZOOM_IN_MILLIS, grow = true, screenGeometry)
                     zooming = false
                 }
@@ -1149,6 +1128,7 @@ fun MirrorWindow(
                         clickIndicator = clickIndicator,
                         followIndicator = followRings,
                         onSheetBounds = { sheetBounds[0] = it },
+                        screenshotButton = cameraButton,
                         stageOverlay = {
                             ScreenshotFlash(screenshotFlash, motion = !reduceMotion)
                             ScreenshotThumbnail(
@@ -1165,32 +1145,37 @@ fun MirrorWindow(
                                 modifier = Modifier.align(Alignment.BottomEnd),
                                 // Dropped back on this window it would be pushed to the device: the drop targets refuse it.
                                 onOsDrag = { transfers.draggingOut = it },
-                                onEdit = markupEditor::open,
+                                onEdit = { markupEditor.open(it, editButton.current()) },
+                                editButton = editButton,
+                                card = thumbnailCard,
                             )
                         },
                     )
                     }
                 }
-                // Over the whole window content; its snackbars ("Saved …") show above it.
-                MarkupEditor(
-                    markupEditor.shot,
-                    motion = !reduceMotion,
-                    onCopy = { shot, marks ->
-                        copyMarked(shot, marks, ImageClipboard::copyPng) // the copy blocks up to 5 s: on IO in there
-                            .onFailure { notify("Could not copy the image: ${it.message ?: it}") }
-                            .isSuccess
-                    },
-                    onSave = { shot, marks -> saveMarkedShot(shot, marks, thumbnail, ::notify) },
-                    onClose = markupEditor::close,
-                    leases = thumbnail,
-                    modifier = Modifier.fillMaxSize(),
-                )
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(start = 16.dp, end = 80.dp, bottom = 44.dp))
             }
         }
     }
     // Logcat's own window, while it is out: part of this window's composition, so it closes with it.
     quickActions.logcat?.let { LogcatWindow(it, model, theme) }
+    // The markup editor's own window, likewise. Its keys are its own window's: none reaches the device.
+    MarkupEditorWindow(
+        markupEditor, model, theme,
+        animate = animate,
+        motion = !reduceMotion,
+        near = { windowHandle?.bounds },
+        thumbnail = { thumbnailCard.current()?.takeIf { thumbnail.shown.value != null } },
+        // Failures show in the editor window (it stays open); "Saved …" here, where the editor closes into the thumbnail.
+        onCopy = { shot, marks, say ->
+            copyMarked(shot, marks, ImageClipboard::copyPng) // the copy blocks up to 5 s: on IO in there
+                .onFailure { say("Could not copy the image: ${it.message ?: it}") }
+                .isSuccess
+        },
+        onSave = { shot, marks, say -> saveMarkedShot(shot, marks, thumbnail, ::notify, failed = say) },
+        leases = thumbnail,
+        screenGeometry = screenGeometry,
+    )
 }
 
 /** What the window's sheet-growth effect last ran for; a plain holder, read and written only in that effect. */
@@ -1333,6 +1318,8 @@ fun MirrorContent(
     onSheetBounds: (Rect?) -> Unit = {},
     /** Taps the leading window sent here: the same dot and click ring, at the spot they landed. */
     followIndicator: ClickIndicator? = null,
+    /** Where the toolbar's Screenshot (camera) button is on screen: the markup editor window can grow from it. */
+    screenshotButton: ScreenBoundsRef? = null,
     /** Drawn over the stage, above the video and its overlays (the screenshot flash and thumbnail). */
     stageOverlay: @Composable BoxScope.() -> Unit = {},
 ) {
@@ -1418,7 +1405,7 @@ fun MirrorContent(
                 }
                 stageOverlay()
             }
-            SideToolbar(state, onAction)
+            SideToolbar(state, onAction, screenshotButton)
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
             val panel = rememberQuickActionsPanel(
                 state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
@@ -1951,7 +1938,7 @@ private val toolbarIcons: Map<MirrorAction, ImageVector> = mapOf(
 internal val SIDE_TOOLBAR_WIDTH = 64.dp
 
 @Composable
-private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) {
+private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit, screenshotButton: ScreenBoundsRef? = null) {
     val colors = MaterialTheme.colorScheme
     Column(
         Modifier.width(SIDE_TOOLBAR_WIDTH).fillMaxHeight().background(colors.surfaceContainer).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
@@ -1980,6 +1967,7 @@ private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) 
                     label = if (recording) "Stop recording" else action.label,
                     tint = if (recording) colors.error else null,
                     selected = action == MirrorAction.QuickActions && state.quickActions.open,
+                    modifier = if (action == MirrorAction.Screenshot && screenshotButton != null) Modifier.screenBoundsOf(screenshotButton) else Modifier,
                 ) { onAction(action) }
             }
         }
@@ -1988,7 +1976,15 @@ private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ToolbarButton(action: MirrorAction, enabled: Boolean, label: String, tint: Color?, selected: Boolean = false, onClick: () -> Unit) {
+private fun ToolbarButton(
+    action: MirrorAction,
+    enabled: Boolean,
+    label: String,
+    tint: Color?,
+    selected: Boolean = false,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     TooltipArea(
         tooltip = {
             Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
@@ -2007,7 +2003,7 @@ private fun ToolbarButton(action: MirrorAction, enabled: Boolean, label: String,
         } else {
             IconButtonDefaults.iconButtonColors()
         }
-        IconButton(onClick = onClick, enabled = enabled, colors = buttonColors) {
+        IconButton(onClick = onClick, modifier = modifier, enabled = enabled, colors = buttonColors) {
             Icon(
                 toolbarIcons.getValue(action),
                 contentDescription = label,

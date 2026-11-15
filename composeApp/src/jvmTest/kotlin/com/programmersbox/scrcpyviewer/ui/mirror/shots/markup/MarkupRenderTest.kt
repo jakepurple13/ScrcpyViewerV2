@@ -81,6 +81,17 @@ class MarkupRenderTest {
     }
 
     @Test
+    fun circleDrawsAnEllipseRingInscribedInItsRectangle() {
+        val orig = gradient(300, 200)
+        val out = rendered(orig, listOf(Mark.Circle(MarkupColor.Blue.argb, MarkPoint(50f, 50f), MarkPoint(250f, 150f))))
+        assertEquals(MarkupColor.Blue.argb, out.getColor(150, 50), "top")
+        assertEquals(MarkupColor.Blue.argb, out.getColor(50, 100), "left")
+        assertEquals(MarkupColor.Blue.argb, out.getColor(250, 100), "right")
+        assertEquals(orig.getColor(150, 100), out.getColor(150, 100), "inside untouched")
+        assertEquals(orig.getColor(55, 55), out.getColor(55, 55), "the rectangle's corner untouched")
+    }
+
+    @Test
     fun penDrawsAlongItsPoints() {
         val orig = gradient(200, 200)
         val pen = Mark.Pen(

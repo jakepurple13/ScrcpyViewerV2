@@ -543,23 +543,17 @@ class ScreenshotThumbnailTest {
     }
 
     @Test
-    fun `Edit opens the editor over the window and holds the timer until it closes`() = onEdt {
-        val host = com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorHost(state)
+    fun `Edit opens one editor window on the shot and holds the timer until it closes`() = onEdt {
+        val editor = com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorWindowState(state)
         val d = SceneDriver(ImageComposeScene(1000, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 Surface(Modifier.fillMaxSize()) {
-                    Box(Modifier.fillMaxSize()) {
-                        Box(Modifier.fillMaxSize().padding(end = AREA_END.dp)) {
-                            ScreenshotThumbnail(
-                                state, motion = true, onCopy = { true }, onReveal = {}, onOpen = {},
-                                dragStarter = FakeStarter(dropped = false),
-                                modifier = Modifier.align(Alignment.BottomEnd),
-                                onEdit = host::open,
-                            )
-                        }
-                        com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditor(
-                            host.shot, motion = true, onCopy = { _, _ -> true }, onSave = { _, _ -> true },
-                            onClose = host::close, leases = state, modifier = Modifier.fillMaxSize(),
+                    Box(Modifier.fillMaxSize().padding(end = AREA_END.dp)) {
+                        ScreenshotThumbnail(
+                            state, motion = true, onCopy = { true }, onReveal = {}, onOpen = {},
+                            dragStarter = FakeStarter(dropped = false),
+                            modifier = Modifier.align(Alignment.BottomEnd),
+                            onEdit = { editor.open(it, null) },
                         )
                     }
                 }
@@ -567,21 +561,112 @@ class ScreenshotThumbnailTest {
         }).also { it.frames(2) }
         state.show(file, solid(Color.Red))
         d.frames(30)
+        val shot = state.shown.value!!
         d.click(d.described("Edit")!!)
-        d.frames(40)
-        assertNotNull(d.texted("Edit screenshot"))
+        d.frames(20)
+        assertTrue(editor.shot === shot)
         assertTrue(state.held.value)
+        assertTrue(state.isEditing.value)
+        assertEquals(shot.id, state.editingShotId.value)
+        assertNotNull(d.texted("EDITING"))
+        // Pressed again (twice, fast): still the one editor, brought to the front.
+        d.click(d.described("Edit")!!)
+        d.click(d.described("Edit")!!)
+        assertTrue(editor.shot === shot)
+        assertEquals(2, editor.raises)
+        // The pointer leaves the card: only the editor holds the timer now.
+        d.scene.sendPointerEvent(PointerEventType.Move, Offset(5f, 5f), type = PointerType.Mouse)
         advance(60_000)
         d.frames(2)
         assertNotNull(state.shown.value, "held while editing")
-        d.click(d.texted("Close")!!)
+        editor.closed(shot)
         d.frames(30)
-        assertNull(d.texted("Edit screenshot"))
+        assertFalse(state.isEditing.value)
+        assertNull(state.editingShotId.value)
+        assertNull(d.texted("EDITING"))
         assertEquals(1f, state.remainingFraction, "restarts at 6 s")
         advance(THUMBNAIL_MILLIS - 1)
         assertNotNull(state.shown.value)
         advance(1)
         assertNull(state.shown.value)
+        d.scene.close()
+    }
+
+    @Test
+    fun `only the shot being edited dims, not an older thumbnail on show`() = onEdt {
+        val d = scene(motion = true)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        // The editor opened on a later screenshot kept for it (Open editor): this thumbnail is not the one edited.
+        val kept = assertNotNull(state.keep(file, solid(Color.Blue), state.begin()))
+        state.editing(kept)
+        d.frames(30)
+        assertTrue(state.held.value, "the timer still holds")
+        assertNull(d.texted("EDITING"))
+        state.editing(null)
+        state.editing(state.shown.value)
+        d.frames(30)
+        assertNotNull(d.texted("EDITING"))
+        d.scene.close()
+    }
+
+    // The EDITING state.
+
+    @Test
+    fun `while the editor is open the image dims under EDITING, fading in and out in 250 ms`() = onEdt {
+        val d = scene(motion = true)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        assertNull(d.texted("EDITING"))
+        val image = d.described("Screenshot")!!.boundsInRoot
+        fun center() = d.snapshot()[image.center.x.toInt(), (image.top + image.height * 0.2f).toInt()]
+        val bright = center()
+        state.editing(state.shown.value)
+        val fadingIn = (1..20).map { center().red }
+        val label = assertNotNull(d.texted("EDITING")).boundsInRoot
+        assertTrue(image.contains(label.center), "over the image: $label in $image")
+        assertTrue(fadingIn.zipWithNext().all { (a, b) -> b <= a + 0.01f }, "only darkens: $fadingIn")
+        assertTrue(fadingIn.any { it < bright.red - 0.1f && it > fadingIn.last() + 0.05f }, "fades, not snaps: $fadingIn")
+        assertEquals(fadingIn.last(), fadingIn[17], 0.01f, "done by 250 ms: $fadingIn")
+        assertTrue(fadingIn.last() < bright.red * 0.7f, "dimmed: $fadingIn")
+        state.editing(null)
+        val fadingOut = (1..20).map { center().red }
+        assertTrue(fadingOut.any { it > fadingIn.last() + 0.05f && it < bright.red - 0.05f }, "fades out: $fadingOut")
+        assertEquals(bright.red, fadingOut.last(), 0.01f)
+        assertNull(d.texted("EDITING"))
+        d.scene.close()
+    }
+
+    @Test
+    fun `the countdown holds while editing, with the EDITING label up`() = onEdt {
+        val d = scene(motion = true)
+        state.show(file, solid(Color.Red))
+        d.frames(10)
+        advance(1_000)
+        state.editing(state.shown.value)
+        d.frames(20)
+        val held = state.remainingFraction
+        advance(30_000)
+        d.frames(5)
+        assertEquals(held, state.remainingFraction, "the ring stands still")
+        assertNotNull(state.shown.value)
+        assertNotNull(d.texted("EDITING"))
+        state.editing(null)
+        d.frames(20)
+        assertEquals(1f, state.remainingFraction, "restarts at 6 s")
+        d.scene.close()
+    }
+
+    @Test
+    fun `the EDITING dim takes no input, the image still opens`() = onEdt {
+        val calls = Calls()
+        val d = scene(motion = true, calls = calls)
+        state.show(file, solid(Color.Red))
+        d.frames(30)
+        state.editing(state.shown.value)
+        d.frames(20)
+        d.click(d.described("Screenshot")!!)
+        assertEquals(listOf(file), calls.opened)
         d.scene.close()
     }
 }

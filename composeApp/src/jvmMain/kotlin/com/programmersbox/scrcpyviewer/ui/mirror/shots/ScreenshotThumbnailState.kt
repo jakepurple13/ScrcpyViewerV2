@@ -75,6 +75,19 @@ class ScreenshotThumbnailState(
     /** The timer is held (pointer on the card, an OS drag, the editor open): the countdown ring need not redraw. */
     val held: StateFlow<Boolean> = _held.asStateFlow()
 
+    private val _editing = MutableStateFlow(false)
+
+    /** The markup editor is open: the timer is held. */
+    val isEditing: StateFlow<Boolean> = _editing.asStateFlow()
+
+    private val _editingShotId = MutableStateFlow<Long?>(null)
+
+    /**
+     * The [Shot.id] the open markup editor edits, null when it is closed. Only that screenshot's image dims under an
+     * "EDITING" label: an older thumbnail on show while the editor edits a later, kept screenshot does not.
+     */
+    val editingShotId: StateFlow<Long?> = _editingShotId.asStateFlow()
+
     private var nextId = 0L
     private var disposed = false
 
@@ -100,7 +113,11 @@ class ScreenshotThumbnailState(
     private var pointerOn = false
 
     /** The markup editor is open. */
-    private var editorOpen = false
+    private var editorOpen: Boolean
+        get() = _editing.value
+        set(value) {
+            _editing.value = value
+        }
 
     /** The timer is held, by the pointer or the editor. */
     private var hovered: Boolean
@@ -184,10 +201,12 @@ class ScreenshotThumbnailState(
     }
 
     /**
-     * The markup editor opened ([on]) or closed. While it is open the timer is held; when it closes the timer
+     * The markup editor opened on [shot], or closed (null). While it is open the timer is held; when it closes the timer
      * restarts at [THUMBNAIL_MILLIS] (held on while the pointer is still on the card).
      */
-    fun editing(on: Boolean) {
+    fun editing(shot: Shot?) {
+        _editingShotId.value = shot?.id
+        val on = shot != null
         if (on == editorOpen) return
         if (on) {
             freeze()

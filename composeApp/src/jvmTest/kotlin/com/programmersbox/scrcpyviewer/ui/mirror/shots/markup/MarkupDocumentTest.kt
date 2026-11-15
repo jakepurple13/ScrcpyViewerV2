@@ -22,7 +22,7 @@ class MarkupDocumentTest {
             MarkupColor.entries.map { it.argb },
         )
         assertEquals(listOf("Red", "Yellow", "Blue", "Black"), MarkupColor.entries.map { it.label })
-        assertEquals(listOf("Pen", "Arrow", "Box", "Pixelate"), MarkupTool.entries.map { it.name })
+        assertEquals(listOf("Pen", "Arrow", "Box", "Circle", "Pixelate"), MarkupTool.entries.map { it.name })
     }
 
     @Test
@@ -111,5 +111,21 @@ class MarkupDocumentTest {
         assertTrue(doc.add(Mark.Pen(red.argb, points)))
         points += MarkPoint(50f, 50f)
         assertEquals(2, (doc.marks.single() as Mark.Pen).points.size)
+    }
+
+    @Test
+    fun circleKeepsTheMinDragRuleAndUndoes() {
+        val doc = MarkupDocument(100, 100)
+        assertFalse(doc.add(Mark.Circle(red.argb, MarkPoint(10f, 10f), MarkPoint(11f, 11f))))
+        assertTrue(doc.add(Mark.Circle(red.argb, MarkPoint(10f, 10f), MarkPoint(40f, 30f))))
+        assertTrue(doc.undo() is Mark.Circle)
+        assertFalse(doc.canUndo)
+    }
+
+    @Test
+    fun squareCornerTakesTheLongerSideInTheDraggedDirection() {
+        assertEquals(MarkPoint(40f, 40f), squareCorner(MarkPoint(10f, 10f), MarkPoint(40f, 20f)))
+        assertEquals(MarkPoint(-20f, 40f), squareCorner(MarkPoint(10f, 10f), MarkPoint(0f, 40f)))
+        assertEquals(MarkPoint(-20f, -20f), squareCorner(MarkPoint(10f, 10f), MarkPoint(-20f, 5f)))
     }
 }

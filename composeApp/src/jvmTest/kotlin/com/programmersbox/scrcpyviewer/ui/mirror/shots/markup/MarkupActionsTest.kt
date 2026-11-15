@@ -100,19 +100,4 @@ class MarkupActionsTest {
         val result = copyMarked(Shot(dir.resolve("a.png"), bitmap(), 1), box, { Result.failure(IOException("Install xclip")) }, Dispatchers.IO)
         assertEquals("Install xclip", result.exceptionOrNull()?.message)
     }
-
-    @Test
-    fun `the host opens one edit at a time and holds the thumbnail's timer while open`() {
-        val host = MarkupEditorHost(thumbnail)
-        thumbnail.show(dir.resolve("a.png"), bitmap())
-        val shot = thumbnail.shown.value!!
-        host.open(shot)
-        assertTrue(host.isOpen)
-        assertTrue(thumbnail.held.value)
-        host.open(Shot(dir.resolve("b.png"), bitmap(), 99))
-        assertTrue(host.shot === shot, "one at a time")
-        host.close()
-        assertFalse(host.isOpen)
-        assertFalse(thumbnail.held.value)
-    }
 }
