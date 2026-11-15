@@ -2,6 +2,11 @@ package com.programmersbox.scrcpyviewer.ui.mirror.shots
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
+import com.programmersbox.scrcpyviewer.media.GifExportException
+import com.programmersbox.scrcpyviewer.media.RecordResult
+import com.programmersbox.scrcpyviewer.media.RecordingGoneException
+import com.programmersbox.scrcpyviewer.media.RecordingInfo
+import com.programmersbox.scrcpyviewer.media.RecordingProbe
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -432,5 +437,130 @@ class ScreenshotThumbnailStateTest {
         assertSame(edited, shot.bitmap)
         assertTrue(first.closed, "the replaced one, drawn by no slot, is closed")
         assertEquals(1f, state.remainingFraction)
+    }
+
+    // Recordings.
+
+    private val recording: Path = Paths.get("/tmp/caps/Pixel 8 Pro #2 ü.mp4")
+    private val info = RecordingInfo(18_030, 1080, 2340)
+
+    @Test
+    fun `a recording shows like a screenshot, with its length and size, for 6 seconds`() {
+        val first = bitmap()
+        state.showRecording(recording, first, info)
+        val shot = assertNotNull(state.shown.value)
+        assertTrue(shot.isRecording)
+        assertEquals(info, shot.video)
+        assertEquals(recording, shot.file)
+        assertSame(first, shot.bitmap)
+        advance(THUMBNAIL_MILLIS - 1)
+        assertNotNull(state.shown.value)
+        advance(1)
+        assertNull(state.shown.value)
+        assertTrue(first.closed)
+    }
+
+    @Test
+    fun `an Export GIF window holds the timer while open, and only its recording is marked`() {
+        state.showRecording(recording, bitmap(), info)
+        val id = state.shown.value!!.id
+        advance(2_000)
+        state.makingGif(id, true)
+        assertEquals(setOf(id), state.gifShotIds.value)
+        assertTrue(state.held.value)
+        assertNull(state.editingShotId.value, "not the markup editor's")
+        advance(60_000)
+        assertNotNull(state.shown.value)
+        // Leaving the card keeps it held: the window is still open.
+        state.hover(true)
+        state.hover(false)
+        advance(60_000)
+        assertNotNull(state.shown.value)
+        state.makingGif(id, false)
+        assertTrue(state.gifShotIds.value.isEmpty())
+        assertFalse(state.held.value)
+        assertEquals(1f, state.remainingFraction, "restarts at 6 s")
+        advance(THUMBNAIL_MILLIS)
+        assertNull(state.shown.value)
+    }
+
+    @Test
+    fun `two Export GIF windows hold until the last one closes, and the editor's hold is its own`() {
+        state.showRecording(recording, bitmap(), info)
+        state.makingGif(1, true)
+        state.makingGif(2, true)
+        state.makingGif(1, false)
+        advance(60_000)
+        assertNotNull(state.shown.value)
+        state.editing(Shot(file, bitmap(), id = -1))
+        state.makingGif(2, false)
+        advance(60_000)
+        assertNotNull(state.shown.value, "the editor still holds it")
+        state.editing(null)
+        advance(THUMBNAIL_MILLIS)
+        assertNull(state.shown.value)
+    }
+
+    @Test
+    fun `a saved recording shows its thumbnail once probed`() = kotlinx.coroutines.runBlocking {
+        val messages = mutableListOf<String>()
+        val first = bitmap()
+        finishRecording(RecordResult.Saved(recording), state, { RecordingProbe(info, first) }, { messages += it })
+        assertTrue(messages.isEmpty(), "no snackbar: the thumbnail says it")
+        val shot = assertNotNull(state.shown.value)
+        assertEquals(info, shot.video)
+        assertSame(first, shot.bitmap)
+    }
+
+    @Test
+    fun `a failed, a deleted and an unreadable recording each say so, with no thumbnail`() = kotlinx.coroutines.runBlocking {
+        val messages = mutableListOf<String>()
+        finishRecording(RecordResult.Failed(recording, "Disk full"), state, { error("not probed") }, { messages += it })
+        finishRecording(RecordResult.Saved(recording), state, { throw RecordingGoneException(it) }, { messages += it })
+        finishRecording(RecordResult.Saved(recording), state, { throw GifExportException("No video in the recording") }, { messages += it })
+        assertEquals(
+            listOf(
+                "Recording failed: Disk full",
+                "The recording is no longer at $recording",
+                "Recording saved to $recording",
+            ),
+            messages,
+        )
+        assertNull(state.shown.value)
+    }
+
+    @Test
+    fun `on Linux without FFmpeg's libraries the saved message says which to install`() = kotlinx.coroutines.runBlocking {
+        val messages = mutableListOf<String>()
+        val missing = com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(UnsatisfiedLinkError("no jniavdevice"), linux = true)
+        finishRecording(RecordResult.Saved(recording), state, { throw GifExportException(missing) }, { messages += it })
+        assertEquals(
+            listOf("Recording saved to $recording. To export GIFs, install libasound2, libpulse0, libxcb1, libxcb-shm0 and libdrm2"),
+            messages,
+        )
+    }
+
+    @Test
+    fun `the FFmpeg reason names the Linux libraries only for a native load failure on Linux`() {
+        val link = RuntimeException("load", UnsatisfiedLinkError("no jniavdevice"))
+        assertEquals(
+            "FFmpeg needs a few system libraries: install libasound2, libpulse0, libxcb1, libxcb-shm0 and libdrm2, then try again",
+            com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(link, linux = true),
+        )
+        assertEquals("FFmpeg isn't available: load", com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(link, linux = false))
+        assertEquals(
+            "FFmpeg isn't available: no jar",
+            com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(IllegalStateException("no jar"), linux = true),
+        )
+    }
+
+    @Test
+    fun `a recording probed after a later screenshot does not replace it, and its frame is closed`() = kotlinx.coroutines.runBlocking {
+        val ticket = state.begin()
+        state.show(file, bitmap())
+        val first = bitmap()
+        finishRecording(RecordResult.Saved(recording), state, { RecordingProbe(info, first) }, {}, ticket)
+        assertFalse(state.shown.value!!.isRecording)
+        assertTrue(first.closed)
     }
 }

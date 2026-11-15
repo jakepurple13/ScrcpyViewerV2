@@ -41,7 +41,9 @@ jobs:
 
       - name: Install Linux runtime libraries and Xvfb
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1 libfontconfig1
+        # libasound2t64, libpulse0, libxcb-shm0, libdrm2: libavdevice (loaded with the bundled ffmpeg) links them;
+        # a Linux desktop has them, the runner does not.
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1 libfontconfig1 libasound2t64 libpulse0 libxcb1 libxcb-shm0 libdrm2 libudev1
 
       # Linux: run under a virtual display so any test that touches AWT/Skia has one.
       - name: Test (Linux)

@@ -152,7 +152,9 @@ import com.programmersbox.scrcpyviewer.AppIcon
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.Device
+import com.programmersbox.scrcpyviewer.media.GifExporter
 import com.programmersbox.scrcpyviewer.media.Recorder
+import com.programmersbox.scrcpyviewer.media.RecordingFrames
 import com.programmersbox.scrcpyviewer.media.Screenshot
 import com.programmersbox.scrcpyviewer.media.VideoDecoder
 import com.programmersbox.scrcpyviewer.media.VideoFrame
@@ -240,6 +242,9 @@ import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlash
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlashState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnail
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnailState
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishRecording
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportWindowsState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishScreenshot
 
 /** Side toolbar buttons; [keycode] buttons send that Android key down and up. */
@@ -434,10 +439,6 @@ fun MirrorWindow(
         uiScope.launch { snackbar.showSnackbar(message) }
     }
     val transferDialogs = fileDialogs ?: remember { NativeTransferFileDialogs(nativeFileDialogs(::notify)) }
-    // Results of this device's sessions (a previous one too, after Reconnect); the main window shows the others.
-    LaunchedEffect(serial) {
-        controller.recordingResults.filter { it.serial == serial }.collect { notify(recordResultMessage(it.result)) }
-    }
     LaunchedEffect(inbox) { inbox.messages.collect { notify(it) } }
     var recordingElapsed by remember { mutableStateOf<String?>(null) }
     /** A start is in flight (directory creation on the IO dispatcher): the Record button waits for it. */
@@ -461,6 +462,19 @@ fun MirrorWindow(
     val editButton = remember { ScreenBoundsRef() }
     val cameraButton = remember { ScreenBoundsRef() }
     val thumbnailCard = remember { ScreenBoundsRef() }
+    // A recording's Export GIF windows, one per recording thumbnail; they grow from its GIF button.
+    val gifWindows = remember { GifExportWindowsState(thumbnail) }
+    val gifButton = remember { ScreenBoundsRef() }
+    val recordingFrames = remember { RecordingFrames() }
+    val gifExporter = remember { GifExporter() }
+    // Results of this device's sessions (a previous one too, after Reconnect); the main window shows the others. A saved
+    // recording (the file is closed by then) shows the recording thumbnail once its first frame is read off the UI thread.
+    LaunchedEffect(serial) {
+        controller.recordingResults.filter { it.serial == serial }.collect { event ->
+            val ticket = thumbnail.begin()
+            uiScope.launch { finishRecording(event.result, thumbnail, recordingFrames::probe, ::notify, ticket) }
+        }
+    }
     val screenshotDragStarter = remember { ComposeDragOutStarter() }
     /** The flash over the video, once per screenshot. Out here, so the content re-entering does not replay it. */
     val screenshotFlash = remember { ScreenshotFlashState() }
@@ -494,7 +508,7 @@ fun MirrorWindow(
     fun toggleRecording() {
         if (recordStarting) return
         if (session.recording.value != null) {
-            session.stopRecording() // "Recording saved to …" comes from recordingResults
+            session.stopRecording() // the recording thumbnail comes from recordingResults, once the file is closed
             return
         }
         recordStarting = true
@@ -753,7 +767,13 @@ fun MirrorWindow(
         }
     }
     // The markup editor window closes first: with marks not saved or copied it asks, and Keep editing keeps both open.
-    val requestClose: () -> Unit = { markupEditor.closeThen(uiScope, closeWindow) }
+    // Then the Export GIF windows close with it, their exports cancelled (partial files deleted).
+    val requestClose: () -> Unit = {
+        markupEditor.closeThen(uiScope) {
+            gifWindows.closeAll()
+            closeWindow()
+        }
+    }
 
     val currentQuickActions by rememberUpdatedState(quickActions)
     // The device's keys: this window's key events before its content sees them (the sheet's fields get theirs back).
@@ -1148,6 +1168,8 @@ fun MirrorWindow(
                                 onEdit = { markupEditor.open(it, editButton.current()) },
                                 editButton = editButton,
                                 card = thumbnailCard,
+                                onExportGif = { gifWindows.open(it, gifButton.current()) },
+                                gifButton = gifButton,
                             )
                         },
                     )
@@ -1173,6 +1195,20 @@ fun MirrorWindow(
                 .isSuccess
         },
         onSave = { shot, marks, say -> saveMarkedShot(shot, marks, thumbnail, ::notify, failed = say) },
+        leases = thumbnail,
+        screenGeometry = screenGeometry,
+    )
+    // The recordings' Export GIF windows, likewise: they go (exports cancelled) with this window.
+    GifExportWindows(
+        gifWindows, model, theme,
+        animate = animate,
+        motion = !reduceMotion,
+        near = { windowHandle?.bounds },
+        thumbnail = { thumbnailCard.current()?.takeIf { thumbnail.shown.value != null } },
+        export = { input, o, onProgress -> gifExporter.export(input, o, onProgress) },
+        frames = recordingFrames::frames,
+        onReveal = { file -> revealInFolder(file) },
+        notify = ::notify,
         leases = thumbnail,
         screenGeometry = screenGeometry,
     )
