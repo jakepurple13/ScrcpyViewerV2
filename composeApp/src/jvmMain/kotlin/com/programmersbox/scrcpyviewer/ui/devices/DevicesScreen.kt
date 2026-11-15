@@ -282,6 +282,8 @@ internal fun DevicesContent(
     emulatorNow: () -> Long = System::currentTimeMillis,
 ) {
     val rowActions = RowActions(onOpen = onOpen, onConnectWifi = onConnectWifi, onDisconnect = onDisconnect, canMirror = canMirror)
+    // The detail pane's view switch has a motion of its own; an emulator's title change follows this one.
+    val titleMotion = motion
     Column(modifier.fillMaxSize()) {
         state.persistenceError?.let {
             Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
@@ -335,6 +337,8 @@ internal fun DevicesContent(
                                     shown, onPreset, onMirror, onConnectWifi,
                                     onAdvanced = { onAdvanced(true) }, onBack = null, presetMenuOpen = presetMenuOpen,
                                     motion = motion,
+                                    avdName = emulators?.avdNames?.get(shown.selectedSerial),
+                                    titleMotion = titleMotion,
                                 )
                             }
                         }

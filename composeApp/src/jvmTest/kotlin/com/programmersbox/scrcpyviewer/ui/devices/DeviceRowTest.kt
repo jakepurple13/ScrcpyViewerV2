@@ -239,6 +239,58 @@ class DeviceRowTest {
         assertTrue("Connected · USB" in detailTexts(phone, advanced = false))
     }
 
+    /** Texts right of the device list: the detail pane's. */
+    private fun SceneDriver.detailTexts(): List<String> {
+        val all = mutableListOf<String>()
+        fun walk(node: SemanticsNode) {
+            if (node.positionInRoot.x > 400f) node.config.getOrNull(SemanticsProperties.Text)?.forEach { all += it.text }
+            node.children.forEach(::walk)
+        }
+        scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
+        return all
+    }
+
+    /** The simple view's texts each frame after the launcher matches the selected emulator-5554 to heads_up_api34. */
+    private fun detailTitlesAfterMatch(motion: Boolean): List<List<String>> {
+        val state = DevicesUiState(devices = listOf(phone, emulator), adbConnected = true, selectedSerial = emulator.serial, advanced = false)
+        var emulators by mutableStateOf(EmulatorsUiState(rows = listOf(EmulatorRow(headsUp, AvdState.Stopped, null, EmulatorPrefs()))))
+        val d = SceneDriver(ImageComposeScene(1280, 800, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        state, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        emulators = emulators, motion = motion,
+                    )
+                }
+            }
+        })
+        try {
+            d.frames(90)
+            val before = d.detailTexts()
+            assertTrue("sdk_gphone64_arm64" in before && "heads_up_api34" !in before, "$before")
+            emulators = emulators.copy(rows = listOf(EmulatorRow(headsUp, AvdState.Running("emulator-5554"), null, EmulatorPrefs())))
+            return (1..30).map { d.frame(); d.detailTexts() }
+        } finally {
+            d.scene.close()
+        }
+    }
+
+    @Test
+    fun `the detail pane titles an emulator with its AVD name, crossfading like the row`() = onEdt {
+        val frames = detailTitlesAfterMatch(motion = true)
+        val both = frames.count { "sdk_gphone64_arm64" in it && "heads_up_api34" in it }
+        assertTrue(both >= 3, "crossfades over several frames: $both")
+        val last = frames.last()
+        assertTrue("heads_up_api34" in last && "sdk_gphone64_arm64" !in last, "$last")
+        assertTrue("Connected · Emulator" in last && "emulator-5554" in last, "$last")
+    }
+
+    @Test
+    fun `without motion the detail pane title changes at once`() = onEdt {
+        val first = detailTitlesAfterMatch(motion = false)[1]
+        assertTrue("heads_up_api34" in first && "sdk_gphone64_arm64" !in first, "$first")
+    }
+
     @Test
     fun `without motion an emulator's title changes at once`() = onEdt {
         val titles = titlesAfterMatch(motion = false)

@@ -22,6 +22,7 @@ import java.awt.Rectangle
 import java.util.concurrent.Executors
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -71,9 +72,11 @@ class EmulatorLauncherTest {
     private class FakeStarter : ProcessStarter {
         val started = mutableListOf<Started>()
         var logText: String? = null
+        /** False: a destroyed process keeps running until it is killed forcibly. */
+        var exitOnDestroy = true
         override fun start(command: List<String>, env: Map<String, String>, log: Path): EmulatorProcess {
             logText?.let { Files.writeString(log, it) }
-            return FakeProcess().also { started += Started(command, env, log, it) }
+            return FakeProcess(exitOnDestroy).also { started += Started(command, env, log, it) }
         }
     }
 
@@ -111,7 +114,7 @@ class EmulatorLauncherTest {
             if (info) DeviceInfo("sdk_gphone64_arm64", "16", 36) else null,
         )
 
-    private fun TestScope.launcher() = EmulatorLauncher(
+    private fun TestScope.launcher(wipeData: (suspend (Path) -> Unit)? = null) = EmulatorLauncher(
         adb = adb,
         devices = devices,
         settings = settings,
@@ -122,6 +125,8 @@ class EmulatorLauncherTest {
         clock = { testScheduler.currentTime },
         isPortFree = { it !in busyPorts },
         uiContext = uiContext,
+        // The real deletion, on the test thread (temp folders only).
+        wipeData = wipeData ?: { wipeAvdData(it) },
     ).also { runCurrent() }
 
     private fun TestScope.notices(launcher: EmulatorLauncher): List<EmulatorNotice> {
@@ -556,6 +561,295 @@ class EmulatorLauncherTest {
         runCurrent()
         assertEquals(AvdState.Running("emulator-5556"), launcher.stateOf(pixel.id))
         assertEquals(2, adb.execs.count { it == listOf("-s", "emulator-5556", "emu", "avd", "name") })
+    }
+
+    // --- Wipe data --------------------------------------------------------------------------------------------------
+
+    private val watch = Avd("Watch_API_34", "Watch", 34, "14", AvdKind.Watch, dir.resolve("Watch_API_34.avd"))
+
+    /** What a wipe leaves in an AVD folder. */
+    private val kept = listOf("config.ini", "hardware-qemu.ini", "userdata.img", "sdcard.img", "encryptionkey.img")
+
+    /** [avd]'s folder with what an emulator writes there: the five wipe entries and the files a wipe keeps. */
+    private fun avdFolder(avd: Avd): Path {
+        val d = Files.createDirectories(avd.dir)
+        for (f in kept + WIPE_ENTRIES.filter { it != "snapshots" }) Files.writeString(d.resolve(f), f)
+        val snap = Files.createDirectories(d.resolve("snapshots").resolve("default_boot"))
+        Files.writeString(snap.resolve("snapshot.pb"), "pb")
+        Files.writeString(snap.resolve("ram.bin"), "ram")
+        return d
+    }
+
+    /** False where symbolic links need rights the test does not have (Windows without developer mode). */
+    private fun symlink(link: Path, target: Path): Boolean = try {
+        Files.createSymbolicLink(link, target)
+        true
+    } catch (_: UnsupportedOperationException) {
+        false
+    } catch (_: java.io.IOException) {
+        false
+    }
+
+    private fun exists(p: Path) = Files.exists(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+
+    @Test
+    fun `wipe deletes only data files`() = runTest {
+        val launcher = launcher()
+        val notices = notices(launcher)
+        val d = avdFolder(pixel)
+        val other = avdFolder(tablet)
+        assertTrue(launcher.wipe(pixel).isSuccess)
+        WIPE_ENTRIES.forEach { assertFalse(exists(d.resolve(it)), "$it is deleted") }
+        kept.forEach { assertEquals(it, Files.readString(d.resolve(it)), "$it is kept") }
+        // Another AVD's folder is untouched.
+        (kept + WIPE_ENTRIES).forEach { assertTrue(exists(other.resolve(it)), "the tablet's $it is kept") }
+        assertEquals("pb", Files.readString(other.resolve("snapshots").resolve("default_boot").resolve("snapshot.pb")))
+        assertEquals(listOf("Wiped Pixel 9. Next start is a cold boot."), notices.map { it.text })
+        assertEquals(emptySet(), launcher.wiping.value)
+        // Missing entries are fine: a second wipe has nothing to delete and still works.
+        assertTrue(launcher.wipe(pixel).isSuccess)
+        assertTrue(starter.started.isEmpty(), "a wipe never starts an emulator")
+    }
+
+    @Test
+    fun `wipe refuses while running or listed`() = runTest {
+        val launcher = launcher()
+        val notices = notices(launcher)
+        val d = avdFolder(pixel)
+        suspend fun refused(reason: String) {
+            val from = notices.size
+            assertTrue(launcher.wipe(pixel).isFailure, reason)
+            assertEquals(listOf("Couldn't wipe Pixel 9: $reason"), notices.drop(from).map { it.text })
+            assertTrue(exists(d.resolve("userdata-qemu.img")) && exists(d.resolve("snapshots")), "nothing deleted ($reason)")
+        }
+
+        // Ours, booting and then running.
+        launcher.start(pixel, sdk)
+        runCurrent()
+        refused("it's running.")
+        launcher.stop(pixel.id)
+        runCurrent()
+        bootPixel(launcher)
+        assertEquals(AvdState.Running("emulator-5554"), launcher.stateOf(pixel.id))
+        refused("it's running.")
+        // Stopping: the emulator is still listed.
+        adb.onKill = {}
+        launcher.stop(pixel.id, pixel.name)
+        runCurrent()
+        assertEquals(AvdState.Stopping("emulator-5554"), launcher.stateOf(pixel.id))
+        refused("it's still stopping.")
+        devices.value = emptyList()
+        runCurrent()
+        assertEquals(AvdState.Stopped, launcher.stateOf(pixel.id))
+        // Unlisted but still saving its snapshot: refused until the process exits.
+        refused("it's still stopping.")
+        starter.started.last().process.exit.complete(0)
+        runCurrent()
+
+        // Started elsewhere and matched by `emu avd name`.
+        adb.avdNames["emulator-5556"] = pixel.id
+        devices.value = listOf(emulator("emulator-5556"))
+        runCurrent()
+        assertEquals(AvdState.Running("emulator-5556"), launcher.stateOf(pixel.id))
+        refused("it's running.")
+        devices.value = emptyList()
+        runCurrent()
+
+        // Listed but not matched yet (offline, so not asked): the wipe asks it.
+        adb.avdNames["emulator-5558"] = pixel.id
+        devices.value = listOf(emulator("emulator-5558", DeviceState.Offline, info = false))
+        runCurrent()
+        assertEquals(AvdState.Stopped, launcher.stateOf(pixel.id))
+        refused("it's running.")
+        // One that cannot say which AVD it runs refuses too.
+        devices.value = listOf(emulator("emulator-5560", DeviceState.Offline, info = false))
+        runCurrent()
+        refused("couldn't tell which AVD emulator-5560 runs.")
+
+        // Another AVD's emulator does not stop the wipe.
+        adb.avdNames["emulator-5562"] = tablet.id
+        devices.value = listOf(emulator("emulator-5562", DeviceState.Offline, info = false))
+        runCurrent()
+        assertTrue(launcher.wipe(pixel).isSuccess)
+        assertFalse(exists(d.resolve("userdata-qemu.img")))
+    }
+
+    @Test
+    fun `wipe never follows a symlink out of the avd dir`() = runTest {
+        val launcher = launcher()
+        val notices = notices(launcher)
+        val outside = Files.createDirectories(dir.resolve("outside"))
+        Files.writeString(outside.resolve("precious.img"), "keep")
+        Files.createDirectories(outside.resolve("folder"))
+        Files.writeString(outside.resolve("folder").resolve("inner.bin"), "keep")
+
+        // A data image linked to a file outside: refused before anything is deleted.
+        val p = avdFolder(pixel)
+        Files.delete(p.resolve("userdata-qemu.img"))
+        if (!symlink(p.resolve("userdata-qemu.img"), outside.resolve("precious.img"))) return@runTest
+        assertTrue(launcher.wipe(pixel).isFailure)
+        assertEquals(
+            "Couldn't wipe Pixel 9: userdata-qemu.img points outside its AVD folder. Nothing was deleted.",
+            notices.last().text,
+        )
+        assertTrue(Files.isSymbolicLink(p.resolve("userdata-qemu.img")))
+        assertTrue(exists(p.resolve("cache.img")) && exists(p.resolve("snapshots")), "nothing deleted")
+
+        // The snapshots folder linked to a folder outside: refused.
+        val t = avdFolder(tablet)
+        Files.walk(t.resolve("snapshots")).use { s -> s.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
+        assertTrue(symlink(t.resolve("snapshots"), outside.resolve("folder")))
+        assertTrue(launcher.wipe(tablet).isFailure)
+        assertTrue(exists(t.resolve("cache.img")))
+
+        // Links inside snapshots, and a data image linked to a file inside the folder: only the links go.
+        val w = avdFolder(watch)
+        val boot = w.resolve("snapshots").resolve("default_boot")
+        assertTrue(symlink(boot.resolve("linked-dir"), outside.resolve("folder")))
+        assertTrue(symlink(boot.resolve("linked-file"), outside.resolve("precious.img")))
+        Files.delete(w.resolve("cache.img"))
+        assertTrue(symlink(w.resolve("cache.img"), w.resolve("sdcard.img")))
+        assertTrue(launcher.wipe(watch).isSuccess, notices.last().text)
+        WIPE_ENTRIES.forEach { assertFalse(exists(w.resolve(it)), "$it is deleted") }
+        assertEquals("sdcard.img", Files.readString(w.resolve("sdcard.img")))
+
+        // Nothing outside was touched.
+        assertEquals("keep", Files.readString(outside.resolve("precious.img")))
+        assertEquals("keep", Files.readString(outside.resolve("folder").resolve("inner.bin")))
+    }
+
+    @Test
+    fun `wipe waits for our emulator process to exit after a stop while unlisted`() = runTest {
+        starter.exitOnDestroy = false
+        val launcher = launcher()
+        val notices = notices(launcher)
+        val d = avdFolder(pixel)
+        launcher.start(pixel, sdk)
+        runCurrent()
+        launcher.stop(pixel.id)
+        runCurrent()
+        // The row is Stopped at once, but the process is still going down.
+        assertEquals(AvdState.Stopped, launcher.stateOf(pixel.id))
+        assertEquals(setOf(pixel.id), launcher.processAlive.value)
+        assertTrue(launcher.wipe(pixel).isFailure)
+        assertEquals("Couldn't wipe Pixel 9: it's still stopping.", notices.last().text)
+        assertTrue(exists(d.resolve("userdata-qemu.img")) && exists(d.resolve("snapshots")))
+
+        // Killed after the grace period: now it can be wiped.
+        advanceTimeBy(6_000)
+        runCurrent()
+        assertTrue(starter.started.single().process.forced)
+        assertEquals(emptySet(), launcher.processAlive.value)
+        assertTrue(launcher.wipe(pixel).isSuccess)
+        assertFalse(exists(d.resolve("userdata-qemu.img")))
+    }
+
+    @Test
+    fun `stale lock files left by an exited emulator do not stop a wipe`() = runTest {
+        val launcher = launcher()
+        // Every AVD that ever booted keeps an empty multiinstance.lock; a crash leaves the pid lock behind.
+        for (pid in listOf(Long.MAX_VALUE.toString(), "not a pid", "")) {
+            val d = avdFolder(pixel)
+            Files.writeString(d.resolve(INSTANCE_LOCK), "")
+            Files.writeString(d.resolve(PID_LOCK), pid)
+            assertTrue(launcher.wipe(pixel).isSuccess, "pid '$pid'")
+            assertFalse(exists(d.resolve("userdata-qemu.img")))
+            // The lock files are not the wipe's to delete.
+            assertTrue(exists(d.resolve(INSTANCE_LOCK)) && exists(d.resolve(PID_LOCK)))
+        }
+    }
+
+    @Test
+    fun `a pid lock of a live process refuses a wipe`() = runTest {
+        val launcher = launcher()
+        val notices = notices(launcher)
+        val d = avdFolder(pixel)
+        val live = ProcessHandle.current().pid().toString()
+        Files.writeString(d.resolve(PID_LOCK), live)
+        assertTrue(launcher.wipe(pixel).isFailure)
+        assertEquals("Couldn't wipe Pixel 9: it's running (hardware-qemu.ini.lock is held).", notices.last().text)
+        assertTrue(exists(d.resolve("userdata-qemu.img")) && exists(d.resolve("snapshots")), "nothing deleted")
+        // Windows writes it as a folder holding a pid file.
+        Files.delete(d.resolve(PID_LOCK))
+        Files.writeString(Files.createDirectories(d.resolve(PID_LOCK)).resolve("pid"), live)
+        assertTrue(launcher.wipe(pixel).isFailure)
+        assertEquals(null, heldAvdLock(d) { false })
+    }
+
+    @Test
+    fun `a held multiinstance lock refuses a wipe`() = runTest {
+        val launcher = launcher()
+        val notices = notices(launcher)
+        val d = avdFolder(pixel)
+        Files.writeString(d.resolve(INSTANCE_LOCK), "")
+        java.nio.channels.FileChannel.open(d.resolve(INSTANCE_LOCK), java.nio.file.StandardOpenOption.WRITE).use { channel ->
+            val lock = channel.lock()
+            assertTrue(launcher.wipe(pixel).isFailure)
+            assertEquals("Couldn't wipe Pixel 9: it's running (multiinstance.lock is held).", notices.last().text)
+            assertTrue(exists(d.resolve("userdata-qemu.img")), "nothing deleted")
+            lock.release()
+        }
+        // Released: the wipe goes ahead.
+        assertTrue(launcher.wipe(pixel).isSuccess)
+        assertFalse(exists(d.resolve("userdata-qemu.img")))
+    }
+
+    @Test
+    fun `wipe refuses a folder without config ini`() = runTest {
+        val launcher = launcher()
+        val notices = notices(launcher)
+        val d = avdFolder(pixel)
+        Files.delete(d.resolve("config.ini"))
+        assertTrue(launcher.wipe(pixel).isFailure)
+        assertEquals("Couldn't wipe Pixel 9: its folder has no config.ini. Nothing was deleted.", notices.last().text)
+        assertTrue(exists(d.resolve("cache.img")) && exists(d.resolve("snapshots")))
+    }
+
+    @Test
+    fun `wipe deletes the snapshots first`() {
+        assertEquals("snapshots", WIPE_ENTRIES.first())
+    }
+
+    @Test
+    fun `start during a wipe is refused`() = runTest {
+        val hold = CompletableDeferred<Unit>()
+        val wiped = mutableListOf<Path>()
+        val launcher = launcher(wipeData = { wiped.add(it); hold.await() })
+        val notices = notices(launcher)
+        val wipe = async { launcher.wipe(pixel) }
+        runCurrent()
+        assertEquals(listOf(pixel.dir), wiped)
+        assertEquals(setOf(pixel.id), launcher.wiping.value)
+
+        // Start and Cold boot are refused while the files are being deleted; another AVD starts.
+        launcher.start(pixel, sdk)
+        launcher.start(pixel, sdk, cold = true)
+        runCurrent()
+        assertEquals(AvdState.Stopped, launcher.stateOf(pixel.id))
+        assertTrue(starter.started.isEmpty())
+        launcher.start(tablet, sdk)
+        runCurrent()
+        assertEquals(1, starter.started.size)
+        // A second wipe of the same AVD is refused.
+        assertTrue(launcher.wipe(pixel).isFailure)
+
+        hold.complete(Unit)
+        runCurrent()
+        assertTrue(wipe.await().isSuccess)
+        assertEquals(emptySet(), launcher.wiping.value)
+        assertEquals(
+            listOf(
+                "Pixel 9 is still being wiped. Start it once that finishes.",
+                "Pixel 9 is still being wiped. Start it once that finishes.",
+                "Couldn't wipe Pixel 9: it's already being wiped.",
+                "Wiped Pixel 9. Next start is a cold boot.",
+            ),
+            notices.map { it.text },
+        )
+        // Once wiped it starts.
+        launcher.start(pixel, sdk)
+        runCurrent()
+        assertTrue(launcher.stateOf(pixel.id) is AvdState.Booting)
     }
 
     @Test

@@ -1,7 +1,7 @@
 # Emulator launcher
 
 Date: 2026-11-15
-Status: approved 2026-11-15 (mockup https://claude.ai/artifact/4Qo5e7z3kTrNAsNpzAf9MQ, "11", placement A; minus Wipe data and Show in Finder)
+Status: approved 2026-11-15 (mockup https://claude.ai/artifact/4Qo5e7z3kTrNAsNpzAf9MQ, "11", placement A; Wipe data and Show in Finder added in the follow-up the same day)
 
 ## Goal
 
@@ -20,7 +20,7 @@ and are mirrored inside Scrcpy Vwr like any other device.
 - Quitting Scrcpy Vwr leaves the emulators it started running; they list as Running next launch (user, 2026-11-15).
 - A boot not done in 4 minutes is stopped and shows Failed (user, 2026-11-15).
 - The new copy marked "new copy" below is approved as written (user, 2026-11-15).
-- Wipe data and Show in Finder are deferred to a follow-up (user, 2026-11-15).
+- Wipe data and Show in Finder, deferred from the first build, follow it (plan 2026-11-15-emulator-wipe-reveal).
 
 ## Where things are found
 
@@ -78,7 +78,8 @@ As built (follow-ups, 2026-11-15), emulator rows only; a real device's row, menu
   elsewhere once matched) is titled with the AVD's display name ("heads_up_api34", "Pixel 9") instead of the system
   model ("sdk_gphone64_arm64"); the serial subtitle is unchanged. Until matched it keeps the existing title; the
   change crossfades the whole title block (250 ms, the row's height following; at once under reduced motion),
-  including a serial-only title becoming name over serial.
+  including a serial-only title becoming name over serial. The detail pane's simple view titles a selected emulator
+  the same way, with the same crossfade (the advanced view has no device title).
 - **No Wi-Fi**: an emulator's right-click menu has Mirror only, and the detail pane (simple view and the advanced
   footer) shows no "Connect over Wi-Fi" button or hint for it.
 - **Offline hint**: an offline emulator row shows "Emulator offline. Stop and start it again from Emulators." instead
@@ -121,10 +122,50 @@ and a **Change** text button (opens the folder picker).
 - **Mirror when ready** checkbox.
 - **Show emulator window** checkbox. A change applies from the next start.
 
-The checkboxes are saved per AVD in `Settings.emulatorPrefs` and the menu stays open when one is toggled.
+- A divider.
+- **Show in Finder** (macOS) / **Show in folder** (Windows, Linux), folder icon, in every state: `revealInFolder`
+  on the AVD's folder (selected in Finder / Explorer; Linux opens the folder that holds it).
+- **Wipe data…** (error colour, trash icon), enabled only when Stopped or Failed and not already being wiped; opens
+  the wipe dialog.
 
-Deferred by the user (2026-11-15) to a follow-up: the mockup's **Show in Finder / Show in folder** and **Wipe data…**
-menu items and the wipe dialog. Leave the menu without a divider or those items.
+The checkboxes are saved per AVD in `Settings.emulatorPrefs` and the menu stays open when one is toggled. Cold boot
+comes and goes, and Wipe data's enabled state changes, with a 200 ms crossfade (150 ms fade under reduced motion).
+
+**Wipe dialog**: title "Wipe <name>?", body "This erases apps, accounts and files on the emulator. It can't be
+undone.", buttons **Cancel** and **Wipe data** (filled, error colour). Focus starts on Cancel; Esc, a click on the
+scrim and Cancel close it without wiping; Enter on Wipe data (or a click) confirms. The scrim fades in over 300 ms;
+the card scales .88 → 1 and rises 14 dp over 450 ms (emphasized decelerate); closing reverses over 150 ms; reduced
+motion: 150 ms fades.
+
+Confirming deletes exactly `userdata-qemu.img`, `userdata-qemu.img.qcow2`, `cache.img`, `cache.img.qcow2` and the
+`snapshots` folder inside the AVD folder (missing ones are fine), then the snackbar "Wiped <name>. Next start is a
+cold boot." and the size is measured again; a failure says "Couldn't wipe <name>: <reason>". As built:
+
+- Refused (nothing deleted) while the AVD is Booting, Running or Stopping, or runs on any emulator adb lists: ours,
+  one started elsewhere, or one not matched to an AVD yet (asked with `emu avd name` first; one that cannot say
+  refuses the wipe too: "couldn't tell which AVD emulator-5560 runs.").
+- Refused while an emulator process we started for it has not exited, though the row may read Stopped or Failed
+  (a Stop before adb listed it, a Stop while it saves its Quick Boot snapshot, a boot timeout): "it's still
+  stopping." Wipe data… stays disabled until the process exits, then fades in.
+- Refused while a running emulator holds its lock in the AVD folder (also one started elsewhere that adb does not
+  list yet): `hardware-qemu.ini.lock` names a live pid, or another process has `multiinstance.lock` locked: "it's
+  running (hardware-qemu.ini.lock is held)." Both files stay behind after an emulator exits, so a stale one (dead or
+  unreadable pid, unlocked file) does not refuse; where the file lock cannot be checked, it does not refuse either.
+- Refused unless the AVD folder holds a `config.ini` (the outer ini's `path=` can name any folder): "its folder has
+  no config.ini. Nothing was deleted."
+- `snapshots` is deleted first, so a wipe stopped by an error never leaves a snapshot to load over fresh data.
+- The wipe and its snackbar run in the launcher's app-wide scope, so both finish if the Devices screen goes away.
+- New copy (user approval on record pending, reviewed 2026-11-15), each after "Couldn't wipe <name>: ": "it's
+  running.", "it's still stopping.", "it's already being wiped.", "couldn't tell which AVD <serial> runs.", "an
+  emulator is starting. Try again.", "it's running (<lock file> is held).", "its folder has no config.ini.
+  Nothing was deleted.", "<entry> points outside its AVD folder. Nothing was deleted."; and the Start refusal
+  "<name> is still being wiped. Start it once that finishes."
+- Every entry must resolve inside the AVD folder's real path, or the wipe refuses before deleting anything
+  ("userdata-qemu.img points outside its AVD folder. Nothing was deleted."). A symbolic link (or Windows junction)
+  is deleted itself, never followed; `snapshots` is deleted file by file without following links.
+- While a wipe runs, the row says "Wiping data…", Start and Retry are disabled, and a Start or Cold boot that still
+  arrives is refused with "<name> is still being wiped. Start it once that finishes." (no emulator boots on
+  half-deleted data). A second wipe of it is refused ("it's already being wiped.").
 
 ## Empty and error states
 
@@ -224,6 +265,8 @@ live in `ui/devices/emulators/EmulatorMotion.kt`.
 | Emulator joins / leaves the connected rows | the existing `AnimatedDeviceItem` arrival and departure |
 | Empty / error state ↔ rows | crossfade + height change, 300 ms |
 | More menu, checkboxes | Material's own (`DropdownMenu` scale/fade, `Checkbox` tick) |
+| More menu items (Cold boot, Wipe data enabled) | 200 ms crossfade |
+| Wipe dialog | scrim fades 300 ms; card scales .88 → 1 and rises 14 dp over 450 ms (emphasized decelerate); closing reverses over 150 ms |
 | Snackbars | the app's existing snackbar motion |
 | Reduced motion | every change is instant or a 150 ms fade; the spinner still turns |
 
@@ -249,6 +292,12 @@ live in `ui/devices/emulators/EmulatorMotion.kt`.
   single-frame jump; without motion each lands in one frame or a 150 ms fade.
 - **Screenshots** (`DevicesScreenshotTest`, `-Pscreenshots`): section with Stopped, Booting, Running, Failed rows
   (light, dark); collapsed; No SDK; More menu open; narrow list (240 dp) with long names.
+- **Wipe and reveal**: `EmulatorLauncherTest` (only the five entries go, temp folders only; refused while booting,
+  running, stopping, matched or listed and unmatched; symlinks out of the folder refuse, links inside are deleted
+  themselves; a Start during a wipe is refused), `EmulatorsViewModelTest` (Reveal opens the AVD folder; Wipe marks the
+  row wiping, then measures again), `EmulatorSectionTest` (Wipe data disabled unless Stopped or Failed; the dialog's
+  open/close motion with and without motion; Cancel, Esc and scrim close; Enter on Wipe data confirms),
+  `DeviceRowTest` (detail pane title crossfade), screenshots (menu with the new items, wipe dialog light and dark).
 
 ## Out of scope
 
