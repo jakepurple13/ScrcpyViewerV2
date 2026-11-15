@@ -113,10 +113,21 @@ import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
 import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTabRow
 import com.programmersbox.scrcpyviewer.ui.devices.info.DetailPane
 import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoUiState
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorEvent
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorSection
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsUiState
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsViewModel
+import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import androidx.compose.runtime.rememberCoroutineScope
+import java.nio.file.Path
 
 @Composable
-fun DevicesScreen(
+internal fun DevicesScreen(
     viewModel: DevicesViewModel,
+    emulatorsViewModel: EmulatorsViewModel,
+    /** Asks for the Android SDK folder (Choose SDK folder / Change); null when cancelled. */
+    chooseSdkFolder: suspend () -> Path?,
     modifier: Modifier = Modifier,
     panes: ListDetailPanes = rememberListDetailPanes(),
     detailTab: DetailTab = DetailTab.Options,
@@ -129,6 +140,11 @@ fun DevicesScreen(
     val query by viewModel.query.collectAsStateWithLifecycle()
     // The search field needs each key at once (see DevicesViewModel.query); the list may follow an event later.
     val state = pageState.copy(query = query)
+    val emulators by emulatorsViewModel.state.collectAsStateWithLifecycle()
+    // The AVD list is read each time the screen opens.
+    LaunchedEffect(emulatorsViewModel) { emulatorsViewModel.onEvent(EmulatorEvent.Reload) }
+    val pickerScope = rememberCoroutineScope()
+    val picker = rememberPickerGuard()
     var pairing by remember { mutableStateOf(false) }
     val pairAnchor = remember { PairDialogAnchor() }
     val snackbar = LocalSnackbarHostState.current
@@ -193,6 +209,13 @@ fun DevicesScreen(
         info = info,
         onInfoActive = onInfoActive,
         onInfoRetry = onInfoRetry,
+        emulators = emulators,
+        onEmulator = emulatorsViewModel::onEvent,
+        onChooseSdk = {
+            picker.launch(pickerScope) {
+                chooseSdkFolder()?.let { emulatorsViewModel.onEvent(EmulatorEvent.SdkChosen(it.toString())) }
+            }
+        },
     )
     state.restartConfirm?.let { impact ->
         RestartAdbDialog(impact, onConfirm = viewModel::confirmRestartAdb, onDismiss = viewModel::cancelRestartAdb)
@@ -208,7 +231,7 @@ val DEVICE_OPTIONS_MIN_WIDTH = 640.dp
 
 /** Stateless Devices screen (Concept C: device column, searchable option grid, command footer). */
 @Composable
-fun DevicesContent(
+internal fun DevicesContent(
     state: DevicesUiState,
     onSelect: (String) -> Unit,
     onOpen: (String) -> Unit,
@@ -246,6 +269,13 @@ fun DevicesContent(
     /** True while the Info tab is on screen; the Info view model polls only then. */
     onInfoActive: (Boolean) -> Unit = {},
     onInfoRetry: () -> Unit = {},
+    /** The Emulators section under the connected devices; null leaves it out. */
+    emulators: EmulatorsUiState? = null,
+    onEmulator: (EmulatorEvent) -> Unit = {},
+    onChooseSdk: () -> Unit = {},
+    motion: Boolean = remember { !systemReducesMotion() },
+    /** The wall clock the emulators' boot timers read (screenshots pass a fixed one). */
+    emulatorNow: () -> Long = System::currentTimeMillis,
 ) {
     val rowActions = RowActions(onOpen = onOpen, onConnectWifi = onConnectWifi, onDisconnect = onDisconnect, canMirror = canMirror)
     Column(modifier.fillMaxSize()) {
@@ -266,6 +296,7 @@ fun DevicesContent(
                 DeviceColumn(
                     state, onSelect = { onSelect(it); panes.navigation.openDetail() }, onSelect, rowActions, onPairWifi,
                     contextMenuSerial, onRestartAdb, restartSucceeded, pairAnchor,
+                    emulators, onEmulator, onChooseSdk, motion, emulatorNow,
                 )
             },
             detail = { onBack ->
@@ -331,9 +362,17 @@ private fun DeviceColumn(
     onRestartAdb: () -> Unit,
     restartSucceeded: Boolean?,
     pairAnchor: PairDialogAnchor?,
+    emulators: EmulatorsUiState?,
+    onEmulator: (EmulatorEvent) -> Unit,
+    onChooseSdk: () -> Unit,
+    motion: Boolean,
+    emulatorNow: () -> Long,
 ) {
     val live = state.adbConnected && !state.restartingAdb
-    val list = rememberDeviceEntries(state.devices, live)
+    // Emulators still booting are left out until they are ready; they then arrive like any new device.
+    val hidden = emulators?.hiddenSerials.orEmpty()
+    val devices = remember(state.devices, hidden) { connectedRows(state.devices, hidden) }
+    val list = rememberDeviceEntries(devices, live)
     val entries = list.entries
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp),
@@ -341,31 +380,32 @@ private fun DeviceColumn(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (state.adbConnected && !state.restartingAdb) deviceSummary(state.devices) else "Devices",
+                if (state.adbConnected && !state.restartingAdb) deviceSummary(devices) else "Devices",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
             RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb, succeeded = restartSucceeded)
         }
-        when {
-            !live -> Row(
-                Modifier.padding(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text("Starting adb…", style = MaterialTheme.typography.bodyMedium)
-            }
-            entries.isEmpty() -> Text(
-                "No devices. Connect a device with USB debugging on, or pair one over Wi-Fi.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(4.dp),
-            )
-            // Each row carries its own gap below it, so a leaving row's gap collapses along with it.
-            else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                entries.forEachIndexed { index, entry ->
+        // The device rows (or what stands in for them) and the Emulators section scroll together.
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+            when {
+                !live -> Row(
+                    Modifier.padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text("Starting adb…", style = MaterialTheme.typography.bodyMedium)
+                }
+                entries.isEmpty() -> Text(
+                    "No devices. Connect a device with USB debugging on, or pair one over Wi-Fi.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(4.dp),
+                )
+                // Each row carries its own gap below it, so a leaving row's gap collapses along with it.
+                else -> entries.forEachIndexed { index, entry ->
                     AnimatedDeviceItem(entry, onExited = list::exited) { glow ->
                         val device = entry.device
                         DeviceRow(
@@ -386,9 +426,13 @@ private fun DeviceColumn(
                     }
                 }
             }
+            if (emulators != null) {
+                EmulatorSection(
+                    emulators, onEmulator, onChooseSdk,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 6.dp), motion = motion, now = emulatorNow,
+                )
+            }
         }
-        // The device list takes the free space when present; otherwise this pushes the button to the bottom.
-        if (!live || entries.isEmpty()) Spacer(Modifier.weight(1f))
         FilledTonalButton(
             onClick = onPairWifi,
             modifier = Modifier.fillMaxWidth().then(pairAnchor?.let { Modifier.pairDialogOrigin(it) } ?: Modifier),
@@ -399,6 +443,10 @@ private fun DeviceColumn(
         }
     }
 }
+
+/** The devices the connected rows show: all but the emulators still booting ([hidden]). */
+internal fun connectedRows(devices: List<Device>, hidden: Set<String>): List<Device> =
+    if (hidden.isEmpty()) devices else devices.filter { it.serial !in hidden }
 
 /** The right-click menu's items: Mirror, plus Connect over Wi-Fi (USB) or Disconnect (Wi-Fi). Internal for screenshots. */
 @Composable
@@ -504,7 +552,8 @@ private fun DeviceRow(
                 } else {
                     serialText(Modifier.weight(1f, fill = false))
                 }
-                StatusChip(status)
+                // An emulator's connection is no USB cable: its tag says what it is (the dot gives its state).
+                if (device.serial.startsWith("emulator-")) EmulatorTag() else StatusChip(status)
             }
             if (title != device.serial) serialText(Modifier)
             if (hint != null) {
@@ -519,6 +568,19 @@ private fun DeviceRow(
         }
     }
     }
+}
+
+/** The "Emulator" pill after an emulator's name in the connected rows. */
+@Composable
+private fun EmulatorTag() {
+    Text(
+        "Emulator",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier.clip(styledCorner(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 6.dp, vertical = 1.dp),
+    )
 }
 
 @Composable

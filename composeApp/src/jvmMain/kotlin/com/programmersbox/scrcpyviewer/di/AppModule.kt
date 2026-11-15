@@ -10,6 +10,8 @@ import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.adb.optionsKey
+import com.programmersbox.scrcpyviewer.emulator.EmulatorEnvironment
+import com.programmersbox.scrcpyviewer.emulator.EmulatorLauncher
 import com.programmersbox.scrcpyviewer.info.DeviceInfoReader
 import com.programmersbox.scrcpyviewer.links.LinkStore
 import com.programmersbox.scrcpyviewer.media.AudioPlayer
@@ -130,15 +132,36 @@ class AdbModule {
     @Singleton
     fun deviceTracker(client: AdbClient, scope: AppScope): DeviceTracker = DeviceTracker(client, scope)
 
-    /** The device selected on the Devices screen; Presets applies to it. */
+    /** The device selected on the Devices screen; Presets applies to it. Never an emulator still booting. */
     @Singleton(binds = [SelectedDevice::class])
-    fun deviceSelection(tracker: DeviceTracker, scope: AppScope): DeviceSelection =
-        DeviceSelection(tracker.devices, tracker.connected, scope)
+    fun deviceSelection(tracker: DeviceTracker, launcher: EmulatorLauncher, scope: AppScope): DeviceSelection =
+        DeviceSelection(tracker.devices, tracker.connected, scope, hidden = launcher.bootingSerials)
 
     /** Readers for the Devices screen's Info tab, one per selected device. */
     @Singleton
     fun deviceInfoReaderFactory(client: AdbClient): DeviceInfoReaderFactory =
         DeviceInfoReaderFactory { DeviceInfoReader(client, it) }
+
+    /**
+     * Starts, watches and stops emulators; app-wide so a boot carries on (and still mirrors) on any screen. Created at
+     * start so emulators left running by the last quit are matched (and listed as Running) right away.
+     */
+    @Singleton(createdAtStart = true)
+    fun emulatorLauncher(
+        client: AdbClient,
+        tracker: DeviceTracker,
+        settings: AppSettings,
+        mirrors: MirrorRequests,
+        dataDir: DataDir,
+        scope: AppScope,
+    ): EmulatorLauncher = EmulatorLauncher(
+        adb = client,
+        devices = tracker.devices,
+        settings = settings,
+        mirrors = mirrors,
+        logDir = dataDir.path.resolve("emulator-logs"),
+        scope = scope,
+    )
 
     @Singleton
     fun wirelessAdb(client: AdbClient, mirrors: Lazy<MirrorController>): WirelessAdb = WirelessAdb(
@@ -280,11 +303,13 @@ fun startAppKoin(
     dataDir: Path = AppDataDir.root(),
     adbClientFactory: AdbClientFactory = AdbClientFactory { AdbClient(adbPath = it) },
     updateBackend: UpdateBackend = NucleusUpdateBackend(cacheDir = dataDir.resolve(UPDATE_CACHE_DIR)),
+    emulatorEnvironment: EmulatorEnvironment = EmulatorEnvironment.system(),
 ): Koin {
     val koin = startKoin<ScrcpyKoinApp> {
         koin.declare(DataDir(dataDir))
         koin.declare(adbClientFactory)
         koin.declare(updateBackend)
+        koin.declare(emulatorEnvironment)
     }.koin
     val mirrors = koin.get<MirrorController>()
     koin.get<AppScope>().launch { koin.get<MirrorRequests>().collect { mirrors.open(it) } }
