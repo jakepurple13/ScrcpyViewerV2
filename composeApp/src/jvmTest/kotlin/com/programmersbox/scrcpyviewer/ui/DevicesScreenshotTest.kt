@@ -133,13 +133,20 @@ class DevicesScreenshotTest {
     fun `devices dark wide divider`() = render("devices-dark-divider.png", ThemeMode.Dark, listWidthPx = 460)
 
     @Test
-    fun `devices narrow list`() = render("devices-light-narrow-list.png", ThemeMode.Light, width = 760)
+    fun `devices narrow list`() = render("devices-light-narrow-list.png", ThemeMode.Light, width = 640)
 
     @Test
-    fun `devices narrow detail`() = render("devices-light-narrow-detail.png", ThemeMode.Light, width = 760, detailOpen = true)
+    fun `devices narrow detail`() = render("devices-light-narrow-detail.png", ThemeMode.Light, width = 640, detailOpen = true)
 
     @Test
-    fun `devices dark narrow detail`() = render("devices-dark-narrow-detail.png", ThemeMode.Dark, width = 760, detailOpen = true)
+    fun `devices dark narrow detail`() = render("devices-dark-narrow-detail.png", ThemeMode.Dark, width = 640, detailOpen = true)
+
+    @Test
+    fun `devices phone width advanced`() = render("devices-light-phone-advanced.png", ThemeMode.Light, width = 360, detailOpen = true)
+
+    @Test
+    fun `devices phone width simple`() =
+        render("devices-light-phone-simple.png", ThemeMode.Light, simple, width = 360, detailOpen = true)
 
     private val samsungStatic = StaticInfo(
         software = SoftwareInfo(
@@ -217,7 +224,7 @@ class DevicesScreenshotTest {
 
     @Test
     fun `devices simple narrow detail`() =
-        render("devices-simple-light-narrow-detail.png", ThemeMode.Light, simple, width = 760, detailOpen = true)
+        render("devices-simple-light-narrow-detail.png", ThemeMode.Light, simple, width = 640, detailOpen = true)
 
     @Test
     fun `devices simple wifi device`() = render(

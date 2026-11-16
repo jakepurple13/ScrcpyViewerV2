@@ -43,7 +43,8 @@ private val StackedGap = 8.dp
 /**
  * Text with a trailing control. The text keeps at least [textMin]: when the control's widest form would leave
  * it less, the control moves under the text (start-aligned, or full width with [fillControlWhenStacked]) and
- * steps down through [ControlSize] until it fits. Both slots glide to their new bounds and the row height
+ * steps down through [ControlSize] until it fits. Inline, the control sits at the row's end, or right after the
+ * text's own width with [packInline]. Both slots glide to their new bounds and the row height
  * springs, all with [layoutSpring]; under reduced motion they change instantly.
  *
  * Do not put it under a parent that asks for intrinsic sizes (`height(IntrinsicSize.Min)` and the like):
@@ -60,13 +61,14 @@ fun AdaptiveRow(
     textMin: Dp = 160.dp,
     gap: Dp = 16.dp,
     fillControlWhenStacked: Boolean = false,
+    packInline: Boolean = false,
 ) {
     val currentText by rememberUpdatedState(text)
     val currentControl by rememberUpdatedState(control)
     val reduceMotion = LocalReduceMotion.current
     // One stable lambda per fit, so remeasuring (every frame of a bounds animation) does not recompose slots.
     val probes = remember { ControlSize.entries.associateWith { size -> @Composable { currentControl(size) } } }
-    val contents = remember(reduceMotion, gap, fillControlWhenStacked) {
+    val contents = remember(reduceMotion, gap, fillControlWhenStacked, packInline) {
         HashMap<RowFit, @Composable () -> Unit>()
     }
     val scope = rememberCoroutineScope()
@@ -98,6 +100,7 @@ fun AdaptiveRow(
                     control = { currentControl(fit.size) },
                     gap = gap,
                     fillControlWhenStacked = fillControlWhenStacked,
+                    packInline = packInline,
                     animate = !reduceMotion,
                 )
             }
@@ -143,6 +146,7 @@ private fun AdaptiveRowContent(
     control: @Composable () -> Unit,
     gap: Dp,
     fillControlWhenStacked: Boolean,
+    packInline: Boolean,
     animate: Boolean,
 ) {
     LookaheadScope {
@@ -178,7 +182,7 @@ private fun AdaptiveRowContent(
                 val controlWidth = controlPlaceable?.width ?: 0
                 val textConstraints = if (bounded) {
                     val textWidth = (constraints.maxWidth - controlWidth - gapPx).coerceAtLeast(0)
-                    loose.copy(minWidth = textWidth, maxWidth = textWidth)
+                    loose.copy(minWidth = if (packInline) 0 else textWidth, maxWidth = textWidth)
                 } else {
                     loose
                 }
@@ -188,7 +192,8 @@ private fun AdaptiveRowContent(
                 val height = maxOf(textPlaceable?.height ?: 0, controlPlaceable?.height ?: 0)
                 layout(width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
                     textPlaceable?.place(0, (height - textPlaceable.height) / 2)
-                    controlPlaceable?.place(width - controlWidth, (height - controlPlaceable.height) / 2)
+                    val controlX = if (packInline && bounded) textWidth + gapPx else width - controlWidth
+                    controlPlaceable?.place(controlX, (height - controlPlaceable.height) / 2)
                 }
             }
         }

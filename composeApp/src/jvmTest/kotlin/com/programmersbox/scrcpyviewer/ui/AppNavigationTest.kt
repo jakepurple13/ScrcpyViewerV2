@@ -52,6 +52,8 @@ class AppNavigationTest {
                 driver.drag(fromX = handleX, toX = handleX + 150f, y = 400f)
                 val dragged = assertNotNull(panes.listWidthPx)
                 assertTrue(dragged > before + 100, "divider moved: $before -> $dragged")
+                // The dragged width is kept in dp; the px read-out can differ by rounding once the drag ends.
+                val draggedWidth = assertNotNull(panes.listWidth)
 
                 navigator.select(TopLevelRoute.Presets)
                 driver.frames(40)
@@ -61,7 +63,8 @@ class AppNavigationTest {
 
                 assertSame(vm, viewModels.last(), "same ViewModel after switching tabs")
                 assertEquals("39121FDJH004AB", vm.selectedSerial.value)
-                assertEquals(dragged, panes.listWidthPx)
+                assertEquals(draggedWidth, panes.listWidth)
+                assertTrue(kotlin.math.abs(dragged - assertNotNull(panes.listWidthPx)) <= 1, "laid out at the dragged width")
             } finally {
                 driver.scene.close()
             }
