@@ -118,10 +118,11 @@ class DeviceListingTest {
     /**
      * Runs [listCommand] in the host shell over [dir]. It needs GNU or toybox `stat -c`: a Mac without coreutils'
      * `gstat` skips it (null). [findWorks] false puts a `find` that always fails first on the PATH, for the old-device
-     * loop.
+     * loop. [folder] is made only after the Windows check: names like "two\nlines" are invalid there.
      */
-    private fun runListOnHost(dir: Path, findWorks: Boolean = true): Pair<String, Int>? {
+    private fun runListOnHost(findWorks: Boolean = true, folder: () -> Path): Pair<String, Int>? {
         if (System.getProperty("os.name").startsWith("Windows")) return null
+        val dir = folder()
         val shim = Files.createTempDirectory("svw-shim")
         val native = runCatching {
             ProcessBuilder("stat", "-c", "%n", "/").redirectErrorStream(true).start().waitFor() == 0
@@ -169,22 +170,25 @@ class DeviceListingTest {
 
     @Test
     fun `list command on the host shell lists odd names, hidden files and broken links`() {
-        val (out, exit) = runListOnHost(oddFolder()) ?: return
+        val (out, exit) = runListOnHost(folder = ::oddFolder) ?: return
         checkOdd(out, exit)
     }
 
     @Test
     fun `list command without find -exec falls back to one stat per entry`() {
-        val (out, exit) = runListOnHost(oddFolder(), findWorks = false) ?: return
+        val (out, exit) = runListOnHost(findWorks = false, folder = ::oddFolder) ?: return
         checkOdd(out, exit)
     }
 
     @Test
     fun `list command on the host shell lists a big folder in a few processes`() {
-        val dir = Files.createTempDirectory("svw-big")
-        repeat(3000) { Files.createFile(dir.resolve("file $it.jpg")) }
-        val started = System.nanoTime()
-        val (out, exit) = runListOnHost(dir) ?: return
+        var started = 0L
+        val (out, exit) = runListOnHost {
+            Files.createTempDirectory("svw-big").also { dir ->
+                repeat(3000) { Files.createFile(dir.resolve("file $it.jpg")) }
+                started = System.nanoTime()
+            }
+        } ?: return
         val ms = (System.nanoTime() - started) / 1_000_000
         assertEquals(0, exit)
         assertEquals(3000, entries(parseListing(out, exit)).size)
