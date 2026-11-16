@@ -49,6 +49,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,9 +87,13 @@ import java.nio.file.Path
 private val ExportShape = RoundedCornerShape(8.dp)
 private val MenuWidth = 300.dp
 
-/** Asks for the export's target with the native save dialog ("Export logs"), on the picker's thread. */
-val defaultExportPick: suspend (String, String) -> Path? = { name, ext ->
-    onPickerThread { nativeFileDialogs().save("Export logs", name, ext) }
+/**
+ * Asks for the export's target with the native save dialog ("Export logs"), on the picker's thread. When no dialog
+ * can be shown, [onUnavailable] gets why (the pick is then canceled).
+ */
+fun defaultExportPick(onUnavailable: (String) -> Unit): suspend (String, String) -> Path? {
+    val dialogs = nativeFileDialogs(onUnavailable)
+    return { name, ext -> onPickerThread { dialogs.save("Export logs", name, ext) } }
 }
 
 /**
@@ -112,13 +118,25 @@ internal fun exportFraction(state: LogcatExport, last: Float): Float = when (sta
     LogcatExport.Idle -> 0f
 }
 
+/** The last fraction shown, kept between compositions; written only after a composition applies. */
+private class ShownFraction(var value: Float)
+
+/** [exportFraction] for [state], carrying the last shown value across compositions. */
+@Composable
+private fun rememberExportFraction(state: LogcatExport): Float {
+    val last = remember { ShownFraction(0f) }
+    val fraction = exportFraction(state, last.value)
+    SideEffect { last.value = fraction }
+    return fraction
+}
+
 /**
  * Export, 36 dp: opens the format menu ([ExportMenu]), which exports through [pick]. Download, progress ring and
  * check are stacked: running, the download drops 8 dp, shrinks to 0.7 and fades (280 ms) as the ring grows in from
  * 0.4, turning once per 1,400 ms; done, the ring goes and the check pops 0.3 → 1.18 → 1 (420 ms); canceled, the
  * download comes back. While running the button cancels ("Cancel export"): on hover or focus the ring fades to 0.22
- * and a close icon turns in (180–260 ms). Tonal while the menu is open or an export shows (150 ms fade); dimmed to
- * 0.38 with nothing to export.
+ * and a close icon turns in (180–260 ms). Done or canceled, a click drops the result and opens the menu. Tonal while
+ * the menu is open or an export shows (150 ms fade); dimmed to 0.38 with nothing to export.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -127,7 +145,8 @@ internal fun LogcatExportButton(controller: LogcatController, motion: Boolean, p
     val state = controller.export
     val running = state is LogcatExport.Running
     val done = state is LogcatExport.Done
-    val hasLines = controller.totalLines > 0
+    // Only whether there are lines, so a new batch every 50 ms doesn't recompose the button.
+    val hasLines by remember(controller) { derivedStateOf { controller.totalLines > 0 } }
     var menu by remember { mutableStateOf(false) }
     val source = remember { MutableInteractionSource() }
     val hovered by source.collectIsHoveredAsState()
@@ -161,9 +180,7 @@ internal fun LogcatExportButton(controller: LogcatController, motion: Boolean, p
             else -> check.animateTo(0f, tween(280, easing = EmphasizedDecelerate))
         }
     }
-    val fraction = remember { floatArrayOf(0f) }
-    fraction[0] = exportFraction(state, fraction[0])
-    val progress by animateFloatAsState(fraction[0], if (motion) tween(80, easing = LinearEasing) else snap())
+    val progress by animateFloatAsState(rememberExportFraction(state), if (motion) tween(80, easing = LinearEasing) else snap())
     val spin = remember { Animatable(0f) }
     LaunchedEffect(running, motion) {
         if (!running || !motion) return@LaunchedEffect
@@ -193,7 +210,10 @@ internal fun LogcatExportButton(controller: LogcatController, motion: Boolean, p
                     when (controller.export) {
                         is LogcatExport.Running -> controller.cancelExport()
                         LogcatExport.Idle -> menu = true
-                        else -> Unit // done or canceled: shown a moment, then idle again
+                        else -> {
+                            controller.dismissExportResult()
+                            menu = true
+                        }
                     }
                 }
                 .semantics { contentDescription = description },
@@ -340,9 +360,7 @@ private fun Staggered(delayMillis: Int, motion: Boolean, content: @Composable ()
 internal fun LogcatExportBar(controller: LogcatController, motion: Boolean, modifier: Modifier) {
     val state = controller.export
     val running = state is LogcatExport.Running
-    val fraction = remember { floatArrayOf(0f) }
-    fraction[0] = exportFraction(state, fraction[0])
-    val width by animateFloatAsState(fraction[0], if (motion) tween(80, easing = LinearEasing) else snap())
+    val width by animateFloatAsState(rememberExportFraction(state), if (motion) tween(80, easing = LinearEasing) else snap())
     val alpha by animateFloatAsState(if (running) 1f else 0f, if (motion) tween(300) else snap())
     val color = MaterialTheme.colorScheme.primary
     Box(

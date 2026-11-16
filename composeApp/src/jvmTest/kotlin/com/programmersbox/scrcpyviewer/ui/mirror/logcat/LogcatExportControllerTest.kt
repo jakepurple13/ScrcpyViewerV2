@@ -198,7 +198,8 @@ class LogcatExportControllerTest {
         e.controller.export(ExportFormat.Studio) { _, _ -> sub.resolve("out.logcat") }
         advanceTimeBy(1_000)
         runCurrent()
-        assertTrue(e.toasts.single().startsWith("Could not export: "), e.toasts.toString())
+        assertEquals(listOf("Could not export: Permission denied"), e.toasts)
+        assertTrue(e.toasts.none { ".part" in it }, e.toasts.toString())
         assertEquals(LogcatExport.Idle, e.controller.export)
         sub.toFile().setWritable(true)
         assertTrue(sub.listDirectoryEntries().isEmpty())
@@ -230,5 +231,63 @@ class LogcatExportControllerTest {
         advanceTimeBy(1)
         runCurrent()
         assertIs<LogcatExport.Done>(e.controller.export)
+    }
+
+    @Test
+    fun `dismissing done goes idle at once and a new export can start`() = runTest {
+        val e = env()
+        feed(e, 2)
+        val first = dir.resolve("a.logcat")
+        e.controller.export(ExportFormat.Studio) { _, _ -> first }
+        advanceTimeBy(400)
+        runCurrent()
+        assertIs<LogcatExport.Done>(e.controller.export)
+        e.controller.dismissExportResult()
+        assertEquals(LogcatExport.Idle, e.controller.export)
+        val second = dir.resolve("b.logcat")
+        e.controller.export(ExportFormat.Studio) { _, _ -> second }
+        runCurrent()
+        assertIs<LogcatExport.Running>(e.controller.export)
+        advanceTimeBy(400)
+        runCurrent()
+        assertEquals(LogcatExport.Done(second, 2), e.controller.export)
+        // The first export's linger was dropped: it doesn't cut the second one's short.
+        advanceTimeBy(3_200)
+        runCurrent()
+        assertEquals(LogcatExport.Done(second, 2), e.controller.export)
+        advanceTimeBy(400)
+        runCurrent()
+        assertEquals(LogcatExport.Idle, e.controller.export)
+    }
+
+    @Test
+    fun `dismissing canceled goes idle at once`() = runTest {
+        val e = env()
+        feed(e, 5_000)
+        e.controller.onExportProgress = { e.controller.cancelExport() }
+        e.controller.export(ExportFormat.Studio) { _, _ -> dir.resolve("out.logcat") }
+        runCurrent()
+        assertEquals(LogcatExport.Canceled, e.controller.export)
+        e.controller.dismissExportResult()
+        assertEquals(LogcatExport.Idle, e.controller.export)
+        e.controller.onExportProgress = {}
+        e.controller.export(ExportFormat.Text) { _, _ -> dir.resolve("out.txt") }
+        runCurrent()
+        assertIs<LogcatExport.Running>(e.controller.export)
+    }
+
+    @Test
+    fun `cancel once the move has started does nothing`() = runTest {
+        val e = env()
+        feed(e, 2)
+        val target = dir.resolve("out.logcat")
+        target.writeText("old")
+        e.controller.onExportMove = { e.controller.cancelExport() }
+        e.controller.export(ExportFormat.Studio) { _, _ -> target }
+        advanceTimeBy(400)
+        runCurrent()
+        assertEquals(LogcatExport.Done(target, 2), e.controller.export)
+        assertEquals(2, Json.parseToJsonElement(target.readText()).jsonObject["logcatMessages"]!!.jsonArray.size)
+        assertEquals(listOf(target), dir.listDirectoryEntries())
     }
 }

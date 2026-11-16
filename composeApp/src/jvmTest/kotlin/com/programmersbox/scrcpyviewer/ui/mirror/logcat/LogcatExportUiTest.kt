@@ -256,4 +256,20 @@ class LogcatExportUiTest {
             assertNotNull(text("Saved a.logcat"), "status bar: ${texts()}")
         }
     }
+
+    @Test
+    fun `clicking the button while done opens the menu`() = onEdt {
+        feed(3)
+        target = dir.resolve("a.logcat")
+        withScene {
+            controller.export(ExportFormat.Studio, pick)
+            settle(500)
+            assertIs<LogcatExport.Done>(controller.export)
+            frames(5)
+            click(checkNotNull(described("Export logs")))
+            assertEquals(LogcatExport.Idle, controller.export)
+            frames(5)
+            assertNotNull(text("Android Studio (.logcat)"), "menu open: ${texts()}")
+        }
+    }
 }

@@ -123,7 +123,7 @@ fun LogcatWindowContent(
     motion: Boolean,
     shown: Boolean,
     onRaise: () -> Unit,
-    pick: suspend (String, String) -> java.nio.file.Path? = defaultExportPick,
+    pick: (suspend (String, String) -> java.nio.file.Path?)? = null,
 ) {
     val snackbar = remember { SnackbarHostState() }
     val snackScope = rememberCoroutineScope()

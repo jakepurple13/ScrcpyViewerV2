@@ -25,8 +25,11 @@ import com.programmersbox.scrcpyviewer.logcat.withTerm
 import com.programmersbox.scrcpyviewer.logcat.writeStudioLogcat
 import com.programmersbox.scrcpyviewer.logcat.writeThreadtime
 import java.nio.charset.StandardCharsets
+import java.nio.file.AccessDeniedException
 import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Instant
@@ -39,6 +42,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -81,6 +85,19 @@ sealed interface LogcatExport {
     data class Done(val path: Path, val lines: Int) : LogcatExport
 
     data object Canceled : LogcatExport
+}
+
+/**
+ * What a failed export's toast says went wrong. A file system error's message is just its file (the `.part`), so
+ * its reason is used, or a plain phrase for its kind.
+ */
+internal fun exportFailureReason(e: Exception): String = when (e) {
+    is FileSystemException -> e.reason?.takeIf { it.isNotBlank() } ?: when (e) {
+        is AccessDeniedException -> "Permission denied"
+        is NoSuchFileException -> "Folder not found"
+        else -> "Could not write file"
+    }
+    else -> e.message ?: e.toString()
 }
 
 /** A row of the Logcat list. */
@@ -301,10 +318,20 @@ class LogcatController(
     /** Called on [io] for each export progress report; the cancel test hooks it. */
     internal var onExportProgress: (Int) -> Unit = {}
 
+    /** Called on [io] just before the finished `.part` is moved over the target; the cancel test hooks it. */
+    internal var onExportMove: () -> Unit = {}
+
+    /** True while the finished file is moved over the target; a cancel then does nothing. */
+    private var exportMoving = false
+
+    /** Shows Done or Canceled for a while, then goes back to idle; its own job, so a click can cut it short. */
+    private var exportResultJob: Job? = null
+
     /**
      * Exports every line in [items] (the filter never limits it) as [format]. The lines are those at this call;
      * later ones aren't in it. [pick] asks for the target file (null = canceled, nothing happens). The file is
-     * written beside the target as `.part` and moved over it when complete. Does nothing unless idle with lines.
+     * written beside the target as `.part` and moved over it when complete. Does nothing unless idle with lines
+     * and no other export is asking for its file.
      */
     fun export(format: ExportFormat, pick: suspend (suggestedName: String, extension: String) -> Path?) {
         if (export !is LogcatExport.Idle || exportJob?.isActive == true || totalLines == 0) return
@@ -335,7 +362,10 @@ class LogcatController(
                 }
                 val wait = EXPORT_MIN_RUN_MILLIS - (clock() - startedAt)
                 if (wait > 0) delay(wait)
-                withContext(io) {
+                // Past here the target may already be replaced, so the move always finishes and cancel is ignored.
+                exportMoving = true
+                withContext(NonCancellable + io) {
+                    onExportMove()
                     try {
                         Files.move(part, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
                     } catch (e: AtomicMoveNotSupportedException) {
@@ -343,33 +373,49 @@ class LogcatController(
                     }
                 }
             } catch (e: CancellationException) {
-                Files.deleteIfExists(part)
+                runCatching { Files.deleteIfExists(part) }
                 throw e
             } catch (e: Exception) {
                 runCatching { Files.deleteIfExists(part) }
                 exportPart = null
-                toast("Could not export: ${e.message ?: e}")
+                toast("Could not export: ${exportFailureReason(e)}")
                 export = LogcatExport.Idle
                 return@launch
+            } finally {
+                exportMoving = false
             }
             exportPart = null
-            export = LogcatExport.Done(target, rows.size)
-            delay(EXPORT_DONE_MILLIS)
-            export = LogcatExport.Idle
+            showExportResult(LogcatExport.Done(target, rows.size), EXPORT_DONE_MILLIS)
         }
     }
 
-    /** Stops a running export, removes its `.part` file and leaves any existing target as it was. */
+    /**
+     * Stops a running export, removes its `.part` file and leaves any existing target as it was. Does nothing once
+     * the finished file is being moved over the target.
+     */
     fun cancelExport() {
-        if (export !is LogcatExport.Running) return
+        if (export !is LogcatExport.Running || exportMoving) return
         exportJob?.cancel()
         exportJob = null
         exportPart?.let { runCatching { Files.deleteIfExists(it) } }
         exportPart = null
-        export = LogcatExport.Canceled
-        scope.launch {
-            delay(EXPORT_CANCELED_MILLIS)
-            if (export is LogcatExport.Canceled) export = LogcatExport.Idle
+        showExportResult(LogcatExport.Canceled, EXPORT_CANCELED_MILLIS)
+    }
+
+    /** Goes back to idle at once from Done or Canceled, so a new export can start. */
+    fun dismissExportResult() {
+        if (export !is LogcatExport.Done && export !is LogcatExport.Canceled) return
+        exportResultJob?.cancel()
+        exportResultJob = null
+        export = LogcatExport.Idle
+    }
+
+    private fun showExportResult(result: LogcatExport, millis: Long) {
+        exportResultJob?.cancel()
+        export = result
+        exportResultJob = scope.launch {
+            delay(millis)
+            if (export == result) export = LogcatExport.Idle
         }
     }
 

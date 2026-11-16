@@ -116,9 +116,13 @@ fun LogcatTab(
     inWindow: Boolean = false,
     /** Makes the tab itself focusable through this, inside its key handlers (the own window focuses it on open). */
     focusRequester: FocusRequester? = null,
-    /** Asks where to save an export: the suggested file name and extension in, the target (null = canceled) out. */
-    pick: suspend (String, String) -> Path? = defaultExportPick,
+    /**
+     * Asks where to save an export: the suggested file name and extension in, the target (null = canceled) out. Null
+     * uses the native save dialog, which toasts through [controller] when it can't open.
+     */
+    pick: (suspend (String, String) -> Path?)? = null,
 ) {
+    val exportPick = pick ?: remember(controller) { defaultExportPick(controller::toast) }
     val filterFocus = remember { LogcatFilterFocus() }
     // True from a Space press that toggled until its release: the key's auto-repeat presses don't toggle again.
     val spaceHeld = remember { BooleanArray(1) }
@@ -157,7 +161,7 @@ fun LogcatTab(
                     Spacer(Modifier.width(6.dp))
                     PlayPauseButton(controller, motion)
                     Spacer(Modifier.width(2.dp))
-                    LogcatExportButton(controller, motion, pick)
+                    LogcatExportButton(controller, motion, exportPick)
                     PopOutButton(controller, inWindow, motion)
                 }
                 ChipsRow(controller, motion)
