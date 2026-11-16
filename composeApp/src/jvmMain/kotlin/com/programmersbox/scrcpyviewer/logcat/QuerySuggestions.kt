@@ -31,7 +31,7 @@ private const val MAX_SUGGESTIONS = 7
  *
  * With the caret inside the token, accepting replaces the rest of it too: a key up to its `:` (`ta|g:x` gives
  * `tag:x`, keeping the value and a `~` or `=`), a value up to the next whitespace, which the value's own space
- * then takes the place of.
+ * then takes the place of. With the caret before a token's key (`|is:crash`) there is nothing to complete.
  */
 fun suggest(text: String, caret: Int, ctx: SuggestionContext): List<Suggestion> {
     var start = caret
@@ -44,7 +44,10 @@ fun suggest(text: String, caret: Int, ctx: SuggestionContext): List<Suggestion> 
         if (':' in tok) return emptyList()
         val neg = if (tok.startsWith("-")) "-" else ""
         val word = tok.removePrefix("-")
-        val rest = keyRest.find(text.substring(caret, tokenEnd))
+        val after = text.substring(caret, tokenEnd)
+        // Before a `key:value` token's key nothing is typed yet, so nothing says the user wants a different key.
+        if (word.isEmpty() && ':' in after) return emptyList()
+        val rest = keyRest.find(after)
         val end = rest?.let { caret + it.value.length } ?: tokenEnd
         val op = rest?.groupValues?.get(1).orEmpty()
         return LogcatQuery.KEYS.filter { it.key.startsWith(word, ignoreCase = true) }.map { (k, d) ->
