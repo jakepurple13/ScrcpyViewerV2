@@ -36,6 +36,45 @@ class BundledToolsTest {
     }
 
     @Test
+    fun `adbExecutable reads and hashes the bundled adb only once`() {
+        val res = fakeResources()
+        val data = Files.createTempDirectory("data")
+        val tools = BundledTools(res, data)
+        val first = tools.adbExecutable()
+        // New content would give a new hash and a new adb-<prefix> folder, so the same path means it was not re-read.
+        Files.writeString(res.resolve(adbName), "other-adb")
+        assertEquals(first, tools.adbExecutable())
+        assertEquals(1, Files.list(data.resolve("tools")).use { it.count() })
+    }
+
+    @Test
+    fun `concurrent first calls all get one complete copy`() {
+        val res = Files.createTempDirectory("res")
+        val bytes = ByteArray(4 shl 20) { it.toByte() }
+        Files.write(res.resolve(adbName), bytes)
+        val tools = BundledTools(res, Files.createTempDirectory("data"))
+        val start = java.util.concurrent.CountDownLatch(1)
+        val results = java.util.concurrent.ConcurrentLinkedQueue<java.nio.file.Path>()
+        val threads = List(8) {
+            kotlin.concurrent.thread {
+                start.await()
+                val adb = tools.adbExecutable()
+                assertTrue(Files.readAllBytes(adb).contentEquals(bytes))
+                results.add(adb)
+            }
+        }
+        start.countDown()
+        threads.forEach { it.join() }
+        assertEquals(8, results.size)
+        assertEquals(1, results.toSet().size)
+        // The copy goes through a temp file that is moved into place: none is left behind. (Only temp files are
+        // checked: on Windows the adb DLLs can be copied alongside from a bundled dir found on the machine.)
+        val left = Files.list(results.first().parent).use { s -> s.map { it.fileName.toString() }.toList() }
+        assertEquals(emptyList(), left.filter { it.endsWith(".tmp") })
+        assertTrue(adbName in left)
+    }
+
+    @Test
     fun `serverJar resolves from common dir`() {
         val bundled = Files.createTempDirectory("bundled")
         Files.createDirectories(bundled.resolve("common"))

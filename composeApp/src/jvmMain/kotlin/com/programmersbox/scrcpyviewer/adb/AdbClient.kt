@@ -67,38 +67,31 @@ open class AdbClient(
      */
     open suspend fun shell(serial: String, cmd: String): String {
         val timeout = currentCoroutineContext()[ShellReadTimeout]?.ms ?: shellReadTimeoutMs
-        return withContext(Dispatchers.IO) {
-        openSocket().use { socket ->
-            socket.soTimeout = timeout
-            val out = socket.getOutputStream()
-            val input = socket.getInputStream()
-            out.write(AdbWire.encodeRequest("host:transport:$serial"))
-            out.flush()
-            AdbWire.readStatus(input)
-            out.write(AdbWire.encodeRequest("shell:$cmd"))
-            out.flush()
-            AdbWire.readStatus(input)
-            String(input.readBytes(), Charsets.UTF_8)
-        }
-        }
+        return String(request(serial, "shell:$cmd", timeout), Charsets.UTF_8)
     }
 
     /**
      * Runs `exec:<cmd>` on [serial] and returns its output byte for byte (no pty, so binary output such as a file
      * read with `unzip -p` arrives intact). Throws [java.net.SocketTimeoutException] like [shell].
      */
-    open suspend fun execOut(serial: String, cmd: String): ByteArray = withContext(Dispatchers.IO) {
+    open suspend fun execOut(serial: String, cmd: String): ByteArray = request(serial, "exec:$cmd", shellReadTimeoutMs)
+
+    /** Sends [service] to [serial] and reads the reply to EOF. Cancelling closes the socket, so it returns at once. */
+    private suspend fun request(serial: String, service: String, readTimeoutMs: Int): ByteArray = withContext(Dispatchers.IO) {
         openSocket().use { socket ->
-            socket.soTimeout = shellReadTimeoutMs
-            val out = socket.getOutputStream()
-            val input = socket.getInputStream()
-            out.write(AdbWire.encodeRequest("host:transport:$serial"))
-            out.flush()
-            AdbWire.readStatus(input)
-            out.write(AdbWire.encodeRequest("exec:$cmd"))
-            out.flush()
-            AdbWire.readStatus(input)
-            input.readBytes()
+            // A blocked read ignores interrupts: without the close a cancel would wait for the read timeout.
+            closingOnCancel(onCancel = { runCatching { socket.close() } }) {
+                socket.soTimeout = readTimeoutMs
+                val out = socket.getOutputStream()
+                val input = socket.getInputStream()
+                out.write(AdbWire.encodeRequest("host:transport:$serial"))
+                out.flush()
+                AdbWire.readStatus(input)
+                out.write(AdbWire.encodeRequest(service))
+                out.flush()
+                AdbWire.readStatus(input)
+                input.readBytes()
+            }
         }
     }
 

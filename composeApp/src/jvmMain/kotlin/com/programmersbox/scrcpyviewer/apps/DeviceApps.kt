@@ -90,11 +90,14 @@ open class DeviceApps(
     private val serverJar: () -> Path?,
     private val serverVersion: String,
     private val listTimeoutMs: Long = LIST_TIMEOUT_MS,
+    /** Bound of the `adb push` of the jar: on a wedged link it never returns. */
+    private val pushTimeoutMs: Long = PUSH_TIMEOUT_MS,
 ) {
     /** The device's launchable apps with their versions, sorted by label. */
     open suspend fun list(): List<DeviceApp> {
         val jar = serverJar() ?: throw IOException("The scrcpy server is missing")
-        val push = adb.exec("-s", serial, "push", jar.toString(), JAR_PATH)
+        val push = adb.execWithTimeout(pushTimeoutMs, "-s", serial, "push", jar.toString(), JAR_PATH)
+            ?: throw IOException("adb push timed out")
         if (push.exitCode != 0) throw IOException("adb push failed: ${(push.stderr + push.stdout).trim()}")
         val out = StringBuilder()
         try {
@@ -150,6 +153,7 @@ open class DeviceApps(
         const val JAR_PATH = "/data/local/tmp/scrcpy-viewer-apps.jar"
         private const val SERVER_CLASS = "com.genymobile.scrcpy.Server"
         private const val LIST_TIMEOUT_MS = 60_000L
+        private const val PUSH_TIMEOUT_MS = 30_000L
         private const val EXIT_MARKER = "__scrcpyviewer_exit="
         private const val VERSIONS_COMMAND =
             "dumpsys package packages | grep -E '^  Package \\[|versionName=|versionCode='"

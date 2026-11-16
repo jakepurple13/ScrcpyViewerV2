@@ -13,7 +13,8 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 
 private const val INFO_COMMAND = "getprop ro.product.model; getprop ro.build.version.release; getprop ro.build.version.sdk; getprop ro.serialno"
-private const val INFO_ATTEMPTS = 5
+/** Caps the doubling shift so the delay cannot overflow before [DeviceTracker]'s maxInfoRetryMs caps it. */
+private const val MAX_RETRY_SHIFT = 16
 
 /** Keeps [devices] in sync with the adb server's `host:track-devices-l` stream and reconnects with backoff. */
 class DeviceTracker(
@@ -23,6 +24,8 @@ class DeviceTracker(
     private val maxBackoffMs: Long = 5000,
     /** First delay before re-asking a device for its info; doubles per attempt. */
     private val infoRetryMs: Long = 500,
+    /** Longest delay between info attempts; a device that never answers is asked this often while it is listed. */
+    private val maxInfoRetryMs: Long = 30_000,
 ) {
     private val _devices = MutableStateFlow<List<Device>>(emptyList())
     val devices: StateFlow<List<Device>> = _devices.asStateFlow()
@@ -108,13 +111,19 @@ class DeviceTracker(
     private suspend fun fetchInfo(key: Key) {
         var info: DeviceInfo? = null
         // A device that just connected over Wi-Fi may not answer yet; retry with backoff while it is still listed,
-        // since its options key (ro.serialno) comes from this info.
-        for (attempt in 0 until INFO_ATTEMPTS) {
+        // since its options key (ro.serialno) comes from this info. There is no last attempt: nothing else would ask
+        // again until the device list changes, and an emulator waiting for its info would be given up on.
+        var attempt = 0
+        while (true) {
             if (attempt > 0) {
-                delay(infoRetryMs shl (attempt - 1))
-                val stillListed = synchronized(lock) { key in inFlight && raw.any { Key(it.serial, it.transportId) == key } }
+                delay((infoRetryMs shl (attempt - 1).coerceAtMost(MAX_RETRY_SHIFT)).coerceAtMost(maxInfoRetryMs))
+                // Online only: an offline or unauthorized device can't answer, and going online again re-fetches.
+                val stillListed = synchronized(lock) {
+                    key in inFlight && raw.any { Key(it.serial, it.transportId) == key && it.state == DeviceState.Device }
+                }
                 if (!stillListed) break
             }
+            attempt++
             info = try {
                 parseInfo(client.shell(key.serial, INFO_COMMAND))
             } catch (e: CancellationException) {

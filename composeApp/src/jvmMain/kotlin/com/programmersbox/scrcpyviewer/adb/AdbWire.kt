@@ -7,8 +7,15 @@ class AdbException(message: String) : IOException(message)
 
 /** adb host protocol framing: requests are a 4-digit hex length followed by the payload. */
 object AdbWire {
+    /** The largest request body the 4-hex-digit length can describe. */
+    const val MAX_REQUEST_BYTES = 0xFFFF
+
+    /** Throws [IllegalArgumentException] for a body over 0xFFFF bytes, which the 4-digit length cannot frame. */
     fun encodeRequest(cmd: String): ByteArray {
         val body = cmd.toByteArray(Charsets.UTF_8)
+        require(body.size <= MAX_REQUEST_BYTES) {
+            "adb request is ${body.size} bytes; the adb protocol allows at most $MAX_REQUEST_BYTES"
+        }
         return "%04x".format(body.size).toByteArray(Charsets.US_ASCII) + body
     }
 

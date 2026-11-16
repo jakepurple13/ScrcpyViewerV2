@@ -16,6 +16,13 @@ class AdbWireTest {
     }
 
     @Test
+    fun `encodeRequest refuses a body longer than four hex digits`() {
+        assertEquals(4 + 0xFFFF, AdbWire.encodeRequest("x".repeat(0xFFFF)).size)
+        val e = assertFailsWith<IllegalArgumentException> { AdbWire.encodeRequest("x".repeat(0x10000)) }
+        kotlin.test.assertTrue("65536" in e.message.orEmpty(), e.message)
+    }
+
+    @Test
     fun `readStatus accepts OKAY`() {
         AdbWire.readStatus(stream("OKAY"))
     }
