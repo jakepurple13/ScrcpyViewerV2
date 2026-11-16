@@ -2,7 +2,10 @@ package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.LocalScrollbarStyle
@@ -211,7 +214,8 @@ internal class LogcatFollow(val state: LazyListState) {
 
 /**
  * The log: a column header, then the rows of [LogcatController.visible] newest at the bottom, the paused banner,
- * the "N new lines" pill, the empty-filter message and, before the first play, the start card. Rows are monospace
+ * the "N new lines" pill, the empty-filter message and, before the first play, the start card. While an export runs
+ * its bar ([LogcatExportBar]) crosses the top edge and the rows dim to 0.55 (300 ms). Rows are monospace
  * and selectable; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
  */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -230,6 +234,11 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val mine = controller.mine
     val wrap = controller.wrap
     val run = controller.run
+    // The rows dim while an export runs.
+    val rowsAlpha by animateFloatAsState(
+        if (controller.export is LogcatExport.Running) 0.55f else 1f,
+        if (motion) tween(300) else snap(),
+    )
     // Entries whose fold the user flipped from the default; kept by the controller, so they move with the panel.
     val flipped = controller.traceFlips
     val clipboard = LocalClipboard.current
@@ -263,7 +272,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     Column(modifier.background(scheme.surfaceContainerLowest)) {
         LogcatHeader(columns)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            SelectionContainer(Modifier.fillMaxSize()) {
+            SelectionContainer(Modifier.fillMaxSize().graphicsLayer { alpha = rowsAlpha }) {
                 LazyColumn(
                     Modifier.fillMaxSize().nestedScroll(follow.connection),
                     state = listState,
@@ -303,6 +312,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
                 Modifier.align(Alignment.BottomCenter),
             )
             LogcatStartCard(run == LogcatRun.NotStarted, motion, controller.canPlay, controller::play)
+            LogcatExportBar(controller, motion, Modifier.align(Alignment.TopCenter).fillMaxWidth())
         }
     }
 }

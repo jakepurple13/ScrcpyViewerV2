@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
+import com.programmersbox.scrcpyviewer.ui.common.revealLabel
 import com.programmersbox.scrcpyviewer.ui.onEdt
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull

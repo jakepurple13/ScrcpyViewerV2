@@ -3,6 +3,13 @@ package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextOverflow
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -56,7 +63,8 @@ private val IconShape = RoundedCornerShape(8.dp)
 
 /**
  * Under the list: the live dot and state, clear, soft wrap and compact, "X of Y lines" (shown of all) and a bar of
- * the shown lines by level.
+ * the shown lines by level. While an export shows, its [exportStatusText] takes the counts' place: the new text rises
+ * 10 dp from below as the old leaves 10 dp up (200 ms fade, 260 ms slide).
  */
 @Composable
 internal fun LogcatStatusBar(controller: LogcatController, motion: Boolean) {
@@ -74,18 +82,40 @@ internal fun LogcatStatusBar(controller: LogcatController, motion: Boolean) {
         StatusIcon(Icons.Filled.ViewHeadline, "Compact view", controller.compact, motion) { controller.compact = !controller.compact }
         val counts = controller.levelCounts
         val shown = counts.values.sum()
-        Text(
-            buildAnnotatedString {
-                val num = SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)
-                withStyle(num) { append("%,d".format(shown)) }
-                append(" of ")
-                withStyle(num) { append("%,d".format(controller.totalLines)) }
-                append(" lines")
+        val shift = with(LocalDensity.current) { 10.dp.roundToPx() }
+        // Keyed on the export's stage: progress and new lines update the text in place.
+        AnimatedContent(
+            controller.export,
+            contentKey = { it::class },
+            transitionSpec = {
+                if (motion) {
+                    (slideInVertically(tween(260, easing = EmphasizedDecelerate)) { shift } + fadeIn(tween(200)))
+                        .togetherWith(slideOutVertically(tween(260, easing = EmphasizedDecelerate)) { -shift } + fadeOut(tween(200)))
+                        .using(SizeTransform(clip = false))
+                } else {
+                    EnterTransition.None.togetherWith(ExitTransition.None)
+                }
             },
-            style = style.copy(fontFeatureSettings = "tnum"),
-            color = scheme.onSurfaceVariant,
-            maxLines = 1,
-        )
+        ) { export ->
+            val status = exportStatusText(export)
+            Text(
+                if (status != null) {
+                    AnnotatedString(status)
+                } else {
+                    buildAnnotatedString {
+                        val num = SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)
+                        withStyle(num) { append("%,d".format(shown)) }
+                        append(" of ")
+                        withStyle(num) { append("%,d".format(controller.totalLines)) }
+                        append(" lines")
+                    }
+                },
+                style = style.copy(fontFeatureSettings = "tnum"),
+                color = scheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
             LevelMix(counts, shown, motion, Modifier.widthIn(min = 60.dp, max = 220.dp).fillMaxWidth())
         }

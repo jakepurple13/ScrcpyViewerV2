@@ -114,10 +114,17 @@ fun LogcatWindow(controller: LogcatController, deviceName: String, theme: AppThe
 /**
  * What [LogcatWindow] shows inside its window: the panel ([LogcatTab]) with a snackbar for the controller's toasts
  * while [LogcatController.popped], [onRaise] once for each [LogcatController.raise] after it composes, and the panel
- * focused once the window is [shown], so its keys work from the start.
+ * focused once the window is [shown], so its keys work from the start. Exports ask for their file through [pick], as
+ * in the sheet.
  */
 @Composable
-fun LogcatWindowContent(controller: LogcatController, motion: Boolean, shown: Boolean, onRaise: () -> Unit) {
+fun LogcatWindowContent(
+    controller: LogcatController,
+    motion: Boolean,
+    shown: Boolean,
+    onRaise: () -> Unit,
+    pick: suspend (String, String) -> java.nio.file.Path? = defaultExportPick,
+) {
     val snackbar = remember { SnackbarHostState() }
     val snackScope = rememberCoroutineScope()
     val raise by rememberUpdatedState(onRaise)
@@ -134,7 +141,7 @@ fun LogcatWindowContent(controller: LogcatController, motion: Boolean, shown: Bo
     val focus = remember { FocusRequester() }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         BoxWithConstraints(Modifier.fillMaxSize().padding(top = 4.dp)) {
-            LogcatTab(controller, maxWidth, motion, inWindow = true, focusRequester = focus)
+            LogcatTab(controller, maxWidth, motion, inWindow = true, focusRequester = focus, pick = pick)
             // Here, in the same subcomposition as the tab: BoxWithConstraints composes its content only at layout,
             // and a hidden window lays nothing out, so an effect outside it ran before the tab's requester attached.
             // After a frame of the shown window, its focus owner has the tab.

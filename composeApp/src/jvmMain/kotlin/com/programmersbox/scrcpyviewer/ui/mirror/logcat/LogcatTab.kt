@@ -87,6 +87,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import com.programmersbox.scrcpyviewer.ui.theme.RetroButton
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
+import java.nio.file.Path
 
 /** True on the Play button while its pulse rings draw (tests read it). */
 internal val LogcatPulseKey = SemanticsPropertyKey<Boolean>("LogcatPulse")
@@ -101,6 +102,9 @@ private const val PULSE_MILLIS = 900
  * Keys, with focus anywhere in the tab ([logcatKeyAction]; ⌘ on macOS per [isMac], Ctrl elsewhere): Space plays or
  * pauses (once per press; not in the filter field or on a control that takes Space itself), ⌘F focuses the filter with its text selected, ⌘K clears the list. The sheet
  * holds focus, so none of them reach the device; Logcat's own window sends nothing to the device at all.
+ *
+ * Export ([LogcatExportButton]) sits between Play and pop out and asks for its file through [pick]; its toast
+ * ([LogcatExportToast]) floats 44 dp above the tab's bottom.
  */
 @Composable
 fun LogcatTab(
@@ -112,11 +116,13 @@ fun LogcatTab(
     inWindow: Boolean = false,
     /** Makes the tab itself focusable through this, inside its key handlers (the own window focuses it on open). */
     focusRequester: FocusRequester? = null,
+    /** Asks where to save an export: the suggested file name and extension in, the target (null = canceled) out. */
+    pick: suspend (String, String) -> Path? = defaultExportPick,
 ) {
     val filterFocus = remember { LogcatFilterFocus() }
     // True from a Space press that toggled until its release: the key's auto-repeat presses don't toggle again.
     val spaceHeld = remember { BooleanArray(1) }
-    Column(
+    Box(
         Modifier.fillMaxSize()
             .onFocusChanged { if (!it.hasFocus) spaceHeld[0] = false }
             // ⌘F and ⌘K before anything in the tab, the filter field included.
@@ -144,18 +150,22 @@ fun LogcatTab(
             }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester).focusable() else Modifier),
     ) {
-        Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                LogcatFilterField(controller, motion, Modifier.weight(1f), filterFocus)
-                Spacer(Modifier.width(6.dp))
-                PlayPauseButton(controller, motion)
-                Spacer(Modifier.width(2.dp))
-                PopOutButton(controller, inWindow, motion)
+        Column(Modifier.fillMaxSize()) {
+            Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.Top) {
+                    LogcatFilterField(controller, motion, Modifier.weight(1f), filterFocus)
+                    Spacer(Modifier.width(6.dp))
+                    PlayPauseButton(controller, motion)
+                    Spacer(Modifier.width(2.dp))
+                    LogcatExportButton(controller, motion, pick)
+                    PopOutButton(controller, inWindow, motion)
+                }
+                ChipsRow(controller, motion)
             }
-            ChipsRow(controller, motion)
+            LogcatList(controller, sheetWidth, motion, Modifier.weight(1f).fillMaxWidth())
+            LogcatStatusBar(controller, motion)
         }
-        LogcatList(controller, sheetWidth, motion, Modifier.weight(1f).fillMaxWidth())
-        LogcatStatusBar(controller, motion)
+        LogcatExportToast(controller, motion, Modifier.align(Alignment.BottomCenter).padding(bottom = 44.dp))
     }
 }
 
