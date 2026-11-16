@@ -53,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.files.DEVICE_ROOT
 import com.programmersbox.scrcpyviewer.files.DeviceEntry
-import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.files.devicePath
 import com.programmersbox.scrcpyviewer.files.isInside
 import com.programmersbox.scrcpyviewer.files.normalizeDir
@@ -221,7 +220,7 @@ class FilesDropState internal constructor(private val browser: FilesBrowser) {
     }
 
     private fun currentBlocked(): Boolean =
-        isKnownBlocked(browser.path) || browser.listingPath == browser.path && browser.listing == Listing.Blocked
+        isKnownBlocked(browser.path) || browser.readOnlyHere
 
     // Computer drags
 

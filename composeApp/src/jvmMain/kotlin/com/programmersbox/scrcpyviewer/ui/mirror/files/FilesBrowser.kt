@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.programmersbox.scrcpyviewer.files.DEVICE_ROOT
+import com.programmersbox.scrcpyviewer.files.FS_ROOT
 import com.programmersbox.scrcpyviewer.files.DeviceEntry
 import com.programmersbox.scrcpyviewer.files.DeviceFiles
 import com.programmersbox.scrcpyviewer.files.DeviceSpace
@@ -104,10 +105,11 @@ sealed interface FilesDialog {
 
 data class Snack(val message: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
 
-/** "Internal storage" for the storage root, else the folder's own name. */
-fun folderLabel(dir: String): String {
-    val d = normalizeDir(dir)
-    return if (d == DEVICE_ROOT) "Internal storage" else d.substringAfterLast('/')
+/** "Internal storage" for the storage root, "Device" for the file system's root, else the folder's own name. */
+fun folderLabel(dir: String): String = when (val d = normalizeDir(dir)) {
+    DEVICE_ROOT -> "Internal storage"
+    FS_ROOT -> "Device"
+    else -> d.substringAfterLast('/')
 }
 
 /**
@@ -173,6 +175,10 @@ class FilesBrowser(
     var showHidden by mutableStateOf(settings.settings.value.filesShowHidden)
         private set
 
+    /** The crumbs show the real path ("/ › sdcard") instead of "Device › Internal storage". */
+    var realPaths by mutableStateOf(settings.settings.value.filesRealPaths)
+        private set
+
     /** Names added since the previous listing of this folder, for [ARRIVING_MILLIS]. */
     var arriving by mutableStateOf<Set<String>>(emptySet())
         private set
@@ -221,6 +227,13 @@ class FilesBrowser(
 
     /** The listing is the open folder's. Until it is, the rows shown are the folder before's and take no action. */
     private val listed: Boolean get() = listingPath == path
+
+    /**
+     * The open folder takes no new files: Android blocks it, or adb can't write there (a system folder). False until
+     * its listing is in.
+     */
+    val readOnlyHere: Boolean
+        get() = listed && listing.let { it is Listing.Blocked || it is Listing.Entries && !it.writable }
 
     /** Every name in the open folder (hidden and filtered ones too), when its listing is current. */
     private val currentNames: Set<String>?
@@ -369,14 +382,15 @@ class FilesBrowser(
                 if (added.isNotEmpty()) markArriving(added)
             }
             if (result !is Listing.Entries) return@launch
-            val folders = result.entries.filter { it.isDir }.map { it.name }
+            // A locked folder can't be counted: its count would read 0.
+            val folders = result.entries.filter { it.isDir && !it.locked }.map { it.name }
             val counts = runCatching { files.counts(dir, folders) }.getOrElse {
                 if (it is CancellationException) throw it
                 emptyMap()
             }
             if (gen != generation) return@launch
             if (counts.isNotEmpty()) {
-                listing = Listing.Entries(result.entries.map { e -> counts[e.name]?.let { e.copy(itemCount = it) } ?: e })
+                listing = result.copy(entries = result.entries.map { e -> counts[e.name]?.let { e.copy(itemCount = it) } ?: e })
             }
             val space = runCatching { files.freeSpace() }.getOrElse {
                 if (it is CancellationException) throw it
@@ -454,6 +468,12 @@ class FilesBrowser(
         selection = selection.retain(order)
     }
 
+    fun toggleRealPaths() {
+        realPaths = !realPaths
+        val r = realPaths
+        settings.update { it.copy(filesRealPaths = r) }
+    }
+
     // Selection
 
     fun click(name: String) { if (listed) selection = selection.click(order, name) }
@@ -506,7 +526,7 @@ class FilesBrowser(
                     // In place before the pending row goes, so the row never disappears while the refresh runs.
                     val current = listing
                     if (path == dir && listingPath == dir && current is Listing.Entries && current.entries.none { it.name == text }) {
-                        listing = Listing.Entries(current.entries + DeviceEntry(text, isDir = true, size = 0, mtimeMillis = pendingMtime))
+                        listing = current.copy(entries = current.entries + DeviceEntry(text, isDir = true, size = 0, mtimeMillis = pendingMtime))
                         markArriving(setOf(text))
                     }
                 } catch (e: CancellationException) {
@@ -527,7 +547,7 @@ class FilesBrowser(
                 // In place, so the refresh does not take the new name for an arrival.
                 val current = listing
                 if (path == dir && listingPath == dir && current is Listing.Entries) {
-                    listing = Listing.Entries(current.entries.map { if (it.name == from) it.copy(name = text) else it })
+                    listing = current.copy(entries = current.entries.map { if (it.name == from) it.copy(name = text) else it })
                 }
                 if (path == dir && from in selection.names) {
                     selection = Selection(
@@ -548,7 +568,7 @@ class FilesBrowser(
 
     /** Adds a "New folder" row in rename; `mkdir` runs only when the name is committed. */
     fun newFolder() {
-        if (!connected || pendingNewFolder != null) return
+        if (!connected || pendingNewFolder != null || readOnlyHere) return
         val taken = currentNames ?: return
         val name = uniqueName(taken, NEW_FOLDER, isDir = true, ignoreCase = true)
         pendingMtime = now()
@@ -613,7 +633,7 @@ class FilesBrowser(
         }
         val current = listing
         if (path == dir && listingPath == dir && current is Listing.Entries) {
-            listing = Listing.Entries(current.entries.filter { it.name !in names })
+            listing = current.copy(entries = current.entries.filter { it.name !in names })
             selection = selection.retain(order)
         }
     }
@@ -710,9 +730,14 @@ class FilesBrowser(
             null
         }
         return when (result) {
-            is Listing.Entries -> result.entries.mapTo(HashSet()) { it.name }
-            Listing.Blocked -> {
-                post(Snack("Android blocks this folder"))
+            is Listing.Entries -> if (forPush && !result.writable) {
+                post(Snack("Nothing pushed: ${folderLabel(dir)} is read-only"))
+                null
+            } else {
+                result.entries.mapTo(HashSet()) { it.name }
+            }
+            is Listing.Blocked -> {
+                post(Snack("No access to ${folderLabel(dir)}"))
                 null
             }
             else -> if (forPush) {
@@ -727,13 +752,13 @@ class FilesBrowser(
     // Transfers
 
     /**
-     * Pushes [paths] into [toDir]. False when nothing can go: disconnected, or [toDir] is the open folder and Android
-     * blocks it. Into the open folder, clashes are known at once; into another folder it is listed first.
+     * Pushes [paths] into [toDir]. False when nothing can go: disconnected, or [toDir] is the open folder and it is
+     * [readOnlyHere]. Into the open folder, clashes are known at once; into another folder it is listed first.
      */
     fun push(paths: List<Path>, toDir: String): Boolean {
         if (!connected || paths.isEmpty()) return false
         val target = normalizeDir(toDir)
-        if (target == path && listingPath == path && listing == Listing.Blocked) return false
+        if (target == path && readOnlyHere) return false
         val known = currentNames?.takeIf { target == path }
         if (known != null) return pushInto(paths, target, known)
         scope.launch {

@@ -94,6 +94,9 @@ private class FakeFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath = {
     }
 }
 
+/** The device's line for a folder Android blocks. */
+internal const val DENIED = "ls: /sdcard/Android/data: Permission denied"
+
 class FilesBrowserTest {
     private val files = FakeFiles().apply {
         dirs["/sdcard"] = Listing.Entries(listOf(dir("Download"), dir("Documents"), dir("Android")))
@@ -103,7 +106,9 @@ class FilesBrowserTest {
         dirs["/sdcard/Download/Telegram"] = Listing.Entries(listOf(file("voice.ogg")))
         dirs["/sdcard/Documents"] = Listing.Entries(emptyList())
         dirs["/sdcard/Android"] = Listing.Entries(listOf(dir("data")))
-        dirs["/sdcard/Android/data"] = Listing.Blocked
+        dirs["/sdcard/Android/data"] = Listing.Blocked(DENIED)
+        dirs["/"] = Listing.Entries(listOf(dir("data").copy(locked = true), dir("sdcard"), dir("system")), writable = false)
+        dirs["/system"] = Listing.Entries(listOf(dir("app"), file("build.prop")), writable = false)
     }
     private val memory = QuickActionsMemory()
     private val settings = AppSettings(Files.createTempDirectory("files-browser").resolve("settings.json"))
@@ -172,8 +177,15 @@ class FilesBrowserTest {
         b.up()
         runCurrent()
         assertEquals("/sdcard", b.path)
+        assertTrue(b.canGoUp, "internal storage goes up to the device root")
+        b.up()
+        runCurrent()
+        assertEquals("/", b.path)
         assertFalse(b.canGoUp)
         b.up()
+        assertEquals("/", b.path)
+        b.back()
+        runCurrent()
         assertEquals("/sdcard", b.path)
         b.back()
         runCurrent()
@@ -259,10 +271,50 @@ class FilesBrowserTest {
         assertEquals(Listing.Failed("/sdcard/Nope: No such file or directory"), b.listing)
         b.open("/sdcard/Android/data")
         runCurrent()
-        assertEquals(Listing.Blocked, b.listing)
+        assertEquals(Listing.Blocked(DENIED), b.listing)
         assertEquals(emptyList(), b.names)
         assertFalse(b.push(listOf(Paths.get("/x/a.jpg")), "/sdcard/Android/data"), "blocked folders refuse pushes")
         assertTrue(requests.isEmpty())
+    }
+
+    @Test
+    fun theDeviceRootListsLockedFoldersWithoutCountingThem() = runTest {
+        val b = browser("/")
+        assertEquals("/", b.path)
+        assertFalse(b.canGoUp)
+        val data = b.visible.first { it.name == "data" }
+        assertTrue(data.locked)
+        assertNull(data.itemCount, "a locked folder can't be counted")
+        assertEquals(3, b.visible.first { it.name == "system" }.itemCount)
+        b.openEntry("data")
+        runCurrent()
+        assertEquals("/data", b.path, "a locked folder still opens")
+    }
+
+    @Test
+    fun aReadOnlyFolderTakesNoNewFiles() = runTest {
+        val b = browser("/system")
+        assertTrue(b.readOnlyHere)
+        b.newFolder()
+        assertNull(b.pendingNewFolder)
+        assertFalse(b.push(listOf(Paths.get("/x/a.jpg")), "/system"))
+        b.open("/sdcard/Download")
+        runCurrent()
+        assertFalse(b.readOnlyHere)
+        assertTrue(b.push(listOf(Paths.get("/x/a.jpg")), "/system"))
+        runCurrent()
+        assertTrue(requests.isEmpty(), requests.toString())
+        assertEquals("Nothing pushed: system is read-only", snacks.last().message)
+    }
+
+    @Test
+    fun realPathsIsSaved() = runTest {
+        val b = browser()
+        assertFalse(b.realPaths)
+        b.toggleRealPaths()
+        assertTrue(b.realPaths)
+        assertTrue(settings.settings.value.filesRealPaths)
+        assertTrue(browser().realPaths, "a new window keeps it")
     }
 
     @Test
@@ -622,7 +674,7 @@ class FilesBrowserTest {
         b.push(listOf(Paths.get("/x/z.txt")), "/sdcard/Android/data")
         runCurrent()
         assertEquals(1, requests.size, "a blocked folder gets nothing")
-        assertEquals(listOf("Skipped notes.txt, already in Documents", "Android blocks this folder"), snacks.map { it.message })
+        assertEquals(listOf("Skipped notes.txt, already in Documents", "No access to data"), snacks.map { it.message })
     }
 
     @Test

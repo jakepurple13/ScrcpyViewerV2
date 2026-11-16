@@ -79,7 +79,6 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.programmersbox.scrcpyviewer.files.DEVICE_ROOT
-import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.files.devicePath
 import com.programmersbox.scrcpyviewer.files.isInside
 import com.programmersbox.scrcpyviewer.files.normalizeDir
@@ -318,24 +317,23 @@ private fun ItemMenu(browser: FilesBrowser, names: Set<String>, actions: MenuAct
 /** Right-click on empty space: New folder, Push files here…, Refresh, Copy folder path. */
 @Composable
 private fun SpaceMenu(browser: FilesBrowser, actions: MenuActions, isMac: Boolean, onDismiss: () -> Unit) {
-    val listedHere = browser.listingPath == browser.path
-    val blocked = listedHere && browser.listing == Listing.Blocked
+    val readOnly = browser.readOnlyHere
     fun run(block: () -> Unit) {
         onDismiss()
         block()
     }
     MenuItem(
         "New folder", Icons.Filled.CreateNewFolder,
-        enabled = browser.listed && browser.pendingNewFolder == null,
+        enabled = browser.listed && browser.pendingNewFolder == null && !readOnly,
         shortcut = shortcutLabel("N", isMac, shift = true),
     ) { run(browser::newFolder) }
-    MenuItem("Push files here…", Icons.Filled.FileUpload, enabled = !blocked) { run(actions.pushFiles) }
+    MenuItem("Push files here…", Icons.Filled.FileUpload, enabled = !readOnly) { run(actions.pushFiles) }
     MenuItem("Refresh", Icons.Filled.Refresh, shortcut = shortcutLabel("R", isMac)) { run(browser::refresh) }
     MenuDivider()
     MenuItem("Copy folder path", Icons.Filled.ContentCopy) { run { actions.copy(browser.path) } }
 }
 
-/** The toolbar's ⋮: Show hidden files, Sort by (the current key shows its direction), Copy folder path. */
+/** The toolbar's ⋮: Show hidden files, Show real paths, Sort by (the current key shows its direction), Copy folder path. */
 @Composable
 private fun ViewMenu(browser: FilesBrowser, actions: MenuActions, onDismiss: () -> Unit) {
     fun run(block: () -> Unit) {
@@ -343,6 +341,7 @@ private fun ViewMenu(browser: FilesBrowser, actions: MenuActions, onDismiss: () 
         block()
     }
     MenuItem("Show hidden files", null, checked = browser.showHidden) { run(browser::toggleHidden) }
+    MenuItem("Show real paths", null, checked = browser.realPaths) { run(browser::toggleRealPaths) }
     MenuDivider()
     Text(
         "Sort by", Modifier.padding(start = 16.dp, top = 2.dp, bottom = 2.dp),

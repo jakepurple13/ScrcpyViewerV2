@@ -38,6 +38,7 @@ import java.time.ZoneOffset
 import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -65,7 +66,7 @@ class FilesTabTest {
         dirs["/sdcard/Download/Telegram"] = Listing.Entries(listOf(file("voice.ogg")))
         dirs["/sdcard/Documents"] = Listing.Entries(emptyList())
         dirs["/sdcard/Android"] = Listing.Entries(listOf(dir("data")))
-        dirs["/sdcard/Android/data"] = Listing.Blocked
+        dirs["/sdcard/Android/data"] = Listing.Blocked(DENIED)
         dirs["/sdcard/Big"] = Listing.Entries((0 until 5_000).map { file("f%04d.txt".format(it)) })
     }
 
@@ -149,7 +150,7 @@ class FilesTabTest {
     @Test
     fun `opens on the push target with folders first, then names`() = onEdt {
         val driver = scene(browser())
-        assertEquals(listOf("Internal storage", "Download"), driver.crumbs())
+        assertEquals(listOf("Device", "Internal storage", "Download"), driver.crumbs())
         assertEquals(listOf("Telegram", "a.jpg", "app.apk", "notes.txt"), driver.rows(listOf("Telegram", "a.jpg", "app.apk", "notes.txt", ".nomedia")))
         assertTrue("Filter in Download" in driver.texts())
         assertTrue("41.2 GB free" in driver.texts())
@@ -164,11 +165,11 @@ class FilesTabTest {
         val driver = scene(browser())
         assertTrue(!driver.enabled("Back"), "no history yet")
         driver.doubleClick(driver.text("Telegram"))
-        assertEquals(listOf("Internal storage", "Download", "Telegram"), driver.crumbs())
+        assertEquals(listOf("Device", "Internal storage", "Download", "Telegram"), driver.crumbs())
         assertTrue("voice.ogg" in driver.texts())
         assertTrue(driver.enabled("Back"))
         driver.click(driver.described("Back"))
-        assertEquals(listOf("Internal storage", "Download"), driver.crumbs())
+        assertEquals(listOf("Device", "Internal storage", "Download"), driver.crumbs())
         assertTrue("notes.txt" in driver.texts())
     }
 
@@ -178,7 +179,7 @@ class FilesTabTest {
         val driver = scene(b)
         driver.click(driver.text("Internal storage"))
         assertEquals("/sdcard", b.path)
-        assertEquals(listOf("Internal storage"), driver.crumbs())
+        assertEquals(listOf("Device", "Internal storage"), driver.crumbs())
         assertEquals(listOf("Android", "Documents", "Download"), driver.rows(listOf("Android", "Documents", "Download")))
     }
 
@@ -194,11 +195,58 @@ class FilesTabTest {
     fun `a blocked folder explains and goes up`() = onEdt {
         val b = browser("/sdcard/Android/data")
         val driver = scene(b)
-        assertTrue("Android blocks this folder" in driver.texts())
-        assertTrue("Apps keep private files in /sdcard/Android/data. adb can’t list it without root." in driver.texts())
+        assertTrue("No access to data" in driver.texts())
+        assertTrue("Apps keep private files here. adb can’t list it without root." in driver.texts())
+        assertTrue(DENIED in driver.texts())
         driver.click(driver.text("Go up"))
         assertEquals("/sdcard/Android", b.path)
         assertTrue("data" in driver.texts())
+    }
+
+    @Test
+    fun `a blocked folder with a known way in opens it`() = onEdt {
+        files.dirs["/data"] = Listing.Blocked("ls: /data: Permission denied")
+        files.dirs["/data/local/tmp"] = Listing.Entries(listOf(file("scrcpy-server.jar")))
+        val b = browser("/data")
+        val driver = scene(b)
+        assertTrue("No access to data" in driver.texts())
+        driver.click(driver.text("Open /data/local/tmp"))
+        driver.frames(30)
+        assertEquals("/data/local/tmp", b.path)
+        assertTrue("scrcpy-server.jar" in driver.texts())
+    }
+
+    @Test
+    fun `the device root marks locked folders, stays clickable, and says it is read-only`() = onEdt {
+        files.dirs["/"] = Listing.Entries(listOf(dir("data").copy(locked = true), dir("system")), writable = false)
+        files.dirs["/data"] = Listing.Blocked("ls: /data: Permission denied")
+        val b = browser("/sdcard")
+        val driver = scene(b)
+        assertTrue(driver.enabled("Up one folder"), "internal storage goes up")
+        driver.click(driver.described("Up one folder"))
+        driver.frames(30)
+        assertEquals("/", b.path)
+        assertEquals(listOf("Device"), driver.crumbs())
+        assertTrue("No access" in driver.texts(), "the locked row says so")
+        assertEquals(1, driver.nodes().count { it.config.getOrNull(SemanticsProperties.TestTag) == LOCK_BADGE_TAG })
+        assertTrue(driver.texts().any { it.startsWith("Read-only folder.") })
+        assertFalse(driver.enabled("New folder"))
+        assertFalse(driver.enabled("Push files here"))
+        driver.doubleClick(driver.text("data"))
+        driver.frames(30)
+        assertEquals("/data", b.path)
+        assertTrue("No access to data" in driver.texts())
+    }
+
+    @Test
+    fun `real path crumbs show the path's own segments`() = onEdt {
+        val b = browser("/sdcard/Download")
+        b.toggleRealPaths()
+        val driver = scene(b)
+        assertEquals(listOf("/", "sdcard", "Download"), driver.crumbs())
+        b.toggleRealPaths()
+        driver.frames(30)
+        assertEquals(listOf("Device", "Internal storage", "Download"), driver.crumbs())
     }
 
     @Test

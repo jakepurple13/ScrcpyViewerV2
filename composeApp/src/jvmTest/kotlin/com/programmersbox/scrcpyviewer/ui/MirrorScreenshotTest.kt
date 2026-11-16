@@ -960,7 +960,7 @@ class MirrorScreenshotTest {
                 ),
             )
             "/sdcard/Documents" -> Listing.Entries(emptyList())
-            else -> Listing.Blocked
+            else -> Listing.Blocked("ls: $dir: Permission denied")
         }
         override suspend fun counts(dir: String, folders: List<String>): Map<String, Int> = folders.associateWith { 7 }
         override suspend fun freeSpace() = DeviceSpace(44_236_955_648, 122_880_000_000)
