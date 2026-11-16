@@ -11,6 +11,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -43,10 +45,10 @@ import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.layout.MeasureResult
 import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.unit.Constraints
-import kotlin.math.roundToInt
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 
@@ -127,7 +129,10 @@ private fun <T> SegmentedForm(
                         } else {
                             SegmentedButtonDefaults.Icon(
                                 active = isSelected && !labelsHidden,
-                                inactiveContent = { Icon(vector, null, Modifier.size(SegmentedButtonDefaults.IconSize)) },
+                                // Icons only: the icon carries the label, so the segment keeps an accessible name.
+                                inactiveContent = {
+                                    Icon(vector, option.label.takeIf { labelsHidden }, Modifier.size(SegmentedButtonDefaults.IconSize))
+                                },
                             )
                         }
                     },
@@ -203,7 +208,7 @@ private fun <T> MenuForm(
         OutlinedButton(
             onClick = { open = true },
             modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 12.dp, end = 4.dp),
+            contentPadding = PaddingValues(start = 12.dp, end = 4.dp),
         ) {
             current?.icon?.let {
                 Icon(it, null, Modifier.size(SegmentedButtonDefaults.IconSize))
@@ -217,6 +222,11 @@ private fun <T> MenuForm(
                 DropdownMenuItem(
                     text = { Text(option.label) },
                     leadingIcon = option.icon?.let { vector -> { Icon(vector, null) } },
+                    trailingIcon = if (option.value == selected) {
+                        { Icon(Icons.Filled.Check, "Selected") }
+                    } else {
+                        null
+                    },
                     onClick = {
                         open = false
                         onSelect(option.value)

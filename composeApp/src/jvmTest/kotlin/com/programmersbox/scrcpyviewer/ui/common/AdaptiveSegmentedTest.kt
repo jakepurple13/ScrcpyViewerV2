@@ -146,9 +146,11 @@ class AdaptiveSegmentedTest {
             driver.frames(60)
             val clickables = driver.clickables()
             assertEquals(1, clickables.size)
+            // The closed button shows the current choice and only it.
+            assertTrue("System" in driver.texts())
+            assertTrue("Dark" !in driver.texts())
             driver.click(clickables.single())
             driver.frames(30)
-            assertEquals("System", driver.texts().keys.firstOrNull { it == "System" })
             driver.click(checkNotNull(driver.texts()["Dark"]))
             assertEquals(listOf(Mode.Dark), h.picked)
         } finally {
