@@ -9,6 +9,9 @@ import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerButtons
 import androidx.compose.ui.input.pointer.PointerEventType
@@ -380,6 +383,35 @@ class LogcatListTest {
             assertNull(containing("new line"), "revealed lines don't count")
             send(line("shown"))
             assertNotNull(text("1 new line"))
+        }
+    }
+
+    @Test
+    fun `dragging across rows selects and copies messages only`() = onEdt {
+        withScene {
+            started()
+            send(line("first message", tag = "AlphaTag"), line("second message", tag = "BetaTag"))
+            val from = checkNotNull(text("10:00:01.234")).boundsInRoot.centerLeft + Offset(2f, 0f)
+            val to = checkNotNull(text("second message")).boundsInRoot.centerRight
+            val held = PointerButtons(isPrimaryPressed = true)
+            scene.sendPointerEvent(PointerEventType.Move, from, type = PointerType.Mouse)
+            scene.sendPointerEvent(PointerEventType.Press, from, type = PointerType.Mouse, buttons = held, button = PointerButton.Primary)
+            frames(2)
+            scene.sendPointerEvent(PointerEventType.Move, to, type = PointerType.Mouse, buttons = held)
+            frames(2)
+            scene.sendPointerEvent(PointerEventType.Release, to, type = PointerType.Mouse, button = PointerButton.Primary)
+            frames(5)
+            // Copy is Cmd+C on macOS and Ctrl+C elsewhere.
+            for (meta in listOf(true, false)) for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
+                scene.sendKeyEvent(KeyEvent(Key.C, type, isMetaPressed = meta, isCtrlPressed = !meta))
+            }
+            frames(5)
+            settle()
+            val copied = clipboard.texts.lastOrNull().orEmpty()
+            assertTrue("first message" in copied && "second message" in copied, "copied: $copied")
+            for (cell in listOf("AlphaTag", "BetaTag", "10:00:01", "1234-1250", "com.example.notes")) {
+                assertFalse(cell in copied, "$cell isn't selectable; copied: $copied")
+            }
         }
     }
 

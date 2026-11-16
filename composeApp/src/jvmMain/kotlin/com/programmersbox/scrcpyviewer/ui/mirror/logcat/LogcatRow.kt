@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.onClick
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
@@ -218,24 +219,28 @@ internal fun LogcatLineRow(
     Column(Modifier.fillMaxWidth().then(bg)) {
         Row(Modifier.padding(horizontal = PAD.dp, vertical = 1.dp), verticalAlignment = Alignment.Top) {
             val dim = scheme.onSurfaceVariant
-            Text(if (columns.compact) line.time.take(8) else line.time, Modifier.widthBy(columns::time), style = LogRowStyle, color = dim, maxLines = 1, softWrap = false)
-            if (columns.idsShown) {
-                Text("${line.pid}-${line.tid}", Modifier.widthBy(columns::pid), style = LogRowStyle, color = dim, maxLines = 1, softWrap = false)
-            }
-            Box(Modifier.widthBy(columns::tag)) {
-                FilterCell(line.tag, LogcatColors.tag(line.tag)) { exclude -> actions.filter("tag", line.tag, exclude) }
-            }
-            if (columns.idsShown) {
-                Box(Modifier.widthBy(columns::pkg)) {
-                    val pkg = item.pkg
-                    if (pkg != null) FilterCell(pkg, dim) { exclude -> actions.filter("package", pkg, exclude) }
+            // Only the message and trace are selectable. Compose's selection across texts side by side, next to a
+            // wrapped message, can end up with start > end and crash in draw.
+            DisableSelection {
+                Text(if (columns.compact) line.time.take(8) else line.time, Modifier.widthBy(columns::time), style = LogRowStyle, color = dim, maxLines = 1, softWrap = false)
+                if (columns.idsShown) {
+                    Text("${line.pid}-${line.tid}", Modifier.widthBy(columns::pid), style = LogRowStyle, color = dim, maxLines = 1, softWrap = false)
                 }
+                Box(Modifier.widthBy(columns::tag)) {
+                    FilterCell(line.tag, LogcatColors.tag(line.tag)) { exclude -> actions.filter("tag", line.tag, exclude) }
+                }
+                if (columns.idsShown) {
+                    Box(Modifier.widthBy(columns::pkg)) {
+                        val pkg = item.pkg
+                        if (pkg != null) FilterCell(pkg, dim) { exclude -> actions.filter("package", pkg, exclude) }
+                    }
+                }
+                LevelBadge(line.level)
             }
-            LevelBadge(line.level)
             Spacer(Modifier.width(GAP.dp))
             Row(Modifier.weight(1f)) {
                 MessageText(line.message, words, messageColor, line.level == LogLevel.Assert, wrap, Modifier.weight(1f, fill = false))
-                if (entry.hasTrace) TraceToggle(entry.trace.size, expanded, motion) { actions.toggle(entry.seq) }
+                if (entry.hasTrace) DisableSelection { TraceToggle(entry.trace.size, expanded, motion) { actions.toggle(entry.seq) } }
             }
         }
         if (entry.hasTrace) {
