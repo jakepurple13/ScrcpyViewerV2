@@ -67,8 +67,11 @@ class BundledToolsTest {
         threads.forEach { it.join() }
         assertEquals(8, results.size)
         assertEquals(1, results.toSet().size)
-        // The copy goes through a temp file that is moved into place: none is left behind.
-        assertEquals(listOf(adbName), Files.list(results.first().parent).use { s -> s.map { it.fileName.toString() }.toList() })
+        // The copy goes through a temp file that is moved into place: none is left behind. (Only temp files are
+        // checked: on Windows the adb DLLs can be copied alongside from a bundled dir found on the machine.)
+        val left = Files.list(results.first().parent).use { s -> s.map { it.fileName.toString() }.toList() }
+        assertEquals(emptyList(), left.filter { it.endsWith(".tmp") })
+        assertTrue(adbName in left)
     }
 
     @Test
