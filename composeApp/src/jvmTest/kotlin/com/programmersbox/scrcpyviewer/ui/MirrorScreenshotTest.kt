@@ -786,6 +786,15 @@ class MirrorScreenshotTest {
     fun `mirror quick actions open`() = render("mirror-quick-actions.png", ThemeMode.Light, state.copy(quickActions = quickActionsOpen))
 
     @Test
+    fun `mirror quick actions floating and full in narrow windows`() {
+        render("mirror-quick-actions-floating-450.png", ThemeMode.Light, state.copy(quickActions = quickActionsOpen), width = 450, height = 760)
+        render(
+            "mirror-quick-actions-full-344-files.png", ThemeMode.Dark,
+            state.copy(quickActions = quickActionsOpen.copy(tab = SheetTab.Files, filesTransfersRunning = 2)), width = 344, height = 760,
+        )
+    }
+
+    @Test
     fun `mirror quick actions open dark`() = render("mirror-quick-actions-dark.png", ThemeMode.Dark, state.copy(quickActions = quickActionsOpen))
 
     private val customActions = listOf(

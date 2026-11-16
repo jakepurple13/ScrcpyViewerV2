@@ -3,6 +3,10 @@ package com.programmersbox.scrcpyviewer.ui.mirror
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.TweenSpec
@@ -97,6 +101,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.Dp
@@ -114,7 +119,8 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import kotlin.math.roundToInt
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** Default and minimum width of the open sheet on the Actions tab, its drag bar included. */
 val QUICK_ACTIONS_WIDTH = 280.dp
@@ -232,6 +238,8 @@ fun rememberQuickActionsPanel(
     filesTab: (@Composable () -> Unit)? = null,
     logcat: LogcatController? = null,
     links: LinksState? = null,
+    /** The window's placement for the sheet while it keeps it fixed (a drag in progress); null: computed here. */
+    placement: SheetPlacement? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
@@ -240,11 +248,12 @@ fun rememberQuickActionsPanel(
     val currentFilesTab by rememberUpdatedState(filesTab)
     val currentLogcat by rememberUpdatedState(logcat)
     val currentLinks by rememberUpdatedState(links)
+    val currentPlacement by rememberUpdatedState(placement)
     return remember {
         movableContentOf { modifier: Modifier ->
             QuickActionsPanel(
                 currentState(), currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab, currentLogcat,
-                links = currentLinks,
+                links = currentLinks, fixedPlacement = currentPlacement,
             )
         }
     }
@@ -267,18 +276,20 @@ fun QuickActionsPanel(
     modifier: Modifier = Modifier,
     filesTab: (@Composable () -> Unit)? = null,
     logcat: LogcatController? = null,
-    /** False under the OS's reduce motion: the Logcat segment's marks and label swap snap. */
-    motion: Boolean = remember { !systemReducesMotion() },
+    /** False under the OS's reduce motion: the Logcat segment's marks and label swap, and placement changes, snap. */
+    motion: Boolean = !LocalReduceMotion.current,
     /** The Links tab's state; null (no adb) says adb isn't available. */
     links: LinksState? = null,
+    /** The current tab's placement while the window keeps it fixed (a drag in progress); null: from its saved width. */
+    fixedPlacement: SheetPlacement? = null,
 ) {
-    fun fit(width: Dp, tab: SheetTab) = if (rowWidth == null) {
-        width.coerceAtLeast(SheetWidths.default(tab))
-    } else {
-        clampSheetWidth(width, tab, rowWidth, SIDE_TOOLBAR_WIDTH)
-    }
+    fun fit(width: Dp, tab: SheetTab) = fitSheetWidth(
+        width, tab, rowWidth, SIDE_TOOLBAR_WIDTH, saved = state.widths[tab],
+        placement = fixedPlacement.takeIf { tab == state.tab },
+    )
     val tab = state.tab
     val shown = fit(state.widths[tab], tab)
+    val placement = fixedPlacement ?: sheetPlacement(state.widths[tab], tab, rowWidth, SIDE_TOOLBAR_WIDTH)
     val animated = remember { Animatable(shown, Dp.VectorConverter) }
     // Plain holders, read in effects and layout only: the tab the width last settled on, and whether the next width
     // change animates (a tab switch or reset) rather than following at once (a drag, a key press, a window resize).
@@ -288,11 +299,24 @@ fun QuickActionsPanel(
         settledTab[0] = tab
         animating[0] = true
     }
+    // A placement change (docked, floating, full) springs the width like a layout move; the window resizing within one
+    // placement follows at once. A tab switch keeps its own timing.
+    val settledPlacement = remember { arrayOf(placement) }
+    val springing = remember { BooleanArray(1) }
+    if (settledPlacement[0] != placement) {
+        settledPlacement[0] = placement
+        if (!animating[0] && motion && rowWidth != null && shown != animated.value) {
+            animating[0] = true
+            springing[0] = true
+        }
+    }
     val currentShown by rememberUpdatedState(shown)
     LaunchedEffect(tab, shown) {
         if (animating[0]) {
-            animated.animateTo(shown, growSpec(shown > animated.value)) // the timing of sheetWidthSpec
+            // The timing of sheetWidthSpec, or the layout spring for a placement change.
+            animated.animateTo(shown, if (springing[0]) layoutSpring() else growSpec(shown > animated.value))
             animating[0] = false
+            springing[0] = false
         } else {
             animated.snapTo(shown)
         }
@@ -321,6 +345,7 @@ fun QuickActionsPanel(
             fit = { fit(it, tab) },
             onResize = {
                 animating[0] = false // a drag that cuts a tab switch short follows the pointer from here
+                springing[0] = false
                 onEvent(QuickActionEvent.Resize(it))
             },
             onResizeDone = { onEvent(QuickActionEvent.ResizeDone(tab)) }, // the tab resized, whatever shows by then
@@ -361,6 +386,7 @@ private fun RowScope.SheetContent(
                         else -> "Runs adb shell on this device"
                     },
                     style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
             Box {
@@ -492,7 +518,14 @@ private fun SheetTabs(
     )
     // Six names don't fit the narrowest sheets: under 56 dp a segment, icons replace them (decided, like the label size,
     // from the width the sheet settles on, so a tab switch cross-fades from its first frame).
-    val iconMode = track / segments < ICON_SEGMENT_UNDER
+    // Under 340 dp of sheet the control is compact instead: every segment shows its icon, the selected one its name
+    // too, in a segment that springs wider (SELECTED_WEIGHT) as the selection moves.
+    val narrow = sheetTabsCompact(sheetWidth)
+    val iconMode = !narrow && track / segments < ICON_SEGMENT_UNDER
+    val weightSpec: FiniteAnimationSpec<Float> = if (motion) layoutSpring() else snap()
+    val weights = SheetTab.entries.map { segment ->
+        animateFloatAsState(if (narrow && segment == tab) SELECTED_WEIGHT else 1f, weightSpec)
+    }
     val toIconState = animateFloatAsState(if (iconMode) 1f else 0f, if (motion) tween(SEGMENT_ICONS_MILLIS) else snap())
     val toIcon by toIconState
     // Between a label and the Shell dot or Files badge: "Files" plus its badge needs the narrower gap at small sizes,
@@ -503,7 +536,7 @@ private fun SheetTabs(
     // With icons for names, the window icon (badged with the live dot) stands for Logcat.
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    val logcatIconOnly = logcatPopped && iconMode || logcatPopped && run {
+    val logcatIconOnly = logcatPopped && (iconMode || narrow) || logcatPopped && run {
         val settled = if (compact) {
             typography.labelSmall.copy(letterSpacing = 0.sp)
         } else {
@@ -521,10 +554,21 @@ private fun SheetTabs(
             Modifier.fillMaxHeight()
                 .layout { measurable, constraints ->
                     // One segment wide, offset by the animated position (read here, in layout, not in composition).
-                    val segment = constraints.maxWidth / segments
-                    val placeable = measurable.measure(constraints.copy(minWidth = segment, maxWidth = segment))
-                    layout(constraints.maxWidth, placeable.height) {
-                        placeable.placeRelative((position * segment).roundToInt(), 0)
+                    val w = weights.map { it.value }
+                    val total = w.sum()
+                    if (total == segments.toFloat()) {
+                        val segment = constraints.maxWidth / segments
+                        val placeable = measurable.measure(constraints.copy(minWidth = segment, maxWidth = segment))
+                        layout(constraints.maxWidth, placeable.height) {
+                            placeable.placeRelative((position * segment).roundToInt(), 0)
+                        }
+                    } else {
+                        // Compact: the segments' animated widths; the highlight spans the selected one's as it glides.
+                        val left = weightedEdge(position, w, total, constraints.maxWidth)
+                        val right = weightedEdge(position + 1f, w, total, constraints.maxWidth)
+                        val width = (right - left).roundToInt().coerceAtLeast(0)
+                        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+                        layout(constraints.maxWidth, placeable.height) { placeable.placeRelative(left.roundToInt(), 0) }
                     }
                 }
                 .clip(SegmentShape)
@@ -533,14 +577,25 @@ private fun SheetTabs(
         Row(Modifier.fillMaxSize().selectableGroup()) {
             SheetTab.entries.forEach { segment ->
                 val selected = segment == tab
-                SegmentTooltip(segment.name, show = iconMode, Modifier.weight(1f).fillMaxHeight()) {
+                val weight = weights[segment.ordinal].value
+                SegmentTooltip(segment.name, show = iconMode || narrow, Modifier.weight(weight).fillMaxHeight()) {
                     Row(
                         Modifier.fillMaxSize().clip(SegmentShape)
                             .selectable(selected, role = Role.Tab) { onSelect(segment) },
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                      SegmentBody(narrow, motion) { compact ->
+                       Row(verticalAlignment = Alignment.CenterVertically) {
                         val tint = if (selected) colors.onSurface else colors.onSurfaceVariant
+                        if (compact && !(segment == SheetTab.Logcat && logcatPopped)) {
+                            CompactSegment(
+                                segment, selected, tint, labelStyle, motion,
+                                dot = segment == SheetTab.Shell && consoleRunning,
+                                badge = if (segment == SheetTab.Files) filesRunning else 0,
+                                lastBadge = lastCount,
+                            )
+                        } else {
                         val label = @Composable { labelModifier: Modifier ->
                             SegmentName(
                                 segment.name, segment.icon(), iconMode, { toIconState.value }, labelModifier, tint,
@@ -588,10 +643,113 @@ private fun SheetTabs(
                         if (segment == SheetTab.Logcat) {
                             LogcatSegmentMarks(logcatPopped && !logcatIconOnly, logcatLive && !logcatIconOnly, gap, motion)
                         }
+                        }
+                       }
+                      }
                     }
                 }
             }
         }
+    }
+}
+
+/** A compact tab control's selected segment is this many times as wide as the others. */
+private const val SELECTED_WEIGHT = 2.2f
+
+/** Where the segment edge at fractional segment [index] falls in [width] px, for segments weighted [weights]. */
+private fun weightedEdge(index: Float, weights: List<Float>, total: Float, width: Int): Float {
+    val whole = index.toInt().coerceIn(0, weights.size)
+    var at = 0f
+    for (k in 0 until whole) at += weights[k]
+    if (whole < weights.size) at += (index - whole) * weights[whole]
+    return at / total * width
+}
+
+/**
+ * A segment's content, cross-fading when the control turns compact or back (its size unclipped, so corner badges
+ * stay whole); at once without [motion].
+ */
+@Composable
+private fun SegmentBody(compact: Boolean, motion: Boolean, content: @Composable (Boolean) -> Unit) {
+    AnimatedContent(
+        targetState = compact,
+        transitionSpec = {
+            if (motion) {
+                (fadeIn(tween(SEGMENT_ICONS_MILLIS)) togetherWith fadeOut(tween(SEGMENT_ICONS_MILLIS))) using SizeTransform(clip = false)
+            } else {
+                (EnterTransition.None togetherWith ExitTransition.None) using SizeTransform(clip = false)
+            }
+        },
+        contentAlignment = Alignment.Center,
+    ) { content(it) }
+}
+
+/** How far a compact segment's Files badge and Shell dot reach past its icon's top-end corner. */
+private val BADGE_OVERLAP = 8.dp
+private val DOT_OVERLAP = 3.dp
+
+/**
+ * A compact segment: [tab]'s icon, with the Shell [dot] or the Files [badge] count on its top-end corner, and, while
+ * [selected], its name after it (growing in). The icon names the segment while the name is hidden.
+ */
+@Composable
+private fun CompactSegment(
+    tab: SheetTab,
+    selected: Boolean,
+    tint: androidx.compose.ui.graphics.Color,
+    labelStyle: androidx.compose.ui.text.TextStyle,
+    motion: Boolean,
+    dot: Boolean,
+    badge: Int,
+    lastBadge: Int,
+) {
+    val colors = MaterialTheme.colorScheme
+    Box {
+        Icon(tab.icon(), contentDescription = if (selected) null else tab.name, Modifier.size(SEGMENT_ICON_SIZE), tint = tint)
+        if (dot) {
+            Box(
+                Modifier.align(Alignment.TopEnd).offset(x = DOT_OVERLAP, y = -DOT_OVERLAP).size(6.dp)
+                    .background(colors.error, CircleShape)
+                    .semantics { contentDescription = "Command running" },
+            )
+        }
+        AnimatedVisibility(
+            visible = badge > 0,
+            modifier = Modifier.align(Alignment.TopEnd).offset(x = BADGE_OVERLAP, y = -BADGE_OVERLAP + 2.dp),
+            enter = scaleIn(segmentSpec(true, motion)),
+            exit = scaleOut(segmentSpec(false, motion)),
+        ) {
+            val count = lastBadge
+            Box(
+                Modifier.defaultMinSize(minWidth = 14.dp, minHeight = 14.dp)
+                    .semantics { contentDescription = if (count == 1) "1 transfer running" else "$count transfers running" }
+                    .background(colors.primary, CircleShape).padding(horizontal = 3.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    count.toString(), style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, lineHeight = 12.sp),
+                    color = colors.onPrimary,
+                )
+            }
+        }
+    }
+    // The name keeps clear of the badge or dot on the icon's corner.
+    val room = when {
+        badge > 0 -> BADGE_OVERLAP + 2.dp
+        dot -> DOT_OVERLAP + 4.dp
+        else -> 4.dp
+    }
+    val start by animateDpAsState(room, if (motion) layoutSpring() else snap())
+    AnimatedVisibility(
+        visible = selected,
+        // The width springs like the segment's own; the fades keep the segment's timing.
+        enter = expandHorizontally(if (motion) layoutSpring() else snap()) + fadeIn(segmentSpec(true, motion)),
+        exit = shrinkHorizontally(if (motion) layoutSpring() else snap()) + fadeOut(segmentSpec(false, motion)),
+    ) {
+        Text(
+            tab.name, Modifier.padding(start = start), style = labelStyle, maxLines = 1, softWrap = false,
+            color = tint, fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
