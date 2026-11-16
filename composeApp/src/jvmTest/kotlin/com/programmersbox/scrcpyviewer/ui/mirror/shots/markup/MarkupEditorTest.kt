@@ -43,6 +43,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.shots.Shot
 import com.programmersbox.scrcpyviewer.ui.onEdt
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -99,6 +100,8 @@ class MarkupEditorTest {
         bitmap: ImageBitmap = solid(gray),
         val copyWorks: Boolean = true,
         val saveWorks: Boolean = true,
+        /** When set, Save waits for it, as a slow disk would. */
+        val saveGate: CompletableDeferred<Unit>? = null,
         dark: Boolean = false,
         /** False: no Surface around the content, as in the editor window (whose root sets no content color). */
         surface: Boolean = true,
@@ -125,7 +128,7 @@ class MarkupEditorTest {
                             MarkupEditorContent(
                                 shot, motion,
                                 onCopy = { _, marks -> copies += marks; copyWorks },
-                                onSave = { _, marks -> saves += marks; saveWorks },
+                                onSave = { _, marks -> saves += marks; saveGate?.await(); saveWorks },
                                 onClose = { closes++ },
                                 leases = leases,
                                 modifier = Modifier.fillMaxSize(),
@@ -833,6 +836,23 @@ class MarkupEditorTest {
         assertNotNull(d.described("Screenshot"))
         assertTrue(d.undoButton().enabled())
         failing.close()
+    }
+
+    @Test
+    fun `a mark drawn while Save runs keeps the editor open and unsaved`() = onEdt {
+        val gate = CompletableDeferred<Unit>()
+        val e = Content(motion = true, saveGate = gate)
+        val d = e.d
+        d.drawOn(Offset(0.2f, 0.2f), Offset(0.6f, 0.4f))
+        d.click(d.texted("Save")!!)
+        assertEquals(1, e.saves.single().size)
+        d.drawOn(Offset(0.2f, 0.6f), Offset(0.6f, 0.8f))
+        gate.complete(Unit)
+        d.frames(10)
+        assertEquals(0, e.closes, "the new mark is not in the saved file: stay open")
+        assertTrue(e.state!!.dirty, "the new mark is unsaved")
+        assertEquals(2, e.state!!.doc.marks.size)
+        e.close()
     }
 
     @Test

@@ -449,7 +449,7 @@ class SheetTabsTest {
         for (selected in SheetTab.entries) {
             state = state.copy(tab = selected)
             driver.frames(80)
-            val bitmap = Bitmap.makeFromImage(driver.scene.render(100_000_000_000L + selected.ordinal * 1_000_000_000L))
+            val bitmap = driver.scene.render(100_000_000_000L + selected.ordinal * 1_000_000_000L).use { Bitmap.makeFromImage(it) }
             // A point inside each segment, left of its label (or icon, at the Actions width), at the label's height.
             for (segment in SheetTab.entries) {
                 val label = checkNotNull(driver.texts()[segment.name] ?: driver.described(segment.name)).boundsInRoot

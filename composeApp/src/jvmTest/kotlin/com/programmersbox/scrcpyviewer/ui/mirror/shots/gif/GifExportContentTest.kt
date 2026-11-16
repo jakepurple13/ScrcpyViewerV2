@@ -13,6 +13,15 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import java.util.concurrent.CountDownLatch
+import org.jetbrains.skia.Bitmap
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.asCoroutineDispatcher
+import androidx.compose.ui.graphics.asSkiaBitmap
+import androidx.compose.ui.graphics.asComposeImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
 import com.programmersbox.scrcpyviewer.media.GifExportException
 import com.programmersbox.scrcpyviewer.media.GifExporter
 import com.programmersbox.scrcpyviewer.media.GifOptions
@@ -24,6 +33,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -487,5 +497,51 @@ class GifExportContentTest {
         assertEquals(listOf<Number>(3_000L, 12_000L, 9 * 15, GIF_PREVIEW_FRAME_WIDTH), ui.frames.calls.last())
         assertEquals(before + 1, ui.frames.calls.size)
         ui.close()
+    }
+
+    private fun tinyBitmap(): ImageBitmap = Bitmap().apply { allocN32Pixels(1, 1) }.asComposeImageBitmap()
+
+    @Test
+    fun `frames decoded for a cancelled caller are closed, not dropped`() {
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            val made = java.util.Collections.synchronizedList(ArrayList<ImageBitmap>())
+            val second = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            runBlocking {
+                val job = launch(Dispatchers.Default) {
+                    decodeAll(List(3) { ByteArray(0) }, pool.asCoroutineDispatcher()) {
+                        if (made.size == 1) {
+                            second.countDown()
+                            release.await()
+                        }
+                        tinyBitmap().also { made += it }
+                    }
+                }
+                assertTrue(second.await(5, TimeUnit.SECONDS))
+                job.cancel()
+                release.countDown()
+                job.join()
+            }
+            assertEquals(3, made.size, "the decode finished its frames")
+            assertTrue(made.all { it.asSkiaBitmap().isClosed }, "and closed every one")
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a frame that fails to decode closes the ones before it`() {
+        val made = mutableListOf<ImageBitmap>()
+        val failed = runCatching {
+            runBlocking {
+                decodeAll(List(3) { ByteArray(0) }, EmptyCoroutineContext) {
+                    if (made.size == 1) error("bad png")
+                    tinyBitmap().also { made += it }
+                }
+            }
+        }
+        assertEquals("bad png", failed.exceptionOrNull()?.message)
+        assertTrue(made.single().asSkiaBitmap().isClosed)
     }
 }

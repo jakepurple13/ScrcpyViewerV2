@@ -376,6 +376,27 @@ private fun close(bitmap: ImageBitmap) {
     if (!skia.isClosed) skia.close()
 }
 
+/**
+ * Decodes [pngs] with [decoder] on [decode]; the bitmaps are then the caller's to close. If the caller is cancelled
+ * meanwhile, or one PNG fails, the ones already decoded are closed here: dropped open, their pixels stay in native
+ * memory until a finalizer runs.
+ */
+internal suspend fun decodeAll(
+    pngs: List<ByteArray>,
+    decode: CoroutineContext,
+    decoder: (ByteArray) -> ImageBitmap = ::decodePng,
+): List<ImageBitmap> {
+    // Filled on the decode thread; withContext returns (or throws on cancel) only once the block has finished.
+    val out = ArrayList<ImageBitmap>(pngs.size)
+    try {
+        withContext(decode) { pngs.forEach { out += decoder(it) } }
+        return out
+    } catch (e: Throwable) {
+        out.forEach(::close)
+        throw e
+    }
+}
+
 /** The trimmed part the preview plays: its PNG frames over [startMs]..[endMs]. */
 private class PreviewClip(val startMs: Long, val endMs: Long, val pngs: List<ByteArray>)
 
@@ -435,7 +456,7 @@ fun GifExportContent(
     LaunchedEffect(state) {
         try {
             val pngs = frames.frames(state.file, 0, video.durationMs, GIF_STRIP_FRAMES, GIF_STRIP_FRAME_WIDTH)
-            strip = withContext(decode) { pngs.map(::decodePng) }
+            strip = decodeAll(pngs, decode)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -474,7 +495,13 @@ fun GifExportContent(
         val frameMillis = ((c.endMs - c.startMs) / n).coerceAtLeast(1L)
         var i = 0
         while (true) {
-            val bitmap = withContext(decode) { runCatching { decodePng(c.pngs[i]) }.getOrNull() }
+            val bitmap = try {
+                decodeAll(listOf(c.pngs[i]), decode).single()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             if (bitmap != null) preview.show(bitmap)
             playhead = (c.startMs + i * frameMillis).toFloat() / video.durationMs.coerceAtLeast(1)
             if (n == 1) break

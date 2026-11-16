@@ -315,7 +315,8 @@ fun MarkupEditorContent(
         scope.launch {
             var saved = false
             try {
-                if (currentOnSave(shot, marks)) {
+                // Marks drawn (or undone) meanwhile are not in the saved file: stay open with them unsaved.
+                if (currentOnSave(shot, marks) && doc.marks.toList() == marks) {
                     doc.markClean()
                     saved = true
                 }

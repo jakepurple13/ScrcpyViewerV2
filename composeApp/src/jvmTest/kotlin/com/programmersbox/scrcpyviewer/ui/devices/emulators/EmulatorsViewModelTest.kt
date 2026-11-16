@@ -301,6 +301,24 @@ class EmulatorsViewModelTest {
     }
 
     @Test
+    fun `reopening the screen measures only folders that changed`() = runTest {
+        sdk()
+        avd("Pixel_9_API_36", "Pixel 9")
+        avd("heads_up_api34", "heads_up_api34", api = 34)
+        val vm = viewModel()
+        assertEquals(listOf("heads_up_api34.avd", "Pixel_9_API_36.avd"), measured)
+        measured.clear()
+        vm.onEvent(EmulatorEvent.Reload)
+        runCurrent()
+        assertEquals(emptyList(), measured, "nothing changed: no du")
+        assertEquals(8_804_682_956L, vm.row("Pixel_9_API_36").size, "the size already known stays")
+        Files.writeString(avdHome.resolve("Pixel_9_API_36.avd").resolve("userdata.img"), "grown")
+        vm.onEvent(EmulatorEvent.Reload)
+        runCurrent()
+        assertEquals(listOf("Pixel_9_API_36.avd"), measured)
+    }
+
+    @Test
     fun `a stop reads the catalog again`() = runTest {
         sdk()
         avd("Pixel_9_API_36", "Pixel 9")
@@ -346,6 +364,8 @@ class EmulatorsViewModelTest {
         runCurrent()
         assertEquals(1, measured.size)
         measured.clear()
+        // Changed on disk, so the read has something to measure (unchanged folders are skipped).
+        Files.writeString(avdHome.resolve("Pixel_9_API_36.avd").resolve("userdata.img"), "grown")
         vm.onEvent(EmulatorEvent.SdkChosen(sdkRoot.toString()))
         vm.onEvent(EmulatorEvent.Start("Pixel_9_API_36"))
         runCurrent()

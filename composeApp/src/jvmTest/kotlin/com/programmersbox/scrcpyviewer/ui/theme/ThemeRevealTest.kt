@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.theme
 
+import com.programmersbox.scrcpyviewer.ui.pixelsAndClose
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,8 +10,6 @@ import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.unit.Density
 import com.programmersbox.scrcpyviewer.ui.onEdt
 import kotlin.math.abs
@@ -38,7 +37,7 @@ class ThemeRevealTest {
 
         fun frame(): androidx.compose.ui.graphics.PixelMap {
             time += 16_000_000
-            return scene.render(time).toComposeImageBitmap().toPixelMap()
+            return scene.render(time).pixelsAndClose()
         }
     }
 
@@ -55,6 +54,27 @@ class ThemeRevealTest {
             assertTrue(close(tealPrimary, px[195, 195]), "the far corner still shows the old palette: ${px[195, 195]}")
             repeat(40) { px = h.frame() }
             assertTrue(close(rosePrimary, px[195, 195]), "fully revealed: ${px[195, 195]}")
+        } finally {
+            h.scene.close()
+        }
+    }
+
+    @Test
+    fun `a same-look change mid-reveal drops the frozen old frame`() = onEdt {
+        val h = Harness()
+        try {
+            repeat(3) { h.frame() }
+            h.state.origin.next = Offset(10f, 10f)
+            h.target.value = rose
+            repeat(4) { h.frame() }
+            assertTrue(h.state.revealing, "the reveal is running")
+            // Only glass opacity changes: the reveal is cancelled and the new move needs no reveal of its own.
+            h.target.value = rose.copy(glassOpacity = 0.9f)
+            repeat(3) { h.frame() }
+            assertTrue(!h.state.revealing, "not stuck revealing")
+            assertTrue(h.state.snapshot == null, "the old frame is dropped")
+            val px = h.frame()
+            assertTrue(close(rosePrimary, px[195, 195]), "the far corner shows the new palette: ${px[195, 195]}")
         } finally {
             h.scene.close()
         }

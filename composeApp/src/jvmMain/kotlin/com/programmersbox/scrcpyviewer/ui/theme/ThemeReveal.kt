@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.layer.GraphicsLayer
@@ -118,6 +119,9 @@ class ThemeRevealState internal constructor(initial: AppTheme, val origin: Theme
             target.pureBlack == shown.pureBlack && target.neon == shown.neon &&
             target.style == shown.style && target.retroPalette == shown.retroPalette
         if (sameLook) {
+            // A reveal this change cancelled may have left its frozen frame up.
+            revealing = false
+            snapshot = null
             shown = target
             return
         }
@@ -131,8 +135,9 @@ class ThemeRevealState internal constructor(initial: AppTheme, val origin: Theme
             shown = target
             return
         }
-        snapshot = runCatching { layer.toImageBitmap() }.getOrNull()
-        if (snapshot == null) {
+        val taken = runCatching { layer.toImageBitmap() }.getOrNull()
+        snapshot = taken
+        if (taken == null) {
             revealing = false
             shown = target
             return
@@ -142,19 +147,28 @@ class ThemeRevealState internal constructor(initial: AppTheme, val origin: Theme
         kind = RevealKind.between(shown, target)
         shown = target
         revealing = true
-        progress.snapTo(0f)
-        progress.animateTo(
-            1f,
-            when (kind) {
-                RevealKind.Circle -> tween(REVEAL_MILLIS, easing = Emphasized)
-                RevealKind.Frost -> tween(FROST_MILLIS, easing = Emphasized)
-                RevealKind.Inflate -> tween(INFLATE_MILLIS, easing = Inflate)
-                // Linear; the drawing snaps it to whole bands.
-                RevealKind.Repaint -> tween(REPAINT_BANDS * REPAINT_BAND_MILLIS, easing = LinearEasing)
-            },
-        )
-        revealing = false
-        snapshot = null
+        // Always drop the old frame, even when a newer theme cancels this reveal: left up, it hides the live UI.
+        try {
+            progress.snapTo(0f)
+            progress.animateTo(
+                1f,
+                when (kind) {
+                    RevealKind.Circle -> tween(REVEAL_MILLIS, easing = Emphasized)
+                    RevealKind.Frost -> tween(FROST_MILLIS, easing = Emphasized)
+                    RevealKind.Inflate -> tween(INFLATE_MILLIS, easing = Inflate)
+                    // Linear; the drawing snaps it to whole bands.
+                    RevealKind.Repaint -> tween(REPAINT_BANDS * REPAINT_BAND_MILLIS, easing = LinearEasing)
+                },
+            )
+        } finally {
+            // A newer reveal may already show its own frame: leave that one up.
+            if (snapshot === taken) {
+                revealing = false
+                snapshot = null
+            }
+            // A window-sized native bitmap: free it now rather than whenever the GC gets to it.
+            taken.asSkiaBitmap().close()
+        }
     }
 }
 
