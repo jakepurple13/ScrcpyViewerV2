@@ -112,3 +112,6 @@ internal fun revealInFolder(
 /** Shows [file] in Finder / Explorer (selected) or opens its folder (Linux). False, logged, on failure; never throws. */
 fun revealInFolder(file: java.nio.file.Path, run: (List<String>) -> Process? = ::startDetached): Boolean =
     revealInFolder(file, OpenPlatform.current(), run)
+
+/** The reveal action's label: Finder on macOS, the file manager elsewhere. */
+internal fun revealLabel(platform: OpenPlatform): String = if (platform == OpenPlatform.Mac) "Show in Finder" else "Show in folder"

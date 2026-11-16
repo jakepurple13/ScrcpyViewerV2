@@ -6,6 +6,13 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.ActionStore
@@ -87,5 +94,52 @@ class ActionsScreenTest {
         onEdt { image = driver!!.scene.render(1_000_000_000L) }
         assertEquals(900, image!!.width)
         assertEquals(1000, image!!.height)
+        image!!.close()
+    }
+
+    @Test
+    fun `a drag carries on when another action is deleted mid-drag`() {
+        store.upsert(run("a"))
+        store.upsert(run("b"))
+        store.upsert(run("c"))
+        show()
+        fun handles(): List<Offset> {
+            val all = mutableListOf<SemanticsNode>()
+            fun walk(n: SemanticsNode) {
+                all += n
+                n.children.forEach(::walk)
+            }
+            onEdt { driver!!.scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) } }
+            return all.filter { it.config.getOrNull(SemanticsProperties.ContentDescription)?.any { d -> d == "Drag to reorder" } == true }
+                .map { it.boundsInRoot.center }.sortedBy { it.y }
+        }
+        val before = handles()
+        assertEquals(3, before.size)
+        val step = before[1].y - before[0].y
+        val start = before[2]
+        fun move(to: Offset) = onEdt {
+            driver!!.scene.sendPointerEvent(PointerEventType.Move, to, type = PointerType.Mouse)
+            driver!!.frame()
+        }
+        onEdt {
+            driver!!.scene.sendPointerEvent(PointerEventType.Move, start, type = PointerType.Mouse)
+            driver!!.scene.sendPointerEvent(PointerEventType.Press, start, type = PointerType.Mouse, button = PointerButton.Primary)
+            driver!!.frame()
+        }
+        // Half a row up, in small steps (past the touch slop).
+        for (i in 1..10) move(Offset(start.x, start.y - step * 0.5f * i / 10))
+        // Deleted elsewhere (a mirror tile) while c is held: c's row moves up a slot but keeps its gesture.
+        store.delete("a")
+        settle()
+        for (i in 1..10) move(Offset(start.x, start.y - step * 0.5f - step * 0.5f * i / 10))
+        onEdt {
+            driver!!.scene.sendPointerEvent(PointerEventType.Release, Offset(start.x, start.y - step), type = PointerType.Mouse, button = PointerButton.Primary)
+        }
+        settle()
+        assertEquals(listOf("c", "b"), store.actions.value.map { it.id }, "the drag still dropped c above b")
+        // Nothing is left displaced: the rows sit one step apart again.
+        val after = handles()
+        assertEquals(2, after.size)
+        assertEquals(step, after[1].y - after[0].y, 0.5f)
     }
 }

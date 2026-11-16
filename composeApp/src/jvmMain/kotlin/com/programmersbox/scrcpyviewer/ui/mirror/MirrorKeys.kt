@@ -90,6 +90,7 @@ class MirrorKeys(
     /** Keys only (no geometry needed); its own state, as [InputMapper] is stateful and not thread-safe. */
     private val followerMapper = InputMapper(
         frameSize = { null }, viewRect = { Rect.Zero }, keyMode = KeyInjectMode.Mixed, forwardKeyRepeat = followerKeyRepeat,
+        ctrlAltIsAltGr = !mac,
     )
     private val zoomKeys = ZoomKeyFilter(mac)
     private val pasteMask = if (mac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
@@ -116,7 +117,9 @@ class MirrorKeys(
         if (noControl) return false
         if (captureKey(ev.id, ev.keyCode, ev.location)) return true
         if (keyboardDisabled) return false
-        if (ev.keyCode == AwtKeyEvent.VK_V && ev.modifiersEx and pasteMask != 0 && ev.id == AwtKeyEvent.KEY_PRESSED) {
+        // Not AltGr+V off macOS: it types a character on some layouts ('@' on Hungarian).
+        val altGr = !mac && InputMapper.isAltGr(ev.modifiersEx, ctrlAlt = true)
+        if (ev.keyCode == AwtKeyEvent.VK_V && ev.modifiersEx and pasteMask != 0 && !altGr && ev.id == AwtKeyEvent.KEY_PRESSED) {
             pasteDown = true
             // The clipboard read is suspending: the press is consumed now, the text is sent when it arrives.
             scope.launch {
@@ -156,6 +159,8 @@ class MirrorKeys(
             zoomKeys.reset()
             captureFocus(false)
             hidKeyboard?.let { send(it.releaseAll()) }
+            // SDK keyboard: the key this window holds on the device (nothing with a HID keyboard).
+            send(mapper.releaseKey())
             send(mapper.releaseButtons())
             followerSend(followerMapper.releaseKey())
         }
@@ -175,6 +180,7 @@ class MirrorKeys(
 
     private fun releaseHeld() {
         hidKeyboard?.let { send(it.releaseAll()) }
+        send(mapper.releaseKey())
         followerSend(followerMapper.releaseKey())
     }
 }

@@ -140,21 +140,27 @@ class DevicesViewModel(
     /** The key the selected device's options are stored under: shared by a phone's USB and Wi-Fi connections. */
     val selectedOptionsKey: StateFlow<String?> get() = selection.optionsKey
 
+    /**
+     * The selection paired with its device's working options. Both come from the same selection emission: combining
+     * the selection with values keyed off the separate [selectedOptionsKey] flow briefly showed a newly selected
+     * device with the previous device's options.
+     */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private val workingValues: Flow<OptionValues?> = selection.optionsKey.flatMapLatest { key ->
-        if (key == null) flowOf(null) else options.workingSet(key).map { it.values }
+    private val selectionValues: Flow<Pair<DeviceSelectionState, OptionValues?>> = selection.state.flatMapLatest { sel ->
+        val key = sel.key
+        if (key == null) flowOf(sel to null) else options.workingSet(key).map { sel to it.values }
     }
 
     val state: StateFlow<DevicesUiState> = combine(
-        selection.state,
+        selectionValues,
         combine(_query, group, switching, restart, settings.settings) { q, g, busy, r, s ->
             Filters(q, g, busy, r, s.advancedDeviceOptions)
         },
-        workingValues,
         presets.presets,
         options.persistenceError,
-        ::uiState,
-    ).stateIn(
+    ) { (sel, values), filters, allPresets, persistenceError ->
+        uiState(sel, filters, values, allPresets, persistenceError)
+    }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
         // Built now, so the first frame after the screen creates this ViewModel already shows the options.
         selection.state.value.let { sel ->

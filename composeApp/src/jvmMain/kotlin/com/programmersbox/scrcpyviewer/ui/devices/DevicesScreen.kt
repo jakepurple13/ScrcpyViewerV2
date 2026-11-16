@@ -67,6 +67,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton
 import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -99,7 +100,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceState
-import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.options.OptionCatalog
 import com.programmersbox.scrcpyviewer.options.OptionGroup
 import com.programmersbox.scrcpyviewer.options.OptionSpec
@@ -151,24 +151,6 @@ internal fun DevicesScreen(
     val picker = rememberPickerGuard()
     var pairing by remember { mutableStateOf(false) }
     val pairAnchor = remember { PairDialogAnchor() }
-    val snackbar = LocalSnackbarHostState.current
-    LaunchedEffect(viewModel, snackbar) {
-        viewModel.notices.collect { notice ->
-            val host = snackbar ?: return@collect
-            val result = host.showSnackbar(
-                notice.text,
-                actionLabel = when {
-                    notice.restartAdb -> "Restart adb"
-                    notice.mirrorSerial != null -> "Mirror"
-                    else -> null
-                },
-                duration = if (notice.restartAdb || notice.mirrorSerial != null) SnackbarDuration.Long else SnackbarDuration.Short,
-            )
-            if (result == SnackbarResult.ActionPerformed) {
-                if (notice.restartAdb) viewModel.restartAdb() else viewModel.mirrorFromNotice(notice)
-            }
-        }
-    }
     pairAnchor.visibility.targetState = pairing
     // Kept while the dialog shrinks back into its button after closing.
     if (pairAnchor.showing) {
@@ -1003,3 +985,24 @@ internal fun RestartAdbDialog(impact: RestartAdbImpact, onConfirm: () -> Unit, o
 /** "Close 2 open mirrors (Pixel 8, Galaxy Tab)". */
 internal fun restartLine(verb: String, names: List<String>, noun: String): String =
     "$verb ${names.size} $noun${if (names.size == 1) "" else "s"} (${names.joinToString()})"
+
+/**
+ * Shows the Wi-Fi and adb notices in [host], with their Mirror or Restart adb action. Collected by App, not this
+ * screen: only the shown tab is composed, so a result arriving while another tab is up would be lost.
+ */
+internal suspend fun DevicesViewModel.showNotices(host: SnackbarHostState) {
+    notices.collect { notice ->
+        val result = host.showSnackbar(
+            notice.text,
+            actionLabel = when {
+                notice.restartAdb -> "Restart adb"
+                notice.mirrorSerial != null -> "Mirror"
+                else -> null
+            },
+            duration = if (notice.restartAdb || notice.mirrorSerial != null) SnackbarDuration.Long else SnackbarDuration.Short,
+        )
+        if (result == SnackbarResult.ActionPerformed) {
+            if (notice.restartAdb) restartAdb() else mirrorFromNotice(notice)
+        }
+    }
+}

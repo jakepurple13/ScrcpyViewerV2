@@ -17,7 +17,8 @@ private val SWEPT = listOf(DRAG, "open", "install")
  * Where rows dragged out of the Files tab are pulled before the OS drag hands them to the computer:
  * `<root>/<serial>/drag/<random>/` (the serial as one path segment, see [serialPathSegment]). Each drag gets its own
  * folder, so the pulled names never clash. The window deletes its serial's drag folders when it closes
- * ([deleteSession]); the app removes leftovers of a crash when it starts ([sweep]).
+ * ([deleteSession]), except the dropped ones ([keep]); the app removes those and leftovers of a crash when it starts
+ * ([sweep]).
  *
  * The root is the per-user [transferCacheRoot], shared with the transfer queue's `open/` and `install/` folders, which
  * [sweep] also clears of old leftovers. Nothing here deletes through a symbolic link: a root that is a link (or, on
@@ -40,8 +41,26 @@ class DragCache(
         deleteChecked(dir, seg.fileName.toString(), DRAG, dir.fileName.toString())
     }
 
-    /** Removes every drag folder of [serial]: the window closed. */
-    fun deleteSession(serial: String) = deleteChecked(dragRoot(serial), serialPathSegment(serial), DRAG, null)
+    /**
+     * Marks [dir] as dropped somewhere: the drop target may read its files long after the drop (a mail attachment, a
+     * browser upload), so [deleteSession] leaves it and only the start-up [sweep] removes it, once it is old. For this
+     * run of the app.
+     */
+    fun keep(dir: Path) {
+        kept.add(dir.toAbsolutePath().normalize())
+    }
+
+    /** Removes every drag folder of [serial] but the dropped ones ([keep]): the window closed. */
+    fun deleteSession(serial: String) {
+        val seg = serialPathSegment(serial)
+        val drag = dragRoot(serial)
+        val dragAbs = drag.toAbsolutePath().normalize()
+        if (kept.none { it.parent == dragAbs }) return deleteChecked(drag, seg, DRAG, null)
+        if (!realDir(drag)) return
+        runCatching { Files.list(drag).use { it.toList() } }.getOrDefault(emptyList()).forEach { entry ->
+            if (entry.toAbsolutePath().normalize() !in kept) deleteChecked(entry, seg, DRAG, entry.fileName.toString())
+        }
+    }
 
     /**
      * Removes, for every serial, the drag folders and the files opened or installed from the device (`open/`,
@@ -66,6 +85,11 @@ class DragCache(
                 }
             }
         }
+    }
+
+    private companion object {
+        /** Dropped drag folders ([keep]), shared by every instance: the window and the tab each make their own. */
+        val kept: MutableSet<Path> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     }
 
     private fun dragRoot(serial: String): Path = root.resolve(serialPathSegment(serial)).resolve(DRAG)

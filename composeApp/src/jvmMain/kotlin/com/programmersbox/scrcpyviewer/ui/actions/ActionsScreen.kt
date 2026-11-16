@@ -45,7 +45,7 @@ import androidx.compose.material3.Text
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -145,7 +145,7 @@ fun ActionsScreen(
     val pending by viewModel.pendingDiscard.collectAsStateWithLifecycle()
     val packages by viewModel.packages.collectAsStateWithLifecycle()
     val snackbar = LocalSnackbarHostState.current
-    LaunchedEffect(viewModel) { viewModel.messages.collect { snackbar?.showSnackbar(it) } }
+    // viewModel.messages is shown by App, so a message from while another tab is up still appears.
     val scope = rememberCoroutineScope()
     // One picker at a time: off macOS the UI stays live while it is open.
     val picker = rememberPickerGuard()
@@ -492,50 +492,65 @@ private fun ReorderableGroup(
     fun targetOf(from: Int, list: List<CustomAction>, step: Float): Int =
         if (from < 0 || step <= 0f) from else (from + (dragOffset / step).roundToInt()).coerceIn(list.indices)
 
-    val from = actions.indexOfFirst { it.id == dragged }
-    val target = targetOf(from, actions, step)
+    // Read only while drawing (in graphicsLayer), so a pointer move redraws the rows instead of recomposing them.
+    val from = remember { derivedStateOf { currentActions.indexOfFirst { it.id == dragged } } }
+    val target = remember { derivedStateOf { targetOf(from.value, currentActions, currentStep) } }
 
     Column(verticalArrangement = Arrangement.spacedBy(RowSpacing)) {
         actions.forEachIndexed { index, action ->
-            // Rows between the dragged row's start and its target shift one step to make room.
-            val shift = when {
-                from < 0 || index == from -> 0f
-                index in (from + 1)..target -> -step
-                index in target until from -> step
-                else -> 0f
-            }
-            val isDragged = index == from
-            ActionRow(
-                action,
-                selected = exportSelection == null && action.id == selectedId,
-                checked = exportSelection?.let { action.id in it },
-                onClick = { onSelect(action.id) },
-                handle = Modifier.pointerInput(action.id, exportSelection == null) {
-                    // No reordering while ticking actions to export.
-                    if (exportSelection != null) return@pointerInput
-                    detectDragGestures(
-                        onDragStart = { dragged = action.id; dragOffset = 0f },
-                        onDragEnd = {
-                            val id = dragged
-                            val f = currentActions.indexOfFirst { it.id == id }
-                            val t = targetOf(f, currentActions, currentStep)
-                            if (id != null && t != f) currentOnMove(id, t)
-                            dragged = null
-                            dragOffset = 0f
-                        },
-                        onDragCancel = { dragged = null; dragOffset = 0f },
-                    ) { change, amount ->
-                        change.consume()
-                        dragOffset += amount.y
-                    }
-                },
-                modifier = Modifier
-                    .onSizeChanged { rowHeight = it.height }
-                    .graphicsLayer {
-                        translationY = if (isDragged) dragOffset else shift
-                        shadowElevation = if (isDragged) 8f else 0f
+            // Keyed, so adding or removing another action mid-drag keeps this row's gesture (and its state) with it.
+            key(action.id) {
+                ActionRow(
+                    action,
+                    selected = exportSelection == null && action.id == selectedId,
+                    checked = exportSelection?.let { action.id in it },
+                    onClick = { onSelect(action.id) },
+                    handle = Modifier.pointerInput(action.id, exportSelection == null) {
+                        // No reordering while ticking actions to export.
+                        if (exportSelection != null) return@pointerInput
+                        try {
+                            detectDragGestures(
+                                onDragStart = { dragged = action.id; dragOffset = 0f },
+                                onDragEnd = {
+                                    val id = dragged
+                                    val f = currentActions.indexOfFirst { it.id == id }
+                                    val t = targetOf(f, currentActions, currentStep)
+                                    if (id != null && t != f) currentOnMove(id, t)
+                                    dragged = null
+                                    dragOffset = 0f
+                                },
+                                onDragCancel = { dragged = null; dragOffset = 0f },
+                            ) { change, amount ->
+                                change.consume()
+                                dragOffset += amount.y
+                            }
+                        } finally {
+                            // The gesture ended without onDragEnd or onDragCancel (the row left, export began):
+                            // don't leave the row displaced.
+                            if (dragged == action.id) {
+                                dragged = null
+                                dragOffset = 0f
+                            }
+                        }
                     },
-            )
+                    modifier = Modifier
+                        .onSizeChanged { rowHeight = it.height }
+                        .graphicsLayer {
+                            val f = from.value
+                            val t = target.value
+                            val isDragged = index == f
+                            // Rows between the dragged row's start and its target shift one step to make room.
+                            translationY = when {
+                                f < 0 -> 0f
+                                isDragged -> dragOffset
+                                index in (f + 1)..t -> -currentStep
+                                index in t until f -> currentStep
+                                else -> 0f
+                            }
+                            shadowElevation = if (isDragged) 8f else 0f
+                        },
+                )
+            }
         }
     }
 }

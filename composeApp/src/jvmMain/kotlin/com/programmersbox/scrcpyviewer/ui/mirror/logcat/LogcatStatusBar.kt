@@ -3,12 +3,15 @@ package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -28,9 +31,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.ViewHeadline
-import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -42,26 +45,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 
 private val IconShape = RoundedCornerShape(8.dp)
 
 /**
  * Under the list: the live dot and state, clear, soft wrap and compact, "X of Y lines" (shown of all) and a bar of
- * the shown lines by level.
+ * the shown lines by level. While an export shows, its [exportStatusText] takes the counts' place: the new text rises
+ * 10 dp from below as the old leaves 10 dp up (200 ms fade, 260 ms slide).
  */
 @Composable
 internal fun LogcatStatusBar(controller: LogcatController, motion: Boolean) {
-    val scheme = MaterialTheme.colorScheme
-    val style = MaterialTheme.typography.bodySmall
     Row(
         Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -74,21 +80,53 @@ internal fun LogcatStatusBar(controller: LogcatController, motion: Boolean) {
         StatusIcon(Icons.Filled.ViewHeadline, "Compact view", controller.compact, motion) { controller.compact = !controller.compact }
         val counts = controller.levelCounts
         val shown = counts.values.sum()
+        CountsText(controller, shown, motion)
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            LevelMix(counts, shown, motion, Modifier.widthIn(min = 60.dp, max = 220.dp).fillMaxWidth())
+        }
+    }
+}
+
+/**
+ * "[shown] of N lines", or the export's [exportStatusText] while one shows. Its own composable, so export progress
+ * recomposes only this. Keyed on the export's stage: progress and new lines update the text in place.
+ */
+@Composable
+private fun CountsText(controller: LogcatController, shown: Int, motion: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    val style = MaterialTheme.typography.bodySmall
+    val shift = with(LocalDensity.current) { 10.dp.roundToPx() }
+    AnimatedContent(
+        controller.export,
+        contentKey = { it::class },
+        transitionSpec = {
+            if (motion) {
+                (slideInVertically(tween(260, easing = EmphasizedDecelerate)) { shift } + fadeIn(tween(200)))
+                    .togetherWith(slideOutVertically(tween(260, easing = EmphasizedDecelerate)) { -shift } + fadeOut(tween(200)))
+                    .using(SizeTransform(clip = false))
+            } else {
+                EnterTransition.None.togetherWith(ExitTransition.None)
+            }
+        },
+    ) { export ->
+        val status = exportStatusText(export)
         Text(
-            buildAnnotatedString {
-                val num = SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)
-                withStyle(num) { append("%,d".format(shown)) }
-                append(" of ")
-                withStyle(num) { append("%,d".format(controller.totalLines)) }
-                append(" lines")
+            if (status != null) {
+                AnnotatedString(status)
+            } else {
+                buildAnnotatedString {
+                    val num = SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)
+                    withStyle(num) { append("%,d".format(shown)) }
+                    append(" of ")
+                    withStyle(num) { append("%,d".format(controller.totalLines)) }
+                    append(" lines")
+                }
             },
             style = style.copy(fontFeatureSettings = "tnum"),
             color = scheme.onSurfaceVariant,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-            LevelMix(counts, shown, motion, Modifier.widthIn(min = 60.dp, max = 220.dp).fillMaxWidth())
-        }
     }
 }
 

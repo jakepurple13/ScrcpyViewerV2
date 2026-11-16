@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui
 
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.unit.Density
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
@@ -10,9 +11,11 @@ import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsViewModel
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsRequest
 import com.programmersbox.scrcpyviewer.ui.devices.DevicesViewModel
+import com.programmersbox.scrcpyviewer.ui.devices.WifiNotice
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavigator
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
 import com.programmersbox.scrcpyviewer.withFakeAppKoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -88,6 +91,56 @@ class AppNavigationTest {
             }
             // The view model's state is derived on the main (EDT) dispatcher, so it updates once the EDT is free.
             runBlocking { withTimeout(5_000) { vm.state.first { it.selectedId == "id" } } }
+        } finally {
+            onEdt { driver.scene.close() }
+        }
+    }
+
+    @Test
+    fun `Wi-Fi notices and Actions messages show while another tab is up`() = withFakeAppKoin { koin ->
+        val navigator = TopLevelNavigator()
+        val snackbar = SnackbarHostState()
+        // Built here, not with koinViewModel(): the test window's ViewModelStore outlives a test's Koin graph.
+        val actionsVm = ActionsViewModel(koin.get(), koin.get(), koin.get())
+        lateinit var devicesVm: DevicesViewModel
+        lateinit var driver: SceneDriver
+        onEdt {
+            driver = SceneDriver(ImageComposeScene(1280, 800, Density(1f)) {
+                devicesVm = koinViewModel<DevicesViewModel>()
+                App(navigator = navigator, devicesViewModel = devicesVm, actionsViewModel = actionsVm, snackbar = snackbar)
+            })
+        }
+        try {
+            onEdt {
+                driver.frames(10)
+                navigator.select(TopLevelRoute.Presets)
+                driver.frames(40)
+                devicesVm.notify(WifiNotice("Connected to Pixel", mirrorSerial = "10.0.0.5:5555"))
+                driver.frames(5)
+                val shown = snackbar.currentSnackbarData
+                assertEquals("Connected to Pixel", shown?.visuals?.message)
+                assertEquals("Mirror", shown?.visuals?.actionLabel)
+                shown?.dismiss()
+                driver.frames(5)
+            }
+            // Deleting the open action from elsewhere (a mirror tile) says so, even with Actions not showing.
+            val store = koin.get<ActionStore>()
+            store.upsert(RunOnceAction("gone", "Reboot", command = "reboot"))
+            actionsVm.handle(ActionsRequest("gone", false))
+            runBlocking { withTimeout(5_000) { actionsVm.state.first { it.selectedId == "gone" } } }
+            store.delete("gone")
+            runBlocking {
+                withTimeout(5_000) {
+                    var message: String? = null
+                    while (message != "Reboot was deleted") {
+                        delay(20)
+                        onEdt {
+                            driver.frame()
+                            message = snackbar.currentSnackbarData?.visuals?.message
+                        }
+                    }
+                }
+            }
         } finally {
             onEdt { driver.scene.close() }
         }

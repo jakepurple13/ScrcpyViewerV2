@@ -97,6 +97,7 @@ import com.programmersbox.scrcpyviewer.files.DragCache
 import kotlin.concurrent.thread
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -302,7 +303,10 @@ data class MirrorUiState(
     val screenshotEnabled: Boolean = false,
     /** Recording can be started (session running) or stopped. */
     val recordEnabled: Boolean = false,
-    /** "● REC mm:ss" while recording. */
+    /**
+     * "● REC mm:ss" while recording. With [StatusReadouts] the status line shows the ticking label from there, and
+     * this one only marks that a recording runs.
+     */
     val recordingLabel: String? = null,
     /** `display-orientation`: how the frame is turned on screen. */
     val orientation: DisplayOrientation = DisplayOrientation.R0,
@@ -312,7 +316,10 @@ data class MirrorUiState(
     val transferLabel: String? = null,
     /** Set while files are dragged over the window. */
     val dropHint: DropHint? = null,
-    /** The quick actions sheet right of the toolbar. */
+    /**
+     * The quick actions sheet right of the toolbar. The window puts only what it and the toolbar read here (open,
+     * enabled, tab, widths) and gives the panel the full state through [MirrorContent]'s `quickActionsPanelState`.
+     */
     val quickActions: QuickActionsUiState = QuickActionsUiState(),
 ) {
     val fit: Boolean get() = zoom == null
@@ -320,6 +327,13 @@ data class MirrorUiState(
     /** The session ended (or failed): the stage shows its last frame, greyed, under the Disconnected card. */
     val disconnected: Boolean get() = status == SessionStatus.Disconnected || status == SessionStatus.Failed
 }
+
+/**
+ * The status line's readouts that change every second (the decoded fps, the REC timer), as state read by the status
+ * line alone: carried in [MirrorUiState] they would recompose the whole window content on every tick.
+ */
+@Stable
+class StatusReadouts(val fps: State<Double>, val recordingLabel: State<String?>)
 
 /** Milliseconds on the monotonic clock the click dots use. */
 internal fun monotonicMillis(): Long = System.nanoTime() / 1_000_000
@@ -422,7 +436,8 @@ fun MirrorWindow(
     val status by session.status.collectAsState()
     val error by session.error.collectAsState()
     val frameSize by session.frameSize.collectAsState()
-    val fps by session.fps.collectAsState()
+    // Read only by the status line (StatusReadouts below): read here, every tick would recompose the whole window.
+    val fps = session.fps.collectAsState()
     val audioDisabled by session.audioDisabledByDevice.collectAsState()
     val audioPlaybackError by session.audioPlaybackError.collectAsState()
     // Only whether there is a frame is read here: reading the frame itself would recompose this whole function (and
@@ -430,7 +445,8 @@ fun MirrorWindow(
     // the stage's canvas redraws on it.
     val hasFrame by remember(session) { session.frames.mapState { it != null } }.collectAsState()
     val reconnectable by controller.reconnectable.collectAsState()
-    val recording by session.recording.collectAsState()
+    val recordingState = session.recording.collectAsState()
+    val recording by recordingState
     val currentCaptureDir by rememberUpdatedState(captureDir)
     val currentAfterScreenshot by rememberUpdatedState(afterScreenshot)
     val currentModel by rememberUpdatedState(model)
@@ -441,17 +457,24 @@ fun MirrorWindow(
     }
     val transferDialogs = fileDialogs ?: remember { NativeTransferFileDialogs(nativeFileDialogs(::notify)) }
     LaunchedEffect(inbox) { inbox.messages.collect { notify(it) } }
-    var recordingElapsed by remember { mutableStateOf<String?>(null) }
+    // Written every second while recording and read only by the status line (StatusReadouts below).
+    val recordingElapsed = remember { mutableStateOf<String?>(null) }
     /** A start is in flight (directory creation on the IO dispatcher): the Record button waits for it. */
     var recordStarting by remember { mutableStateOf(false) }
     LaunchedEffect(recording) {
         val r = recording
-        recordingElapsed = null
+        recordingElapsed.value = null
         while (r != null) {
             val elapsed = System.nanoTime() - r.startedNanos
-            recordingElapsed = recordingLabel(elapsed)
+            recordingElapsed.value = recordingLabel(elapsed)
             delay(1_000 - (elapsed / 1_000_000) % 1_000) // tick on the second
         }
+    }
+    val readouts = remember(fps, recordingState) {
+        StatusReadouts(
+            fps = fps,
+            recordingLabel = derivedStateOf { if (recordingState.value != null) recordingElapsed.value ?: recordingLabel(0) else null },
+        )
     }
 
     // The thumbnail after a screenshot; it owns its bitmaps, released when the window closes.
@@ -529,7 +552,8 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
-    // Files dragged out of the Files tab wait in the drag cache; the window takes them with it when it closes.
+    // Files dragged out of the Files tab wait in the drag cache; the window takes them with it when it closes, but
+    // not the dropped ones: the drop target may still read them, so the start-up sweep removes those.
     DisposableEffect(serial) {
         onDispose { thread(name = "drag-cache-delete") { DragCache().deleteSession(serial) } }
     }
@@ -546,7 +570,7 @@ fun MirrorWindow(
     )
     // Made the first time the Files tab shows, so a window that never opens it never lists a folder. A plain holder.
     val filesWanted = remember { BooleanArray(1) }
-    quickActions.uiState.let { if (it.open && it.tab == SheetTab.Files) filesWanted[0] = true }
+    if (quickActions.open && quickActions.shownTab == SheetTab.Files) filesWanted[0] = true
     val filesBrowser = if (filesWanted[0]) rememberFilesBrowser(serial, session, adb, transfers) else null
     // Read when the picker closes, like currentTransfers.
     val currentFilesBrowser by rememberUpdatedState(filesBrowser)
@@ -727,7 +751,6 @@ fun MirrorWindow(
         maxSize = e["max-size"]?.toIntOrNull()?.takeIf { it > 0 },
         codec = codecLabel(e["video-codec"]),
         bitRate = bitRateLabel(e["video-bit-rate"]),
-        fps = fps,
         zoom = zoom,
         fittedScale = fittedScale(),
         stretch = stretch,
@@ -739,12 +762,16 @@ fun MirrorWindow(
         captureHint = if (captured && windowFocused) "Mouse captured — press ${MouseCapture.keyLabel()} to release" else null,
         screenshotEnabled = hasFrame,
         recordEnabled = !recordStarting && (recording != null || status == SessionStatus.Running),
-        recordingLabel = if (recording != null) recordingElapsed ?: recordingLabel(0) else null,
+        // Marks the recording for the toolbar; the status line's ticking label is in readouts.
+        recordingLabel = if (recording != null) recordingLabel(0) else null,
         orientation = orientation,
         transferEnabled = transfers.enabled,
         transferLabel = transfers.progressLabel,
         dropHint = transfers.hint,
-        quickActions = quickActions.uiState.copy(filesTransfersRunning = transfers.runningCount),
+        // Narrow reads: the panel reads the full sheet state itself (quickActionsPanelState below).
+        quickActions = QuickActionsUiState(
+            open = quickActions.open, enabled = quickActions.enabled, tab = quickActions.shownTab, widths = quickActions.sheetWidths,
+        ),
     )
 
     // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now
@@ -1107,6 +1134,8 @@ fun MirrorWindow(
                     MirrorContent(
                         state = state,
                         frame = frame,
+                        readouts = readouts,
+                        quickActionsPanelState = { quickActions.uiState.copy(filesTransfersRunning = transfers.runningCount) },
                         showTopStrip = false, // drawn by the window's title bar
                         latestFrame = { session.frames.value },
                         onZoom = applyZoom,
@@ -1133,6 +1162,15 @@ fun MirrorWindow(
                                     send(msgs)
                                     follow.send(msgs)
                                 }
+                            }
+                        },
+                        onInputDetached = {
+                            if ("no-control" !in e) {
+                                clickIndicator?.release(monotonicMillis())
+                                val msgs = mapper.releaseButtons()
+                                send(msgs)
+                                // Followers got the press only from the SDK mouse (onPointer above).
+                                if (capture == null) follow.send(msgs)
                             }
                         },
                         onViewSize = { viewSize = it },
@@ -1327,6 +1365,13 @@ fun MirrorContent(
     modifier: Modifier = Modifier,
     /** The frame to draw, read at draw time ([frame] only triggers the redraw). */
     latestFrame: () -> VideoFrame? = { frame.value },
+    /** The fps and REC readouts, read by the status line alone; null shows [MirrorUiState.fps] and its recordingLabel. */
+    readouts: StatusReadouts? = null,
+    /**
+     * The quick actions panel's full state, read inside the panel so a sheet change recomposes only the sheet; null
+     * reads [MirrorUiState.quickActions].
+     */
+    quickActionsPanelState: (() -> QuickActionsUiState)? = null,
     /** `show-touches`: the click dots drawn over the frame. */
     clickIndicator: ClickIndicator? = null,
     /** The stage's bounds in window pixels. */
@@ -1359,6 +1404,11 @@ fun MirrorContent(
     screenshotButton: ScreenBoundsRef? = null,
     /** Drawn over the stage, above the video and its overlays (the screenshot flash and thumbnail). */
     stageOverlay: @Composable BoxScope.() -> Unit = {},
+    /**
+     * The view that took [onPointer]'s events is gone (Fit and zoom swapped canvases, or the stage left): a release of
+     * a button pressed on it will never come.
+     */
+    onInputDetached: () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1401,10 +1451,10 @@ fun MirrorContent(
             ) {
                 val disconnected = state.disconnected
                 if (wake == null) {
-                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator)
+                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator, onInputDetached)
                 } else {
                     WakeStage(wake, standby = !disconnected) {
-                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator)
+                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator, onInputDetached)
                     }
                 }
                 // While the screen is still asleep its standby line stands in for the skeleton.
@@ -1444,8 +1494,9 @@ fun MirrorContent(
             }
             SideToolbar(state, onAction, screenshotButton)
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
+            val panelState = quickActionsPanelState ?: { state.quickActions }
             val panel = rememberQuickActionsPanel(
-                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
+                panelState, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
                 links,
             )
             // Where the sheet is, so the window's file drop leaves it to the sheet (the Files tab takes drops there).
@@ -1466,7 +1517,7 @@ fun MirrorContent(
             }
         }
         HorizontalDivider(color = colors.outlineVariant)
-        StatusLine(state)
+        StatusLine(state, readouts)
     }
 }
 
@@ -1736,8 +1787,10 @@ private fun Stage(
     clickIndicator: ClickIndicator?,
     onViewOrigin: (Offset) -> Unit = {},
     followIndicator: ClickIndicator? = null,
+    onInputDetached: () -> Unit = {},
 ) {
     val pointer by rememberUpdatedState(onPointer)
+    val inputDetached by rememberUpdatedState(onInputDetached)
     // Redraws every frame while a click dot fades out.
     var now by remember { mutableLongStateOf(monotonicMillis()) }
     val releaseTime = clickIndicator?.releaseTime
@@ -1793,6 +1846,11 @@ private fun Stage(
     val disconnected = state.disconnected
     val waiting = !disconnected && (state.status == SessionStatus.Connecting || state.frameSize == null)
     val stretch = state.stretch && zoom == null
+    // The pointer input sits on the Fit canvas or on the zoomed one. Switching between them (Cmd/Ctrl+0, zooming in
+    // from Fit, the first frame's zoom) disposes the node that saw a press, so its release never comes: held buttons
+    // are released here, as is everything when the stage goes.
+    val fitCanvas = zoom == null || fs == null
+    DisposableEffect(fitCanvas) { onDispose { inputDetached() } }
     val motion = rememberStageMotion(
         revealed = hasFrame && !waiting,
         disconnected = disconnected,
@@ -2051,7 +2109,7 @@ private fun ToolbarButton(
 }
 
 @Composable
-private fun StatusLine(state: MirrorUiState) {
+private fun StatusLine(state: MirrorUiState, readouts: StatusReadouts? = null) {
     val colors = MaterialTheme.colorScheme
     BoxWithConstraints(Modifier.fillMaxWidth().background(colors.surfaceContainer)) {
         // Secondary readouts go first when narrow: the encoder, then the "shown at" suffix, then the fps.
@@ -2065,7 +2123,8 @@ private fun StatusLine(state: MirrorUiState) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val style = MaterialTheme.typography.labelMedium
-            state.recordingLabel?.let {
+            val recordingLabel = if (readouts != null) readouts.recordingLabel.value else state.recordingLabel
+            recordingLabel?.let {
                 Text(it, style = style, color = colors.error, fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
             }
             state.transferLabel?.let {
@@ -2079,7 +2138,7 @@ private fun StatusLine(state: MirrorUiState) {
             val size = if (fs == null) "—" else "${fs.width} × ${fs.height}" + (if (showMax) state.maxSize?.let { " shown at $it max" } ?: "" else "")
             Text(size, Modifier.weight(1f, fill = false), style = style, color = colors.onSurfaceVariant, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             if (showCodec) Text("${state.codec} · ${state.bitRate}", style = style, color = colors.onSurfaceVariant, maxLines = 1, softWrap = false)
-            if (showFps) Text("%.1f fps".format(state.fps), style = style, color = colors.onSurfaceVariant, maxLines = 1, softWrap = false)
+            if (showFps) Text("%.1f fps".format(readouts?.fps?.value ?: state.fps), style = style, color = colors.onSurfaceVariant, maxLines = 1, softWrap = false)
             state.audioNote?.let {
                 Text(it, Modifier.weight(1f, fill = false), style = style, color = colors.onSurfaceVariant, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
             }

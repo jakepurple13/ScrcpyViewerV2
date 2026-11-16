@@ -18,7 +18,7 @@ plugins {
 
 // Single source of truth: feeds packageVersion and the generated APP_VERSION constant shown in the window title.
 // Local update tests only: -PappVersion=1.6.1 builds a "newer" package.
-val appVersion = (findProperty("appVersion") as String?) ?: "1.23.0"
+val appVersion = (findProperty("appVersion") as String?) ?: "1.24.0"
 
 // The scrcpy-server release the app bundles (downloadBundledTools); Settings › Help › About shows it.
 val scrcpyServerVersion = "5.0"
@@ -347,6 +347,16 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         if (!deviceTests) excludeTestsMatching("*DeviceTest")
         if (!macCursorSmoke) excludeTestsMatching("*MacSmokeTest")
     }
+    // LeakedCoroutineReporter (jvmTest) writes each coroutine exception that escaped its test to stderr, tagged.
+    // Print those in the build log with the test that was running: runTest later fails some other test with
+    // UncaughtExceptionsBeforeTest, and without this line nothing names the test that leaked.
+    (this as Test).addTestOutputListener(object : TestOutputListener {
+        override fun onOutput(test: TestDescriptor, event: TestOutputEvent) {
+            if ("[leaked-coroutine-exception]" in event.message) {
+                logger.lifecycle("Leaked coroutine exception while running ${test.className ?: "-"} > ${test.name}:\n${event.message}")
+            }
+        }
+    })
     // On CI, log each test as it starts: when a job hangs and times out, the last STARTED line names the test.
     if (System.getenv("CI") == "true") {
         testLogging { events("started", "failed", "skipped") }
@@ -355,7 +365,8 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         (this as Test).maxHeapSize = "2g"
         // The heap cap doesn't bound native memory (Skia surfaces, FFmpeg): one test JVM grew to 13 GB resident on
         // the 16 GB Linux runner and the runner died mid-step. A fresh JVM every 25 test classes (of about 220)
-        // releases it; the markup, GIF and screenshot tests alone added about 3 GB.
+        // releases it. Most of that was tests not closing the images ImageComposeScene.render() returns (fixed in
+        // SceneDriver); a fork of 25 classes now peaks near 1.4 GB, so this is a safety margin.
         forkEvery = 25
     }
     if (deviceTests) {

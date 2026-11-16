@@ -9,7 +9,11 @@ import androidx.compose.ui.InternalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerButtons
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
 import androidx.compose.ui.input.pointer.PointerType
@@ -379,6 +383,57 @@ class LogcatListTest {
             assertNull(containing("new line"), "revealed lines don't count")
             send(line("shown"))
             assertNotNull(text("1 new line"))
+        }
+    }
+
+    @Test
+    fun `dragging across rows selects and copies messages only`() = onEdt {
+        withScene {
+            started()
+            send(line("first message", tag = "AlphaTag"), line("second message", tag = "BetaTag"))
+            val from = checkNotNull(text("10:00:01.234")).boundsInRoot.centerLeft + Offset(2f, 0f)
+            val to = checkNotNull(text("second message")).boundsInRoot.centerRight
+            val held = PointerButtons(isPrimaryPressed = true)
+            scene.sendPointerEvent(PointerEventType.Move, from, type = PointerType.Mouse)
+            scene.sendPointerEvent(PointerEventType.Press, from, type = PointerType.Mouse, buttons = held, button = PointerButton.Primary)
+            frames(2)
+            scene.sendPointerEvent(PointerEventType.Move, to, type = PointerType.Mouse, buttons = held)
+            frames(2)
+            scene.sendPointerEvent(PointerEventType.Release, to, type = PointerType.Mouse, button = PointerButton.Primary)
+            frames(5)
+            // Copy is Cmd+C on macOS and Ctrl+C elsewhere.
+            for (meta in listOf(true, false)) for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
+                scene.sendKeyEvent(KeyEvent(Key.C, type, isMetaPressed = meta, isCtrlPressed = !meta))
+            }
+            frames(5)
+            settle()
+            val copied = clipboard.texts.lastOrNull().orEmpty()
+            assertTrue("first message" in copied && "second message" in copied, "copied: $copied")
+            for (cell in listOf("AlphaTag", "BetaTag", "10:00:01", "1234-1250", "com.example.notes")) {
+                assertFalse(cell in copied, "$cell isn't selectable; copied: $copied")
+            }
+        }
+    }
+
+    @Test
+    fun `list holds still while selecting, then shows the lines that came`() = onEdt {
+        withScene {
+            started()
+            // Few enough rows that new ones would land on screen.
+            send(*Array(5) { line("line $it") })
+            val at = checkNotNull(text("line 2")).boundsInRoot.centerLeft + Offset(5f, 0f)
+            val held = PointerButtons(isPrimaryPressed = true)
+            scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
+            scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, buttons = held, button = PointerButton.Primary)
+            frames(2)
+            scene.sendPointerEvent(PointerEventType.Move, at + Offset(40f, 30f), type = PointerType.Mouse, buttons = held)
+            send(line("new 0"), line("new 1"))
+            assertNull(text("new 0"), "held while the button is down")
+            scene.sendPointerEvent(PointerEventType.Release, at + Offset(40f, 30f), type = PointerType.Mouse, button = PointerButton.Primary)
+            frames(5)
+            settle()
+            frames(60)
+            assertNotNull(text("new 1"), "shown on release")
         }
     }
 

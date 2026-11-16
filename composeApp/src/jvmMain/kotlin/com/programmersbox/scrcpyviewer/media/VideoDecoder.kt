@@ -188,6 +188,9 @@ class VideoDecoder(
             _frameSize.value = IntSize(w, h)
         }
         val converter = sws ?: return
+        // A new bitmap per frame, never a released one reused: drawing a frame makes Skia images that share its
+        // pixels and outlive VideoFrame.use (a recorded picture replays them later), and skiko gives no reliable way
+        // to tell when they are gone, so a reused bitmap could show a later or half-written frame.
         val bitmap = Bitmap()
         if (!bitmap.allocPixels(ImageInfo(w, h, ColorType.BGRA_8888, ColorAlphaType.OPAQUE))) {
             bitmap.close()

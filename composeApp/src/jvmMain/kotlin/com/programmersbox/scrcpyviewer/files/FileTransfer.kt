@@ -41,6 +41,12 @@ const val TRANSFER_TIMEOUT_MS = 30 * 60 * 1000L
 private const val PULL_POLL_MS = 250L
 private const val PUSH_POLL_MS = 500L
 
+/** A folder pull's sample walks the whole growing folder (thousands of files): less often than one file's size. */
+private const val FOLDER_PULL_POLL_MS = 2_000L
+
+/** How often a pull of a folder ([isDirectory]) or a file samples the bytes on the host. */
+internal fun pullPollMillis(isDirectory: Boolean): Long = if (isDirectory) FOLDER_PULL_POLL_MS else PULL_POLL_MS
+
 /**
  * [Install] and [Push] take a host file; [Pull] copies a device file or folder to the host; [InstallFromDevice]
  * pulls a device APK to a temp folder and installs it.
@@ -668,7 +674,7 @@ class FileTransferQueue(
         var keep = false
         var started = false
         try {
-            val r = withProgress(id, PULL_POLL_MS, { hostSize(target) }) {
+            val r = withProgress(id, pullPollMillis(request.isDirectory), { hostSize(target) }) {
                 runAdb(pullArgs(serial, devicePath(deviceDir, name), target)) { started = true }
             } ?: return Pulled.Failed(timedOut())
             failureOf(r)?.let { return Pulled.Failed(it) }

@@ -119,10 +119,14 @@ class QuickActionsTest {
         var states = mapOf<QuickToggle, Boolean?>(QuickToggle.WiFi to true, QuickToggle.ShowTaps to false)
         var setResult = CompletableDeferred<Unit>()
         var reads = 0
+        /** When set, a read answers (with the states as they were when it started) only once it completes. */
+        var readGate: CompletableDeferred<Unit>? = null
 
         override suspend fun read(): Map<QuickToggle, Boolean?> {
             reads++
-            return states
+            val sample = states
+            readGate?.await()
+            return sample
         }
 
         override suspend fun set(toggle: QuickToggle, on: Boolean) = setResult.await()
@@ -153,6 +157,28 @@ class QuickActionsTest {
 
         actions.toggleSheet()
         assertFalse(actions.open)
+    }
+
+    @Test
+    fun `a read started before a switch does not undo it`() = runBlocking {
+        val device = FakeDevice().apply { readGate = CompletableDeferred() }
+        val actions = QuickActions(device, eager) {}
+
+        actions.toggleSheet() // the read samples Wi-Fi on and waits
+        device.setResult = CompletableDeferred(Unit)
+        actions.onEvent(QuickActionEvent.Toggle(QuickToggle.WiFi, false))
+        assertTrue(actions.uiState.pending.isEmpty()) // the switch already answered
+        device.readGate!!.complete(Unit)
+
+        assertEquals(false, actions.uiState.toggles[QuickToggle.WiFi])
+        assertEquals(false, actions.uiState.toggles[QuickToggle.ShowTaps]) // the rest of the read still lands
+
+        // A read started after the switch is believed again.
+        device.readGate = null
+        device.states = mapOf(QuickToggle.WiFi to true)
+        actions.toggleSheet()
+        actions.toggleSheet()
+        assertEquals(true, actions.uiState.toggles[QuickToggle.WiFi])
     }
 
     @Test

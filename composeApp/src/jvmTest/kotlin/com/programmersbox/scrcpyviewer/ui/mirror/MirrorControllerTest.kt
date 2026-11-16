@@ -18,6 +18,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import com.programmersbox.scrcpyviewer.media.RecordResult
+import com.programmersbox.scrcpyviewer.media.VideoFrame
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.ColorAlphaType
+import org.jetbrains.skia.ColorType
+import org.jetbrains.skia.ImageInfo
 import java.io.DataOutputStream
 import java.nio.file.Files
 import kotlin.test.AfterTest
@@ -25,6 +30,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotSame
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
@@ -89,14 +95,33 @@ class MirrorControllerTest {
         withTimeout(5_000) { b.status.first { it == SessionStatus.Running } }
     }
 
+    /** A frame the way a decoder publishes one; the session keeps it after it ends, for the Disconnected scrim. */
+    private fun ScrcpySession.publishTestFrame(): VideoFrame {
+        val bitmap = Bitmap().apply { allocPixels(ImageInfo(4, 4, ColorType.BGRA_8888, ColorAlphaType.OPAQUE)) }
+        return VideoFrame.of(bitmap).also(::publishFrame)
+    }
+
+    @Test
+    fun `closing a window releases its session's last frame`() = runBlocking<Unit> {
+        controller.open("A")
+        val a = controller.open.value.getValue("A")
+        val frame = a.publishTestFrame()
+        controller.close("A")
+        withTimeout(5_000) { while (!frame.isReleased) delay(10) }
+        assertNull(a.frames.value)
+    }
+
     @Test
     fun `reconnect is enabled when the device is back and replaces the session`() = runBlocking<Unit> {
         controller.open("A")
         val old = controller.open.value.getValue("A")
         withTimeout(5_000) { old.status.first { it == SessionStatus.Running } }
+        val lastFrame = old.publishTestFrame()
         devices.value = listOf(device("B"))
         launchers.getValue("A").single().device.await().video!!.close() // the device side goes away
         withTimeout(5_000) { old.status.first { it == SessionStatus.Disconnected } }
+        // Still shown under the Disconnected scrim.
+        assertTrue(!lastFrame.isReleased)
         assertTrue("A" !in controller.reconnectable.value)
         controller.reconnect("A") // ignored: device not back yet
         assertSame(old, controller.open.value.getValue("A"))
@@ -107,6 +132,8 @@ class MirrorControllerTest {
         val fresh = controller.open.value.getValue("A")
         assertNotSame(old, fresh)
         withTimeout(5_000) { fresh.status.first { it == SessionStatus.Running } }
+        // The new session replaced it in the window: the old last frame is released.
+        withTimeout(5_000) { while (!lastFrame.isReleased) delay(10) }
     }
 
     @Test

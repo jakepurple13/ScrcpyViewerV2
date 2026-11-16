@@ -25,18 +25,27 @@ data class AppsUiState(
     val loading: Boolean = false,
     val query: String = "",
     val filter: AppFilter = AppFilter.All,
-    /** Loaded icons by package name; a package missing here has none (yet). */
+    /**
+     * Loaded icons by package name; a package missing here has none (yet). From [AppExplorer] this is its live
+     * snapshot map, not a copy: a read stays a read of the map, so an icon arriving recomposes only the cards (and
+     * sheet) that look it up, and no read copies the whole map.
+     */
     val icons: Map<String, ImageBitmap> = emptyMap(),
     /** Packages with a launch, force stop or uninstall running. */
     val busy: Set<String> = emptySet(),
     /** The app picked in the Logcat tab (its card shows a "Logcat" badge); null when none is. */
     val logcatPackage: String? = null,
 ) {
-    /** The apps the grid shows: [query] and [filter] applied. */
-    val visible: List<DeviceApp> get() = apps.orEmpty().matching(query, filter)
+    /** The apps the grid shows: [query] and [filter] applied. Worked out once per state, on first use. */
+    val visible: List<DeviceApp> by lazy { apps.orEmpty().matching(query, filter) }
+
+    /** Each filter's count with the current query, worked out once per state (every filter chip shows one). */
+    private val counts: Map<AppFilter, Int> by lazy {
+        AppFilter.entries.associateWith { if (it == filter) visible.size else apps.orEmpty().matching(query, it).size }
+    }
 
     /** How many apps [filter] would show with the current query. */
-    fun count(filter: AppFilter): Int = apps.orEmpty().matching(query, filter).size
+    fun count(filter: AppFilter): Int = counts.getValue(filter)
 }
 
 /** Something done on the Apps tab. */
@@ -79,7 +88,8 @@ class AppExplorer(
     private var loadJob: Job? = null
     private val iconJobs = HashMap<String, Job>()
 
-    val uiState: AppsUiState get() = AppsUiState(apps, loading, query, filter, icons.toMap(), busy)
+    // The icons map itself, not a copy (see AppsUiState.icons).
+    val uiState: AppsUiState get() = AppsUiState(apps, loading, query, filter, icons, busy)
 
     /** The listed apps; null until listed. */
     val listed: List<DeviceApp>? get() = apps

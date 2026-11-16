@@ -1,10 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.window.launch
 
+import com.programmersbox.scrcpyviewer.ui.pixelsAndClose
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.unit.Density
 import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
 import org.jetbrains.skia.Bitmap
@@ -32,7 +32,7 @@ class OverlaySceneTest {
             OverlayScene(frame, picture, surface = Color.DarkGray, titleBar = Color.Gray, accent = Color.Cyan)
         }
         try {
-            return scene.render().toComposeImageBitmap().toPixelMap()
+            return scene.render().pixelsAndClose()
         } finally {
             scene.close()
         }

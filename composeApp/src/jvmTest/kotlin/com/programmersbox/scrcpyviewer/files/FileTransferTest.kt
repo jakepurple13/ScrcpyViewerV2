@@ -435,7 +435,9 @@ class FileTransferTest {
         assertFalse(java.nio.file.Files.exists(dir.resolve("big.bin")))
         q.awaitJob(ids[1]) { it.state == JobState.Done }
         assertEquals("push", adb.calls[1][2])
-        kotlinx.coroutines.delay(100)
+        // Results arrive in order on one collector, so once the push's is in, any result for the cancelled pull would
+        // be in too. A fixed delay here lost the push's result on a slow macOS runner.
+        withTimeout(5_000) { while (results.isEmpty()) kotlinx.coroutines.delay(10) }
         // A cancel is the user's own doing: no snackbar for it.
         assertEquals(listOf<TransferResult>(TransferResult.Pushed("b.jpg", DEFAULT_PUSH_TARGET)), results.toList())
     }
@@ -489,6 +491,29 @@ class FileTransferTest {
         assertEquals(1000L, job.total)
         assertEquals(JobState.Running, job.state)
         assertTrue((job.bytesPerSecond ?: 0) > 0)
+        q.cancel(id)
+        q.awaitJob(id) { it.state == JobState.Cancelled }
+    }
+
+    @Test
+    fun `a folder pull samples its growing folder less often than a file pull`() {
+        assertEquals(250L, pullPollMillis(isDirectory = false))
+        assertEquals(2_000L, pullPollMillis(isDirectory = true))
+    }
+
+    @Test
+    fun `folder pull progress sums the files written so far`() = runBlocking<Unit> {
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args ->
+            val folder = java.nio.file.Files.createDirectories(Paths.get(args.last()))
+            java.nio.file.Files.write(folder.resolve("a.jpg"), ByteArray(300))
+            java.nio.file.Files.write(java.nio.file.Files.createDirectories(folder.resolve("sub")).resolve("b.jpg"), ByteArray(200))
+            awaitCancellation()
+        }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(pull(dir, "Camera").copy(isDirectory = true))).single()
+        val job = q.awaitJob(id) { it.bytes == 500L }
+        assertNull(job.total, "a folder has no known total")
         q.cancel(id)
         q.awaitJob(id) { it.state == JobState.Cancelled }
     }

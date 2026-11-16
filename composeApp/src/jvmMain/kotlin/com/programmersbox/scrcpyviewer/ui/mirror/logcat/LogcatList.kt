@@ -2,30 +2,33 @@ package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.LocalScrollbarStyle
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.rememberScrollbarAdapter
-import androidx.compose.foundation.v2.ScrollbarAdapter
-import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.v2.ScrollbarAdapter
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,9 +41,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.unit.Dp
@@ -51,6 +59,7 @@ import java.awt.datatransfer.StringSelection
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -126,6 +135,12 @@ internal class LogcatFollow(val state: LazyListState) {
         private set
     private var newest = Long.MIN_VALUE
 
+    /**
+     * The rows shown while the primary button is down in the list, else null. Compose's selection across many
+     * texts crashes when rows arrive, move or change under a drag, so the list holds still until the button is up.
+     */
+    var held by mutableStateOf<List<LogcatItem>?>(null)
+
     /** Unpins on a user scroll toward the top. */
     val connection = object : NestedScrollConnection {
         override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
@@ -156,7 +171,9 @@ internal class LogcatFollow(val state: LazyListState) {
                 }
             }
         }
-        snapshotFlow { items() to visible() }.collectLatest { (all, v) ->
+        snapshotFlow { Triple(items(), visible(), held != null) }.collectLatest { (all, v, holding) ->
+            // Lines that come while held are counted, and followed, once the button is up.
+            if (holding) return@collectLatest
             val added = countNew(all, v)
             if (!pinned) {
                 unseen += added
@@ -211,8 +228,9 @@ internal class LogcatFollow(val state: LazyListState) {
 
 /**
  * The log: a column header, then the rows of [LogcatController.visible] newest at the bottom, the paused banner,
- * the "N new lines" pill, the empty-filter message and, before the first play, the start card. Rows are monospace
- * and selectable; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
+ * the "N new lines" pill, the empty-filter message and, before the first play, the start card. While an export runs
+ * its bar ([LogcatExportBar]) crosses the top edge and the rows dim to 0.55 (300 ms). Rows are monospace with
+ * selectable messages and traces; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -222,14 +240,29 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val items = controller.items
     // Before the frame's layout composes the new rows, which read [LiveRows.fresh].
     SideEffect { live.observe(items) }
-    val visible = controller.visible
     val listState = rememberLazyListState()
     val follow = remember(listState) { LogcatFollow(listState) }
+    val visible = follow.held ?: controller.visible
     val columns = rememberLogcatColumns(controller.compact, sheetWidth < 600.dp, motion)
     val words = controller.parsed.highlightWords
+    // `age:` is judged against the clock, which isn't state: re-check it on showing and every second after.
+    val ageing = controller.parsed.ageLimits.isNotEmpty()
+    LaunchedEffect(controller, ageing) {
+        if (!ageing) return@LaunchedEffect
+        while (true) {
+            controller.tickAge()
+            delay(1_000)
+        }
+    }
     val mine = controller.mine
     val wrap = controller.wrap
     val run = controller.run
+    // The rows dim while an export runs. Derived: progress replaces the export state often, the list need not see it.
+    val exporting by remember(controller) { derivedStateOf { controller.export is LogcatExport.Running } }
+    val rowsAlpha by animateFloatAsState(
+        if (exporting) 0.55f else 1f,
+        if (motion) tween(300) else snap(),
+    )
     // Entries whose fold the user flipped from the default; kept by the controller, so they move with the panel.
     val flipped = controller.traceFlips
     val clipboard = LocalClipboard.current
@@ -263,7 +296,9 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     Column(modifier.background(scheme.surfaceContainerLowest)) {
         LogcatHeader(columns)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            SelectionContainer(Modifier.fillMaxSize()) {
+            SelectionContainer(
+                Modifier.fillMaxSize().holdWhilePressed(follow) { controller.visible }.graphicsLayer { alpha = rowsAlpha },
+            ) {
                 LazyColumn(
                     Modifier.fillMaxSize().nestedScroll(follow.connection),
                     state = listState,
@@ -303,9 +338,26 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
                 Modifier.align(Alignment.BottomCenter),
             )
             LogcatStartCard(run == LogcatRun.NotStarted, motion, controller.canPlay, controller::play)
+            LogcatExportBar(controller, motion, Modifier.align(Alignment.TopCenter).fillMaxWidth())
         }
     }
 }
+
+/** Holds [follow]'s rows at [current] from a primary press in the element until the button is up. */
+private fun Modifier.holdWhilePressed(follow: LogcatFollow, current: () -> List<LogcatItem>): Modifier =
+    pointerInput(follow) {
+        awaitPointerEventScope {
+            while (true) {
+                // Initial pass: seen before the text under the pointer starts its selection drag.
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                when {
+                    event.type == PointerEventType.Press && event.buttons.isPrimaryPressed ->
+                        if (follow.held == null) follow.held = current()
+                    event.type == PointerEventType.Release && !event.buttons.isPrimaryPressed -> follow.held = null
+                }
+            }
+        }
+    }
 
 /** A live row growing from 0 height and fading in, 300 ms. */
 @Composable

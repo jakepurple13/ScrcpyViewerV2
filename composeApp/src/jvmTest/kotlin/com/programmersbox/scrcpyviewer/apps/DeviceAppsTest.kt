@@ -12,7 +12,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 
-private class FakeAdb(private val answer: (String) -> String) : AdbClient(adbPath = { error("no real adb in tests") }) {
+private class FakeAdb(
+    private val pushHangs: Boolean = false,
+    private val answer: (String) -> String,
+) : AdbClient(adbPath = { error("no real adb in tests") }) {
     val commands = mutableListOf<String>()
     val execs = mutableListOf<List<String>>()
 
@@ -28,6 +31,7 @@ private class FakeAdb(private val answer: (String) -> String) : AdbClient(adbPat
 
     override suspend fun exec(vararg args: String): ProcessResult {
         execs += args.toList()
+        if (pushHangs && "push" in args) kotlinx.coroutines.awaitCancellation()
         return ProcessResult(0, "", "")
     }
 }
@@ -138,5 +142,17 @@ class DeviceAppsTest {
         assertEquals(listOf("Chrome"), apps.matching("android", AppFilter.User).map { it.label })
         assertEquals(listOf("Settings"), apps.matching("", AppFilter.System).map { it.label })
         assertEquals(listOf("Spotify"), apps.matching(" spot ", AppFilter.All).map { it.label })
+    }
+
+    @Test
+    fun `a hung adb push fails the listing with a clear message`() = runBlocking<Unit> {
+        val adb = FakeAdb(pushHangs = true) { "" }
+        val e = assertFailsWith<IOException> {
+            kotlinx.coroutines.withTimeout(5_000) {
+                DeviceApps(adb, "SER", { Path.of("/jar") }, "5.0", pushTimeoutMs = 200).list()
+            }
+        }
+        assertEquals("adb push timed out", e.message)
+        assertTrue(adb.commands.isEmpty(), "nothing runs after the failed push")
     }
 }
