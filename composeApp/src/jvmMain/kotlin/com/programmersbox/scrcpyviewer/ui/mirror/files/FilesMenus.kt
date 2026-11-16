@@ -79,6 +79,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.programmersbox.scrcpyviewer.files.DEVICE_ROOT
+import com.programmersbox.scrcpyviewer.files.SearchHit
 import com.programmersbox.scrcpyviewer.files.devicePath
 import com.programmersbox.scrcpyviewer.files.isInside
 import com.programmersbox.scrcpyviewer.files.normalizeDir
@@ -103,6 +104,9 @@ internal sealed interface FilesMenu {
 
     /** The toolbar's ⋮: view options. */
     data class View(override val at: Offset) : FilesMenu
+
+    /** A search result's menu. */
+    data class Hit(override val at: Offset, val hit: SearchHit) : FilesMenu
 }
 
 /** One "Move to…" folder: [enabled] false when a selected folder would land inside itself. */
@@ -130,6 +134,7 @@ internal class MenuActions(
     val pullTo: (List<String>) -> Unit,
     val pushFiles: () -> Unit,
     val copy: (String) -> Unit,
+    val pullHitsToDownloads: (List<SearchHit>) -> Unit = {},
 )
 
 /**
@@ -183,6 +188,7 @@ internal fun FilesMenuHost(
                     is FilesMenu.Item -> ItemMenu(browser, shown.names, actions, isMac, onDismiss)
                     is FilesMenu.Space -> SpaceMenu(browser, actions, isMac, onDismiss)
                     is FilesMenu.View -> ViewMenu(browser, actions, onDismiss)
+                    is FilesMenu.Hit -> HitMenu(browser, shown.hit, actions, onDismiss)
                 }
             }
         }
@@ -312,6 +318,26 @@ private fun ItemMenu(browser: FilesBrowser, names: Set<String>, actions: MenuAct
     }
     MenuDivider()
     MenuItem("Delete", Icons.Filled.Delete, shortcut = if (isMac) "⌫" else "Delete", danger = true) { run { browser.askDelete() } }
+}
+
+/** A search result's menu: Show in folder, open it, pull it, copy its path. */
+@Composable
+private fun HitMenu(browser: FilesBrowser, hit: SearchHit, actions: MenuActions, onDismiss: () -> Unit) {
+    fun run(block: () -> Unit) {
+        onDismiss()
+        block()
+    }
+    val entry = hit.entry
+    MenuItem("Show in folder", Icons.Filled.FolderOpen) { run { browser.reveal(hit) } }
+    if (entry.isDir) {
+        MenuItem("Open", Icons.Filled.Folder) { run { browser.openHit(hit) } }
+    } else {
+        MenuItem("Open on computer", Icons.AutoMirrored.Filled.OpenInNew) { run { browser.openHitOnComputer(hit) } }
+        if (isApk(entry)) MenuItem("Install on this device", Icons.Filled.Android) { run { browser.openHit(hit) } }
+    }
+    MenuDivider()
+    MenuItem("Pull to Downloads", Icons.Filled.Download) { run { actions.pullHitsToDownloads(listOf(hit)) } }
+    MenuItem("Copy path", Icons.Filled.ContentCopy) { run { actions.copy(hit.path) } }
 }
 
 /** Right-click on empty space: New folder, Push files here…, Refresh, Copy folder path. */

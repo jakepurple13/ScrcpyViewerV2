@@ -14,7 +14,7 @@ import com.programmersbox.scrcpyviewer.files.Listing
 import com.programmersbox.scrcpyviewer.files.kindOf
 
 /** What a key does in the Files tab (the spec's Keyboard table). */
-enum class FilesKey { Up, Down, ExtendUp, ExtendDown, Enter, Open, Parent, Rename, Delete, SelectAll, NewFolder, Refresh, Escape }
+enum class FilesKey { Up, Down, ExtendUp, ExtendDown, Enter, Open, Parent, Rename, Delete, SelectAll, NewFolder, Refresh, Search, Escape }
 
 /**
  * The Files tab's action for [event], or null when it is not one of the tab's keys. ⌘ on macOS ([isMac]) and Ctrl
@@ -43,6 +43,7 @@ fun filesKeyAction(event: KeyEvent, isMac: Boolean): FilesKey? {
         Key.A -> FilesKey.SelectAll.takeIf { cmd && !shift }
         Key.N -> FilesKey.NewFolder.takeIf { cmd && shift }
         Key.R -> FilesKey.Refresh.takeIf { cmd && !shift }
+        Key.F -> FilesKey.Search.takeIf { cmd && !shift }
         Key.Escape -> FilesKey.Escape
         else -> null
     }
@@ -79,7 +80,7 @@ internal fun FilesBrowser.onKey(key: FilesKey): Boolean {
         FilesKey.SelectAll -> selectAll()
         FilesKey.NewFolder -> newFolder()
         FilesKey.Refresh -> refresh()
-        FilesKey.Escape -> return false
+        FilesKey.Search, FilesKey.Escape -> return false
     }
     return true
 }

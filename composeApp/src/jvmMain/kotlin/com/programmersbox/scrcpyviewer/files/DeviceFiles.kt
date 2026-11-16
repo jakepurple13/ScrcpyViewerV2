@@ -1,7 +1,10 @@
 package com.programmersbox.scrcpyviewer.files
 
+import com.programmersbox.scrcpyviewer.adb.ShellEvent
 import com.programmersbox.scrcpyviewer.adb.ShellResult
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import java.io.IOException
 import java.util.UUID
 
@@ -30,6 +33,20 @@ open class DeviceFiles(
     /** Every folder and regular file under [names] in [dir] (see [treeCommand]). */
     open suspend fun tree(dir: String, names: List<String>): List<TreeEntry> =
         if (names.isEmpty()) emptyList() else parseTree(runner.run(treeCommand(dir, names)).output)
+
+    /**
+     * Searches [DEVICE_ROOT] for names containing [query] (see [searchCommand]), emitting each batch of hits as the
+     * device finds them. The flow completes when the search ends; cancelling its collection stops it on the device.
+     */
+    open fun search(query: String, includeHidden: Boolean): Flow<List<SearchHit>> = flow {
+        val parser = SearchParser()
+        runner.stream(searchCommand(query, includeHidden)).collect { event ->
+            when (event) {
+                is ShellEvent.Output -> parser.feed(event.text).takeIf { it.isNotEmpty() }?.let { emit(it) }
+                is ShellEvent.Exit -> parser.finish().takeIf { it.isNotEmpty() }?.let { emit(it) }
+            }
+        }
+    }
 
     open suspend fun freeSpace(): DeviceSpace? {
         val r = runner.run(freeSpaceCommand())

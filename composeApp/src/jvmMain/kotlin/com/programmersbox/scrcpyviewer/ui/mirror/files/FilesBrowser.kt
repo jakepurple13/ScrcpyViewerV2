@@ -24,6 +24,7 @@ import com.programmersbox.scrcpyviewer.files.DeviceSpace
 import com.programmersbox.scrcpyviewer.files.FileKind
 import com.programmersbox.scrcpyviewer.files.JobState
 import com.programmersbox.scrcpyviewer.files.Listing
+import com.programmersbox.scrcpyviewer.files.SearchHit
 import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import com.programmersbox.scrcpyviewer.files.shellQuote
@@ -207,6 +208,16 @@ class FilesBrowser(
     var navDirection by mutableStateOf(0)
         private set
 
+    /** A row just shown by a search's Show in folder: it flashes once. */
+    var revealed by mutableStateOf<String?>(null)
+        private set
+
+    /** The name to select and flash once the folder being opened has listed. */
+    private var pendingReveal: String? = null
+
+    /** Device-wide search; it follows Show hidden files. */
+    val search = FilesSearch(scope, files::search, { showHidden }, now)
+
     private var loadJob: Job? = null
     private var generation = 0
 
@@ -377,6 +388,13 @@ class FilesBrowser(
             listingPath = dir
             loading = false
             selection = selection.retain(order)
+            pendingReveal?.let { name ->
+                pendingReveal = null
+                if (result is Listing.Entries && result.entries.any { it.name == name }) {
+                    selection = Selection(setOf(name), name, name)
+                    markRevealed(name)
+                }
+            }
             if (before != null && result is Listing.Entries) {
                 val added = result.entries.map { it.name }.toSet() - before
                 if (added.isNotEmpty()) markArriving(added)
@@ -398,6 +416,52 @@ class FilesBrowser(
             }
             if (gen == generation) free = space
         }
+    }
+
+    private fun markRevealed(name: String) {
+        revealed = name
+        scope.launch {
+            delay(ARRIVING_MILLIS)
+            if (revealed == name) revealed = null
+        }
+    }
+
+    // Search
+
+    /** Leaves search and opens [hit]'s folder with [hit] selected (it flashes once listed). */
+    fun reveal(hit: SearchHit) {
+        if (!connected) return
+        search.close()
+        pendingReveal = hit.entry.name
+        val dir = normalizeDir(hit.dir)
+        if (dir == path) refresh() else navigate(dir, history + path, if (isInside(path, dir)) -1 else 1)
+    }
+
+    /** As a double-click on a row: a folder opens (leaving search), an `.apk` installs, another file opens on the computer. */
+    fun openHit(hit: SearchHit) {
+        if (!connected) return
+        val e = hit.entry
+        when {
+            e.isDir -> {
+                search.close()
+                open(hit.path)
+            }
+            kindOf(e) == FileKind.Apk ->
+                enqueue(listOf(TransferRequest(Paths.get(""), TransferKind.InstallFromDevice, hit.dir, e.name, size = e.size)))
+            else -> openHitOnComputer(hit)
+        }
+    }
+
+    /** Pulls file [hit] to a temp folder and opens it with the computer's default app, whatever its kind. */
+    fun openHitOnComputer(hit: SearchHit) {
+        if (!connected || hit.entry.isDir) return
+        enqueue(listOf(TransferRequest(Paths.get(""), TransferKind.Pull, hit.dir, hit.entry.name, opensAfter = true, size = hit.entry.size)))
+    }
+
+    /** Pulls [hits] (from any folders) into the computer folder [toDir]. */
+    fun pullHits(hits: List<SearchHit>, toDir: Path) {
+        if (!connected || hits.isEmpty()) return
+        enqueue(hits.map { TransferRequest(toDir, TransferKind.Pull, it.dir, it.entry.name, size = it.entry.size, isDirectory = it.entry.isDir) })
     }
 
     private fun markArriving(names: Set<String>) {
@@ -466,6 +530,7 @@ class FilesBrowser(
         val h = showHidden
         settings.update { it.copy(filesShowHidden = h) }
         selection = selection.retain(order)
+        if (search.active && search.query.isNotBlank()) search.rerun()
     }
 
     fun toggleRealPaths() {
@@ -869,6 +934,7 @@ class FilesBrowser(
             loading = false
             showDialog(null)
             cancelRename()
+            search.stop()
         }
     }
 }

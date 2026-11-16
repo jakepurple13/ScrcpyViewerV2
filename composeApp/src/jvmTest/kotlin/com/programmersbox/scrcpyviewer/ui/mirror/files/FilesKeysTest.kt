@@ -35,6 +35,8 @@ class FilesKeysTest {
         assertEquals(FilesKey.SelectAll, action(Key.A, cmd = true))
         assertEquals(FilesKey.NewFolder, action(Key.N, cmd = true, shift = true))
         assertEquals(FilesKey.Refresh, action(Key.R, cmd = true))
+        assertEquals(FilesKey.Search, action(Key.F, cmd = true))
+        assertNull(action(Key.F))
         assertEquals(FilesKey.Escape, action(Key.Escape))
         // Plain letters, and N without Shift, are not shortcuts.
         assertNull(action(Key.A))
