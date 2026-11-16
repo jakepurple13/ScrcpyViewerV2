@@ -83,6 +83,7 @@ class ShellRunnerTest {
             val elapsedMs = (System.nanoTime() - start) / 1_000_000
             assertEquals(timeoutMessage, e.message)
             assertTrue(elapsedMs < 1_000, "took $elapsedMs ms")
+            server.close() // wakes an accept() still waiting when the client timed out before connecting
             t.join()
         }
     }
@@ -101,6 +102,7 @@ class ShellRunnerTest {
             assertFailsWith<ShellTimeoutException> { runner.run("yes", timeoutMs = 300) }
             val elapsedMs = (System.nanoTime() - start) / 1_000_000
             assertTrue(elapsedMs < 1_000, "took $elapsedMs ms")
+            server.close() // wakes an accept() still waiting when the client timed out before connecting
             t.join()
         }
     }
