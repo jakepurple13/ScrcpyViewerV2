@@ -717,6 +717,7 @@ Changes:
 - **Dialogs:** stacked buttons full width, the filled one on top.
 - **Drop chip:** `widthIn(max = listWidth - 24.dp)`, folder name ellipsized.
 - Above every threshold nothing changes. Keyboard shortcuts (F2, ⌫, ⇧⌘N, ⌘R) keep working when their buttons are folded.
+- **Device search (main v1.25, `ui/mirror/files/FilesSearchUi.kt`, added 2026-11-16):** result rows reuse `FileRow`, so they reflow with it. The search field's placeholder ("Search all of internal storage") ellipsizes. Below 400 dp (`filesLayout(...).modifiedBelow`), the "Show in folder" pill over a selected result becomes an icon-only button (folder-open icon, content description "Show in folder", tooltip), cross-faded, so it no longer covers the file name. The type chips already scroll sideways; leave them.
 
 - [ ] **Step 1: Write the failing tests.**
   - `filesLayout` at 439 / 440, 399 / 400, 379 / 380, 339 / 340, 329 / 330: each flag flips exactly at its threshold; at 440 every flag is false.
@@ -726,6 +727,7 @@ Changes:
   - With a running transfer at 280: its name, progress text and cancel button are all inside the sheet.
   - Delete dialog at 280: "Delete" sits above "Cancel", both ≥ 200 wide.
   - Scene at 440: the header shows "Size" and "Modified"; Refresh is displayed (unchanged).
+  - Search results at 280 with one result selected: the "Show in folder" node is displayed, has no "Show in folder" text child, and its left edge is right of the result name's right edge.
 - [ ] **Step 2: Run them.** Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run them, every `ui/mirror/files` test class, `MirrorScreenshotTest` and the full suite.** Expected: PASS.
