@@ -44,7 +44,7 @@ nucleus-window-material3 = { module = "dev.nucleusframework:nucleus.decorated-wi
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 composenativetray = { module = "dev.nucleusframework:composenativetray", version.ref = "composenativetray" }
 aboutlibraries-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "aboutlibraries" }
-aboutlibraries-compose-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutlibraries" }
+aboutlibraries-compose-core = { module = "com.mikepenz:aboutlibraries-compose-core", version.ref = "aboutlibraries" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 
 [plugins]

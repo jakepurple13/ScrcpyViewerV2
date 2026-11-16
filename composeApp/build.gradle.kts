@@ -135,7 +135,7 @@ kotlin {
             implementation(libs.composenativetray)
             implementation(libs.jna)
             implementation(libs.aboutlibraries.core)
-            implementation(libs.aboutlibraries.compose.m3)
+            implementation(libs.aboutlibraries.compose.core)
             // Only icon and resource parsing is used: the signing parts (BouncyCastle) and annotations stay out.
             implementation("net.dongliu:apk-parser:${libs.versions.apk.parser.get()}") {
                 exclude(group = "org.bouncycastle")
