@@ -15,7 +15,8 @@ class StripRoomTest {
 
     private val chip = ChipWidths(model = 80.dp, following = 150.dp, differs = 106.dp, differsIcon = 28.dp)
 
-    private fun room(w: Dp, follow: FollowStrip?, c: ChipWidths? = null) = stripRoom(w, mins, hasDetails = true, follow, c)
+    private fun room(w: Dp, follow: FollowStrip?, c: ChipWidths? = null, arrange: Boolean = false) =
+        stripRoom(w, mins, hasDetails = true, follow, c, arrange)
 
     @Test
     fun `a lone window keeps today's cutoffs exactly and shows no send control`() {
@@ -90,5 +91,72 @@ class StripRoomTest {
         // With words the cutoffs count the full pill, with the icon only the icon.
         assertTrue(room(340.dp + 150.dp + 106.dp + 10.dp, f, chip).zoom)
         assertFalse(room(340.dp + 150.dp + 106.dp + 9.dp, f, chip).zoom)
+    }
+
+    // --- Arrange ---------------------------------------------------------------------------------------------------
+
+    @Test
+    fun `without arrange nothing changes and there is no arrange control`() {
+        val alone = strip(FollowRole.None, others = emptyList())
+        for (w in (300..1400 step 5).map { it.dp }) {
+            for (f in listOf(null, alone, strip(FollowRole.None))) {
+                assertEquals(ArrangePlace.None, room(w, f).arrange, "at $w")
+                assertEquals(room(w, f), room(w, f, arrange = false), "at $w")
+            }
+        }
+    }
+
+    @Test
+    fun `the arrange button sits in the strip down to the Fit cutoff, then in the overflow`() {
+        // No send control (a no-control window, or follow not wired): every cutoff but zoom moves up by its room.
+        assertEquals(ArrangePlace.Strip, room(480.dp + ARRANGE_ROOM, null, arrange = true).arrange)
+        assertTrue(room(480.dp + ARRANGE_ROOM, null, arrange = true).fit)
+        val narrow = room(480.dp + ARRANGE_ROOM - 1.dp, null, arrange = true)
+        assertEquals(ArrangePlace.Overflow, narrow.arrange)
+        assertFalse(narrow.fit)
+        assertTrue(narrow.overflow)
+        assertTrue(room(620.dp + ARRANGE_ROOM, null, arrange = true).copy)
+        assertFalse(room(620.dp + ARRANGE_ROOM - 1.dp, null, arrange = true).copy)
+        assertTrue(room(740.dp + ARRANGE_ROOM, null, arrange = true).details)
+        assertFalse(room(740.dp + ARRANGE_ROOM - 1.dp, null, arrange = true).details)
+        assertTrue(room(340.dp, null, arrange = true).zoom)
+        assertFalse(room(339.dp, null, arrange = true).zoom)
+    }
+
+    @Test
+    fun `next to the send button both go into the overflow together, and the words need the arrange room too`() {
+        val idle = strip(FollowRole.None)
+        val wide = room(760.dp + ARRANGE_ROOM, idle, arrange = true)
+        assertEquals(SendPlace.Words, wide.send)
+        assertEquals(ArrangePlace.Strip, wide.arrange)
+        assertEquals(SendPlace.Icon, room(760.dp + ARRANGE_ROOM - 1.dp, idle, arrange = true).send)
+        val atFit = room(480.dp + ARRANGE_ROOM, idle, arrange = true)
+        assertEquals(SendPlace.Icon, atFit.send)
+        assertEquals(ArrangePlace.Strip, atFit.arrange)
+        val below = room(480.dp + ARRANGE_ROOM - 1.dp, idle, arrange = true)
+        assertEquals(SendPlace.Overflow, below.send)
+        assertEquals(ArrangePlace.Overflow, below.arrange)
+        assertTrue(room(680.dp + ARRANGE_ROOM, idle, arrange = true).copy)
+        assertFalse(room(680.dp + ARRANGE_ROOM - 1.dp, idle, arrange = true).copy)
+        assertTrue(room(890.dp + ARRANGE_ROOM, idle, arrange = true).details)
+        assertFalse(room(890.dp + ARRANGE_ROOM - 1.dp, idle, arrange = true).details)
+    }
+
+    @Test
+    fun `a follower arranges too, and its parts still go copy, then Fit with Arrange, then zoom`() {
+        val f = strip(FollowRole.Follower("A"))
+        val extra = 160.dp
+        assertEquals(ArrangePlace.Strip, room(480.dp + extra + ARRANGE_ROOM, f, chip, arrange = true).arrange)
+        assertEquals(ArrangePlace.Overflow, room(480.dp + extra + ARRANGE_ROOM - 1.dp, f, chip, arrange = true).arrange)
+        assertTrue(room(340.dp + extra, f, chip, arrange = true).zoom)
+        for (w in (300..1400 step 5).map { it.dp }) {
+            for (follow in listOf(f, strip(FollowRole.None), null)) {
+                val r = room(w, follow, chip, arrange = true)
+                assertEquals(r.fit, r.arrange == ArrangePlace.Strip, "Arrange goes with Fit at $w")
+                if (r.copy) assertTrue(r.fit && r.zoom, "at $w")
+                if (r.fit) assertTrue(r.zoom, "at $w")
+                if (r.details) assertTrue(r.copy, "at $w")
+            }
+        }
     }
 }

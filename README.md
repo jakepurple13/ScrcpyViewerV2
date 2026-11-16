@@ -237,4 +237,6 @@ Set the `scrcpyviewer.dataDir` system property to use a different folder.
 - [scrcpy](https://github.com/Genymobile/scrcpy) by Genymobile, whose server this app bundles and whose protocol it
   implements.
 - [Android platform-tools](https://developer.android.com/tools/releases/platform-tools) for adb.
-- [FFmpeg](https://ffmpeg.org/) and [JavaCPP](https://github.com/bytedeco/javacpp) for video decoding.
+- [FFmpeg](https://ffmpeg.org/) and [JavaCPP](https://github.com/bytedeco/javacpp) for video decoding and GIF export.
+  FFmpeg is LGPL v3 or later; the app ships its notice as `FFMPEG-NOTICE.txt` (from `composeApp/bundled/common/`), and
+  the binaries are built from [javacpp-presets 1.5.14](https://github.com/bytedeco/javacpp-presets/tree/1.5.14/ffmpeg).

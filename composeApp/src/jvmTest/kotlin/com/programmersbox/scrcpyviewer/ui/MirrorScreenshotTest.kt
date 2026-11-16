@@ -8,6 +8,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
@@ -43,6 +44,10 @@ import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_LOGCAT_WIDTH
 import com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_WIDTH
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickToggle
 import com.programmersbox.scrcpyviewer.ui.mirror.TopStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeLayout
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeMenu
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeState
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeStrip
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowCandidate
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowStrip
@@ -59,6 +64,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import org.jetbrains.skia.Bitmap
+import androidx.compose.ui.graphics.asSkiaBitmap
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.Font
 import org.jetbrains.skia.Paint
@@ -80,6 +86,9 @@ import com.programmersbox.scrcpyviewer.ui.mirror.FileTransfers
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesBrowser
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
+import com.programmersbox.scrcpyviewer.ui.mirror.files.ComposeDragOutStarter
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnail
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnailState
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.styleBackdrop
 import kotlinx.coroutines.flow.emptyFlow
@@ -162,6 +171,316 @@ class MirrorScreenshotTest {
             }
         }
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    /**
+     * The markup editor's window content at [width] x [height], with a pen stroke, an arrow, a box and a pixelated
+     * line, drawn with the pointer unless not [draw] (the scene's frames are virtual, so the animations settle).
+     * [confirm] shows the discard prompt.
+     */
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+    private fun renderEditor(
+        name: String,
+        mode: ThemeMode,
+        width: Int = com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.EDITOR_TOOLBAR_WIDTH,
+        height: Int = 980,
+        confirm: Boolean = false,
+        draw: Boolean = true,
+    ) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher())
+        val thumbnail = ScreenshotThumbnailState(timers, clock = { 0L })
+        val bitmap = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
+        val shot = checkNotNull(thumbnail.keep(Paths.get("/tmp/Pixel 8 Pro.png"), bitmap, thumbnail.begin()))
+        var editor: com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorState? = null
+        val scene = androidx.compose.ui.ImageComposeScene(width, height, androidx.compose.ui.unit.Density(1f)) {
+            ScrcpyViewerTheme(AppTheme(mode)) {
+                val s = com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.rememberMarkupEditorState(shot)
+                editor = s
+                com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorContent(
+                    shot, motion = true, onCopy = { _, _ -> true }, onSave = { _, _ -> true }, onClose = {},
+                    leases = thumbnail, modifier = Modifier.fillMaxSize(), state = s,
+                )
+            }
+        }
+        try {
+            val d = SceneDriver(scene)
+            d.frames(40)
+            fun nodes(): List<androidx.compose.ui.semantics.SemanticsNode> {
+                val all = mutableListOf<androidx.compose.ui.semantics.SemanticsNode>()
+                fun walk(n: androidx.compose.ui.semantics.SemanticsNode) {
+                    all += n
+                    n.children.forEach(::walk)
+                }
+                scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
+                return all
+            }
+            fun described(label: String) = nodes().last {
+                it.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription)?.contains(label) == true
+            }
+            fun press(at: Offset) {
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Press, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse, button = androidx.compose.ui.input.pointer.PointerButton.Primary)
+            }
+            fun release(at: Offset) {
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Release, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse, button = androidx.compose.ui.input.pointer.PointerButton.Primary)
+                d.frames(2)
+            }
+            fun click(label: String) {
+                val at = described(label).boundsInRoot.center
+                press(at)
+                release(at)
+            }
+            val c = described("Screenshot").boundsInRoot
+            fun at(x: Float, y: Float) = Offset(c.left + c.width * x, c.top + c.height * y)
+            fun drag(points: List<Offset>) {
+                press(points.first())
+                d.frame()
+                points.drop(1).forEach {
+                    scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, it, type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+                    d.frame()
+                }
+                release(points.last())
+            }
+            if (draw) {
+            // Pixelate the date, box the clock, an arrow at it in yellow, and a pen loop around an icon in blue.
+            click("Pixelate")
+            drag(listOf(at(0.06f, 0.18f), at(0.62f, 0.23f)))
+            click("Box")
+            drag(listOf(at(0.05f, 0.08f), at(0.55f, 0.19f)))
+            click("Arrow")
+            click("Yellow")
+            drag(listOf(at(0.85f, 0.45f), at(0.6f, 0.2f)))
+            click("Circle")
+            click("Red")
+            drag(listOf(at(0.55f, 0.5f), at(0.7f, 0.56f), at(0.9f, 0.62f)))
+            click("Pen")
+            click("Blue")
+            drag((0..24).map { i ->
+                val a = i / 24f * 2 * Math.PI
+                at(0.165f + 0.11f * kotlin.math.cos(a).toFloat(), 0.77f + 0.05f * kotlin.math.sin(a).toFloat())
+            })
+            }
+            // Pointer off the tools, so no tooltip shows.
+            scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, at(0.5f, 0.6f), type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+            if (confirm) checkNotNull(editor).requestClose()
+            d.frames(60)
+            val image = scene.render(10_000_000_000L)
+            val data = checkNotNull(image.encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG))
+            Files.createDirectories(out.parent)
+            Files.write(out, data.bytes)
+        } finally {
+            scene.close()
+            thumbnail.dispose()
+            timers.cancel()
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror screenshot markup editor`() = onEdt {
+        renderEditor("mirror-markup-editor-light.png", ThemeMode.Light)
+        renderEditor("mirror-markup-editor-dark.png", ThemeMode.Dark)
+        renderEditor("mirror-markup-editor-discard-light.png", ThemeMode.Light, confirm = true)
+        renderEditor("mirror-markup-editor-small-dark.png", ThemeMode.Dark, width = 360, height = 420, draw = false)
+    }
+
+    /** The window after a toolbar screenshot: the thumbnail in the video area's corner, its ring two thirds full. */
+    private fun renderThumbnail(name: String, mode: ThemeMode, copied: Boolean = false, edited: Boolean = false, editing: Boolean = false) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher()) // never advanced: nothing expires
+        var now = 0L
+        val thumbnail = ScreenshotThumbnailState(timers, clock = { now })
+        val bitmap = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
+        if (edited) {
+            thumbnail.showEdited(Paths.get("/tmp/Pixel 8 Pro-edited.png"), bitmap, Paths.get("/tmp/Pixel 8 Pro.png"))
+        } else {
+            thumbnail.show(Paths.get("/tmp/Pixel 8 Pro.png"), bitmap)
+        }
+        if (copied) thumbnail.markCopied()
+        now = 2_000
+        if (editing) thumbnail.editing(thumbnail.shown.value)
+        try {
+            renderToPng(1280, 800, out, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                        MirrorContent(
+                            state, frame, {}, {}, {}, {}, {}, {}, showTopStrip = false,
+                            stageOverlay = {
+                                ScreenshotThumbnail(
+                                    thumbnail, motion = true, onCopy = { true }, onReveal = {}, onOpen = {},
+                                    dragStarter = ComposeDragOutStarter(),
+                                    modifier = Modifier.align(androidx.compose.ui.Alignment.BottomEnd),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        } finally {
+            thumbnail.dispose()
+            timers.cancel()
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    /** The window after a recording: the recording thumbnail (first frame, length, Export GIF), [makingGif] dimmed. */
+    private fun renderRecordingThumbnail(name: String, mode: ThemeMode, makingGif: Boolean = false) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        val timers = CoroutineScope(kotlinx.coroutines.test.StandardTestDispatcher()) // never advanced: nothing expires
+        var now = 0L
+        val thumbnail = ScreenshotThumbnailState(timers, clock = { now })
+        val bitmap = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
+        thumbnail.showRecording(
+            Paths.get("/tmp/Pixel 8 Pro.mp4"), bitmap,
+            com.programmersbox.scrcpyviewer.media.RecordingInfo(18_030, 1344, 2992),
+        )
+        now = 2_000
+        if (makingGif) thumbnail.makingGif(thumbnail.shown.value!!.id, true)
+        try {
+            renderToPng(1280, 800, out, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                        MirrorContent(
+                            state, frame, {}, {}, {}, {}, {}, {}, showTopStrip = false,
+                            stageOverlay = {
+                                ScreenshotThumbnail(
+                                    thumbnail, motion = true, onCopy = { true }, onReveal = {}, onOpen = {},
+                                    dragStarter = ComposeDragOutStarter(),
+                                    modifier = Modifier.align(androidx.compose.ui.Alignment.BottomEnd),
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+        } finally {
+            thumbnail.dispose()
+            timers.cancel()
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror recording thumbnail`() {
+        renderRecordingThumbnail("mirror-recording-thumbnail-light.png", ThemeMode.Light)
+        renderRecordingThumbnail("mirror-recording-thumbnail-dark.png", ThemeMode.Dark)
+        renderRecordingThumbnail("mirror-recording-thumbnail-making-gif-light.png", ThemeMode.Light, makingGif = true)
+        renderRecordingThumbnail("mirror-recording-thumbnail-making-gif-dark.png", ThemeMode.Dark, makingGif = true)
+    }
+
+    private enum class GifStage { Idle, Exporting, Done, TooLong }
+
+    /**
+     * The Export GIF window's content at its opening size (less the title bar): the synthetic frame as the preview, a
+     * strip of tinted copies, trimmed to 0:03.0–0:12.0; then exporting at 42%, or done, or a clip over 60 s.
+     */
+    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+    private fun renderGifWindow(name: String, mode: ThemeMode, stage: GifStage) {
+        val out = outDir.resolve(name)
+        val frame = mutableStateOf<VideoFrame?>(syntheticFrame())
+        val first = checkNotNull(com.programmersbox.scrcpyviewer.media.Screenshot.copyLatest { frame.value })
+        val tmp = Files.createTempDirectory("gif-shot")
+        val duration = if (stage == GifStage.TooLong) 84_000L else 18_000L
+        val state = com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportState(
+            tmp.resolve("Pixel 8 Pro-20261115-114210.mp4"),
+            com.programmersbox.scrcpyviewer.media.RecordingInfo(duration, 1344, 2992),
+        )
+        if (stage != GifStage.TooLong) {
+            state.trimStart(3_000)
+            state.trimEnd(12_000)
+        }
+        // The strip: the frame, each tinted a little differently.
+        fun png(i: Int): ByteArray {
+            val w = 120
+            val h = 267
+            val b = Bitmap().apply { allocN32Pixels(w, h) }
+            val c = Canvas(b)
+            c.drawImageRect(org.jetbrains.skia.Image.makeFromBitmap(first.asSkiaBitmap()), org.jetbrains.skia.Rect.makeWH(w.toFloat(), h.toFloat()))
+            c.drawRect(org.jetbrains.skia.Rect.makeXYWH(0f, h * (i / 12f), w.toFloat(), 18f), Paint().apply { color = 0x66FFFFFF })
+            return org.jetbrains.skia.Image.makeFromBitmap(b).encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG)!!.bytes
+        }
+        val frames = com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.FakeFrames { n -> (0 until n.coerceAtMost(12)).map(::png) }
+        val export = com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.FakeExport()
+        val scene = androidx.compose.ui.ImageComposeScene(665, 502, androidx.compose.ui.unit.Density(1f)) {
+            ScrcpyViewerTheme(AppTheme(mode)) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportContent(
+                        state, motion = true, export = export.fn, frames = frames,
+                        onClose = {}, onReveal = {}, say = {},
+                        modifier = Modifier.fillMaxSize(),
+                        firstFrame = first,
+                        decode = kotlin.coroutines.EmptyCoroutineContext,
+                    )
+                }
+            }
+        }
+        try {
+            val d = SceneDriver(scene)
+            d.frames(30)
+            if (stage == GifStage.Exporting || stage == GifStage.Done) {
+                val export0 = checkNotNull(scene.semanticsOwners.flatMap { o ->
+                    val all = mutableListOf<androidx.compose.ui.semantics.SemanticsNode>()
+                    fun walk(n: androidx.compose.ui.semantics.SemanticsNode) {
+                        all += n
+                        n.children.forEach(::walk)
+                    }
+                    walk(o.unmergedRootSemanticsNode)
+                    all
+                }.firstOrNull { n -> n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.any { it.text == "Export" } == true })
+                val at = export0.boundsInRoot.center
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Press, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse, button = androidx.compose.ui.input.pointer.PointerButton.Primary)
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Release, at, type = androidx.compose.ui.input.pointer.PointerType.Mouse, button = androidx.compose.ui.input.pointer.PointerButton.Primary)
+                d.frames(4)
+                export.progress!!(com.programmersbox.scrcpyviewer.media.GifExporter.Phase.Encode, 0.275f)
+                if (stage == GifStage.Done) {
+                    val gif = Files.write(tmp.resolve("Pixel 8 Pro-20261115-114210.gif"), ByteArray(4_300_000))
+                    export.gate.complete(Result.success(gif))
+                    repeat(200) {
+                        if (state.done != null) return@repeat
+                        d.frame()
+                        Thread.sleep(10)
+                    }
+                }
+                // Pointer off the button, so no hover shows.
+                scene.sendPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Move, Offset(5f, 5f), type = androidx.compose.ui.input.pointer.PointerType.Mouse)
+            }
+            d.frames(60)
+            val image = scene.render(10_000_000_000L)
+            val data = checkNotNull(image.encodeToData(org.jetbrains.skia.EncodedImageFormat.PNG))
+            Files.createDirectories(out.parent)
+            Files.write(out, data.bytes)
+        } finally {
+            scene.close()
+            first.asSkiaBitmap().close()
+            tmp.toFile().deleteRecursively()
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror export gif window`() = onEdt {
+        renderGifWindow("mirror-gif-window-light.png", ThemeMode.Light, GifStage.Idle)
+        renderGifWindow("mirror-gif-window-dark.png", ThemeMode.Dark, GifStage.Idle)
+        renderGifWindow("mirror-gif-window-exporting-light.png", ThemeMode.Light, GifStage.Exporting)
+        renderGifWindow("mirror-gif-window-exporting-dark.png", ThemeMode.Dark, GifStage.Exporting)
+        renderGifWindow("mirror-gif-window-done-light.png", ThemeMode.Light, GifStage.Done)
+        renderGifWindow("mirror-gif-window-done-dark.png", ThemeMode.Dark, GifStage.Done)
+        renderGifWindow("mirror-gif-window-too-long-light.png", ThemeMode.Light, GifStage.TooLong)
+    }
+
+    @Test
+    fun `mirror screenshot thumbnail`() {
+        renderThumbnail("mirror-thumbnail-light.png", ThemeMode.Light)
+        renderThumbnail("mirror-thumbnail-dark.png", ThemeMode.Dark)
+        renderThumbnail("mirror-thumbnail-copied-dark.png", ThemeMode.Dark, copied = true)
+        renderThumbnail("mirror-thumbnail-edited-light.png", ThemeMode.Light, edited = true)
+        renderThumbnail("mirror-thumbnail-editing-light.png", ThemeMode.Light, editing = true)
+        renderThumbnail("mirror-thumbnail-editing-dark.png", ThemeMode.Dark, editing = true)
     }
 
     @Test
@@ -294,6 +613,66 @@ class MirrorScreenshotTest {
         renderFollowerWindow("mirror-follow-follower-layout-differs-dark.png", ThemeMode.Dark, differs)
         for (w in listOf(420, 560, 900, 1200)) renderFollowStrip("mirror-follow-follower-layout-differs-strip-$w.png", ThemeMode.Light, differs, width = 80 + w)
         renderFollowStrip("mirror-follow-follower-layout-differs-strip-320.png", ThemeMode.Light, differs, width = 80 + 320)
+    }
+
+    // --- Arrange mirror windows ------------------------------------------------------------------------------------
+
+    private fun arrangeStrip(state: ArrangeState = ArrangeState()) =
+        ArrangeStrip(state, onPick = {}, onKeepTiled = {})
+
+    /** The title bar with the Arrange button (and [follow]'s send button), as the custom bar paints it, at [width]. */
+    private fun renderArrangeStrip(name: String, mode: ThemeMode, follow: FollowStrip?, width: Int) {
+        val out = outDir.resolve(name)
+        renderToPng(width, 40, out, settleMillis = 600) {
+            ScrcpyViewerTheme(mode) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 80.dp)) {
+                    CustomBarScope.TopStrip(state, follow, arrangeStrip()) {}
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 1_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror arrange title bar`() {
+        val idle = followStrip(FollowRole.None)
+        renderArrangeStrip("mirror-arrange-strip-1100-light.png", ThemeMode.Light, idle, width = 1100)
+        renderArrangeStrip("mirror-arrange-strip-1100-dark.png", ThemeMode.Dark, idle, width = 1100)
+        renderArrangeStrip("mirror-arrange-strip-800.png", ThemeMode.Light, idle, width = 80 + 800)
+        // At the Fit cutoff (480 + 42): the send icon, Fit and Arrange still fit; 1 dp less and both go into ⋮.
+        renderArrangeStrip("mirror-arrange-strip-522.png", ThemeMode.Light, idle, width = 80 + 522)
+        renderArrangeStrip("mirror-arrange-strip-narrow-420.png", ThemeMode.Light, idle, width = 80 + 420)
+        // A no-control window (no send button) and a follower arrange too.
+        renderArrangeStrip("mirror-arrange-strip-no-send-700.png", ThemeMode.Light, null, width = 80 + 700)
+        renderArrangeStrip(
+            "mirror-arrange-strip-follower-900.png", ThemeMode.Light,
+            followStrip(FollowRole.Follower("A15"), "Galaxy A15 5G"), width = 80 + 900,
+        )
+    }
+
+    private fun renderArrangeMenu(name: String, mode: ThemeMode, arrange: ArrangeStrip) {
+        val out = outDir.resolve(name)
+        renderToPng(440, 420, out, settleMillis = 600) {
+            ScrcpyViewerTheme(mode) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+                    ArrangeMenu(true, {}, arrange)
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 1_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror arrange menu`() {
+        // Grid checked, Keep tiled on.
+        val grid = arrangeStrip(ArrangeState(layout = ArrangeLayout.Grid, keepTiled = true))
+        renderArrangeMenu("mirror-arrange-menu-light.png", ThemeMode.Light, grid)
+        renderArrangeMenu("mirror-arrange-menu-dark.png", ThemeMode.Dark, grid)
+        // As placed: Keep tiled is disabled (no layout to keep).
+        renderArrangeMenu("mirror-arrange-menu-default.png", ThemeMode.Light, arrangeStrip())
+        // Wayland: positions don't take, so the layouts are disabled under the note.
+        renderArrangeMenu("mirror-arrange-menu-not-movable.png", ThemeMode.Light, arrangeStrip(ArrangeState(movable = false)))
+        renderArrangeMenu("mirror-arrange-menu-not-movable-dark.png", ThemeMode.Dark, arrangeStrip(ArrangeState(movable = false)))
     }
 
     @Test
@@ -749,4 +1128,89 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror files tab retro`() = filesStates(ThemeStyle.Retro, onlySelection = true)
+
+    /** Answers `am start -W` with [answer]. */
+    private class LinksShotRunner(private val answer: String) :
+        ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "R5CX12GDWPZ") {
+        override suspend fun run(cmd: String, timeoutMs: Long) = com.programmersbox.scrcpyviewer.adb.ShellResult(answer, 0, 1)
+    }
+
+    private fun renderLinks(name: String, mode: ThemeMode, answer: String, setUp: (com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState) -> Unit) {
+        val now = System.currentTimeMillis()
+        val store = com.programmersbox.scrcpyviewer.links.LinkStore(java.nio.file.Files.createTempDirectory("links-shot").resolve("links.json"))
+        val starred = com.programmersbox.scrcpyviewer.links.LinkEntry("https://example.com/login?next=/account", "com.android.chrome", "Chrome", ok = true, at = now - 720_000)
+        store.record("R5CX12GDWPZ", com.programmersbox.scrcpyviewer.links.LinkEntry("https://www.youtube.com/@AndroidDevelopers", ok = true, appLabel = "YouTube", at = now - 86_400_000))
+        store.record("R5CX12GDWPZ", com.programmersbox.scrcpyviewer.links.LinkEntry("market://details?id=com.android.chrome", ok = false, at = now - 3_600_000))
+        store.record("R5CX12GDWPZ", starred)
+        store.star(starred, true)
+        val apps = listOf(
+            DeviceApp("com.android.chrome", "Chrome", system = true, versionName = null, versionCode = null),
+            DeviceApp("com.google.android.youtube", "YouTube", system = true, versionName = null, versionCode = null),
+        )
+        val scope = CoroutineScope(Dispatchers.Unconfined + kotlinx.coroutines.Job())
+        val links = com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState("R5CX12GDWPZ", LinksShotRunner(answer), store, { apps }, scope)
+        setUp(links)
+        val state = QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Links, apps = AppsUiState(apps = apps))
+        val out = outDir.resolve(name)
+        try {
+            renderToPng(com.programmersbox.scrcpyviewer.ui.mirror.QUICK_ACTIONS_LINKS_WIDTH.value.toInt(), 900, out, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize()) {
+                        QuickActionsPanel(state, { (it as? com.programmersbox.scrcpyviewer.ui.mirror.QuickActionEvent.Links)?.let { e -> links.onEvent(e.event) } }, console = null, links = links, motion = false)
+                    }
+                }
+            }
+        } finally {
+            scope.cancel()
+        }
+        assertTrue(Files.size(out) > 5_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `mirror links tab`() {
+        val ok = "Starting: Intent { act=android.intent.action.VIEW dat=https://example.com/... }\nStatus: ok\nLaunchState: COLD\n" +
+            "Activity: com.android.chrome/com.google.android.apps.chrome.Main\nTotalTime: 412\nWaitTime: 420\nComplete"
+        val error = "Starting: Intent { act=android.intent.action.VIEW dat=myapp://settings/profile }\n" +
+            "Error: Activity not started, unable to resolve Intent { act=android.intent.action.VIEW dat=myapp://settings/profile flg=0x10000000 }"
+        fun send(l: com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState, e: com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent) = l.onEvent(e)
+        for (mode in listOf(ThemeMode.Light, ThemeMode.Dark)) {
+            val m = mode.name.lowercase()
+            renderLinks("mirror-links-idle-$m.png", mode, ok) {
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetText("https://example.com/orders/1042"))
+            }
+            renderLinks("mirror-links-success-$m.png", mode, ok) {
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetText("https://example.com/orders/1042"))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetPackage("com.android.chrome"))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetBefore(com.programmersbox.scrcpyviewer.links.Before.ForceStop))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.Open)
+            }
+            renderLinks("mirror-links-failure-$m.png", mode, error) {
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetText("myapp://settings/profile"))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.Open)
+            }
+            renderLinks("mirror-links-details-$m.png", mode, ok) {
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetText("https://example.com/orders/1042"))
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.ToggleDetails)
+                send(it, com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent.SetExtra(
+                    com.programmersbox.scrcpyviewer.links.Extra(com.programmersbox.scrcpyviewer.links.ExtraType.String, "source", "qa"),
+                ))
+            }
+            // The narrowest sheet: six icons, the Shell dot, Files badge and Logcat's window icon with its live badge.
+            val narrow = outDir.resolve("mirror-sheet-tabs-icons-$m.png")
+            renderToPng(QUICK_ACTIONS_WIDTH.value.toInt(), 160, narrow, settleMillis = 1_000) {
+                ScrcpyViewerTheme(AppTheme(mode)) {
+                    Surface(Modifier.fillMaxSize()) {
+                        QuickActionsPanel(
+                            QuickActionsUiState(
+                                open = true, enabled = true, tab = SheetTab.Actions, consoleRunning = true, filesTransfersRunning = 2,
+                                logcatPopped = true, logcatLive = true,
+                            ),
+                            {}, console = null,
+                        )
+                    }
+                }
+            }
+            assertTrue(Files.size(narrow) > 2_000)
+        }
+    }
 }

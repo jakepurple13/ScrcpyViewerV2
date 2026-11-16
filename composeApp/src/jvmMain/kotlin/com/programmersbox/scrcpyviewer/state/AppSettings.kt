@@ -38,6 +38,8 @@ data class Settings(
     val filesWidth: Int = 440,
     /** The sheet's width (dp) on the Logcat tab. */
     val logcatWidth: Int = 560,
+    /** The sheet's width (dp) on the Links tab. */
+    val linksWidth: Int = 400,
     /** How the Files tab sorts a folder: "name", "size" or "mtime". A string so an unknown value never corrupts the file. */
     val filesSort: String = "name",
     /** Whether the Files tab sorts descending. */
@@ -72,8 +74,26 @@ data class Settings(
     val animateMirrorWindows: Boolean = true,
     /** A [LaunchQuitAnimation] name; unknown or missing names fall back to IconUnfold. */
     val launchQuitAnimation: String = LaunchQuitAnimation.IconUnfold.name,
+    /** An [AfterScreenshot] name; unknown or missing names fall back to Thumbnail. */
+    val afterScreenshot: String = AfterScreenshot.Thumbnail.name,
     /** A newer release downloads in the background as soon as it is found, then waits for a restart. */
     val autoDownloadUpdates: Boolean = false,
+    /** The menu bar (macOS) / system tray (Windows, Linux) icon listing the devices. */
+    val showTrayIcon: Boolean = true,
+    /** The Android SDK folder chosen in the Emulators section; null looks in ANDROID_HOME, ANDROID_SDK_ROOT, the default. */
+    val androidSdkPath: String? = null,
+    /** Whether the Devices screen's Emulators section is unfolded. */
+    val emulatorsExpanded: Boolean = true,
+    /** Per-AVD launcher options, keyed by AVD id. */
+    val emulatorPrefs: Map<String, EmulatorPrefs> = emptyMap(),
+)
+
+/** One AVD's launcher options. [lastBootMillis] is how long its last successful boot took (the progress estimate). */
+@Serializable
+data class EmulatorPrefs(
+    val mirrorWhenReady: Boolean = false,
+    val showWindow: Boolean = false,
+    val lastBootMillis: Long? = null,
 )
 
 /** Everything the theme reads from [Settings]. */

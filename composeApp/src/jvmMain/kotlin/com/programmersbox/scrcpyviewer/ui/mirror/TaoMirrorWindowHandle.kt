@@ -9,6 +9,8 @@ import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import com.sun.jna.Pointer
 import dev.nucleusframework.application.NucleusWindow
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +25,7 @@ import kotlin.math.roundToInt
 class TaoMirrorWindowHandle(private val window: NucleusWindow, private val geometry: ScreenGeometry) : MirrorWindowHandle {
     private val tao = window.unsafe.taoWindow
     private val focusChanges = MutableSharedFlow<Boolean>(extraBufferCapacity = 16)
+    private val moves = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     private val aspect = nsWindow?.let(::MacAspectLock)
 
     // Shown / hidden as Tao reports it; off macOS, where there is no NSWindow to ask. A window shown before this
@@ -36,7 +39,11 @@ class TaoMirrorWindowHandle(private val window: NucleusWindow, private val geome
         tao?.onShown { shownFlag = true }
         tao?.onWillHide { shownFlag = false }
         // contentAspectRatio is exact for the width it was computed at; recompute it after every step of a resize.
-        tao?.onResized { _, _ -> aspect?.reapply() }
+        tao?.onResized { _, _ ->
+            aspect?.reapply()
+            moves.tryEmit(Unit)
+        }
+        tao?.onMoved { _, _ -> moves.tryEmit(Unit) }
     }
 
     override var bounds: Rectangle
@@ -57,6 +64,7 @@ class TaoMirrorWindowHandle(private val window: NucleusWindow, private val geome
             return runCatching { ObjC.msgBool(ns, "isVisible") }.getOrDefault(shownFlag)
         }
 
+    override val boundsChanges: Flow<Unit> = moves.asSharedFlow()
     override val focused: StateFlow<Boolean> = window.focusFlow
     override val focusEvents: SharedFlow<Boolean> = focusChanges.asSharedFlow()
 

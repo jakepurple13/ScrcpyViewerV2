@@ -20,8 +20,10 @@ class NoAwtToolkitTest {
             .filter { it.isFile && it.extension == "kt" }
             .flatMap { file ->
                 val code = stripComments(file.readText())
+                val path = file.relativeTo(sources).invariantSeparatorsPath
+                val allowedHere = ALLOWED_IN_FILE[path].orEmpty()
                 code.lineSequence().withIndex().flatMap { (i, line) ->
-                    bannedIn(line).map { "${file.relativeTo(sources)}:${i + 1}: $it" }
+                    bannedIn(line).filter { it !in allowedHere }.map { "$path:${i + 1}: $it" }
                 }
             }
             .toList()
@@ -95,6 +97,15 @@ class NoAwtToolkitTest {
             "java.awt.dnd.DnDConstants",
             "java.awt.dnd.DropTargetDragEvent",
             "java.awt.dnd.DropTargetDropEvent",
+        )
+
+        /**
+         * The one place the toolkit may start, by file: copying an image on Windows goes through AWT's clipboard (the
+         * screenshot thumbnail's Copy; macOS and Linux use NSPasteboard and wl-copy / xclip).
+         */
+        val ALLOWED_IN_FILE = mapOf(
+            "com/programmersbox/scrcpyviewer/ui/common/ImageClipboard.kt" to
+                setOf("java.awt.Toolkit", "java.awt.image.BufferedImage", "javax.imageio.ImageIO"),
         )
 
         /** Compose Desktop's AWT windows and application. */

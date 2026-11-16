@@ -17,7 +17,7 @@ plugins {
 
 // Single source of truth: feeds packageVersion and the generated APP_VERSION constant shown in the window title.
 // Local update tests only: -PappVersion=1.6.1 builds a "newer" package.
-val appVersion = (findProperty("appVersion") as String?) ?: "1.19.0"
+val appVersion = (findProperty("appVersion") as String?) ?: "1.22.0"
 
 val generateAppVersion = tasks.register("generateAppVersion") {
     val version = appVersion
@@ -76,6 +76,7 @@ kotlin {
             implementation(libs.nucleus.application)
             implementation(libs.nucleus.window.tao)
             implementation(libs.nucleus.window.material3)
+            implementation(libs.composenativetray)
             implementation(libs.jna)
             // Only icon and resource parsing is used: the signing parts (BouncyCastle) and annotations stay out.
             implementation("net.dongliu:apk-parser:${libs.versions.apk.parser.get()}") {
@@ -278,6 +279,9 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
     // On CI, log each test as it starts: when a job hangs and times out, the last STARTED line names the test.
     if (System.getenv("CI") == "true") {
         testLogging { events("started", "failed", "skipped") }
+        // A fixed heap instead of a quarter of the runner's memory: with Gradle, xvfb, native Skia surfaces and
+        // FFmpeg processes alongside, an uncapped test JVM ran the Linux runner out of memory.
+        (this as Test).maxHeapSize = "2g"
     }
     if (deviceTests) {
         systemProperty("scrcpyviewer.bundledDir", layout.projectDirectory.dir("bundled").asFile.absolutePath)

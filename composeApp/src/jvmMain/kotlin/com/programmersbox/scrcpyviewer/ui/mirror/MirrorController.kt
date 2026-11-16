@@ -96,6 +96,11 @@ class MirrorController(
         }
     }
 
+    /** Asks [serial]'s mirror window to come to the front. Does nothing (opens nothing) when it is not open. */
+    fun focus(serial: String) {
+        if (serial in _open.value) _focusRequests.tryEmit(serial)
+    }
+
     /** Closes [serial]'s window and session. */
     fun close(serial: String) {
         val session = synchronized(lock) {

@@ -199,9 +199,15 @@ class SettingsViewModel(
 
     fun setAutoDownloadUpdates(value: Boolean) = appSettings.update { it.copy(autoDownloadUpdates = value) }
 
+    /** Applies at once: Main.kt shows the tray icon only while this is on. */
+    fun setShowTrayIcon(value: Boolean) = appSettings.update { it.copy(showTrayIcon = value) }
+
     /** Read at launch and at quit: a change applies from the next quit. */
     fun setLaunchQuitAnimation(value: com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation) =
         appSettings.update { it.copy(launchQuitAnimation = value.name) }
+
+    fun setAfterScreenshot(value: com.programmersbox.scrcpyviewer.state.AfterScreenshot) =
+        appSettings.update { it.copy(afterScreenshot = value.name) }
 
     /** Reopens the first-run guide; it marks itself seen again when closed. */
     fun showOnboarding() = appSettings.update { it.copy(onboardingSeen = false) }

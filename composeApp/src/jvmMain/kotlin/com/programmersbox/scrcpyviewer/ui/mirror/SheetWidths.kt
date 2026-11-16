@@ -25,6 +25,7 @@ data class SheetWidths(
     val shell: Dp = QUICK_ACTIONS_SHELL_WIDTH,
     val apps: Dp = QUICK_ACTIONS_APPS_WIDTH,
     val files: Dp = QUICK_ACTIONS_FILES_WIDTH,
+    val links: Dp = QUICK_ACTIONS_LINKS_WIDTH,
     val logcat: Dp = QUICK_ACTIONS_LOGCAT_WIDTH,
 ) {
     operator fun get(tab: SheetTab): Dp = when (tab) {
@@ -32,6 +33,7 @@ data class SheetWidths(
         SheetTab.Apps -> apps
         SheetTab.Shell -> shell
         SheetTab.Files -> files
+        SheetTab.Links -> links
         SheetTab.Logcat -> logcat
     }
 
@@ -40,6 +42,7 @@ data class SheetWidths(
         SheetTab.Apps -> copy(apps = width)
         SheetTab.Shell -> copy(shell = width)
         SheetTab.Files -> copy(files = width)
+        SheetTab.Links -> copy(links = width)
         SheetTab.Logcat -> copy(logcat = width)
     }
 
@@ -54,12 +57,14 @@ data class SheetWidths(
             apps: Int,
             files: Int,
             logcat: Int = QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(),
+            links: Int = QUICK_ACTIONS_LINKS_WIDTH.value.toInt(),
         ): SheetWidths = SheetWidths(
-            actions.dp.coerceIn(default(SheetTab.Actions), SHEET_MAX_WIDTH),
-            shell.dp.coerceIn(default(SheetTab.Shell), SHEET_MAX_WIDTH),
-            apps.dp.coerceIn(default(SheetTab.Apps), SHEET_MAX_WIDTH),
-            files.dp.coerceIn(default(SheetTab.Files), SHEET_MAX_WIDTH),
-            logcat.dp.coerceIn(default(SheetTab.Logcat), SHEET_MAX_WIDTH),
+            actions = actions.dp.coerceIn(default(SheetTab.Actions), SHEET_MAX_WIDTH),
+            shell = shell.dp.coerceIn(default(SheetTab.Shell), SHEET_MAX_WIDTH),
+            apps = apps.dp.coerceIn(default(SheetTab.Apps), SHEET_MAX_WIDTH),
+            files = files.dp.coerceIn(default(SheetTab.Files), SHEET_MAX_WIDTH),
+            links = links.dp.coerceIn(default(SheetTab.Links), SHEET_MAX_WIDTH),
+            logcat = logcat.dp.coerceIn(default(SheetTab.Logcat), SHEET_MAX_WIDTH),
         )
     }
 }

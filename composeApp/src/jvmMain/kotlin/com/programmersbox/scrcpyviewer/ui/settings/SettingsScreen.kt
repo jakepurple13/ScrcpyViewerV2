@@ -52,6 +52,7 @@ fun SettingsScreen(
         onGlassOpacity = viewModel::setGlassOpacity,
         onDefaultPreset = viewModel::setDefaultPreset,
         onAnimateMirrorWindows = viewModel::setAnimateMirrorWindows,
+        onShowTrayIcon = viewModel::setShowTrayIcon,
         onLaunchQuitAnimation = viewModel::setLaunchQuitAnimation,
         onUseBundledAdb = viewModel::useBundledAdb,
         onUseCustomAdb = viewModel::useCustomAdb,
@@ -60,6 +61,7 @@ fun SettingsScreen(
             val current = Paths.get(state.settings.captureDir)
             picker.launch(pickerScope) { files.chooseFolder(current)?.let { viewModel.setCaptureDir(it.toString()) } }
         },
+        onAfterScreenshot = viewModel::setAfterScreenshot,
         onShowOnboarding = viewModel::showOnboarding,
         onCheckUpdates = updateViewModel::check,
         onUpdate = updateViewModel::update,

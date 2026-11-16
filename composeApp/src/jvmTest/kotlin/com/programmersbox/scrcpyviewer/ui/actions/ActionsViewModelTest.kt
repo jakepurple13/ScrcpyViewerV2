@@ -4,7 +4,9 @@ import com.programmersbox.scrcpyviewer.actions.ActionCodec
 import com.programmersbox.scrcpyviewer.actions.ActionSource
 import com.programmersbox.scrcpyviewer.actions.ActionStore
 import com.programmersbox.scrcpyviewer.actions.withSource
+import com.programmersbox.scrcpyviewer.actions.ActionTemplate
 import com.programmersbox.scrcpyviewer.actions.ActionTemplates
+import com.programmersbox.scrcpyviewer.actions.TemplateGroup
 import com.programmersbox.scrcpyviewer.actions.MatchMode
 import com.programmersbox.scrcpyviewer.actions.OnWhen
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
@@ -853,6 +855,30 @@ class ActionsViewModelTest {
         assertEquals(key, vm.state.value.editorKey)
         vm.new()
         assertTrue(vm.state.value.editorKey != key)
+    }
+
+    @Test
+    fun `a saved link's template fills a draft without the banner, also after discarding`() {
+        val vm = vm()
+        val link = ActionTemplate(
+            TemplateGroup.Intents, "Open example.com", "",
+            RunOnceAction("link", "Open example.com", "open_in_new", "am start -W -d 'https://example.com'"),
+        )
+        vm.handle(ActionsRequest(null, new = true, template = link, banner = false))
+        val draft = vm.state.value.draft!!
+        assertEquals("Open example.com", draft.name)
+        assertEquals("am start -W -d 'https://example.com'", draft.command)
+        assertEquals(OutputTarget.Toast, draft.output)
+        assertFalse(draft.templateBanner)
+        assertTrue(vm.state.value.dirty, "unsaved until Save")
+        vm.new()
+        vm.edit { it.copy(name = "Mine") }
+        vm.handle(ActionsRequest(null, new = true, template = link, banner = false))
+        vm.discardAndSelect(null)
+        assertFalse(vm.state.value.draft!!.templateBanner)
+        vm.newFromTemplate(template("Force stop"))
+        vm.discardAndSelect(null)
+        assertTrue(vm.state.value.draft!!.templateBanner, "built-in templates keep it")
     }
 
     @Test

@@ -10,7 +10,10 @@ import com.programmersbox.scrcpyviewer.adb.DeviceTracker
 import com.programmersbox.scrcpyviewer.adb.DnsSdDiscovery
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.adb.optionsKey
+import com.programmersbox.scrcpyviewer.emulator.EmulatorEnvironment
+import com.programmersbox.scrcpyviewer.emulator.EmulatorLauncher
 import com.programmersbox.scrcpyviewer.info.DeviceInfoReader
+import com.programmersbox.scrcpyviewer.links.LinkStore
 import com.programmersbox.scrcpyviewer.media.AudioPlayer
 import com.programmersbox.scrcpyviewer.media.DelayedVideoSink
 import com.programmersbox.scrcpyviewer.media.VideoDecoder
@@ -25,9 +28,12 @@ import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
 import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoReaderFactory
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.InputFollowing
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
 import com.programmersbox.scrcpyviewer.ui.mirror.OpenMirrors
 import com.programmersbox.scrcpyviewer.ui.mirror.QuickActionsMemory
 import com.programmersbox.scrcpyviewer.ui.mirror.ShellHistory
@@ -92,6 +98,9 @@ class StorageModule {
     @Singleton
     fun actionStore(dataDir: DataDir): ActionStore = ActionStore(dataDir.path.resolve("actions.json"))
 
+    @Singleton
+    fun linkStore(dataDir: DataDir): LinkStore = LinkStore(dataDir.path.resolve("links.json"))
+
     /** Watches `actions-inbox` for action files AI tools drop in; `main()` starts it. */
     @Singleton
     fun actionInbox(dataDir: DataDir, store: ActionStore): ActionInbox =
@@ -123,15 +132,36 @@ class AdbModule {
     @Singleton
     fun deviceTracker(client: AdbClient, scope: AppScope): DeviceTracker = DeviceTracker(client, scope)
 
-    /** The device selected on the Devices screen; Presets applies to it. */
+    /** The device selected on the Devices screen; Presets applies to it. Never an emulator still booting. */
     @Singleton(binds = [SelectedDevice::class])
-    fun deviceSelection(tracker: DeviceTracker, scope: AppScope): DeviceSelection =
-        DeviceSelection(tracker.devices, tracker.connected, scope)
+    fun deviceSelection(tracker: DeviceTracker, launcher: EmulatorLauncher, scope: AppScope): DeviceSelection =
+        DeviceSelection(tracker.devices, tracker.connected, scope, hidden = launcher.bootingSerials)
 
     /** Readers for the Devices screen's Info tab, one per selected device. */
     @Singleton
     fun deviceInfoReaderFactory(client: AdbClient): DeviceInfoReaderFactory =
         DeviceInfoReaderFactory { DeviceInfoReader(client, it) }
+
+    /**
+     * Starts, watches and stops emulators; app-wide so a boot carries on (and still mirrors) on any screen. Created at
+     * start so emulators left running by the last quit are matched (and listed as Running) right away.
+     */
+    @Singleton(createdAtStart = true)
+    fun emulatorLauncher(
+        client: AdbClient,
+        tracker: DeviceTracker,
+        settings: AppSettings,
+        mirrors: MirrorRequests,
+        dataDir: DataDir,
+        scope: AppScope,
+    ): EmulatorLauncher = EmulatorLauncher(
+        adb = client,
+        devices = tracker.devices,
+        settings = settings,
+        mirrors = mirrors,
+        logDir = dataDir.path.resolve("emulator-logs"),
+        scope = scope,
+    )
 
     @Singleton
     fun wirelessAdb(client: AdbClient, mirrors: Lazy<MirrorController>): WirelessAdb = WirelessAdb(
@@ -159,6 +189,10 @@ class MirrorModule {
     /** Mirror windows ask the main window to open the Actions screen through this. */
     @Singleton
     fun actionsNavigation(): ActionsNavigation = ActionsNavigation()
+
+    /** The tray menu asks for the main window (and a rail destination) through this. */
+    @Singleton
+    fun mainWindowRequests(): MainWindowRequests = MainWindowRequests()
 
     /** Typed shell commands, shared by every mirror window's console. */
     @Singleton
@@ -208,6 +242,20 @@ class MirrorModule {
         clipboardMuted = { following.value.roleOf(it) is FollowRole.Follower },
     )
 
+    /** The open mirror windows (handles and layout info) for Arrange mirror windows; each window registers itself. */
+    @Singleton
+    fun mirrorWindows(): MirrorWindows = MirrorWindows()
+
+    /** Arrange mirror windows: moves the registered windows into a layout, and keeps them tiled. */
+    @Singleton
+    fun windowArranger(windows: MirrorWindows, screens: ScreenGeometry, settings: AppSettings, scope: AppScope): WindowArranger =
+        WindowArranger(
+            windows = windows,
+            screens = screens,
+            animateWindows = { settings.settings.value.animateMirrorWindows },
+            scope = scope,
+        )
+
     /** The app-wide follow link between mirror windows; pruned as mirrors close. */
     @Singleton
     fun inputFollowing(mirrors: MirrorController, scope: AppScope): InputFollowing =
@@ -255,11 +303,13 @@ fun startAppKoin(
     dataDir: Path = AppDataDir.root(),
     adbClientFactory: AdbClientFactory = AdbClientFactory { AdbClient(adbPath = it) },
     updateBackend: UpdateBackend = NucleusUpdateBackend(cacheDir = dataDir.resolve(UPDATE_CACHE_DIR)),
+    emulatorEnvironment: EmulatorEnvironment = EmulatorEnvironment.system(),
 ): Koin {
     val koin = startKoin<ScrcpyKoinApp> {
         koin.declare(DataDir(dataDir))
         koin.declare(adbClientFactory)
         koin.declare(updateBackend)
+        koin.declare(emulatorEnvironment)
     }.koin
     val mirrors = koin.get<MirrorController>()
     koin.get<AppScope>().launch { koin.get<MirrorRequests>().collect { mirrors.open(it) } }

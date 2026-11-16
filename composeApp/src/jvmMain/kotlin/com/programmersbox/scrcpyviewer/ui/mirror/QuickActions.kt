@@ -11,6 +11,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.Dp
 import com.programmersbox.scrcpyviewer.actions.ActionStore
+import com.programmersbox.scrcpyviewer.actions.ActionTemplate
 import com.programmersbox.scrcpyviewer.actions.CommandTemplate
 import com.programmersbox.scrcpyviewer.actions.CustomAction
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
@@ -28,6 +29,9 @@ import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.logcat.LogcatSource
+import com.programmersbox.scrcpyviewer.links.LinkStore
+import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent
+import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesLocation
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatRun
@@ -172,7 +176,7 @@ open class DeviceQuickActions(
 }
 
 /** The sheet's tabs, in the order the segmented control shows them. */
-enum class SheetTab { Actions, Apps, Shell, Files, Logcat }
+enum class SheetTab { Actions, Apps, Shell, Files, Links, Logcat }
 
 /**
  * A run-once action waiting for the user: the variable prompt while [needsValues], then the confirm dialog while
@@ -296,6 +300,9 @@ sealed interface QuickActionEvent {
 
     /** Something done on the Apps tab. */
     data class Apps(val event: AppsEvent) : QuickActionEvent
+
+    /** Something done on the Links tab. */
+    data class Links(val event: LinksEvent) : QuickActionEvent
 }
 
 /**
@@ -318,6 +325,8 @@ class QuickActions internal constructor(
     val console: ShellConsole? = null,
     private val memory: QuickActionsMemory = QuickActionsMemory(),
     private val onManage: (actionId: String?, new: Boolean) -> Unit = { _, _ -> },
+    /** Opens the Actions editor in the main window on a new action filled from the template (Links' Save as quick action). */
+    private val onNewAction: (ActionTemplate) -> Unit = {},
     /** Each tab's sheet width when the window opens; [saveWidth] persists one tab's width after a drag. */
     widths: SheetWidths = SheetWidths(),
     private val saveWidth: (SheetTab, Dp) -> Unit = { _, _ -> },
@@ -329,6 +338,8 @@ class QuickActions internal constructor(
     private val followers: () -> List<FollowRunner> = { emptyList() },
     /** The Logcat tab; null without adb. Its stream stops when the tab stops showing, unless it is in its own window. */
     val logcat: LogcatController? = null,
+    /** The Links tab; null without adb. */
+    val links: LinksState? = null,
     private val notify: (String) -> Unit,
 ) {
     var open by mutableStateOf(false)
@@ -368,7 +379,7 @@ class QuickActions internal constructor(
             tab = memory.tab
             open = true
             refresh()
-            if (tab == SheetTab.Apps) apps?.ensureLoaded()
+            if (tab == SheetTab.Apps || tab == SheetTab.Links) apps?.ensureLoaded()
             if (tab == SheetTab.Logcat) nudgeIfStopped()
         }
     }
@@ -406,7 +417,8 @@ class QuickActions internal constructor(
         if (from == SheetTab.Logcat && to != SheetTab.Logcat) logcat?.takeUnless { it.popped }?.stopForLeaving()
         tab = to
         memory.tab = to
-        if (to == SheetTab.Apps) apps?.ensureLoaded()
+        // Links' "Open with" lists the same apps.
+        if (to == SheetTab.Apps || to == SheetTab.Links) apps?.ensureLoaded()
         if (to == SheetTab.Logcat && from != to) nudgeIfStopped()
     }
 
@@ -488,6 +500,10 @@ class QuickActions internal constructor(
             is QuickActionEvent.Apps -> when (val e = event.event) {
                 is AppsEvent.ShowInLogcat -> showInLogcat(e.app)
                 else -> apps?.onEvent(e)
+            }
+            is QuickActionEvent.Links -> when (val e = event.event) {
+                LinksEvent.Save -> links?.saveTemplate()?.let(onNewAction)
+                else -> links?.onEvent(e)
             }
         }
     }
@@ -777,6 +793,8 @@ fun rememberQuickActions(
     adb: AdbClient?,
     notify: (String) -> Unit,
     onManage: (actionId: String?, new: Boolean) -> Unit = { _, _ -> },
+    /** Opens the Actions editor on a new action filled from a template (the Links tab's Save as quick action). */
+    onNewAction: (ActionTemplate) -> Unit = {},
     /** This device's title, for the result line of a run that also went to [followers]. */
     title: String = serial,
     /** The windows following this one right now (none unless it leads). */
@@ -787,9 +805,11 @@ fun rememberQuickActions(
     settings: AppSettings = koinInject(),
     tools: BundledTools = koinInject(),
     dataDir: DataDir = koinInject(),
+    linkStore: LinkStore = koinInject(),
 ): QuickActions {
     val currentNotify by rememberUpdatedState(notify)
     val currentOnManage by rememberUpdatedState(onManage)
+    val currentOnNewAction by rememberUpdatedState(onNewAction)
     val currentTitle by rememberUpdatedState(title)
     val currentFollowers by rememberUpdatedState(followers)
     val scope = rememberCoroutineScope()
@@ -809,8 +829,9 @@ fun rememberQuickActions(
             console = ShellConsole(runner, history, scope, { currentNotify(it) }),
             memory = memory,
             onManage = { id, new -> currentOnManage(id, new) },
+            onNewAction = { currentOnNewAction(it) },
             widths = settings.settings.value.let {
-                SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth, it.appsWidth, it.filesWidth, it.logcatWidth)
+                SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth, it.appsWidth, it.filesWidth, it.logcatWidth, it.linksWidth)
             },
             // Only the tab that changed: another mirror window may have saved the others since this one opened.
             saveWidth = { tab, width ->
@@ -821,6 +842,7 @@ fun rememberQuickActions(
                         SheetTab.Apps -> it.copy(appsWidth = dp)
                         SheetTab.Shell -> it.copy(shellWidth = dp)
                         SheetTab.Files -> it.copy(filesWidth = dp)
+                        SheetTab.Links -> it.copy(linksWidth = dp)
                         SheetTab.Logcat -> it.copy(logcatWidth = dp)
                     }
                 }
@@ -829,9 +851,11 @@ fun rememberQuickActions(
             title = { currentTitle },
             followers = { currentFollowers() },
             logcat = adb?.let { LogcatController(LogcatSource(it, serial), scope, { msg -> currentNotify(msg) }) },
+            links = runner?.let { LinksState(serial, it, linkStore, { apps.listed }, scope) },
         ) { currentNotify(it) }
     }
     LaunchedEffect(actions) { actions.watchActions() }
+    LaunchedEffect(actions) { actions.links?.watch() }
     LaunchedEffect(actions, session) {
         session.status.collect { actions.onSessionStatus(it) }
     }

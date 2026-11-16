@@ -51,8 +51,8 @@ fun awtKeyOf(event: KeyEvent): AwtKeyTuple? {
 
 /**
  * The mirror window's device keys, called from the window's `onPreviewKeyEvent` (it sees only its own window's keys)
- * and its focus events. A key goes, in order: to the quick actions sheet when it has focus ([keyTarget]: Compose gets
- * it), Esc to close the open sheet, the zoom shortcuts (never forwarded), then unless [noControl]: capture keys
+ * and its focus events. The markup editor has its own window: its keys never come here. A key goes, in order: to the
+ * quick actions sheet when it has focus ([keyTarget]: Compose gets it), Esc to close the open sheet, the zoom shortcuts (never forwarded), then unless [noControl]: capture keys
  * ([captureKey]), and unless [keyboardDisabled]: Cmd+V (Ctrl+V off macOS) pastes the computer's clipboard on the
  * device, the [hidKeyboard] when there is one (always consumed: HID keys never become text), else the [mapper]
  * (consumed when it produced messages).
@@ -171,7 +171,9 @@ class MirrorKeys(
      * Focus entered the quick actions sheet: keys held for the device, and the key held for followers, would never see
      * their release.
      */
-    fun onSheetFocusGained() {
+    fun onSheetFocusGained() = releaseHeld()
+
+    private fun releaseHeld() {
         hidKeyboard?.let { send(it.releaseAll()) }
         followerSend(followerMapper.releaseKey())
     }

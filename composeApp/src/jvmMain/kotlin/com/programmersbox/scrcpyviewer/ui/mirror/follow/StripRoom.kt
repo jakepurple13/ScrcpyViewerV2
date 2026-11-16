@@ -29,6 +29,9 @@ data class ChipWidths(val model: Dp, val following: Dp, val differs: Dp, val dif
 /** Where the "Send input to…" control is. */
 enum class SendPlace { None, Words, Icon, Overflow }
 
+/** Where the Arrange button is. */
+enum class ArrangePlace { None, Strip, Overflow }
+
 /** Which title bar parts show at one strip width. */
 data class StripRoom(
     val details: Boolean,
@@ -38,8 +41,9 @@ data class StripRoom(
     val send: SendPlace,
     /** "Layout differs" is down to its warning icon: even without the controls there is no room for its words. */
     val compactWarning: Boolean,
+    val arrange: ArrangePlace = ArrangePlace.None,
 ) {
-    val overflow: Boolean get() = !copy || !fit || !zoom || send == SendPlace.Overflow
+    val overflow: Boolean get() = !copy || !fit || !zoom || send == SendPlace.Overflow || arrange == ArrangePlace.Overflow
 }
 
 /** The send button keeps its words from this strip width. */
@@ -48,6 +52,9 @@ val SEND_WORDS_MIN = 760.dp
 /** Room the button takes from the details (with words) and from the copy button (icon only). */
 val SEND_ROOM = 150.dp
 val SEND_ICON_ROOM = 60.dp
+
+/** Room the Arrange icon button takes (32 dp and the gap before it); every cutoff above zoom moves up by it. */
+val ARRANGE_ROOM = 42.dp
 
 /** Everything in a follower's strip but the model and the chip once every control is gone: padding, dot, gaps, ⋮. */
 val FOLLOWER_FIXED = 98.dp
@@ -67,45 +74,66 @@ private val GAP = 10.dp
  * - Following: no send control. Every cutoff moves up by the chip's width ([chip]), so copy, then Fit, then zoom go
  *   before the chip has to ellipsize; once they are all gone and there is still no room, "Layout differs" turns into
  *   its icon, and only then does the leader's name ellipsize.
+ * - [arrange] (two or more mirror windows open, whatever the follow role): the Arrange button sits in the strip down to
+ *   the Fit cutoff and goes into the overflow menu with Fit; the details, copy, Fit and the send button's words cutoffs
+ *   move up by [ARRANGE_ROOM] so it has room. Without it the cutoffs are exactly the ones above.
  */
-fun stripRoom(width: Dp, mins: StripMins, hasDetails: Boolean, follow: FollowStrip?, chip: ChipWidths?): StripRoom {
+fun stripRoom(
+    width: Dp,
+    mins: StripMins,
+    hasDetails: Boolean,
+    follow: FollowStrip?,
+    chip: ChipWidths?,
+    arrange: Boolean = false,
+): StripRoom {
+    val a = if (arrange) ARRANGE_ROOM else 0.dp
+    fun arrangePlace(fit: Boolean) = when {
+        !arrange -> ArrangePlace.None
+        fit -> ArrangePlace.Strip
+        else -> ArrangePlace.Overflow
+    }
     val following = follow?.role is FollowRole.Follower
     if (following && chip != null) {
         val differs = follow.layoutDiffers
         val compact = differs && width < FOLLOWER_FIXED + chip.model + chip.following + chip.differs
         val extra = chip.following + (if (!differs) 0.dp else if (compact) chip.differsIcon else chip.differs) + GAP
+        val fit = width >= mins.fit + extra + a
         return StripRoom(
-            details = hasDetails && width >= mins.details + extra,
-            copy = width >= mins.copy + extra,
-            fit = width >= mins.fit + extra,
+            details = hasDetails && width >= mins.details + extra + a,
+            copy = width >= mins.copy + extra + a,
+            fit = fit,
             zoom = width >= mins.zoom + extra,
             send = SendPlace.None,
             compactWarning = compact,
+            arrange = arrangePlace(fit),
         )
     }
     val canSend = follow != null && !following && follow.control && follow.others.isNotEmpty()
     if (!canSend) {
+        val fit = width >= mins.fit + a
         return StripRoom(
-            details = hasDetails && width >= mins.details,
-            copy = width >= mins.copy,
-            fit = width >= mins.fit,
+            details = hasDetails && width >= mins.details + a,
+            copy = width >= mins.copy + a,
+            fit = fit,
             zoom = width >= mins.zoom,
             send = SendPlace.None,
             compactWarning = false,
+            arrange = arrangePlace(fit),
         )
     }
-    val fit = width >= mins.fit
+    val fit = width >= mins.fit + a
     return StripRoom(
-        details = hasDetails && width >= mins.details + SEND_ROOM,
-        copy = width >= mins.copy + SEND_ICON_ROOM,
+        details = hasDetails && width >= mins.details + SEND_ROOM + a,
+        copy = width >= mins.copy + SEND_ICON_ROOM + a,
         fit = fit,
         zoom = width >= mins.zoom,
         send = when {
             !fit -> SendPlace.Overflow
-            width >= SEND_WORDS_MIN -> SendPlace.Words
+            width >= SEND_WORDS_MIN + a -> SendPlace.Words
             else -> SendPlace.Icon
         },
         compactWarning = false,
+        arrange = arrangePlace(fit),
     )
 }
 

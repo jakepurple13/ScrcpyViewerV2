@@ -37,6 +37,15 @@ class OpenExternallyTest {
     }
 
     @Test
+    fun `reveal selects the file on mac and windows and opens the folder on linux, one argument each`() {
+        assertEquals(listOf("open", "-R", file), revealCommand(file, OpenPlatform.Mac))
+        assertEquals(listOf("explorer.exe", "/select,", file), revealCommand(file, OpenPlatform.Windows))
+        assertEquals(listOf("xdg-open", "/tmp"), revealCommand(file, OpenPlatform.Linux))
+        assertEquals(listOf("xdg-open", "/"), revealCommand("/shot.png", OpenPlatform.Linux))
+        assertEquals(listOf("xdg-open", "."), revealCommand("shot.png", OpenPlatform.Linux))
+    }
+
+    @Test
     fun `a file path gets the per-os file command as one argument`() {
         assertEquals(listOf("open", file), openCommand(file, OpenPlatform.Mac))
         assertEquals(listOf("explorer.exe", file), openCommand(file, OpenPlatform.Windows))
