@@ -81,6 +81,17 @@ class LogcatLineTest {
     }
 
     @Test
+    fun `splitter returns many lines from one chunk and keeps the partial tail`() {
+        val s = LineSplitter()
+        val chunk = (0 until 5_000).joinToString("") { if (it % 2 == 0) "line $it\r\n" else "line $it\n" } + "tail"
+        assertEquals((0 until 5_000).map { "line $it" }, s.feed(chunk))
+        assertEquals(listOf("tail-end", ""), s.feed("-end\r\n\n"))
+        assertEquals(emptyList(), s.feed("x"))
+        assertEquals(listOf("xy"), s.feed("y\n"))
+        assertNull(s.flush())
+    }
+
+    @Test
     fun `non-ASCII survives`() {
         val l = assertNotNull(parseThreadtime("11-13 09:24:01.123  1  2 I Tag: Größe 😀"))
         assertEquals("Größe 😀", l.message)
