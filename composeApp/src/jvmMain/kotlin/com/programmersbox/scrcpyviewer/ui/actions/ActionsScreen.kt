@@ -1,5 +1,9 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateBounds
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -36,6 +41,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.AssistChip
 import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +51,8 @@ import androidx.compose.material3.Text
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
@@ -62,7 +70,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -79,10 +90,27 @@ import com.programmersbox.scrcpyviewer.actions.CustomAction
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.actions.ToggleAction
-import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveListDetail
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
+import com.programmersbox.scrcpyviewer.ui.common.ListPresentation
+import com.programmersbox.scrcpyviewer.ui.common.ListStrip
+import com.programmersbox.scrcpyviewer.ui.common.ListSwitcherChip
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
-import com.programmersbox.scrcpyviewer.ui.common.ResizableListDetail
+import com.programmersbox.scrcpyviewer.ui.common.RowHighlight
+import com.programmersbox.scrcpyviewer.ui.common.RowOrigin
+import com.programmersbox.scrcpyviewer.ui.common.StripItem
+import com.programmersbox.scrcpyviewer.ui.common.closeOverlay
+import com.programmersbox.scrcpyviewer.ui.common.highlightContainer
+import com.programmersbox.scrcpyviewer.ui.common.highlightPart
+import com.programmersbox.scrcpyviewer.ui.common.itemSwitchTransform
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.common.rememberRowHighlight
+import com.programmersbox.scrcpyviewer.ui.common.rowOrigin
+import com.programmersbox.scrcpyviewer.ui.common.selectionHighlightTarget
+import com.programmersbox.scrcpyviewer.ui.common.switchDirection
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
 import com.programmersbox.scrcpyviewer.ui.presets.ErrorBanner
@@ -247,59 +275,193 @@ fun ActionsContent(
         }
     }
     if (picker) TemplatePickerDialog(onPick = { send(ActionsEvent.NewFromTemplate(it)) }, onDismiss = { picker = false })
+    val reduceMotion = LocalReduceMotion.current
     Column(modifier.fillMaxSize()) {
         state.persistenceError?.let { ErrorBanner("Actions can't be saved: $it") }
-        ResizableListDetail(
+        AdaptiveListDetail(
             panes = panes,
             listMinWidth = ACTION_LIST_MIN_WIDTH,
             listPreferredWidth = ActionListPreferredWidth,
-            detailMinWidth = ACTION_DETAIL_MIN_WIDTH,
-            list = {
-                ActionList(
-                    state,
+            hasSelection = state.draft != null,
+            list = { presentation ->
+                // Rows and avatars cross-fade while the list's width glides between them.
+                Crossfade(presentation, animationSpec = tween(if (reduceMotion) 150 else 220), label = "actionPresentation") { shown ->
+                    when (shown) {
+                        ListPresentation.Full -> ActionList(
+                            state,
+                            onBrowseTemplates = { picker = true },
+                            onSelect = {
+                                onEvent(ActionsEvent.Select(it))
+                                panes.navigation.openDetail()
+                                panes.closeOverlay()
+                            },
+                            onEvent = { event ->
+                                send(event)
+                                if (event == ActionsEvent.New) {
+                                    panes.navigation.openDetail()
+                                    panes.closeOverlay()
+                                }
+                            },
+                        )
+                        ListPresentation.Strip -> ActionStrip(
+                            state,
+                            onSelect = { onEvent(ActionsEvent.Select(it)) },
+                            onShowList = panes.navigation::backToList,
+                            onNew = { onEvent(ActionsEvent.New) },
+                            onBrowseTemplates = { picker = true },
+                        )
+                    }
+                }
+            },
+            detail = { openSwitcher ->
+                // Item view only: the open action leaving the list (deleted) leaves item view too.
+                if (openSwitcher != null) BackToListWhenGone(state, panes.navigation::backToList)
+                val switcher: (@Composable () -> Unit)? = openSwitcher?.let { open ->
+                    {
+                        val label = state.draft?.let { it.name.ifBlank { if (it.id == null) "New action" else "Untitled" } } ?: "Actions"
+                        ListSwitcherChip(label, open, Modifier.padding(bottom = 4.dp))
+                    }
+                }
+                ActionDetail(
+                    state, packages, onEvent, switcher,
                     onBrowseTemplates = { picker = true },
-                    onSelect = { onEvent(ActionsEvent.Select(it)); panes.navigation.openDetail() },
-                    onEvent = { event ->
+                    onEmptyEvent = { event ->
                         send(event)
                         if (event == ActionsEvent.New) panes.navigation.openDetail()
                     },
                 )
-            },
-            detail = { onBack ->
-                val draft = state.draft
-                Box(Modifier.fillMaxSize()) {
-                    when {
-                        // Keyed by the open draft so remembered field text (e.g. a List variable's choices) never carries over.
-                        draft != null -> key(state.editorKey) { ActionEditor(state, draft, packages, onEvent, onBack) }
-                        else -> {
-                            if (onBack != null) DetailBackButton(onBack, Modifier.padding(start = 6.dp, top = 6.dp))
-                            if (state.actions.isEmpty()) EmptyState(
-                                onBrowseTemplates = { picker = true },
-                                onEvent = { event ->
-                                    send(event)
-                                    if (event == ActionsEvent.New) panes.navigation.openDetail()
-                                },
-                                modifier = Modifier.align(Alignment.Center))
-                            else Text(
-                                "Select an action to edit it, or create one with + New.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.align(Alignment.Center),
-                            )
-                        }
-                    }
-                }
             },
             modifier = Modifier.weight(1f).fillMaxWidth(),
         )
     }
 }
 
+/** The state each recently shown detail key last had; a few are enough for the switch animation. */
+private class ShownStates : LinkedHashMap<Int, ActionsUiState>() {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, ActionsUiState>?) = size > 4
+}
+
+/**
+ * The editor for the open draft, or the empty page. Each newly opened draft slides in (see [itemSwitchTransform]):
+ * the switch is keyed by [ActionsUiState.editorKey], which changes only when another draft opens, so saving a new
+ * action (which gives it an id) updates it in place.
+ */
+@Composable
+private fun ActionDetail(
+    state: ActionsUiState,
+    packages: List<String>?,
+    onEvent: (ActionsEvent) -> Unit,
+    switcher: (@Composable () -> Unit)?,
+    onBrowseTemplates: () -> Unit,
+    onEmptyEvent: (ActionsEvent) -> Unit,
+) {
+    val reduceMotion = LocalReduceMotion.current
+    val current = if (state.draft != null) state.editorKey else NO_DRAFT_KEY
+    // The outgoing editor keeps its own draft while it slides away.
+    val shownStates = remember { ShownStates() }
+    SideEffect { shownStates[current] = state }
+    val ids = state.actions.map { it.id }
+    fun indexOf(k: Int) = (if (k == current) state else shownStates[k])?.draft?.id?.let(ids::indexOf)?.takeIf { it >= 0 } ?: ids.size
+    AnimatedContent(
+        targetState = current,
+        transitionSpec = { itemSwitchTransform(switchDirection(indexOf(initialState), indexOf(targetState)), reduceMotion) },
+        modifier = Modifier.fillMaxSize(),
+        label = "actionSwitch",
+    ) { shownKey ->
+        val leaving = shownKey != current
+        val shown = if (leaving) shownStates[shownKey] ?: state else state
+        val draft = shown.draft
+        // The editor sliding away ignores input: its events would act on the draft that replaced it.
+        Box(Modifier.fillMaxSize().then(if (leaving) Modifier.blockInput() else Modifier)) {
+            when {
+                // Keyed by the open draft so remembered field text (e.g. a List variable's choices) never carries over.
+                draft != null -> key(shown.editorKey) { ActionEditor(shown, draft, packages, if (leaving) IgnoreEvent else onEvent, switcher) }
+                else -> {
+                    switcher?.let { Box(Modifier.padding(start = 22.dp, top = 16.dp)) { it() } }
+                    if (shown.actions.isEmpty()) EmptyState(
+                        onBrowseTemplates = onBrowseTemplates,
+                        onEvent = onEmptyEvent,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                    else Text(
+                        "Select an action to edit it, or create one with + New.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private val IgnoreEvent: (ActionsEvent) -> Unit = {}
+
+/** Swallows pointer input before the content sees it, and keeps focus out of the content. */
+private fun Modifier.blockInput(): Modifier = focusProperties { canFocus = false }.pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+    }
+}
+
+/** The detail's switch key with no draft open. */
+private const val NO_DRAFT_KEY = -1
+
+/**
+ * Calls [backToList] when the action that was open leaves the list (deleted): item view would otherwise show the
+ * empty editor page.
+ */
+@Composable
+private fun BackToListWhenGone(state: ActionsUiState, backToList: () -> Unit) {
+    val open = remember { arrayOf(state.selectedId) }
+    val ids = state.actions.map { it.id }
+    LaunchedEffect(state.selectedId, ids) {
+        val was = open[0]
+        open[0] = state.selectedId
+        if (was != null && was !in ids) backToList()
+    }
+}
+
+/**
+ * The action list beside an open action: each action's own icon ("Made by AI" ones after an AI divider), and a New
+ * action button under them that opens the same New menu as the full list. Import and Export stay in the full list.
+ */
+@Composable
+private fun ActionStrip(
+    state: ActionsUiState,
+    onSelect: (String) -> Unit,
+    onShowList: () -> Unit,
+    onNew: () -> Unit,
+    onBrowseTemplates: () -> Unit,
+) {
+    val groups = ActionGroups.of(state.actions)
+    fun item(action: CustomAction, divider: String?) = StripItem(
+        key = action.id,
+        label = action.name,
+        avatar = { Icon(ActionIcons.forName(action.icon, action.defaultIcon), contentDescription = null, Modifier.size(22.dp)) },
+        dividerLabel = divider,
+    )
+    val items = groups.yours.map { item(it, null) } +
+        if (groups.showAiSection) groups.madeByAi.mapIndexed { i, a -> item(a, if (i == 0) "AI" else null) } else emptyList()
+    ListStrip(
+        items, state.selectedId,
+        onSelect = { onSelect(it as String) },
+        onShowList = onShowList,
+        modifier = Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        var menu by remember { mutableStateOf(false) }
+        Box(Modifier.padding(top = 4.dp, bottom = 8.dp)) {
+            FilledTonalIconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = "New action", Modifier.size(20.dp))
+            }
+            // Anchored to the button just clicked, like the full list's arrow.
+            NewActionMenu(menu, onDismiss = { menu = false }, onNew = onNew, onBrowseTemplates = onBrowseTemplates)
+        }
+    }
+}
+
 /** Narrowest action list that still shows a row and the toolbar under it. */
 val ACTION_LIST_MIN_WIDTH = 260.dp
 private val ActionListPreferredWidth = 320.dp
-
-/** Narrowest editor that still fits the bottom button row. */
-val ACTION_DETAIL_MIN_WIDTH = 560.dp
 
 @Composable
 private fun EmptyState(onBrowseTemplates: () -> Unit, onEvent: (ActionsEvent) -> Unit, modifier: Modifier = Modifier) {
@@ -311,10 +473,18 @@ private fun EmptyState(onBrowseTemplates: () -> Unit, onEvent: (ActionsEvent) ->
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button({ onEvent(ActionsEvent.New) }) { Text("+ New") }
-            OutlinedButton(onBrowseTemplates) { Text("Browse templates") }
-            OutlinedButton({ onEvent(ActionsEvent.Import) }) { Text("Import") }
+        val reduceMotion = LocalReduceMotion.current
+        LookaheadScope {
+            // A button that wraps to the next line (or back) glides there.
+            val glide = if (reduceMotion) Modifier else Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button({ onEvent(ActionsEvent.New) }, glide) { Text("+ New", maxLines = 1) }
+                OutlinedButton(onBrowseTemplates, glide) { Text("Browse templates", maxLines = 1) }
+                OutlinedButton({ onEvent(ActionsEvent.Import) }, glide) { Text("Import", maxLines = 1) }
+            }
         }
         Text("Popular templates, one click to start", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -350,19 +520,25 @@ private fun SplitNewButton(onNew: () -> Unit, onBrowseTemplates: () -> Unit) {
                 shape = RoundedCornerShape(topStart = 4.dp, bottomStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp),
                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
             ) { Icon(Icons.Filled.ArrowDropDown, contentDescription = "More ways to create an action") }
-            DropdownMenu(menu, { menu = false }) {
-                DropdownMenuItem(
-                    text = { Text("New blank action") },
-                    leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
-                    onClick = { menu = false; onNew() },
-                )
-                DropdownMenuItem(
-                    text = { Text("From template…") },
-                    leadingIcon = { Icon(Icons.Filled.AutoAwesomeMotion, contentDescription = null) },
-                    onClick = { menu = false; onBrowseTemplates() },
-                )
-            }
+            NewActionMenu(menu, onDismiss = { menu = false }, onNew = onNew, onBrowseTemplates = onBrowseTemplates)
         }
+    }
+}
+
+/** The New menu: a blank action or the template picker. Put it in a Box with the control that opens it. */
+@Composable
+private fun NewActionMenu(expanded: Boolean, onDismiss: () -> Unit, onNew: () -> Unit, onBrowseTemplates: () -> Unit) {
+    DropdownMenu(expanded, onDismiss) {
+        DropdownMenuItem(
+            text = { Text("New blank action") },
+            leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+            onClick = { onDismiss(); onNew() },
+        )
+        DropdownMenuItem(
+            text = { Text("From template…") },
+            leadingIcon = { Icon(Icons.Filled.AutoAwesomeMotion, contentDescription = null) },
+            onClick = { onDismiss(); onBrowseTemplates() },
+        )
     }
 }
 
@@ -430,7 +606,7 @@ private fun ListHeader(total: Int, selection: Set<String>?, onEvent: (ActionsEve
                 }
             }
         } else {
-            Text("${selection.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text("${selection.size} selected", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             TextButton({ onEvent(ActionsEvent.SelectAllExport) }, enabled = selection.size < total, contentPadding = ToolbarPadding) { Text("Select all") }
             TextButton({ onEvent(ActionsEvent.SelectNoExport) }, enabled = selection.isNotEmpty(), contentPadding = ToolbarPadding) { Text("None") }
         }
@@ -452,12 +628,20 @@ private fun ReorderableActions(
     onMove: (String, Int) -> Unit,
 ) {
     val groups = ActionGroups.of(actions)
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(RowSpacing)) {
+    // Material: the selected row's highlight slides between rows (see RowHighlight). The other styles mark the
+    // selected row themselves (listRow).
+    val highlight = rememberRowHighlight()
+    Column(
+        Modifier.verticalScroll(rememberScrollState()).then(
+            if (currentStyle == ThemeStyle.Material) Modifier.highlightContainer(highlight) else Modifier,
+        ),
+        verticalArrangement = Arrangement.spacedBy(RowSpacing),
+    ) {
         if (groups.showYoursHeader) GroupHeader("Your actions")
-        ReorderableGroup(groups.yours, selectedId, exportSelection, onSelect, onMove)
+        ReorderableGroup(groups.yours, selectedId, exportSelection, highlight, onSelect, onMove)
         if (groups.showAiSection) {
             GroupHeader("Made by AI")
-            ReorderableGroup(groups.madeByAi, selectedId, exportSelection, onSelect, onMove)
+            ReorderableGroup(groups.madeByAi, selectedId, exportSelection, highlight, onSelect, onMove)
         }
     }
 }
@@ -470,12 +654,17 @@ private fun GroupHeader(text: String) {
     )
 }
 
-/** One group's rows; dragging a row's handle moves it, and the others make room as it passes. */
+/**
+ * One group's rows; dragging a row's handle moves it, and the others make room as it passes. While a row of this
+ * group is dragged, Material's selected row paints its own fill (so it moves with its layer) instead of the sliding
+ * highlight, which reads the rows' resting places.
+ */
 @Composable
 private fun ReorderableGroup(
     actions: List<CustomAction>,
     selectedId: String?,
     exportSelection: Set<String>?,
+    highlight: RowHighlight,
     onSelect: (String) -> Unit,
     onMove: (String, Int) -> Unit,
 ) {
@@ -504,6 +693,7 @@ private fun ReorderableGroup(
                     action,
                     selected = exportSelection == null && action.id == selectedId,
                     checked = exportSelection?.let { action.id in it },
+                    highlight = highlight.takeIf { dragged == null },
                     onClick = { onSelect(action.id) },
                     handle = Modifier.pointerInput(action.id, exportSelection == null) {
                         // No reordering while ticking actions to export.
@@ -533,8 +723,8 @@ private fun ReorderableGroup(
                             }
                         }
                     },
-                    modifier = Modifier
-                        .onSizeChanged { rowHeight = it.height }
+                    modifier = Modifier.onSizeChanged { rowHeight = it.height },
+                    layer = Modifier
                         .graphicsLayer {
                             val f = from.value
                             val t = target.value
@@ -556,12 +746,32 @@ private fun ReorderableGroup(
 }
 
 @Composable
-private fun ActionRow(action: CustomAction, selected: Boolean, checked: Boolean?, onClick: () -> Unit, handle: Modifier, modifier: Modifier = Modifier) {
+private fun ActionRow(
+    action: CustomAction,
+    selected: Boolean,
+    checked: Boolean?,
+    /** Material's sliding highlight; null while the group is dragged. */
+    highlight: RowHighlight?,
+    onClick: () -> Unit,
+    handle: Modifier,
+    modifier: Modifier = Modifier,
+    /** The drag's layer; it moves the row, so the highlight's bounds are read outside it. */
+    layer: Modifier = Modifier,
+) {
     val colors = MaterialTheme.colorScheme
+    val shape = styledCorner(12.dp)
+    val sliding = highlight != null && currentStyle == ThemeStyle.Material
+    val origin = remember { RowOrigin() }
     Row(
         modifier
             .fillMaxWidth()
-            .listRow(selected, styledCorner(12.dp))
+            .then(if (sliding) Modifier.selectionHighlightTarget(highlight.state, selected).rowOrigin(highlight, origin) else Modifier)
+            .then(layer)
+            .then(
+                // Material: the row's surface with the sliding highlight over it. Otherwise (and mid-drag) listRow.
+                if (sliding) Modifier.clip(shape).background(colors.surface).highlightPart(highlight, shape, origin)
+                else Modifier.listRow(selected, shape),
+            )
             .then(
                 if (checked == null) Modifier.clickable(onClick = onClick)
                 else Modifier.toggleable(checked, role = Role.Checkbox, onValueChange = { onClick() }),
