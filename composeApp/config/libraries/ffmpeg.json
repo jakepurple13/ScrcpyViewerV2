@@ -1,0 +1,14 @@
+{
+  "uniqueId": "bundled:ffmpeg",
+  "artifactVersion": "8.1.2",
+  "name": "FFmpeg",
+  "description": "Decodes the mirrored video, plays audio, writes recordings and makes GIFs. Loaded as separate shared libraries and run as a separate program, unmodified from the Bytedeco build.",
+  "website": "https://ffmpeg.org/",
+  "developers": [
+    { "name": "The FFmpeg developers" },
+    { "name": "Bytedeco (JavaCPP Presets)" }
+  ],
+  "scm": { "url": "https://github.com/bytedeco/javacpp-presets/tree/1.5.14/ffmpeg" },
+  "licenses": ["LGPL-3.0-or-later"],
+  "tag": "bundled"
+}

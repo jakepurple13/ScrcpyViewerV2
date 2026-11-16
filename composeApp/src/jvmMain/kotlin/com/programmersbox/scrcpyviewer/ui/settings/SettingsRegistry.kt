@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.programmersbox.scrcpyviewer.APP_VERSION
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.actions.SkillTarget
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
@@ -50,6 +51,8 @@ class SettingsActions(
     val onBrowseCaptureDir: () -> Unit = {},
     val onAfterScreenshot: (com.programmersbox.scrcpyviewer.state.AfterScreenshot) -> Unit = {},
     val onShowOnboarding: () -> Unit = {},
+    val onShowAbout: () -> Unit = {},
+    val onShowLicenses: () -> Unit = {},
     val onCheckUpdates: () -> Unit = {},
     val onUpdate: () -> Unit = {},
     val onCancelUpdate: () -> Unit = {},
@@ -218,6 +221,16 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 "welcome-guide", "Welcome guide", "Setup steps for USB debugging, Wi-Fi and mirroring.",
                 keywords = listOf("onboarding", "tutorial", "setup", "usb", "wifi"),
                 content = { OutlinedButton(onClick = it.actions.onShowOnboarding) { Text("Show welcome guide") } },
+            ),
+            SettingEntry(
+                "about", "About Scrcpy Vwr", "Version $APP_VERSION · what's inside and where it came from.",
+                keywords = listOf("about", "version", "ffmpeg", "scrcpy-server", "java"),
+                content = { OutlinedButton(onClick = it.actions.onShowAbout) { Text("About") } },
+            ),
+            SettingEntry(
+                "licenses", "Open-source licenses", "The libraries and tools Scrcpy Vwr is built on, with their licences.",
+                keywords = listOf("license", "licence", "oss", "open source", "attribution", "ffmpeg", "third party", "credits"),
+                content = { OutlinedButton(onClick = it.actions.onShowLicenses) { Text("View licenses") } },
             ),
         ),
     ),

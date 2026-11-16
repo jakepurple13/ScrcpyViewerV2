@@ -4,6 +4,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayInputStream
@@ -26,6 +28,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import org.junit.Assume.assumeTrue
@@ -237,8 +240,8 @@ class GifExporterTest {
 
     private fun fakeFfmpeg(): Path = tmp.resolve("ffmpeg").also { if (!Files.exists(it)) Files.write(it, byteArrayOf()) }
 
-    private fun exporter(starter: GifProcessStarter) =
-        GifExporter(ffmpegPath = ::fakeFfmpeg, cacheDir = { cache }, starter = starter)
+    private fun exporter(starter: GifProcessStarter, runs: FfmpegRuns = FfmpegRuns()) =
+        GifExporter(ffmpegPath = ::fakeFfmpeg, cacheDir = { cache }, starter = starter, runs = runs)
 
     @Test
     fun exportRunsBothPassesAndMovesTheGifIntoPlace() = runBlocking {
@@ -348,6 +351,82 @@ class GifExporterTest {
         } finally {
             Files.setPosixFilePermissions(recordings, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
         }
+    }
+
+    @Test
+    fun aCancelRightAfterTheMoveKeepsTheGifAndReturnsIt() = runBlocking {
+        val rec = recording()
+        // No progress=end from FFmpeg: the only "Encode at 1" is the one reported once the GIF is in place.
+        val starter = FakeStarter { _, _ -> FakeProcess(listOf("out_time_us=500000")) }
+        var result: Result<java.nio.file.Path>? = null
+        lateinit var job: kotlinx.coroutines.Job
+        job = launch(Dispatchers.Default) {
+            // Cancel pressed right after the move.
+            result = exporter(starter).export(rec, GifOptions(0, 2_000)) { p, f ->
+                if (p == GifExporter.Phase.Encode && f == 1f) job.cancel()
+            }
+        }
+        withTimeout(10_000) { job.join() }
+        assertTrue(job.isCancelled)
+        val out = assertNotNull(result).getOrThrow()
+        assertTrue(Files.isRegularFile(out), "the finished GIF stays")
+        assertEquals(listOf("Pixel 8-20261115-101500.gif", "Pixel 8-20261115-101500.mp4"), recordings.listDirectoryEntries().map { it.name }.sorted())
+        assertTrue(cache.listDirectoryEntries().isEmpty(), "palette deleted")
+    }
+
+    @Test
+    fun theGifGetsTheUsersNormalFileMode() = runBlocking {
+        com.programmersbox.scrcpyviewer.assumePosix()
+        // What any new file in that folder gets (0666 less the umask), unlike a temp file's owner-only mode.
+        val reference = Files.createFile(tmp.resolve("reference"))
+        val normal = Files.getPosixFilePermissions(reference)
+        val out = exporter(FakeStarter { _, _ -> FakeProcess() }).export(recording(), GifOptions(0, 1_000)).getOrThrow()
+        assertEquals(normal, Files.getPosixFilePermissions(out))
+        val ownerOnly = java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")
+        if (normal != ownerOnly) assertTrue(Files.getPosixFilePermissions(out) != ownerOnly, "not owner-only")
+    }
+
+    @Test
+    fun eachRunIsRegisteredWhileItRunsAndGoneAfter() = runBlocking {
+        val runs = FfmpegRuns()
+        val rec = recording()
+        val running = CompletableDeferred<Unit>()
+        val starter = FakeStarter { n, _ ->
+            if (n == 2) running.complete(Unit)
+            FakeProcess(listOf("out_time_us=500000"), hang = n == 2)
+        }
+        val job = async(Dispatchers.Default) { exporter(starter, runs).export(rec, GifOptions(0, 2_000)) }
+        withTimeout(10_000) { running.await() }
+        // The encode process, the palette and the partial GIF.
+        withTimeout(10_000) { runs.active.first { it == 3 } }
+        withTimeout(10_000) { job.cancelAndJoin() }
+        assertEquals(0, runs.active.value)
+        val done = exporter(FakeStarter { _, _ -> FakeProcess() }, runs).export(rec, GifOptions(0, 1_000))
+        assertTrue(done.isSuccess)
+        assertEquals(0, runs.active.value, "nothing left registered, the GIF never was")
+    }
+
+    @Test
+    fun forceCleanupKillsTheProcessesAndDeletesOnlyTheRegisteredTempFiles() {
+        val runs = FfmpegRuns()
+        val process = FakeProcess(hang = true)
+        val partial = Files.write(recordings.resolve(".gif-export-abc.part"), byteArrayOf(1))
+        val palette = Files.createDirectories(cache).resolve("palette-1.png").also { Files.write(it, byteArrayOf(1)) }
+        val gif = Files.write(recordings.resolve("finished.gif"), byteArrayOf(1))
+        runs.add(process)
+        runs.addFile(partial)
+        runs.addFile(palette)
+        assertEquals(3, runs.active.value)
+        runs.forceCleanup() // the shutdown hook's body
+        assertTrue(process.destroyed)
+        assertFalse(process.isAlive)
+        assertFalse(Files.exists(partial))
+        assertFalse(Files.exists(palette))
+        assertTrue(Files.exists(gif), "a finished GIF is never deleted")
+        assertEquals(0, runs.active.value)
+        runs.remove(process) // the run's own cleanup afterwards is harmless
+        runs.removeFile(partial)
+        assertEquals(0, runs.active.value)
     }
 
     // ---- the real bundled ffmpeg ----

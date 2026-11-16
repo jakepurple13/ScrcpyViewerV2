@@ -51,7 +51,10 @@ jobs:
       - name: Test (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 25
-        run: xvfb-run --auto-servernum ./gradlew :composeApp:downloadBundledTools :composeApp:jvmTest --stacktrace -Pkotlin.compiler.execution.strategy=in-process
+        run: |
+          # Diagnostics: memory and the biggest processes every 10 s, so a runner that dies mid-step shows why.
+          ( while true; do echo "MEM $(free -m | awk 'NR==2{print "used="$3"M avail="$7"M"}') $(ps -eo rss=,comm= --sort=-rss | head -3 | awk '{printf "%s=%dM ", $2, $1/1024}')"; sleep 10; done ) &
+          xvfb-run --auto-servernum ./gradlew :composeApp:downloadBundledTools :composeApp:jvmTest --stacktrace -Pkotlin.compiler.execution.strategy=in-process
 
       - name: Test
         if: runner.os != 'Linux'

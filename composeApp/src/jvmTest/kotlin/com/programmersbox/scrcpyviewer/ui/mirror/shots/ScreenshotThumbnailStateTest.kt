@@ -535,7 +535,7 @@ class ScreenshotThumbnailStateTest {
         val missing = com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(UnsatisfiedLinkError("no jniavdevice"), linux = true)
         finishRecording(RecordResult.Saved(recording), state, { throw GifExportException(missing) }, { messages += it })
         assertEquals(
-            listOf("Recording saved to $recording. To export GIFs, install libasound2, libpulse0, libxcb1, libxcb-shm0 and libdrm2"),
+            listOf("Recording saved to $recording. To export GIFs, install libasound2t64 (libasound2 on older systems), libpulse0, libxcb1, libxcb-shm0, libdrm2 and libudev1"),
             messages,
         )
     }
@@ -544,7 +544,7 @@ class ScreenshotThumbnailStateTest {
     fun `the FFmpeg reason names the Linux libraries only for a native load failure on Linux`() {
         val link = RuntimeException("load", UnsatisfiedLinkError("no jniavdevice"))
         assertEquals(
-            "FFmpeg needs a few system libraries: install libasound2, libpulse0, libxcb1, libxcb-shm0 and libdrm2, then try again",
+            "FFmpeg needs a few system libraries: install libasound2t64 (libasound2 on older systems), libpulse0, libxcb1, libxcb-shm0, libdrm2 and libudev1, then try again",
             com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(link, linux = true),
         )
         assertEquals("FFmpeg isn't available: load", com.programmersbox.scrcpyviewer.media.ffmpegUnavailableReason(link, linux = false))

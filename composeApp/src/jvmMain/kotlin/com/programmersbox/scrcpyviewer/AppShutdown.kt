@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer
 
+import com.programmersbox.scrcpyviewer.media.FfmpegRuns
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -17,8 +18,9 @@ import com.sun.jna.Pointer
 /**
  * The one way the app quits: the main window's close button and the macOS Quit command (Cmd+Q, Dock, menu) both
  * call [request]. [run] then closes every mirror session, which waits for their recorders to write the trailer
- * (bounded by [timeoutMs]), plays the main window's quit animation ([animateOut], bounded by [animateTimeoutMs]), then
- * runs [install] on [installDispatcher] and only then calls [exit]. While it waits,
+ * (bounded by [timeoutMs]), waits for running FFmpeg exports to stop and delete their temp files (bounded by
+ * [ffmpegTimeoutMs], then forced: [FfmpegRuns.forceCleanup]), plays the main window's quit animation ([animateOut],
+ * bounded by [animateTimeoutMs]), then runs [install] on [installDispatcher] and only then calls [exit]. While it waits,
  * [state] says whether a recording is being finished, so the UI can say so instead of freezing silently.
  *
  * [install] starts a downloaded update's installer, which blocks on `adb kill-server` and ends the process with
@@ -36,6 +38,10 @@ class AppShutdown(
     private val animateOut: suspend () -> Unit = {},
     /** [animateOut] is cut off after this long, and a failing one is skipped: the exit never waits on it. */
     private val animateTimeoutMs: Long = DEFAULT_ANIMATE_TIMEOUT_MS,
+    /** The FFmpeg runs (GIF exports, frame reads) that must be gone, with their temp files, before the app exits. */
+    private val ffmpegRuns: FfmpegRuns = FfmpegRuns.shared,
+    /** How long [run] waits for [ffmpegRuns] to clean up by themselves before killing them and deleting their files. */
+    private val ffmpegTimeoutMs: Long = DEFAULT_FFMPEG_TIMEOUT_MS,
 ) {
     sealed interface State {
         data object Running : State
@@ -56,6 +62,11 @@ class AppShutdown(
         state.value as? State.ShuttingDown ?: return
         if (withTimeoutOrNull(timeoutMs) { controller.closeAll() } == null) {
             log.log(System.Logger.Level.WARNING, "Sessions still closing after $timeoutMs ms, exiting anyway")
+        }
+        // Closing the sessions closes their Export GIF windows, which cancels their exports: let them clean up.
+        if (withTimeoutOrNull(ffmpegTimeoutMs) { ffmpegRuns.awaitIdle() } == null) {
+            log.log(System.Logger.Level.WARNING, "FFmpeg still running after $ffmpegTimeoutMs ms, killing it")
+            withContext(installDispatcher) { ffmpegRuns.forceCleanup() }
         }
         // Before the quit hook lets go, so a second Cmd+Q during the animation is still caught (and ignored).
         try {
@@ -85,6 +96,9 @@ class AppShutdown(
 
         /** The longest quit animation is 420 ms; this is only a backstop. */
         const val DEFAULT_ANIMATE_TIMEOUT_MS = 1_000L
+
+        /** An export's cancel kills FFmpeg and deletes two files: normally well under this. */
+        const val DEFAULT_FFMPEG_TIMEOUT_MS = 2_000L
         private val log = System.getLogger("scrcpyviewer.AppShutdown")
     }
 }

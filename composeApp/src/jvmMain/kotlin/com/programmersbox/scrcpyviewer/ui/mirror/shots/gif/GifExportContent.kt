@@ -118,6 +118,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -250,7 +251,13 @@ class GifExportState(val file: Path, val video: RecordingInfo) {
     /** The estimate's accent pulse, 0 to 1 and back, read at draw time. */
     internal val pulse = Animatable(0f)
 
-    private var job: Job? = null
+    /** The export running: its job, and whether [GifExport] has returned (its outcome stands, even if cancelled now). */
+    private class Run {
+        lateinit var job: Job
+        var returned = false
+    }
+
+    private var run: Run? = null
 
     val options: GifOptions get() = GifOptions(startMs, endMs, width, fps)
     val gifHeight: Int get() = gifHeight(width, video.width, video.height)
@@ -303,33 +310,40 @@ class GifExportState(val file: Path, val video: RecordingInfo) {
         val height = gifHeight
         done = null
         progress = GifProgress(GifExporter.Phase.Palette, 0f)
-        job = scope.launch {
+        val run = Run()
+        this.run = run
+        run.job = scope.launch {
             // Progress comes from a background thread: handed over through a flow, applied here.
             val updates = MutableStateFlow(GifProgress(GifExporter.Phase.Palette, 0f))
             val follow = launch { updates.collect { if (progress != null) progress = it } }
             try {
                 val result = export(file, o) { phase, f -> updates.value = GifProgress(phase, f) }
+                run.returned = true
                 follow.cancel()
-                result.fold(
-                    onSuccess = { out -> done = GifDone(out, sizeOf(out), o.width, height, o.durationMs) },
-                    onFailure = { e -> say("Couldn't make the GIF: ${e.message ?: e.javaClass.simpleName}") },
-                )
+                // The export is over: a Cancel arriving now must not drop the finished GIF (it is on disk).
+                withContext(NonCancellable) {
+                    result.fold(
+                        onSuccess = { out -> done = GifDone(out, sizeOf(out), o.width, height, o.durationMs) },
+                        onFailure = { e -> say("Couldn't make the GIF: ${e.message ?: e.javaClass.simpleName}") },
+                    )
+                }
             } finally {
                 follow.cancel()
                 progress = null
-                job = null
+                if (this@GifExportState.run === run) this@GifExportState.run = null
             }
         }
     }
 
     /**
-     * Stops the export running, if any, and waits until FFmpeg is gone and the partial GIF deleted. True when one ran
-     * (the caller says "Export cancelled. The partial GIF was deleted.").
+     * Stops the export running, if any, and waits until FFmpeg is gone and the partial GIF deleted. True when the
+     * cancel stopped it (the caller says "Export cancelled. The partial GIF was deleted."); false when none ran or it
+     * had already finished (its GIF stays and shows as done, or its failure was said).
      */
     suspend fun cancelExport(): Boolean {
-        val running = job ?: return false
-        running.cancelAndJoin()
-        return true
+        val running = run ?: return false
+        running.job.cancelAndJoin()
+        return !running.returned
     }
 
     private companion object {

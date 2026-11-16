@@ -13,21 +13,35 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.koinCompiler)
     alias(libs.plugins.nucleus)
+    alias(libs.plugins.aboutLibraries)
 }
 
 // Single source of truth: feeds packageVersion and the generated APP_VERSION constant shown in the window title.
 // Local update tests only: -PappVersion=1.6.1 builds a "newer" package.
-val appVersion = (findProperty("appVersion") as String?) ?: "1.22.0"
+val appVersion = (findProperty("appVersion") as String?) ?: "1.23.0"
+
+// The scrcpy-server release the app bundles (downloadBundledTools); Settings › Help › About shows it.
+val scrcpyServerVersion = "5.0"
+
+// The versions Settings › Help › About shows, from this build. org.bytedeco:ffmpeg is "<FFmpeg>-<JavaCPP>".
+val buildInfo = mapOf(
+    "SCRCPY_SERVER_VERSION" to scrcpyServerVersion,
+    "FFMPEG_VERSION" to libs.versions.ffmpeg.get().substringBefore('-'),
+    "JAVACPP_VERSION" to libs.versions.javacpp.get(),
+    "COMPOSE_VERSION" to libs.versions.compose.multiplatform.get(),
+)
 
 val generateAppVersion = tasks.register("generateAppVersion") {
     val version = appVersion
+    val info = buildInfo
     val outDir = layout.buildDirectory.dir("generated/appVersion/kotlin")
     inputs.property("version", version)
+    inputs.property("buildInfo", info)
     outputs.dir(outDir)
     doLast {
-        val file = outDir.get().file("com/programmersbox/scrcpyviewer/AppVersion.kt").asFile
-        file.parentFile.mkdirs()
-        file.writeText(
+        val dir = outDir.get().dir("com/programmersbox/scrcpyviewer").asFile
+        dir.mkdirs()
+        dir.resolve("AppVersion.kt").writeText(
             """
             package com.programmersbox.scrcpyviewer
 
@@ -35,8 +49,47 @@ val generateAppVersion = tasks.register("generateAppVersion") {
 
             """.trimIndent()
         )
+        val constants = info.entries.joinToString("\n") { (name, value) -> "    const val $name = \"$value\"" }
+        dir.resolve("BuildInfo.kt").writeText(
+            "package com.programmersbox.scrcpyviewer\n\n" +
+                "/** Versions of what this build bundles, from composeApp/build.gradle.kts and libs.versions.toml. */\n" +
+                "internal object BuildInfo {\n$constants\n}\n"
+        )
     }
 }
+
+// Settings › Help › Open-source licenses reads aboutlibraries.json from the classpath. It is generated on every build
+// (never committed) from the jvm runtime dependencies plus composeApp/config/libraries (the bundled tools), into a
+// build dir that is a jvmMain resource dir, so tests, runs and packages always get a fresh list.
+val licensesResourceDir = layout.buildDirectory.dir("generated/aboutLibrariesResources")
+
+aboutLibraries {
+    collect {
+        configPath = layout.projectDirectory.dir("config")
+    }
+    export {
+        // Only what the licenses dialog shows: the JSON ships in the app and tests read it on a memory-tight runner.
+        excludeFields.addAll(
+            "funding", "targets", "metadata",
+            "Developer.organisationUrl", "Organization.url", "Scm.connection", "Scm.developerConnection",
+        )
+        prettyPrint = false
+    }
+    exports {
+        create("jvm") {
+            outputFile = licensesResourceDir.map { it.file("aboutlibraries.json") }
+        }
+    }
+    library {
+        // One entry per library, not one per platform artifact (foo and foo-jvm / foo-desktop).
+        mergePlatformArtifacts = true
+        // FFmpeg is listed once, as a bundled tool with its LGPL v3+ licence (config/libraries/ffmpeg.json).
+        exclusionPatterns.add(Regex("^org\\.bytedeco:ffmpeg$").toPattern())
+    }
+}
+
+// The plugin registers it with the jvm target (kotlin { jvm() } below), so it is referenced by name.
+val exportLicenses = "exportLibraryDefinitionsJvm"
 
 val hostOs: String = System.getProperty("os.name").lowercase()
 
@@ -56,7 +109,10 @@ kotlin {
     jvm()
 
     sourceSets {
-        jvmMain { kotlin.srcDir(generateAppVersion) }
+        jvmMain {
+            kotlin.srcDir(generateAppVersion)
+            resources.srcDir(files(licensesResourceDir).builtBy(exportLicenses))
+        }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(compose.material3)
@@ -78,6 +134,8 @@ kotlin {
             implementation(libs.nucleus.window.material3)
             implementation(libs.composenativetray)
             implementation(libs.jna)
+            implementation(libs.aboutlibraries.core)
+            implementation(libs.aboutlibraries.compose.core)
             // Only icon and resource parsing is used: the signing parts (BouncyCastle) and annotations stay out.
             implementation("net.dongliu:apk-parser:${libs.versions.apk.parser.get()}") {
                 exclude(group = "org.bouncycastle")
@@ -177,11 +235,21 @@ nucleus.application {
             iconFile.set(project.file("icons/icon.png"))
             // electron-builder's deb target needs a maintainer; without one it requires an author email instead.
             debMaintainer = "jakepurple13 <jakepurple13@users.noreply.github.com>"
+            // Setting this replaces electron-builder's default Depends, so those are listed first (as in the v1.22.0
+            // .deb: GTK 3 for the window, xdg-utils, …). Then the system libraries the bundled FFmpeg's libavdevice
+            // links (ALSA, PulseAudio, XCB, DRM) and udev. Ubuntu 24.04+ renamed ALSA's package to libasound2t64;
+            // older releases and Debian have libasound2.
+            debDepends = listOf(
+                "libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils", "libatspi2.0-0", "libuuid1",
+                "libsecret-1-0",
+                "libasound2t64 | libasound2", "libpulse0", "libxcb1", "libxcb-shm0", "libdrm2", "libudev1",
+            )
         }
     }
 }
 
-val scrcpyServerUrl = "https://github.com/Genymobile/scrcpy/releases/download/v5.0/scrcpy-server-v5.0"
+val scrcpyServerUrl =
+    "https://github.com/Genymobile/scrcpy/releases/download/v$scrcpyServerVersion/scrcpy-server-v$scrcpyServerVersion"
 // SHA-256 of scrcpy-server v5.0 (matches the GitHub release asset digest).
 val scrcpyServerSha256 = "26cbc9ad0aced6c2282455bef4fb43462605c1f8758c74b4ab1dbf818c229daa"
 
@@ -247,6 +315,9 @@ val downloadBundledTools = tasks.register("downloadBundledTools") {
 
 tasks.matching { it.name == "prepareAppResources" }.configureEach { dependsOn(downloadBundledTools) }
 
+// Explicit as well as through the resource dir's builtBy: resources are processed after the licence export.
+tasks.matching { it.name == "jvmProcessResources" }.configureEach { dependsOn(exportLicenses) }
+
 // Nucleus 2.5.18 writes the package.json electron-builder reads its version from only when the file is missing, so
 // after an appVersion change an incremental build names the files and latest-*.yml after the old version. Fixed
 // upstream after 2.5.18 (Nucleus 85204103); remove this when upgrading. Clean CI builds never hit it.
@@ -282,6 +353,10 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         // A fixed heap instead of a quarter of the runner's memory: with Gradle, xvfb, native Skia surfaces and
         // FFmpeg processes alongside, an uncapped test JVM ran the Linux runner out of memory.
         (this as Test).maxHeapSize = "2g"
+        // The heap cap doesn't bound native memory (Skia surfaces, FFmpeg): one test JVM grew to 13 GB resident on
+        // the 16 GB Linux runner and the runner died mid-step. A fresh JVM every 25 test classes (of about 220)
+        // releases it; the markup, GIF and screenshot tests alone added about 3 GB.
+        forkEvery = 25
     }
     if (deviceTests) {
         systemProperty("scrcpyviewer.bundledDir", layout.projectDirectory.dir("bundled").asFile.absolutePath)
