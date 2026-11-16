@@ -212,6 +212,43 @@ Packaging also needs Node.js (24 in CI): the Nucleus plugin builds the installer
 The `downloadBundledTools` task fetches scrcpy-server v5.0 (checked against its SHA-256) and the latest Android
 platform-tools adb for each OS.
 
+## Releasing
+
+A release is built and published by the `release` job in `.github/workflows/build.yml` when a `v*` tag is pushed.
+The only file to change is `composeApp/build.gradle.kts`. These steps are written for people and AI agents alike;
+follow them in order.
+
+1. **Pick the version.** List what was merged since the last release:
+   `git fetch --tags origin && git log $(git describe --tags --abbrev=0 origin/main)..origin/main --merges --oneline`.
+   Bump the minor version (`1.23.0` to `1.24.0`) when anything user-visible was added or changed, and the patch
+   version (`1.23.0` to `1.23.1`) for fixes only.
+2. **Bump it on a branch.** From the latest `main`, create `chore/release-<version>` and change the default in
+   `composeApp/build.gradle.kts`:
+   ```kotlin
+   val appVersion = (findProperty("appVersion") as String?) ?: "<version>"
+   ```
+3. **Open a PR** titled `chore: bump version to <version>`. In the body, list the merged PRs since the last tag
+   (`- What changed (#123)`). Merge it once CI is green.
+4. **Tag the merge on `main` and push the tag:**
+   ```bash
+   git fetch origin
+   git tag v<version> origin/main
+   git push origin v<version>
+   ```
+   The tag must be `v` plus `appVersion` exactly. The release job's "Check the tag matches the built version" step
+   fails otherwise, because the update metadata takes its version from the tag.
+5. **Watch the tag's Build run** (`gh run list --branch v<version>`, then `gh run watch <id>`). It runs the tests and
+   packaging on macOS, Windows and Linux. The `release` job then creates a draft release with generated notes,
+   uploads the files, and publishes the draft.
+6. **Check the release** with `gh release view v<version>`. It must not be a draft, must be the latest release, and
+   must have 10 files: `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, the macOS `.dmg` and `.zip`, the Windows
+   `-nsis.exe`, the Linux `.deb`, and a `.blockmap` for the `.dmg`, `.zip` and `.exe`. Installed apps find it through
+   their update check.
+
+If a job fails on the tag run, re-run only the failed jobs (`gh run rerun <id> --failed`); some tests are timing
+sensitive. Never move or delete a tag that has a published release. If the code needs a fix, merge it and release
+the next patch version.
+
 ## Project layout
 
 ```
