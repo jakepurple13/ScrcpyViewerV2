@@ -88,9 +88,6 @@ class AiSkillSettingsTest {
         // The combined state can show the result a moment before the refreshed rows.
         vm.awaitRows { it.of(AiTool.Claude).status == SkillStatus.UpToDate }
         vm.dismissAiInstallResult()
-        // state is a combine chain: when another upstream is mid-emission on an IO thread, the cleared result reaches
-        // state.value a moment later, so wait for it instead of reading it once.
-        runBlocking { withTimeout(10_000) { vm.state.first { it.aiInstallResult == null } } }
         assertNull(vm.state.value.aiInstallResult)
     }
 
@@ -104,8 +101,7 @@ class AiSkillSettingsTest {
         assertEquals(SkillStatus.UpdateAvailable, before.status)
         vm.installAiSkill(listOf(before.target))
         vm.awaitResult()
-        // The combined state can show the result a moment before the refreshed rows.
-        vm.awaitRows { it.of(AiTool.Gemini).status == SkillStatus.UpToDate }
+        assertEquals(SkillStatus.UpToDate, vm.state.value.aiSkill.of(AiTool.Gemini).status)
     }
 
     @Test

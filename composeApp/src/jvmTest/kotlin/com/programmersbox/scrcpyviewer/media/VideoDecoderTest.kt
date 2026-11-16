@@ -35,13 +35,6 @@ class VideoDecoderTest {
 
     private class Sample(val config: ByteArray, val frames: List<ByteArray>)
 
-    /** Polls [decoder]'s fps until [ok] holds; fails with [what] after 5 s. */
-    private fun awaitFps(decoder: VideoDecoder, what: String, ok: (Double) -> Boolean) {
-        val deadline = System.nanoTime() + 5_000_000_000L
-        while (!ok(decoder.fps.value) && System.nanoTime() < deadline) Thread.sleep(20)
-        assertTrue(ok(decoder.fps.value), "$what: ${decoder.fps.value}")
-    }
-
     private fun sample(): Sample {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/sample.h264")).readBytes()
         val nals = nalUnits(bytes)
@@ -170,10 +163,10 @@ class VideoDecoderTest {
         val decoder = VideoDecoder(StreamProtocol.CODEC_H264)
         try {
             decoder.feed(sample())
-            // One shared timer thread ticks once a second; on a busy CI runner a tick can land late, so wait for each
-            // value under a deadline instead of sleeping a fixed 1.2 s.
-            awaitFps(decoder, "frames in the first second") { it > 0.0 }
-            awaitFps(decoder, "no frames in the last second") { it == 0.0 }
+            Thread.sleep(1_200)
+            assertTrue(decoder.fps.value > 0.0, "frames in the first second: ${decoder.fps.value}")
+            Thread.sleep(1_100)
+            assertEquals(0.0, decoder.fps.value, "no frames in the last second")
             decoder.feed(sample())
         } finally {
             decoder.close()

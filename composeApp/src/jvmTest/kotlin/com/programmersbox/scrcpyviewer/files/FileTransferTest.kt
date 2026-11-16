@@ -435,9 +435,7 @@ class FileTransferTest {
         assertFalse(java.nio.file.Files.exists(dir.resolve("big.bin")))
         q.awaitJob(ids[1]) { it.state == JobState.Done }
         assertEquals("push", adb.calls[1][2])
-        // Results arrive in order on one collector, so once the push's is in, any result for the cancelled pull would
-        // be in too. A fixed delay here lost the push's result on a slow macOS runner.
-        withTimeout(5_000) { while (results.isEmpty()) kotlinx.coroutines.delay(10) }
+        kotlinx.coroutines.delay(100)
         // A cancel is the user's own doing: no snackbar for it.
         assertEquals(listOf<TransferResult>(TransferResult.Pushed("b.jpg", DEFAULT_PUSH_TARGET)), results.toList())
     }
