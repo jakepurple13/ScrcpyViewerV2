@@ -3,8 +3,14 @@ package com.programmersbox.scrcpyviewer.files
 import com.programmersbox.scrcpyviewer.adb.ShellResult
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import java.io.IOException
+import java.util.UUID
 
 private const val LONG_TIMEOUT_MS = 120_000L
+
+/** Size limit of one batched command; well under the adb request limit, leaving room for the shell wrapper. */
+private const val MAX_COMMAND_BYTES = 32 * 1024
+
+private const val RM = "rm -rf -- "
 
 /** File operations on the device over `adb shell`; mutating calls throw [IOException] with the device's message. */
 open class DeviceFiles(
@@ -35,13 +41,21 @@ open class DeviceFiles(
         scanFile(dir)
     }
 
-    /** Fails with "<to>: already exists" when the target exists; toybox `mv -n` would skip it and exit 0. */
+    /**
+     * Fails with "<to>: already exists" when the target exists; toybox `mv -n` would skip it and exit 0. A rename by
+     * case only (photo.jpg to Photo.jpg) on case-insensitive `/sdcard` finds the source itself as the target (`-ef`):
+     * it moves through a temporary name instead, since a direct `mv` there can be a no-op.
+     */
     open suspend fun rename(dir: String, from: String, to: String) {
+        val source = shellQuote(devicePath(dir, from))
         val target = shellQuote(devicePath(dir, to))
-        mutate(
-            "if ${exists(target)}; then ${clash(to)}; else " +
-                "mv -n ${shellQuote(devicePath(dir, from))} $target; fi",
-        )
+        val clashOrMove = "${exists(target)}; then ${clash(to)}; else mv -n $source $target; fi"
+        if (from != to && from.equals(to, ignoreCase = true)) {
+            val tmp = shellQuote(devicePath(dir, ".rename-${UUID.randomUUID()}"))
+            mutate("if [ $source -ef $target ]; then mv $source $tmp && mv $tmp $target; elif $clashOrMove")
+        } else {
+            mutate("if $clashOrMove")
+        }
         scanFile(dir)
     }
 
@@ -77,7 +91,7 @@ open class DeviceFiles(
                 throw IOException("$targetName: $CONTAINS_MOVED")
             }
         }
-        val cmd = moving.joinToString(" && ") {
+        val items = moving.map {
             val targetName = renames[it] ?: it
             val sourcePath = devicePath(dir, it)
             val targetPath = devicePath(toDir, targetName)
@@ -93,7 +107,9 @@ open class DeviceFiles(
             }
         }
         try {
-            mutate(cmd, LONG_TIMEOUT_MS)
+            // Items chain with && so the first failure stops the rest; a big selection runs as several commands,
+            // and a failing one stops the batches after it.
+            for (batch in batches(items, " && ")) mutate(batch.joinToString(" && "), LONG_TIMEOUT_MS)
         } finally {
             scanFile(dir)
             if (toDir != dir) scanFile(toDir)
@@ -104,10 +120,44 @@ open class DeviceFiles(
 
     private fun clash(name: String) = "printf '%s: already exists\\n' ${shellQuote(name)}; false"
 
+    /** Removes [names] in [dir], in several `rm` commands for a big selection; stops at the first one that fails. */
     open suspend fun delete(dir: String, names: List<String>) {
         if (names.isEmpty()) return
-        mutate("rm -rf -- ${names.joinToString(" ") { shellQuote(devicePath(dir, it)) }}", LONG_TIMEOUT_MS)
-        scanFile(dir)
+        var removedAny = false
+        try {
+            for (batch in batches(names.map { shellQuote(devicePath(dir, it)) }, " ", prefix = RM)) {
+                mutate(RM + batch.joinToString(" "), LONG_TIMEOUT_MS)
+                removedAny = true
+            }
+        } finally {
+            // An earlier batch may be gone even when a later one failed.
+            if (removedAny) scanFile(dir)
+        }
+    }
+
+    /**
+     * Splits [parts] into runs whose command ([prefix] plus the parts joined by [separator]) stays within
+     * [MAX_COMMAND_BYTES]: an adb request cannot be longer than 0xFFFF bytes. A part too long on its own gets a run
+     * of its own.
+     */
+    private fun batches(parts: List<String>, separator: String, prefix: String = ""): List<List<String>> {
+        val prefixBytes = prefix.toByteArray(Charsets.UTF_8).size
+        val sepBytes = separator.toByteArray(Charsets.UTF_8).size
+        val result = mutableListOf<List<String>>()
+        var current = mutableListOf<String>()
+        var size = prefixBytes
+        for (part in parts) {
+            val bytes = part.toByteArray(Charsets.UTF_8).size
+            if (current.isNotEmpty() && size + sepBytes + bytes > MAX_COMMAND_BYTES) {
+                result += current
+                current = mutableListOf()
+                size = prefixBytes
+            }
+            size += if (current.isEmpty()) bytes else sepBytes + bytes
+            current += part
+        }
+        if (current.isNotEmpty()) result += current
+        return result
     }
 
     private suspend fun mutate(cmd: String, timeoutMs: Long? = null) {

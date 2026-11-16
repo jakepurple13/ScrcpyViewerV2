@@ -39,6 +39,9 @@ class LogcatQuery private constructor(
 ) {
     val isEmpty: Boolean get() = groups.isEmpty()
 
+    /** The distinct `age:` limits in millis: the ages at which an entry's match can change as time passes. */
+    internal val ageLimits: List<Long> = groups.flatten().mapNotNull { it.ageMillis }.distinct()
+
     /** Positive bare and `message:` words worth highlighting in the message text. */
     val highlightWords: List<String> = groups.flatten()
         .filter { !it.neg && it.value.length > 1 && (it.key == "text" || (it.key == "message" && it.op == "")) }

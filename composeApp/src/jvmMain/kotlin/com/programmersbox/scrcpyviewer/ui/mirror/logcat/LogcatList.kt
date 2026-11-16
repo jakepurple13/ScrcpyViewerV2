@@ -45,6 +45,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.unit.Dp
@@ -55,6 +59,7 @@ import java.awt.datatransfer.StringSelection
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -130,6 +135,12 @@ internal class LogcatFollow(val state: LazyListState) {
         private set
     private var newest = Long.MIN_VALUE
 
+    /**
+     * The rows shown while the primary button is down in the list, else null. Compose's selection across many
+     * texts crashes when rows arrive, move or change under a drag, so the list holds still until the button is up.
+     */
+    var held by mutableStateOf<List<LogcatItem>?>(null)
+
     /** Unpins on a user scroll toward the top. */
     val connection = object : NestedScrollConnection {
         override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
@@ -160,7 +171,9 @@ internal class LogcatFollow(val state: LazyListState) {
                 }
             }
         }
-        snapshotFlow { items() to visible() }.collectLatest { (all, v) ->
+        snapshotFlow { Triple(items(), visible(), held != null) }.collectLatest { (all, v, holding) ->
+            // Lines that come while held are counted, and followed, once the button is up.
+            if (holding) return@collectLatest
             val added = countNew(all, v)
             if (!pinned) {
                 unseen += added
@@ -227,11 +240,20 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val items = controller.items
     // Before the frame's layout composes the new rows, which read [LiveRows.fresh].
     SideEffect { live.observe(items) }
-    val visible = controller.visible
     val listState = rememberLazyListState()
     val follow = remember(listState) { LogcatFollow(listState) }
+    val visible = follow.held ?: controller.visible
     val columns = rememberLogcatColumns(controller.compact, sheetWidth < 600.dp, motion)
     val words = controller.parsed.highlightWords
+    // `age:` is judged against the clock, which isn't state: re-check it on showing and every second after.
+    val ageing = controller.parsed.ageLimits.isNotEmpty()
+    LaunchedEffect(controller, ageing) {
+        if (!ageing) return@LaunchedEffect
+        while (true) {
+            controller.tickAge()
+            delay(1_000)
+        }
+    }
     val mine = controller.mine
     val wrap = controller.wrap
     val run = controller.run
@@ -274,7 +296,9 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     Column(modifier.background(scheme.surfaceContainerLowest)) {
         LogcatHeader(columns)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            SelectionContainer(Modifier.fillMaxSize().graphicsLayer { alpha = rowsAlpha }) {
+            SelectionContainer(
+                Modifier.fillMaxSize().holdWhilePressed(follow) { controller.visible }.graphicsLayer { alpha = rowsAlpha },
+            ) {
                 LazyColumn(
                     Modifier.fillMaxSize().nestedScroll(follow.connection),
                     state = listState,
@@ -318,6 +342,22 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
         }
     }
 }
+
+/** Holds [follow]'s rows at [current] from a primary press in the element until the button is up. */
+private fun Modifier.holdWhilePressed(follow: LogcatFollow, current: () -> List<LogcatItem>): Modifier =
+    pointerInput(follow) {
+        awaitPointerEventScope {
+            while (true) {
+                // Initial pass: seen before the text under the pointer starts its selection drag.
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                when {
+                    event.type == PointerEventType.Press && event.buttons.isPrimaryPressed ->
+                        if (follow.held == null) follow.held = current()
+                    event.type == PointerEventType.Release && !event.buttons.isPrimaryPressed -> follow.held = null
+                }
+            }
+        }
+    }
 
 /** A live row growing from 0 height and fading in, 300 ms. */
 @Composable

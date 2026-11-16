@@ -1,7 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -168,6 +167,7 @@ class LogcatController(
         set(value) {
             queryText = value
             parsed = LogcatQuery.parse(value)
+            refilter()
         }
 
     /** The picked app's package (`package:mine`). */
@@ -261,29 +261,101 @@ class LogcatController(
     /** The last `ps` table, pid to process name. Lines copy their names from it; not state. */
     private var processes: Map<Int, String> = emptyMap()
 
-    private val visibleState = derivedStateOf {
-        val q = parsed
-        val m = mine
-        val now = clock()
-        itemsState.filter { item ->
-            item !is LogcatItem.Line || q.matches(item.entry, EntryInfo(item.pkg, item.process), m, now)
+    /*
+     * The filter result is kept up to date as lines come and go, not recomputed from all of [items] per batch: a
+     * batch checks only its new lines (and the entry its trace lines folded into), trimmed lines leave the front,
+     * and only a new query, a new picked app or new process names filter everything again. `age:` is re-checked by
+     * [tickAge]. [visible] holds the same instances as [items], so trimming can match them by identity.
+     */
+    private var visibleState by mutableStateOf<List<LogcatItem>>(emptyList())
+
+    /** [items] that pass the filter; gaps are always kept. */
+    val visible: List<LogcatItem> get() = visibleState
+
+    private var totalState by mutableIntStateOf(0)
+
+    /** Lines in [items]. */
+    val totalLines: Int get() = totalState
+
+    private var levelState by mutableStateOf<Map<LogLevel, Int>>(emptyMap())
+
+    /** Lines in [visible] per level. */
+    val levelCounts: Map<LogLevel, Int> get() = levelState
+
+    /** Lines in [visible] per level, by ordinal; [levelCounts] is published from it. Not state. */
+    private val visibleLevels = IntArray(LogLevel.entries.size)
+
+    /** Lines in [items] per tag, package and process, for [suggestionContext]. Not state. */
+    private val tagCounts = LinkedHashMap<String, Int>()
+    private val packageCounts = HashMap<String, Int>()
+    private val processCounts = HashMap<String, Int>()
+
+    /** The clock the filter last judged every `age:` term at. */
+    private var filteredAt = Long.MIN_VALUE
+
+    private fun passes(item: LogcatItem, q: LogcatQuery, m: String?, now: Long): Boolean =
+        item !is LogcatItem.Line || q.matches(item.entry, EntryInfo(item.pkg, item.process), m, now)
+
+    private fun countLevel(item: LogcatItem, by: Int) {
+        if (item is LogcatItem.Line) visibleLevels[item.entry.line.level.ordinal] += by
+    }
+
+    private fun publishVisible(vis: List<LogcatItem>) {
+        visibleState = vis
+        levelState = buildMap {
+            for (l in LogLevel.entries) if (visibleLevels[l.ordinal] > 0) put(l, visibleLevels[l.ordinal])
         }
     }
 
-    /** [items] that pass the filter; gaps are always kept. */
-    val visible: List<LogcatItem> by visibleState
-
-    private val totalState = derivedStateOf { itemsState.count { it is LogcatItem.Line } }
-
-    /** Lines in [items]. */
-    val totalLines: Int by totalState
-
-    private val levelState = derivedStateOf {
-        visible.filterIsInstance<LogcatItem.Line>().groupingBy { it.entry.line.level }.eachCount()
+    /** Filters all of [items] again: the query, the picked app or a line's process changed. */
+    private fun refilter() {
+        val q = parsed
+        val m = mine
+        val now = clock()
+        visibleLevels.fill(0)
+        val vis = ArrayList<LogcatItem>()
+        for (item in itemsState) {
+            if (passes(item, q, m, now)) {
+                vis += item
+                countLevel(item, 1)
+            }
+        }
+        filteredAt = now
+        publishVisible(vis)
     }
 
-    /** Lines in [visible] per level. */
-    val levelCounts: Map<LogLevel, Int> by levelState
+    /**
+     * Judges `age:` terms against the clock again. The list calls it about once a second while the query has one,
+     * so lines age out (or in, for `-age:`) on a quiet or paused stream too. Only lines whose age limit passed since
+     * the last check are matched again; the rest keep their result.
+     */
+    internal fun tickAge() {
+        val q = parsed
+        val limits = q.ageLimits
+        if (limits.isEmpty()) return
+        val now = clock()
+        val from = filteredAt
+        if (now == from) return
+        if (now < from) return refilter()
+        val m = mine
+        val old = visibleState
+        val vis = ArrayList<LogcatItem>(old.size)
+        var j = 0
+        var changed = false
+        for (item in itemsState) {
+            val was = j < old.size && old[j] === item
+            if (was) j++
+            val crossed = item is LogcatItem.Line && limits.any { item.entry.receivedAtMillis + it in from..now }
+            val keep = if (crossed) passes(item, q, m, now) else was
+            if (keep != was) {
+                changed = true
+                countLevel(item, if (keep) 1 else -1)
+            }
+            if (keep) vis += item
+        }
+        filteredAt = now
+        if (changed) publishVisible(vis)
+    }
 
     private var streamJob: Job? = null
     private var folder = TraceFolder()
@@ -501,6 +573,12 @@ class LogcatController(
     /** Empties the list; the run state and query stay. */
     fun clear() {
         setItems(emptyList())
+        totalState = 0
+        tagCounts.clear()
+        packageCounts.clear()
+        processCounts.clear()
+        visibleLevels.fill(0)
+        publishVisible(emptyList())
         atNewest.clear()
         replays.clear()
         replayTs = null
@@ -536,19 +614,34 @@ class LogcatController(
     internal var windowToast: ((String) -> Unit)? = null
 
     /** Tags (with line counts), packages and processes seen in the list, for autocomplete. */
-    fun suggestionContext(): SuggestionContext {
-        val lines = items.filterIsInstance<LogcatItem.Line>()
-        return SuggestionContext(
-            tags = lines.groupingBy { it.entry.line.tag }.eachCount(),
-            packages = lines.mapNotNullTo(HashSet()) { it.pkg },
-            processes = lines.mapNotNullTo(HashSet()) { it.process },
-            mine = mine,
-        )
+    fun suggestionContext(): SuggestionContext = SuggestionContext(
+        // Counted as lines come and go, so this costs per tag, not per line, on every keystroke.
+        tags = LinkedHashMap(tagCounts),
+        packages = HashSet(packageCounts.keys),
+        processes = HashSet(processCounts.keys),
+        mine = mine,
+    )
+
+    private fun <K> MutableMap<K, Int>.bump(key: K?, by: Int) {
+        if (key == null) return
+        val n = (this[key] ?: 0) + by
+        if (n > 0) this[key] = n else remove(key)
+    }
+
+    private fun countLine(line: LogcatItem.Line, by: Int) {
+        tagCounts.bump(line.entry.line.tag, by)
+        packageCounts.bump(line.pkg, by)
+        processCounts.bump(line.process, by)
     }
 
     private fun append(batch: List<LogcatLine>) {
         val now = clock()
         val out = ArrayList(items)
+        val vis = ArrayList(visible)
+        val firstNew = out.size
+        // Rows from here on are matched against the filter after the loop: the new ones, and an older entry that
+        // trace lines folded into, since `message:` and `is:` look at its trace.
+        var recheck = firstNew
         val names = processes
         for (line in batch) {
             if (dropAsReplay(line)) continue
@@ -571,12 +664,35 @@ class LogcatController(
                 }
                 is FoldResult.Appended -> {
                     val i = out.indexOfLast { it is LogcatItem.Line && it.entry.seq == f.entry.seq }
-                    if (i >= 0) out[i] = (out[i] as LogcatItem.Line).copy(entry = f.entry)
+                    if (i >= 0) {
+                        out[i] = (out[i] as LogcatItem.Line).copy(entry = f.entry)
+                        if (i < recheck) recheck = i
+                    }
                 }
             }
         }
-        trim(out)
+        if (recheck < firstNew) {
+            // The rows being rechecked end the old list, so whichever of them showed end [vis].
+            val keys = (recheck until firstNew).mapTo(HashSet()) { out[it].key }
+            while (vis.isNotEmpty() && vis.last().key in keys) countLevel(vis.removeAt(vis.lastIndex), -1)
+        }
+        val q = parsed
+        val m = mine
+        var lines = totalState
+        for (i in recheck until out.size) {
+            val item = out[i]
+            if (i >= firstNew && item is LogcatItem.Line) {
+                lines++
+                countLine(item, 1)
+            }
+            if (passes(item, q, m, now)) {
+                vis += item
+                countLevel(item, 1)
+            }
+        }
+        totalState = trim(out, vis, lines)
         setItems(out)
+        publishVisible(vis)
         if (unknownPids.isNotEmpty()) requestLookup()
     }
 
@@ -602,16 +718,32 @@ class LogcatController(
         }
     }
 
-    private fun trim(out: MutableList<LogcatItem>) {
-        var lines = out.count { it is LogcatItem.Line }
-        if (lines <= maxEntries) return
+    /**
+     * Drops the oldest rows of [out] past [maxEntries] lines, and the same rows from [vis]. [count] is the lines in
+     * [out]; returns the lines left.
+     */
+    private fun trim(out: MutableList<LogcatItem>, vis: MutableList<LogcatItem>, count: Int): Int {
+        var lines = count
+        if (lines <= maxEntries) return lines
         var cut = 0
         while (lines > maxEntries) {
             if (out[cut] is LogcatItem.Line) lines--
             cut++
         }
         while (cut < out.size && out[cut] is LogcatItem.Gap) cut++
+        // [vis] keeps [out]'s order and instances, so the cut rows that show are its first ones.
+        var shown = 0
+        for (i in 0 until cut) {
+            val item = out[i]
+            if (item is LogcatItem.Line) countLine(item, -1)
+            if (shown < vis.size && vis[shown] === item) {
+                countLevel(item, -1)
+                shown++
+            }
+        }
+        vis.subList(0, shown).clear()
         out.subList(0, cut).clear()
+        return lines
     }
 
     /** Reads `ps` for [unknownPids], waiting until a second after the last read. */
@@ -665,7 +797,19 @@ class LogcatController(
                 item
             }
         }
-        if (changed) setItems(out)
+        if (changed) {
+            setItems(out)
+            packageCounts.clear()
+            processCounts.clear()
+            for (item in out) {
+                if (item is LogcatItem.Line) {
+                    packageCounts.bump(item.pkg, 1)
+                    processCounts.bump(item.process, 1)
+                }
+            }
+            // Package and process terms may judge the changed lines differently now.
+            refilter()
+        }
     }
 
     private fun hostTime(ms: Long): String = hostTimeFormat.withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(ms))

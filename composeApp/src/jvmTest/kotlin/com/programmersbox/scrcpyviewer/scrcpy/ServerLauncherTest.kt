@@ -158,6 +158,15 @@ class ServerLauncherTest {
     }
 
     @Test
+    fun `a hung adb push fails start with a clear message`() = runBlocking {
+        val adb = FakeAdb(pushHangs = true)
+        val launcher = ServerLauncher(adb, fakeTools(), stopTimeoutMs = 100, pushTimeoutMs = 200)
+        val e = assertFailsWith<IOException> { withTimeout(5_000) { launcher.start(serial, OptionValues(emptyMap())) } }
+        assertEquals("adb push timed out", e.message)
+        assertTrue(adb.processes.isEmpty(), "the server is not started")
+    }
+
+    @Test
     fun `cancelling start while waiting for the device cleans up`() = runBlocking {
         val adb = FakeAdb(deviceConnects = false)
         val start = CoroutineScope(Dispatchers.IO).async { launcher(adb).start(serial, OptionValues(emptyMap())) }

@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.PointerButton
+import androidx.compose.ui.input.pointer.PointerButtons
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
 import androidx.compose.ui.input.pointer.PointerType
@@ -379,6 +380,28 @@ class LogcatListTest {
             assertNull(containing("new line"), "revealed lines don't count")
             send(line("shown"))
             assertNotNull(text("1 new line"))
+        }
+    }
+
+    @Test
+    fun `list holds still while selecting, then shows the lines that came`() = onEdt {
+        withScene {
+            started()
+            // Few enough rows that new ones would land on screen.
+            send(*Array(5) { line("line $it") })
+            val at = checkNotNull(text("line 2")).boundsInRoot.centerLeft + Offset(5f, 0f)
+            val held = PointerButtons(isPrimaryPressed = true)
+            scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
+            scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, buttons = held, button = PointerButton.Primary)
+            frames(2)
+            scene.sendPointerEvent(PointerEventType.Move, at + Offset(40f, 30f), type = PointerType.Mouse, buttons = held)
+            send(line("new 0"), line("new 1"))
+            assertNull(text("new 0"), "held while the button is down")
+            scene.sendPointerEvent(PointerEventType.Release, at + Offset(40f, 30f), type = PointerType.Mouse, button = PointerButton.Primary)
+            frames(5)
+            settle()
+            frames(60)
+            assertNotNull(text("new 1"), "shown on release")
         }
     }
 
