@@ -75,6 +75,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -148,6 +151,7 @@ import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
 import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.ZoneId
 import kotlin.math.roundToInt
@@ -878,6 +882,15 @@ private fun Rows(
     val renaming = browser.renaming
     val hoverRow = drop.hover?.row?.takeIf { dir == browser.path }
     val moving = drop.moving?.takeIf { drop.movingFrom == dir }.orEmpty()
+    // The arrow keys move the cursor and New folder adds a row in rename, maybe off screen: scroll it into view, or
+    // the typing would go to a field that is not there (it focuses once composed).
+    val currentRows by rememberUpdatedState(rows)
+    LaunchedEffect(cursor, renaming) {
+        val target = renaming ?: cursor ?: return@LaunchedEffect
+        if (dir != browser.path) return@LaunchedEffect
+        val index = currentRows.indexOfFirst { it.name == target }
+        if (index >= 0) state.bringIntoView(index, motion)
+    }
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 64.dp)) {
         itemsIndexed(rows, key = { _, e -> e.name }) { index, entry ->
             val sizeText = if (entry.isDir) entry.itemCount?.let(::formatItemCount) else formatSize(entry.size)
@@ -947,6 +960,27 @@ private fun Rows(
             )
         }
     }
+}
+
+/**
+ * Scrolls the row at [index] fully into view (above the bottom padding the tray and snackbar sit over), by as little as
+ * it takes; nothing when it already is. A row far off screen comes in at the top.
+ */
+private suspend fun LazyListState.bringIntoView(index: Int, animate: Boolean) {
+    // Before the first layout there is nothing to measure against.
+    val info = snapshotFlow { layoutInfo }.first { it.visibleItemsInfo.isNotEmpty() }
+    val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+    if (item == null) {
+        if (animate) animateScrollToItem(index) else scrollToItem(index)
+        return
+    }
+    val bottom = info.viewportEndOffset - info.afterContentPadding
+    val delta = when {
+        item.offset < 0 -> item.offset
+        item.offset + item.size > bottom -> minOf(item.offset + item.size - bottom, item.offset)
+        else -> return
+    }
+    if (animate) animateScrollBy(delta.toFloat()) else scrollBy(delta.toFloat())
 }
 
 /** A row's eased progress [elapsed] milliseconds into its own stagger-in. */

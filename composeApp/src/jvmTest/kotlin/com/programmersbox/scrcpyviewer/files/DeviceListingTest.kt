@@ -1,5 +1,9 @@
 package com.programmersbox.scrcpyviewer.files
 
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.concurrent.TimeUnit
 import kotlin.system.measureTimeMillis
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -95,6 +99,107 @@ class DeviceListingTest {
         assertTrue("'/sdcard/it'\\''s'" in cmd, cmd)
         assertTrue("/sdcard/it's" !in cmd, cmd)
         assertTrue("exit 13" in cmd && "__svend__" in cmd)
+    }
+
+    @Test
+    fun `listing records name entries relative to the folder, broken links after the rest`() {
+        val out = "directory|3452|1700000000|./Camera|__svend__\n" +
+            "regular file|5|1700000000|./.nomedia|__svend__\n" +
+            "regular file|7|1700000000|./two\nlines|__svend__\n" +
+            "regular file|8|1700000000|./it's ü|__svend__\n" +
+            "regular empty file|0|1700000000|./-x|__svend__\n" +
+            "broken|0|0|./dangling|__svend__\n"
+        val e = entries(parseListing(out, 0))
+        assertEquals(listOf("Camera", ".nomedia", "two\nlines", "it's ü", "-x", "dangling"), e.map { it.name })
+        assertEquals(listOf(true, false, false, false, false, false), e.map { it.isDir })
+        assertEquals(DeviceEntry("dangling", false, 0, 0), e.last())
+    }
+
+    /**
+     * Runs [listCommand] in the host shell over [dir]. It needs GNU or toybox `stat -c`: a Mac without coreutils'
+     * `gstat` skips it (null). [findWorks] false puts a `find` that always fails first on the PATH, for the old-device
+     * loop.
+     */
+    private fun runListOnHost(dir: Path, findWorks: Boolean = true): Pair<String, Int>? {
+        if (System.getProperty("os.name").startsWith("Windows")) return null
+        val shim = Files.createTempDirectory("svw-shim")
+        val native = runCatching {
+            ProcessBuilder("stat", "-c", "%n", "/").redirectErrorStream(true).start().waitFor() == 0
+        }.getOrDefault(false)
+        if (!native) {
+            val gnu = listOf("/opt/homebrew/bin/gstat", "/usr/local/bin/gstat").map { Paths.get(it) }
+                .firstOrNull { Files.isExecutable(it) } ?: return null
+            Files.createSymbolicLink(shim.resolve("stat"), gnu)
+        }
+        if (!findWorks) Files.writeString(shim.resolve("find"), "#!/bin/sh\nexit 1\n").toFile().setExecutable(true)
+        val pb = ProcessBuilder("/bin/sh", "-c", listCommand(dir.toString()))
+        pb.environment()["PATH"] = "$shim:" + System.getenv("PATH")
+        val p = pb.start()
+        val out = String(p.inputStream.readBytes(), Charsets.UTF_8)
+        p.waitFor(60, TimeUnit.SECONDS)
+        return out to p.exitValue()
+    }
+
+    /** A folder of odd names, a hidden file, a subfolder, a broken link and a working one. */
+    private fun oddFolder(): Path {
+        val dir = Files.createTempDirectory("svw-list")
+        for (name in listOf("a.jpg", "b c.txt", ".hidden", "..dots", "-x", "it's", "uni ü 写真", "two\nlines")) {
+            Files.writeString(dir.resolve(name), "12345")
+        }
+        Files.createDirectory(dir.resolve("Sub dir"))
+        Files.createSymbolicLink(dir.resolve("dangling"), dir.resolve("nowhere"))
+        Files.createSymbolicLink(dir.resolve("good link"), dir.resolve("a.jpg"))
+        return dir
+    }
+
+    private fun checkOdd(out: String, exit: Int) {
+        assertEquals(0, exit, out)
+        val e = entries(parseListing(out, exit)).associateBy { it.name }
+        assertEquals(
+            setOf("a.jpg", "b c.txt", ".hidden", "..dots", "-x", "it's", "uni ü 写真", "two\nlines", "Sub dir", "dangling", "good link"),
+            e.keys,
+        )
+        assertEquals(11, entries(parseListing(out, exit)).size, "each entry once")
+        assertEquals(5L, e.getValue("two\nlines").size)
+        assertEquals(5L, e.getValue("good link").size, "a link is listed as what it points to")
+        assertTrue(e.getValue("Sub dir").isDir)
+        assertEquals(DeviceEntry("dangling", false, 0, 0), e.getValue("dangling"))
+        assertTrue(e.getValue("a.jpg").mtimeMillis > 0)
+    }
+
+    @Test
+    fun `list command on the host shell lists odd names, hidden files and broken links`() {
+        val (out, exit) = runListOnHost(oddFolder()) ?: return
+        checkOdd(out, exit)
+    }
+
+    @Test
+    fun `list command without find -exec falls back to one stat per entry`() {
+        val (out, exit) = runListOnHost(oddFolder(), findWorks = false) ?: return
+        checkOdd(out, exit)
+    }
+
+    @Test
+    fun `list command on the host shell lists a big folder in a few processes`() {
+        val dir = Files.createTempDirectory("svw-big")
+        repeat(3000) { Files.createFile(dir.resolve("file $it.jpg")) }
+        val started = System.nanoTime()
+        val (out, exit) = runListOnHost(dir) ?: return
+        val ms = (System.nanoTime() - started) / 1_000_000
+        assertEquals(0, exit)
+        assertEquals(3000, entries(parseListing(out, exit)).size)
+        // One stat per file took seconds here; a few processes take well under one.
+        assertTrue(ms < 5_000, "took $ms ms")
+    }
+
+    @Test
+    fun `list command on a missing folder exits 13 with ls's error`() {
+        if (System.getProperty("os.name").startsWith("Windows")) return
+        val p = ProcessBuilder("/bin/sh", "-c", listCommand("/nonexistent/svw")).redirectErrorStream(true).start()
+        val out = String(p.inputStream.readBytes(), Charsets.UTF_8)
+        p.waitFor(10, TimeUnit.SECONDS)
+        assertEquals(13, p.exitValue())
+        assertTrue(parseListing(out, p.exitValue()) is Listing.Failed, out)
     }
 
     @Test

@@ -528,7 +528,8 @@ fun MirrorWindow(
     }
 
     val transfers = rememberFileTransfers(serial, session, adb, ::notify)
-    // Files dragged out of the Files tab wait in the drag cache; the window takes them with it when it closes.
+    // Files dragged out of the Files tab wait in the drag cache; the window takes them with it when it closes, but
+    // not the dropped ones: the drop target may still read them, so the start-up sweep removes those.
     DisposableEffect(serial) {
         onDispose { thread(name = "drag-cache-delete") { DragCache().deleteSession(serial) } }
     }

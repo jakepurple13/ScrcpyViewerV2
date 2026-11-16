@@ -62,6 +62,21 @@ class DragCacheTest {
     }
 
     @Test
+    fun `deleteSession keeps the dropped drag folders and removes the rest`() {
+        val dropped = made("A")
+        val left = made("A")
+        cache.keep(dropped)
+        // Another instance (the window's) knows it too.
+        DragCache(root).deleteSession("A")
+        assertTrue(Files.exists(dropped.resolve("photo.jpg")))
+        assertFalse(Files.exists(left))
+        // The start-up sweep removes it once old.
+        Files.setLastModifiedTime(dropped, FileTime.fromMillis(hourAgo))
+        cache.sweep()
+        assertFalse(Files.exists(dropped))
+    }
+
+    @Test
     fun `delete removes one drag folder and nothing outside the cache`() {
         val a = made("A")
         val b = made("A")

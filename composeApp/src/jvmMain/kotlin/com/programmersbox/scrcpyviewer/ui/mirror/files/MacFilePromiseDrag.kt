@@ -9,8 +9,6 @@ import com.sun.jna.Structure
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 
 /**
  * File-promise drags on macOS (NSFilePromiseProvider), see docs/superpowers/notes/2026-11-13-file-promise-drag-spike.md.
@@ -34,6 +32,47 @@ class MacFilePromiseDragStarter(private val nsWindow: () -> Pointer?) : PromiseD
     }
 }
 
+/**
+ * The promised items of file-promise drags, by the key in their provider's userInfo. Finder asks for an item only
+ * after a drop, on the promise queue, and may ask after the drag ended (the source hears the end at the drop; the
+ * writes run after it, one by one if the queue runs them so). So an item stays until it is written, unless its drag
+ * ended with nothing dropped: then no write can come, and it goes at the end. Each item's write holds the tab's
+ * browser and adb session, so one left behind would keep them for the app's lifetime. Pure Kotlin; any thread.
+ */
+internal class PromiseRegistry<T> {
+    private class Entry<T>(val drag: Long, val item: T)
+
+    private val items = HashMap<String, Entry<T>>()
+    private var nextKey = 0L
+    private var nextDrag = 0L
+
+    /** Registers one drag's [promised] items: the drag's id and each item's key, in order. */
+    @Synchronized
+    fun register(promised: List<T>): Pair<Long, List<String>> {
+        val drag = ++nextDrag
+        val keys = promised.map { item -> "promise-${++nextKey}".also { items[it] = Entry(drag, item) } }
+        return drag to keys
+    }
+
+    @Synchronized
+    operator fun get(key: String): T? = items[key]?.item
+
+    /** [key]'s write ended (done or not): Finder will not ask again. */
+    @Synchronized
+    fun written(key: String) {
+        items.remove(key)
+    }
+
+    /** [drag] ended; without a drop ([dropped] false) its items go, as none will be asked for. */
+    @Synchronized
+    fun ended(drag: Long, dropped: Boolean) {
+        if (!dropped) items.values.removeIf { it.drag == drag }
+    }
+
+    @Synchronized
+    fun size(): Int = items.size
+}
+
 private object MacFilePromises {
     private const val NS_DRAG_OPERATION_COPY = 1L
     private const val NS_DRAG_OPERATION_NONE = 0L
@@ -44,12 +83,12 @@ private object MacFilePromises {
     private val msgSend = objc.getFunction("objc_msgSend")
     private val foundation = NativeLibrary.getInstance("Foundation")
 
-    /** Promised items by the key in their provider's userInfo; removed once written. */
-    private val items = ConcurrentHashMap<String, PromisedItem>()
-    private val nextKey = AtomicLong()
+    /** Promised items by the key in their provider's userInfo: until written, or their drag ended without a drop. */
+    private val items = PromiseRegistry<PromisedItem>()
 
-    /** The running drag's end handler (one drag at a time; main thread). */
+    /** The running drag's end handler and id in [items] (one drag at a time; main thread). */
     private var onEnd: ((Boolean) -> Unit)? = null
+    private var drag = 0L
 
     @Structure.FieldOrder("x", "y")
     open class CGPoint : Structure() {
@@ -109,7 +148,10 @@ private object MacFilePromises {
     private val endedImp = EndedImp { _, _, _, _, operation ->
         val end = onEnd
         onEnd = null
-        end?.invoke(operation != NS_DRAG_OPERATION_NONE)
+        val dropped = operation != NS_DRAG_OPERATION_NONE
+        // Dropped nowhere or cancelled: Finder asks for nothing, so the items (and the tab they hold) go now.
+        items.ended(drag, dropped)
+        end?.invoke(dropped)
     }
 
     private val delegate: Pointer by lazy {
@@ -148,9 +190,9 @@ private object MacFilePromises {
         val at = point(view, "convertPoint:fromView:", point(event, "locationInWindow"), null)
         val workspace = ObjC.msgPtr(ObjC.cls("NSWorkspace"), "sharedWorkspace")!!
         val list = ObjC.msgPtr(ObjC.cls("NSMutableArray"), "array")!!
-        val keys = promised.mapIndexed { i, item ->
-            val key = "promise-${nextKey.incrementAndGet()}"
-            items[key] = item
+        val (id, keys) = items.register(promised)
+        promised.forEachIndexed { i, item ->
+            val key = keys[i]
             val type = if (item.isDirectory) "public.folder" else "public.data"
             val provider = ObjC.msgPtr(
                 ObjC.msgPtr(ObjC.cls("NSFilePromiseProvider"), "alloc")!!, "initWithFileType:delegate:", ObjC.nsString(type), delegate,
@@ -168,13 +210,13 @@ private object MacFilePromises {
             ObjC.msgVoid(dragItem, "setDraggingFrame:contents:", frame, icon)
             ObjC.msgVoid(list, "addObject:", dragItem)
             ObjC.msgVoid(dragItem, "release")
-            key
         }
         onEnd = end
+        drag = id
         val session = ObjC.msgPtr(view, "beginDraggingSessionWithItems:event:source:", list, event, delegate)
         if (session == null) {
             onEnd = null
-            keys.forEach(items::remove)
+            items.ended(id, dropped = false)
             logDragOut("promise start refused: beginDraggingSession returned nil")
             return false
         }
@@ -208,7 +250,7 @@ private object MacFilePromises {
             if (placeholder && !done) runCatching { if (Files.size(target) == 0L) Files.deleteIfExists(target) }
             ObjC.msgVoid(progress, "unpublish")
             ObjC.msgVoid(progress, "release")
-            items.remove(key)
+            items.written(key)
         }
     }
 

@@ -19,11 +19,29 @@ sealed interface Listing {
 private const val MARKER = "|__svend__"
 private const val BLOCKED_EXIT = 13
 
-/** One shell process: exits 13 when [dir] cannot be listed, else prints one stat record per entry. */
+private const val STAT_FORMAT = "'%F|%s|%Y|%n$MARKER'"
+
+/** Every entry of the current folder, hidden ones included; the shell expands them (no process). */
+private const val ALL_ENTRIES = "./.[!.]* ./..?* ./*"
+
+/**
+ * One shell: exits 13 when [dir] cannot be listed, else prints one stat record per entry ("./name" after a `cd`, so a
+ * name starting with "-" is no option and the folder may be a link like /sdcard).
+ *
+ * One `stat` per entry costs a fork and exec each (1–4 ms), so thousands of files took longer than the shell's
+ * timeout. `find -exec stat {} +` stats them in a few processes, split under the argument limit by find. `stat -L`
+ * fails on a broken link and prints nothing for it, so a loop of shell builtins adds those as "broken". A device
+ * whose find lacks `-exec {} +` (or `-mindepth`) gets the old loop of one `stat` per entry.
+ */
 fun listCommand(dir: String): String =
-    "d=${shellQuote(dir)}; ls -A \"\$d\" >/dev/null || exit $BLOCKED_EXIT; " +
-        "for f in \"\$d\"/.[!.]* \"\$d\"/..?* \"\$d\"/*; do [ -e \"\$f\" ] || [ -L \"\$f\" ] || continue; " +
-        "stat -L -c '%F|%s|%Y|%n$MARKER' \"\$f\" 2>/dev/null || printf 'broken|0|0|%s$MARKER\\n' \"\$f\"; done"
+    "d=${shellQuote(dir)}; ls -A \"\$d\" >/dev/null || exit $BLOCKED_EXIT; cd \"\$d\" || exit $BLOCKED_EXIT; " +
+        "if find . -mindepth 0 -maxdepth 0 -exec stat -c %n {} + >/dev/null 2>&1; then " +
+        "find . -mindepth 1 -maxdepth 1 -exec stat -L -c $STAT_FORMAT {} + 2>/dev/null; " +
+        "for f in $ALL_ENTRIES; do if [ -L \"\$f\" ] && [ ! -e \"\$f\" ]; then printf 'broken|0|0|%s$MARKER\\n' \"\$f\"; fi; done; " +
+        "else " +
+        "for f in $ALL_ENTRIES; do [ -e \"\$f\" ] || [ -L \"\$f\" ] || continue; " +
+        "stat -L -c $STAT_FORMAT \"\$f\" 2>/dev/null || printf 'broken|0|0|%s$MARKER\\n' \"\$f\"; done; " +
+        "fi"
 
 /** Splits [output] into records ending in the marker, tolerating a missing final newline. */
 private fun records(output: String): List<String> {

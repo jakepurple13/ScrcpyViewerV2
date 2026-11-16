@@ -21,7 +21,6 @@ import com.programmersbox.scrcpyviewer.files.JobState
 import com.programmersbox.scrcpyviewer.files.TransferJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -33,12 +32,6 @@ import java.awt.datatransfer.UnsupportedFlavorException
 import java.io.File
 import java.nio.file.Path
 import kotlin.coroutines.CoroutineContext
-
-/**
- * How long a drag folder outlives its OS drag. Finder copies during the drop, before the drag returns; Explorer and
- * file managers on Linux may copy after it (a shell copy that runs on its own thread), so the files stay a while.
- */
-const val DRAG_DIR_KEEP_MILLIS = 30_000L
 
 private val dragLog = System.getLogger("scrcpyviewer.DragOut")
 
@@ -124,8 +117,11 @@ enum class DragOutPhase {
 /**
  * Rows dragged out of the Files tab, onto the computer. [begin] pulls them into a new drag folder ([DragCache]) through
  * [pull] (one transfer job per name; the pull creates the folder, off the UI thread). Once every pull is done and the button is still held, [starter] hands the files
- * to the OS drag (see [DragOutStartRule]); the folder is deleted [keepMillis] after the drag ends. [released] or
- * [cancel] before that cancels the pulls ([cancelJob]) and deletes the folder once no pull can still write into it.
+ * to the OS drag (see [DragOutStartRule]). A drop target may read the files long after the drop (Explorer and Linux
+ * file managers copy on a thread of their own, a mail attachment or browser upload later still), so a dropped drag's
+ * folder stays for the app's start-up sweep ([DragCache.keep]); one that nothing took is deleted when the drag ends.
+ * [released] or [cancel] before that cancels the pulls ([cancelJob]) and deletes the folder once no pull can still
+ * write into it.
  *
  * The OS drag never starts after a release: the platform reuses the last mouse-down without checking the button. It
  * is synchronous, so the gesture never sees its pointer-up; [onFinished] tells the tab to drop its drag state when the
@@ -150,7 +146,6 @@ class DragOutController(
     private val cleanupScope: CoroutineScope = scope,
     private val currentJobs: (() -> List<TransferJob>)? = null,
     private val io: CoroutineContext = Dispatchers.IO,
-    private val keepMillis: Long = DRAG_DIR_KEEP_MILLIS,
     private val rule: DragOutStartRule = DragOutStartRule.WhenReady,
     /** Hears the OS drag start (true) and end (false): the window's drop targets refuse it meanwhile. */
     private val onOsDrag: (Boolean) -> Unit = {},
@@ -169,6 +164,7 @@ class DragOutController(
         val seen = HashSet<Long>()
         val states = HashMap<Long, JobState>()
         var deleteScheduled = false
+        var kept = false
     }
 
     var phase by mutableStateOf(DragOutPhase.Idle)
@@ -437,10 +433,15 @@ class DragOutController(
             }
             moveToPhase(DragOutPhase.OsDrag)
             onOsDrag(true)
+            // What the drop said, once the platform said it; whether the start returned, so a completion that
+            // comes after it settles the folder itself.
+            var dropped: Boolean? = null
+            var returned = false
             val started = try {
-                starter.start(files, pointer) { dropped ->
-                    logDragOut("OS drag ended: dropped=$dropped")
-                    deleteLater(drag, keepMillis)
+                starter.start(files, pointer) { d ->
+                    logDragOut("OS drag ended: dropped=$d")
+                    dropped = d
+                    if (returned) settle(drag, d)
                 }
             } catch (e: Exception) {
                 logDragOutWarn("starter.start threw", e)
@@ -448,12 +449,15 @@ class DragOutController(
             } finally {
                 onOsDrag(false)
             }
-            logDragOut("starter.start returned started=$started")
+            returned = true
+            logDragOut("starter.start returned started=$started, dropped=$dropped")
             if (current === drag) {
                 current = null
                 reset()
             }
-            deleteLater(drag, if (started) keepMillis else 0)
+            // A started drag that has not said whether it was dropped may have been: its folder stays, rather than
+            // pull the files from under a drop target.
+            if (started) settle(drag, dropped ?: true) else deleteLater(drag)
             onFinished()
         }
     }
@@ -487,16 +491,28 @@ class DragOutController(
             val drag = it.next()
             if (jobs.any { j -> j.id in drag.ids && j.active }) continue
             it.remove()
-            deleteLater(drag, 0)
+            deleteLater(drag)
         }
     }
 
-    private fun deleteLater(drag: Drag, afterMillis: Long) {
+    /**
+     * The OS drag of [drag] ended, [dropped] or not. A dropped folder stays for the start-up sweep (the drop target may
+     * read it much later); one that nothing took goes now. The finished pulls leave the tray either way.
+     */
+    private fun settle(drag: Drag, dropped: Boolean) {
+        if (!dropped) return deleteLater(drag)
+        if (drag.deleteScheduled || drag.kept) return
+        drag.kept = true
+        cache.keep(drag.dir)
+        drag.ids.forEach(dismissJob)
+        logDragOut("drag folder kept for the start-up sweep: dir=${drag.dir}")
+    }
+
+    private fun deleteLater(drag: Drag) {
         if (drag.deleteScheduled) return
         drag.deleteScheduled = true
-        logDragOut("deleteLater scheduled: dir=${drag.dir}, afterMillis=$afterMillis")
+        logDragOut("deleteLater scheduled: dir=${drag.dir}")
         cleanupScope.launch(io) {
-            if (afterMillis > 0) delay(afterMillis)
             cache.delete(drag.dir)
             drag.ids.forEach(dismissJob)
             logDragOut("deleteLater ran: dir=${drag.dir}")
