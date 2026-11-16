@@ -25,6 +25,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
 import com.programmersbox.scrcpyviewer.ui.onEdt
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -42,6 +45,7 @@ class AdaptiveListDetailTest {
     private var contentWidth by mutableIntStateOf(1200)
     private var hasSelection by mutableStateOf(false)
     private var reduceMotion by mutableStateOf(false)
+    private var listsComposed by mutableIntStateOf(0)
     private lateinit var panes: ListDetailPanes
 
     private fun scene() = SceneDriver(ImageComposeScene(1200, 600, Density(1f)) {
@@ -55,6 +59,10 @@ class AdaptiveListDetailTest {
                     hasSelection = hasSelection,
                     list = { p ->
                         presentation = p
+                        DisposableEffect(Unit) {
+                            listsComposed++
+                            onDispose { listsComposed-- }
+                        }
                         Box(Modifier.fillMaxSize().onSizeChanged { listWidth = it.width })
                     },
                     detail = { openSwitcher ->
@@ -284,5 +292,108 @@ class AdaptiveListDetailTest {
         repeat(10) { key(Key.DirectionLeft) }
         frames(60)
         assertEquals(240, listWidth, "stops at the list min")
+    }
+
+    private fun SceneDriver.hasNode(description: String): Boolean {
+        var found = false
+        fun walk(node: SemanticsNode) {
+            if (node.config.getOrNull(SemanticsProperties.ContentDescription)?.contains(description) == true) found = true
+            node.children.forEach(::walk)
+        }
+        scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
+        return found
+    }
+
+    private fun SceneDriver.enterItemView() {
+        hasSelection = true
+        frames(5)
+        contentWidth = 600
+        frames(90)
+        assertEquals(76, listWidth)
+    }
+
+    @Test
+    fun `the switcher opens the full list over the item at its preferred width`() = withScene {
+        enterItemView()
+        assertTrue(!hasNode("Close list"), "no scrim before opening")
+        switcher!!.invoke()
+        frames(90)
+        assertEquals(300, listWidth, "overlay list measures the preferred width")
+        assertEquals(ListPresentation.Full, presentation)
+        assertTrue(hasNode("Close list"))
+        assertEquals(600 - 76 - 8, detailWidth, "detail keeps its place under the overlay")
+    }
+
+    @Test
+    fun `the overlay width springs from the strip`() = withScene {
+        enterItemView()
+        switcher!!.invoke()
+        frames(3)
+        assertTrue(listWidth in 77..299, "mid-spring: $listWidth")
+    }
+
+    @Test
+    fun `clicking the scrim closes the overlay`() = withScene {
+        enterItemView()
+        switcher!!.invoke()
+        frames(90)
+        val at = Offset(500f, 300f)
+        scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
+        scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, button = PointerButton.Primary)
+        frame()
+        scene.sendPointerEvent(PointerEventType.Release, at, type = PointerType.Mouse, button = PointerButton.Primary)
+        frames(90)
+        assertTrue(!hasNode("Close list"), "scrim gone")
+    }
+
+    @Test
+    fun `closeOverlay closes it`() = withScene {
+        enterItemView()
+        switcher!!.invoke()
+        frames(90)
+        panes.closeOverlay()
+        frames(90)
+        assertTrue(!hasNode("Close list"))
+    }
+
+    @Test
+    fun `widening to two panes closes the overlay`() = withScene {
+        enterItemView()
+        switcher!!.invoke()
+        frames(90)
+        assertTrue(hasNode("Close list"))
+        contentWidth = 1200
+        frames(90)
+        assertTrue(!hasNode("Close list"), "scrim gone")
+        assertTrue(detailComposed, "both panes show")
+        assertEquals(300, listWidth, "list width")
+        assertEquals(ListPresentation.Full, presentation)
+    }
+
+    @Test
+    fun `widening with the overlay open fades the overlay out instead of cutting it`() = withScene {
+        enterItemView()
+        switcher!!.invoke()
+        frames(90)
+        assertEquals(2, listsComposed, "strip and overlay")
+        contentWidth = 1200
+        frames(2)
+        assertEquals(2, listsComposed, "overlay list still there, fading")
+        frames(90)
+        assertEquals(1, listsComposed, "overlay gone once faded")
+        assertTrue(!hasNode("Close list"))
+    }
+
+    @Test
+    fun `shrinking to list view with the overlay open fades the overlay out`() = withScene {
+        enterItemView()
+        switcher!!.invoke()
+        frames(90)
+        contentWidth = 400
+        panes.navigation.backToList() // ItemView -> ListView
+        frames(2)
+        assertEquals(2, listsComposed, "overlay list still there, fading")
+        frames(90)
+        assertEquals(1, listsComposed)
     }
 }

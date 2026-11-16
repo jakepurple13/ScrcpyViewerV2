@@ -147,6 +147,9 @@ class ListDetailPanes internal constructor(
      * for the screen's preferred width. Replaces [expansion] once the last [ResizableListDetail] is gone.
      */
     var listWidth: Dp? by mutableStateOf(null)
+
+    /** The full list is showing over the open item (item view only; see [AdaptiveListDetail]). */
+    internal var overlayOpen: Boolean by mutableStateOf(false)
 }
 
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)

@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.VerticalDragHandle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +36,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -43,10 +47,13 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.awt.Cursor
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 /** What the list width motion last saw, so a recomposition can tell a mode or user change from a window resize. */
 private class ListWidthMotion(var mode: PaneMode, var userWidth: Any?, var shown: Dp) {
@@ -225,8 +232,15 @@ fun AdaptiveListDetail(
             val start = panes.listWidth?.coerceIn(currentMin, currentMax) ?: currentTwoPaneWidth
             panes.listWidth = start + with(currentDensity) { panes.limits.consume(delta).toDp() }
         }
-        // Task 6 replaces this with the overlay that shows the full list over the detail.
-        val openSwitcher: () -> Unit = remember { {} }
+        val openSwitcher: () -> Unit = remember(panes) { { panes.overlayOpen = true } }
+        // Picking an item (a selection change) or leaving item view ends the overlay.
+        LaunchedEffect(mode) { if (mode != PaneMode.ItemView) panes.closeOverlay() }
+        // Only a change closes it, not the first composition.
+        var previousSelection by remember { mutableStateOf(hasSelection) }
+        LaunchedEffect(hasSelection) {
+            if (hasSelection != previousSelection) panes.closeOverlay()
+            previousSelection = hasSelection
+        }
 
         Row(Modifier.fillMaxSize()) {
             Box(
@@ -298,6 +312,71 @@ fun AdaptiveListDetail(
                     detail(if (mode == PaneMode.ItemView) openSwitcher else null)
                 }
             }
+        }
+        ListOverlay(panes, listPreferredWidth, contentWidth, reduceMotion) { list(ListPresentation.Full) }
+    }
+}
+
+/** Closes the full list shown over the open item; call it after a pick. */
+fun ListDetailPanes.closeOverlay() {
+    overlayOpen = false
+}
+
+/** Scrim colour alpha behind the list overlay. */
+private const val ScrimAlpha = 0.32f
+
+/**
+ * The full list over the open item: a scrim that fades in and a [Surface] that widens from the strip to
+ * [preferredWidth] with [layoutSpring]. After closing (also when the window leaves item view) the surface
+ * keeps its width and fades out with the scrim, then leaves the composition. Reduced motion: the width
+ * jumps and fades take at most [ReducedFadeMillis].
+ */
+@Composable
+private fun ListOverlay(
+    panes: ListDetailPanes,
+    preferredWidth: Dp,
+    contentWidth: Dp,
+    reduceMotion: Boolean,
+    list: @Composable () -> Unit,
+) {
+    val open = panes.overlayOpen
+    val width = remember { Animatable(0f) }
+    val scrim = remember { Animatable(0f) }
+    LaunchedEffect(open, reduceMotion) {
+        val fade = tween<Float>(if (reduceMotion) ReducedFadeMillis else 220)
+        if (open) {
+            launch {
+                if (reduceMotion) width.snapTo(1f) else width.animateTo(1f, layoutSpring())
+            }
+            scrim.animateTo(1f, fade)
+        } else {
+            // The width stays where it is while the list fades.
+            scrim.animateTo(0f, fade)
+            width.snapTo(0f)
+        }
+    }
+    if (!open && scrim.value == 0f) return
+    val shown = (StripWidth + (minOf(preferredWidth, contentWidth) - StripWidth) * width.value).coerceAtLeast(StripWidth)
+    Box(Modifier.fillMaxSize()) {
+        Box(
+            Modifier.fillMaxSize()
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = ScrimAlpha * scrim.value))
+                .then(
+                    if (open) {
+                        Modifier
+                            .semantics { contentDescription = "Close list" }
+                            .clickable(interactionSource = null, indication = null, onClick = panes::closeOverlay)
+                    } else {
+                        Modifier
+                    },
+                ),
+        )
+        Surface(
+            Modifier.width(shown).fillMaxHeight().graphicsLayer { alpha = scrim.value },
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 6.dp,
+        ) {
+            Box(Modifier.fillMaxSize().clipToBounds()) { list() }
         }
     }
 }

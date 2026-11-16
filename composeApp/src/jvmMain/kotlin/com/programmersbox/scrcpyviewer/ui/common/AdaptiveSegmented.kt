@@ -184,7 +184,7 @@ private class ShrinkPolicy(private val fraction: Float) : MeasurePolicy {
 }
 
 @Composable
-private fun LabelTooltip(label: String) {
+internal fun LabelTooltip(label: String) {
     Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
         Text(
             label,
