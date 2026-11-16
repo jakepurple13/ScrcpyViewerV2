@@ -61,7 +61,7 @@ fun gifHeight(width: Int, srcW: Int, srcH: Int): Int {
 }
 
 /** The Linux system libraries the bundled FFmpeg's libavdevice links; a desktop has them, a minimal install may not. */
-internal const val LINUX_FFMPEG_LIBRARIES = "libasound2, libpulse0, libxcb1, libxcb-shm0 and libdrm2"
+internal const val LINUX_FFMPEG_LIBRARIES = "libasound2t64 (libasound2 on older systems), libpulse0, libxcb1, libxcb-shm0, libdrm2 and libudev1"
 
 /** What the user is told when they are missing on Linux. */
 internal const val LINUX_FFMPEG_MESSAGE = "FFmpeg needs a few system libraries: install $LINUX_FFMPEG_LIBRARIES, then try again"

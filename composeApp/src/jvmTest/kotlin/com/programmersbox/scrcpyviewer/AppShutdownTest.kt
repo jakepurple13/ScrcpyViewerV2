@@ -229,8 +229,8 @@ class AppShutdownTest {
             kotlinx.coroutines.delay(100)
             Files.deleteIfExists(partial)
             runs.removeFile(partial)
-            runs.remove(process)
             events += "export cleaned up"
+            runs.remove(process)
         }
         val shutdown = AppShutdown(controller, exit = { events += "exit" }, ffmpegRuns = runs, ffmpegTimeoutMs = 5_000)
         shutdown.request()
