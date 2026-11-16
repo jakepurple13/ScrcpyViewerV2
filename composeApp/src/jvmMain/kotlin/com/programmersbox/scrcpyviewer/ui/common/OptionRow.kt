@@ -3,13 +3,14 @@ package com.programmersbox.scrcpyviewer.ui.common
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -33,6 +34,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -42,7 +44,8 @@ import com.programmersbox.scrcpyviewer.options.OptionType
 
 /**
  * One option: checkbox, label with its `--flag`, and (for valued options) a value field that is enabled only while
- * the option is checked. [error] is shown under the row.
+ * the option is checked. [error] is shown under the row. The label keeps at least 140 dp: when the field would
+ * leave it less, the field moves under the label and fills its width (see [AdaptiveRow]).
  */
 @Composable
 fun OptionRow(
@@ -62,19 +65,36 @@ fun OptionRow(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-            Column(Modifier.weight(1f)) {
-                Text(spec.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "--${spec.flag}",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            val label = @Composable {
+                Column(Modifier.fillMaxWidth().testTag("option-label:${spec.flag}")) {
+                    Text(spec.label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "--${spec.flag}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
-            if (spec.type !is OptionType.Flag) {
-                ValueField(spec.type, checked, value.orEmpty(), error != null, Pair(fieldKey, spec.flag), onValueChange, Modifier.width(140.dp))
+            if (spec.type is OptionType.Flag) {
+                Box(Modifier.weight(1f)) { label() }
+            } else {
+                AdaptiveRow(
+                    text = label,
+                    control = {
+                        // 140 dp beside the label; under it, the incoming width wins and the field fills the row.
+                        ValueField(
+                            spec.type, checked, value.orEmpty(), error != null, Pair(fieldKey, spec.flag), onValueChange,
+                            Modifier.widthIn(min = ValueFieldWidth, max = ValueFieldWidth).testTag("option-field:${spec.flag}"),
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                    textMin = 140.dp,
+                    gap = 8.dp,
+                    fillControlWhenStacked = true,
+                )
             }
         }
         if (error != null && checked) {
@@ -87,6 +107,9 @@ fun OptionRow(
         }
     }
 }
+
+/** A value field's width beside its label (a maximum: stacked under the label it fills the row). */
+private val ValueFieldWidth = 140.dp
 
 @Composable
 private fun ValueField(

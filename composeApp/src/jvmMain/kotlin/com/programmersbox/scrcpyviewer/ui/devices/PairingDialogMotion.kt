@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onPlaced
@@ -74,12 +75,43 @@ class PairDialogAnchor {
      * then: the dialog layer can take a frame to appear, and hiding the button earlier would blink it out.
      */
     internal var covered by mutableStateOf(false)
+
+    /** The button clicked last; null before any click, when every button reports its bounds. */
+    internal var owner: PairOrigin? = null
+
+    /** The clicked button shows only its icon (the device strip's), so the dialog grows from that face. */
+    internal var iconOnly by mutableStateOf(false)
 }
 
-/** Records this button's window bounds in [anchor] and hides it while the pairing dialog grown from it covers it. */
-internal fun Modifier.pairDialogOrigin(anchor: PairDialogAnchor): Modifier =
-    onGloballyPositioned { anchor.bounds = it.boundsInWindow() }
-        .graphicsLayer { alpha = if (anchor.covered) 0f else 1f }
+/**
+ * One "Pair over Wi-Fi" button the dialog can grow from. Several can be on screen (the device strip and the full list
+ * over it); the one clicked ([claim]) owns [PairDialogAnchor.bounds] until another is clicked.
+ */
+internal class PairOrigin(val anchor: PairDialogAnchor, val iconOnly: Boolean) {
+    var coordinates: LayoutCoordinates? = null
+
+    val owns: Boolean get() = anchor.owner.let { it == null || it === this }
+
+    /** Makes this button the one the dialog grows from and shrinks back into; call it when it is clicked. */
+    fun claim() {
+        anchor.owner = this
+        anchor.iconOnly = iconOnly
+        coordinates?.takeIf { it.isAttached }?.let { anchor.bounds = it.boundsInWindow() }
+    }
+}
+
+@Composable
+internal fun rememberPairOrigin(anchor: PairDialogAnchor?, iconOnly: Boolean): PairOrigin? =
+    anchor?.let { remember(it, iconOnly) { PairOrigin(it, iconOnly) } }
+
+/** Tracks this button's window bounds for [origin] and hides it while the pairing dialog grown from it covers it. */
+internal fun Modifier.pairDialogOrigin(origin: PairOrigin?): Modifier {
+    if (origin == null) return this
+    return onGloballyPositioned {
+        origin.coordinates = it
+        if (origin.owns) origin.anchor.bounds = it.boundsInWindow()
+    }.graphicsLayer { alpha = if (origin.anchor.covered && origin.owns) 0f else 1f }
+}
 
 /** The look of the button the dialog grows from: its container color, corner radius, and face (its label). */
 internal class ContainerOrigin(

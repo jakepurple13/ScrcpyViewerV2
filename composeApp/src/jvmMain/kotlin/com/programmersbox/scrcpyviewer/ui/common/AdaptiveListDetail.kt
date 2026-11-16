@@ -36,6 +36,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -308,12 +310,28 @@ fun AdaptiveListDetail(
                     slideOutHorizontally(layoutSpring()) { with(density) { DetailEnterOffset.roundToPx() } } + fadeOut(tween(120))
                 },
             ) {
-                Box(Modifier.fillMaxSize()) {
+                val leaving = mode == PaneMode.ListView
+                Box(Modifier.fillMaxSize().keepWidthWhile(leaving)) {
                     detail(if (mode == PaneMode.ItemView) openSwitcher else null)
                 }
             }
         }
         ListOverlay(panes, listPreferredWidth, contentWidth, reduceMotion) { list(ListPresentation.Full) }
+    }
+}
+
+/**
+ * While [keep] (the detail leaving as the list widens over it), lays the content out at the width it had before
+ * and clips it to the shrinking slot, so it slides away whole instead of being squeezed to nothing (a squeeze
+ * would also drive its springy bounds animations below zero).
+ */
+private fun Modifier.keepWidthWhile(keep: Boolean): Modifier = composed {
+    val lastWidth = remember { intArrayOf(0) }
+    clipToBounds().layout { measurable, constraints ->
+        if (!keep) lastWidth[0] = constraints.maxWidth
+        val width = if (keep) maxOf(lastWidth[0], constraints.maxWidth) else constraints.maxWidth
+        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+        layout(constraints.maxWidth, placeable.height) { placeable.place(0, 0) }
     }
 }
 

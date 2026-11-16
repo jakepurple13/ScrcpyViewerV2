@@ -2,6 +2,9 @@ package com.programmersbox.scrcpyviewer.ui.devices.info
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -33,6 +36,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -41,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 import kotlin.math.roundToInt
@@ -165,9 +171,11 @@ internal fun DetailTab.label(): String = when (this) {
 }
 
 /**
- * The detail pane's top row: the back button (single-pane layout) and, while a device is [selected], the
- * Options | Info control, which fades and scales in and out. The row keeps [DETAIL_TAB_ROW_HEIGHT] either way, so
- * nothing below it moves.
+ * The detail pane's top row: the back button (single-pane layout) or a [leading] control (the list switcher chip)
+ * and, while a device is [selected], the Options | Info control, which fades and scales in and out. The row keeps
+ * [DETAIL_TAB_ROW_HEIGHT] either way, so nothing below it moves. When [leading] and the centred tabs do not fit side
+ * by side, [leading] takes a line of its own above them; both glide to their new places and the row's height
+ * springs ([layoutSpring]), or change at once with [reduceMotion].
  */
 @Composable
 fun DetailTabRow(
@@ -177,12 +185,11 @@ fun DetailTabRow(
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
     reduceMotion: Boolean = remember { systemReducesMotion() },
+    leading: (@Composable () -> Unit)? = null,
 ) {
-    Box(modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
-        if (onBack != null) DetailBackButton(onBack, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
+    val tabs = @Composable {
         AnimatedVisibility(
             visible = selected,
-            modifier = Modifier.align(Alignment.Center),
             // Arrives and leaves with the content below (see selectionFade).
             enter = if (reduceMotion) fadeIn(tween(REDUCED_FADE_MILLIS)) else
                 fadeIn(selectInSpec()) + scaleIn(selectInSpec(), initialScale = 0.92f),
@@ -198,6 +205,47 @@ fun DetailTabRow(
                         shape = styledSegmentShape(i, DetailTab.entries.size),
                         modifier = Modifier.widthIn(min = 120.dp),
                     ) { Text(entry.label()) }
+                }
+            }
+        }
+    }
+    if (leading == null) {
+        Box(modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
+            if (onBack != null) DetailBackButton(onBack, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
+            Box(Modifier.align(Alignment.Center)) { tabs() }
+        }
+    } else {
+        LeadingTabRow(leading, tabs, reduceMotion, modifier)
+    }
+}
+
+/** Space before [LeadingTabRow]'s leading control, and between it and the tabs. */
+private val LeadingInset = 12.dp
+private val LeadingGap = 8.dp
+
+/** [leading] at the start and the tabs centred on one line, or [leading] on a line above the tabs when they would meet. */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+private fun LeadingTabRow(leading: @Composable () -> Unit, tabs: @Composable () -> Unit, reduce: Boolean, modifier: Modifier) {
+    Box(modifier.fillMaxWidth().then(if (reduce) Modifier else Modifier.animateContentSize(layoutSpring()))) {
+        LookaheadScope {
+            val glide = if (reduce) Modifier else Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
+            Layout(
+                contents = listOf({ Box(glide) { leading() } }, { Box(glide) { tabs() } }),
+                modifier = Modifier.fillMaxWidth(),
+            ) { (leadingMeasurables, tabMeasurables), constraints ->
+                val loose = constraints.copy(minWidth = 0, minHeight = 0)
+                val lead = leadingMeasurables.first().measure(loose)
+                val tab = tabMeasurables.first().measure(loose)
+                val width = constraints.maxWidth
+                val rowHeight = DETAIL_TAB_ROW_HEIGHT.roundToPx()
+                val inset = LeadingInset.roundToPx()
+                val tabX = (width - tab.width) / 2
+                val inline = inset + lead.width + LeadingGap.roundToPx() <= tabX
+                val leadLine = if (inline) 0 else lead.height + LeadingGap.roundToPx()
+                layout(width, leadLine + rowHeight) {
+                    lead.place(inset, if (inline) (rowHeight - lead.height) / 2 else LeadingGap.roundToPx())
+                    tab.place(tabX, leadLine + (rowHeight - tab.height) / 2)
                 }
             }
         }

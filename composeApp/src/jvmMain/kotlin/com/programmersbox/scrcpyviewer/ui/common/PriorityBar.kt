@@ -18,11 +18,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -85,6 +87,12 @@ class BarItem(
     val content: @Composable () -> Unit,
 )
 
+/**
+ * True while a [PriorityBar] composes an item only to measure it. An item's content reads it to leave out what must
+ * exist once (shared bounds, a mirror origin registration).
+ */
+val LocalBarProbe = staticCompositionLocalOf { false }
+
 /** A weighted spacer slot in a [PriorityBar]'s items: it takes the leftover space. */
 object BarSpacer
 
@@ -112,7 +120,11 @@ fun PriorityBar(items: List<Any>, modifier: Modifier = Modifier, gap: Dp = 8.dp,
         val widths = items.indices.map { i ->
             val item = bars[i] ?: return@map 0
             if (item.grow && item.minWidth != Dp.Unspecified) item.minWidth.roundToPx()
-            else subcompose("m:${item.key}") { Box(Modifier.clearAndSetSemantics { }) { item.content() } }
+            else subcompose("m:${item.key}") {
+                CompositionLocalProvider(LocalBarProbe provides true) {
+                    Box(Modifier.clearAndSetSemantics { }) { item.content() }
+                }
+            }
                 .first().measure(loose).width
         }
         val overflowWidth = subcompose("m:more") {
