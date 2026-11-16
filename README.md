@@ -37,8 +37,11 @@ so you do not need to install scrcpy, adb or FFmpeg.
   with a `dns-sd` fallback on macOS.
 - **Restart adb** from the device list when the adb server gets stuck. If mirror windows or Wi-Fi devices would be
   lost, the app asks first.
-- **Emulators.** A collapsible Emulators section under Connected lists your Android Virtual Devices. Start one with no
-  emulator window and mirror it in Scrcpy Vwr, or stop one, including emulators started elsewhere.
+- **Emulators.** A collapsible Emulators section under the connected devices lists your Android Virtual Devices with
+  their API level and size. **Start** boots one with no emulator window of its own, so Scrcpy Vwr is its window, and
+  shows each boot stage. **Stop** works on any running emulator, including ones started elsewhere. The ⋮ menu has Cold
+  boot, Mirror when ready, Show emulator window, Show in Finder (Show in folder on Windows and Linux) and Wipe data.
+  The app finds the Android SDK through `ANDROID_HOME`, `ANDROID_SDK_ROOT` or a folder you choose.
 
 ### Options and presets
 - **Every scrcpy 5.0 option** as a checkbox. Options that take a value add a text field or dropdown.
@@ -55,16 +58,22 @@ so you do not need to install scrcpy, adb or FFmpeg.
 - **Mouse and keyboard input**, including scrcpy's UHID keyboard and mouse modes.
 - **Navigation buttons:** Back, Home, Recents, Volume up/down, Rotate and Power.
 - **Audio playback** from the device.
-- **Screenshots and screen recordings**, saved to a capture folder you choose in Settings. After a screenshot, a
-  thumbnail shows for a few seconds. From it you can copy the image as PNG or export a GIF.
+- **Screenshots and screen recordings**, saved to a capture folder you choose in Settings.
+- **Screenshot thumbnail.** After a screenshot, a thumbnail floats in the corner for 6 seconds (hover to keep it).
+  Copy puts the PNG image on the clipboard, Show in folder reveals the file, and you can drag it into another app.
+  Settings › After a screenshot can instead copy it at once or open the markup editor.
+- **Markup editor.** Draw on a screenshot in its own window: Pen, Arrow, Box, Circle and Pixelate in four colors,
+  with Undo. Save writes a new `-edited.png` next to the original and never overwrites it.
+- **GIF export.** When a recording stops, its thumbnail offers **Export GIF**. Trim the clip, pick a width
+  (320, 480 or 640 px) and a frame rate (10 or 15 fps), and see a size estimate. The app's bundled FFmpeg encodes it.
 - **Zoom** from 25% to 400%, plus fit to window.
 - **Drag and drop files.** Drop an APK to install it. Other files go to `/sdcard/Download/`.
 - **Reconnect.** If a device disconnects, the window keeps the last frame and offers Reconnect when the device returns.
 - **Send input to other windows.** One mirror window can lead. Its taps, swipes, scrolls, typing, nav buttons and
   quick actions also go to the other mirror windows you pick. Positions map by percent of each device's screen.
 - **Arrange mirror windows.** An Arrange button in the title bar (and in the menu bar icon) tiles open mirror windows:
-  As placed, Grid, Side by side, Focus this window or Cascade. Windows keep their device's shape. **Keep tiled**
-  re-tiles them as windows open and close.
+  As placed, Grid, Side by side, Focus this window or Cascade. Windows animate into place and keep their device's
+  shape. **Keep tiled** re-tiles them as windows open and close; dragging a window turns it off.
 
 ### Quick actions sheet
 A bolt button in each mirror window's side toolbar opens a sheet beside the device screen. The window grows to make
@@ -78,8 +87,9 @@ room, so the mirrored image keeps its size. Drag the sheet's edge to resize it. 
 - **Files.** A file browser for the device's shared storage. Pull, push, move, rename, delete and make folders.
   Drag files in from your computer, or drag rows out to Finder or Explorer. On macOS and Windows the copy starts after
   you drop, with no wait. A transfers tray shows progress, speed and Cancel.
-- **Links.** Open a URL or deep link on the device. History is kept per device, and starred links are shared by all
-  devices.
+- **Links.** Open a web link, custom-scheme link or intent URI on the device. Pick the app to open it with, force-stop
+  first for a cold start, and see the launch time. History is kept per device, and starred links are shared by all
+  devices. **Save as quick action** turns a link into a custom action.
 - **Logcat.** Live `adb logcat` with Android Studio's filter language (`tag:`, `package:`, `level:`, `is:crash`,
   regex and more), level colors, folded stack traces and autocomplete. **Show in Logcat** in the Apps tab filters to
   one app. **Open in new window** moves Logcat to its own window, with an always-on-top pin.
@@ -102,12 +112,11 @@ room, so the mirrored image keeps its size. Drag the sheet's edge to resize it. 
   Mirror button and shrink back into it when closed. The main window has a launch and quit animation (Icon unfold,
   Screen on or Off). All motion follows your OS reduce-motion setting.
 - **Menu bar / system tray icon.** Its menu lists connected devices: mirror one, or bring its mirror window forward.
-  It also has Open Scrcpy Vwr, Settings… and Quit. You can turn it off in Settings › Appearance.
+  It also has the Arrange mirror windows submenu, Open Scrcpy Vwr, Settings… and Quit. You can turn it off in
+  Settings › Appearance.
 
 ### App
-- **Keyboard shortcuts.** Settings › Keyboard shortcuts lets you record shortcuts for Send input to other windows and
-  each Arrange layout. None are set by default.
-- **Searchable settings**, grouped into Appearance, Mirroring, Keyboard shortcuts, adb, AI, Updates and Help.
+- **Searchable settings**, grouped into Appearance, Mirroring, adb, AI, Updates and Help.
 - **Updates.** Checks on launch and every 6 hours. It can also download updates in the background and install them
   when you quit.
 - First-run welcome guide. You can reopen it from Settings.
