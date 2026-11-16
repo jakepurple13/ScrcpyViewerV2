@@ -72,7 +72,10 @@ fun foldBar(
 /**
  * One button-like slot of a [PriorityBar]. [priority] 0 never folds; larger folds first. A folded item shows as
  * [menuLabel] in the overflow menu, calling [onMenuClick] (null shows it disabled). A [grow] item measures at
- * [minWidth] and takes a share of any leftover space.
+ * [minWidth] and takes a share of any leftover space. With [growToNatural] it measures at the smaller of [minWidth]
+ * and its natural width, takes leftover space first but only up to its natural width (like `weight(fill = false)`),
+ * and the spacers share the rest. When the bar still overflows with everything foldable folded, growers shrink below
+ * [minWidth] so the priority 0 items stay inside it.
  *
  * [content] is composed twice, once to measure the item's natural width and once to display it, so it must be
  * free of side effects.
@@ -84,6 +87,7 @@ class BarItem(
     val onMenuClick: (() -> Unit)?,
     val minWidth: Dp = Dp.Unspecified,
     val grow: Boolean = false,
+    val growToNatural: Boolean = false,
     val content: @Composable () -> Unit,
 )
 
@@ -117,15 +121,26 @@ fun PriorityBar(items: List<Any>, modifier: Modifier = Modifier, gap: Dp = 8.dp,
         val bounded = constraints.maxWidth != Constraints.Infinity
         val fill = bounded && items.indices.any { bars[it] == null || bars[it]!!.grow }
 
+        fun naturalWidth(item: BarItem): Int = subcompose("m:${item.key}") {
+            CompositionLocalProvider(LocalBarProbe provides true) {
+                Box(Modifier.clearAndSetSemantics { }) { item.content() }
+            }
+        }.first().measure(loose).width
+
+        // A grower to its natural width stops there; it also measures (and folds others) at no more than that.
+        val natural = items.indices.associateWith { i ->
+            val item = bars[i]
+            if (item != null && item.grow && item.growToNatural) naturalWidth(item) else 0
+        }
         val widths = items.indices.map { i ->
             val item = bars[i] ?: return@map 0
-            if (item.grow && item.minWidth != Dp.Unspecified) item.minWidth.roundToPx()
-            else subcompose("m:${item.key}") {
-                CompositionLocalProvider(LocalBarProbe provides true) {
-                    Box(Modifier.clearAndSetSemantics { }) { item.content() }
-                }
+            when {
+                item.grow && item.minWidth != Dp.Unspecified && item.growToNatural ->
+                    minOf(item.minWidth.roundToPx(), natural.getValue(i))
+                item.grow && item.minWidth != Dp.Unspecified -> item.minWidth.roundToPx()
+                item.grow && item.growToNatural -> natural.getValue(i)
+                else -> naturalWidth(item)
             }
-                .first().measure(loose).width
         }
         val overflowWidth = subcompose("m:more") {
             Box(Modifier.clearAndSetSemantics { }) { OverflowButton(emptyList(), pop = false, reduceMotion = true) }
@@ -189,11 +204,23 @@ fun PriorityBar(items: List<Any>, modifier: Modifier = Modifier, gap: Dp = 8.dp,
             ?.let { bars[it] != null } ?: false
         val trailingGap = if (morePlaceable == null && lastIsItem) gapPx else 0
 
-        val sharers = spacers.size + growing.size
-        val leftover = if (fill) (constraints.maxWidth - used - growBase + trailingGap).coerceAtLeast(0) else 0
+        val room = constraints.maxWidth - used - growBase + trailingGap
+        var leftover = if (fill) room.coerceAtLeast(0) else 0
+        // Everything foldable is folded and it still overflows: the growers give up the rest, evenly.
+        val shrink = if (fill && room < 0 && growing.isNotEmpty()) -room / growing.size + 1 else 0
+        // Growers to their natural width take what they want first, splitting it evenly when it runs short.
+        val fitting = growing.filter { bars[it]!!.growToNatural }
+        val extra = HashMap<Int, Int>()
+        fitting.forEachIndexed { n, i ->
+            val want = (natural.getValue(i) - widths[i]).coerceAtLeast(0)
+            val take = minOf(want, leftover / (fitting.size - n))
+            extra[i] = take
+            leftover -= take
+        }
+        val sharers = spacers.size + growing.size - fitting.size
         val share = if (sharers == 0) 0 else leftover / sharers
         growing.forEach { i ->
-            val w = widths[i] + gapPx + share
+            val w = (widths[i] + gapPx + (extra[i] ?: share) - shrink).coerceAtLeast(gapPx)
             placeables[i] = slots[i]?.measure(Constraints(minWidth = w, maxWidth = w, maxHeight = constraints.maxHeight))
             used += placeables[i]?.width ?: 0
         }

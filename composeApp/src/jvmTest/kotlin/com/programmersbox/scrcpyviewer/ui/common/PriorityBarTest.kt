@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.common
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -211,6 +212,61 @@ class PriorityBarTest {
             assertFalse("Duplicate" in labels, "Duplicate folded: $labels")
             assertTrue("Apply" in labels, "Apply (priority 0) stays: $labels")
             assertTrue("Edit" in labels && "More" in labels, "Edit stays, More shown: $labels")
+        }
+    }
+
+    @Test
+    fun `a grower to its natural width stops there and the spacer takes the rest`() {
+        val name = BarItem("Name", priority = 0, menuLabel = "Name", onMenuClick = null, minWidth = 40.dp, grow = true, growToNatural = true) {
+            Box(Modifier.width(100.dp).height(20.dp).semantics { contentDescription = "item:Name" })
+        }
+        run({ scene(500, items = listOf(name, item("Edit", 1), BarSpacer, item("Apply", 0))) }) {
+            frames(60)
+            val e = scene.edges()
+            assertEquals(100f, e.getValue("Name").width, 1f)
+            assertEquals(108f, e.getValue("Edit").left, 1f, "Edit right after the name and the gap")
+            assertEquals(500f, e.getValue("Apply").right, 1f)
+        }
+        run({ scene(180, items = listOf(name, item("Apply", 0))) }) {
+            frames(60)
+            val e = scene.edges()
+            assertEquals(0f, e.getValue("Name").left, 1f)
+            assertEquals(72f, e.getValue("Name").width, 1f, "the name shrinks to the room left (180 - Apply 100 - the 8 dp gap)")
+            assertEquals(180f, e.getValue("Apply").right, 1f)
+        }
+    }
+
+    private fun nameItem(natural: Int) =
+        BarItem("Name", priority = 0, menuLabel = "Name", onMenuClick = null, minWidth = 110.dp, grow = true, growToNatural = true) {
+            Box(Modifier.width(natural.dp).height(20.dp).semantics { contentDescription = "item:Name" })
+        }
+
+    @Test
+    fun `a name shorter than its min width keeps the next item right after it`() {
+        run({ scene(500, items = listOf(nameItem(30), item("Edit", 1), BarSpacer, item("Apply", 0))) }) {
+            frames(60)
+            val e = scene.edges()
+            assertEquals(30f, e.getValue("Name").width, 1f)
+            assertEquals(e.getValue("Name").right + 8f, e.getValue("Edit").left, 1f, "Edit right after the name and the gap")
+        }
+        // Name 30 + Edit 100 + Apply 100 and two gaps fit 250: nothing folds although 110 + 216 would not.
+        run({ scene(250, items = listOf(nameItem(30), item("Edit", 1), item("Apply", 0))) }) {
+            frames(60)
+            assertFalse("More" in scene.labels(), "nothing folds: ${scene.labels()}")
+        }
+    }
+
+    @Test
+    fun `with everything folded the name shrinks below its min width so the priority zero items fit`() {
+        run({ scene(170, items = listOf(nameItem(200), item("Edit", 1), item("Apply", 0))) }) {
+            frames(120)
+            val e = scene.edges()
+            assertTrue("More" in scene.labels(), "Edit folded")
+            assertEquals(0f, e.getValue("Name").left, 1f)
+            assertTrue(e.getValue("Name").width in 1f..109f, "the name shrinks: ${e["Name"]}")
+            assertTrue(e.getValue("Apply").right <= e.getValue("Name").right + 8f + 100f + 1f, "Apply right after the name")
+            val more = scene.nodes().first { "More" in it.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty() }.boundsInWindow
+            assertTrue(more.right <= 170f + 0.5f && more.width > 0f, "More inside the bar: $more")
         }
     }
 
