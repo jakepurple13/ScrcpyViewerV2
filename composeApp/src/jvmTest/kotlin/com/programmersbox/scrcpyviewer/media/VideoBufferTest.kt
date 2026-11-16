@@ -80,6 +80,20 @@ class VideoBufferTest {
     }
 
     @Test
+    fun `a failing delegate is reported, not only logged`() {
+        val target = RecordingVideoSink(throwOnPacket = true)
+        val failure = java.util.concurrent.CompletableFuture<Throwable>()
+        val sink = DelayedVideoSink(target, delayMs = 50, onFailure = { failure.complete(it) })
+        sink.onPacket(media(0))
+        val cause = failure.get(5, java.util.concurrent.TimeUnit.SECONDS)
+        assertEquals("sink bug", cause.message)
+        val start = System.nanoTime()
+        while (!target.closed && System.nanoTime() - start < 5_000_000_000) Thread.sleep(5)
+        assertTrue(target.closed)
+        sink.close()
+    }
+
+    @Test
     fun `forOptions wraps only with a positive video-buffer`() {
         val target = RecordingVideoSink()
         assertSame(target, DelayedVideoSink.forOptions(target, OptionValues(emptyMap())))

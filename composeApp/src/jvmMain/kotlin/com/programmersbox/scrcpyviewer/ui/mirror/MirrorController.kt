@@ -156,7 +156,15 @@ class MirrorController(
     private fun shutDown(session: ScrcpySession) {
         synchronized(lock) {
             clipboardJobs.remove(session)?.cancel()
-            val job = scope.launch { session.close() }
+            // Nothing shows the session now (its window closed, or the reconnected session replaced it): the last
+            // frame the Disconnected scrim kept can go.
+            val job = scope.launch {
+                try {
+                    session.close()
+                } finally {
+                    session.releaseLastFrame()
+                }
+            }
             closing += job
             job.invokeOnCompletion { synchronized(lock) { closing -= job } }
         }
