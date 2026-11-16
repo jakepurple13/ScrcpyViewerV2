@@ -16,12 +16,10 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -60,6 +58,7 @@ import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -73,8 +72,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -128,6 +125,7 @@ import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import java.awt.datatransfer.StringSelection
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -184,6 +182,7 @@ fun AppsTabContent(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) ->
                 }
             },
             uninstall = { onEvent(AppsEvent.Uninstall(it)) },
+            showInLogcat = { onEvent(AppsEvent.ShowInLogcat(it)) },
         )
     }
 
@@ -243,6 +242,7 @@ private class AppActions(
     val forceStop: (DeviceApp) -> Unit,
     val copy: (DeviceApp) -> Unit,
     val uninstall: (DeviceApp) -> Unit,
+    val showInLogcat: (DeviceApp) -> Unit,
 )
 
 /**
@@ -332,25 +332,8 @@ private fun FilterRow(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent)
             FilterChip(
                 selected = selected,
                 onClick = { if (!selected) onEvent(AppsEvent.Filter(filter)) },
-                label = {
-                    Text(filter.name)
-                    if (state.apps != null) {
-                        Spacer(Modifier.width(6.dp))
-                        Counter(state.count(filter))
-                    }
-                },
-                leadingIcon = {
-                    // The check grows into the chip as it is selected and shrinks away as it is not.
-                    AnimatedVisibility(
-                        visible = selected,
-                        enter = expandHorizontally(tween(220, easing = EmphasizedDecelerate)) +
-                            scaleIn(tween(220, easing = EmphasizedDecelerate), initialScale = 0.4f) + fadeIn(tween(160)),
-                        exit = shrinkHorizontally(tween(180, easing = EmphasizedAccelerate)) +
-                            scaleOut(tween(180), targetScale = 0.4f) + fadeOut(tween(120)),
-                    ) {
-                        Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(FilterChipDefaults.IconSize))
-                    }
-                },
+                label = { Text(filter.name) },
+                trailing = if (state.apps != null) ({ Counter(state.count(filter)) }) else null,
             )
         }
         Spacer(Modifier.weight(1f))
@@ -370,7 +353,7 @@ private fun Counter(count: Int) {
                 .using(SizeTransform(clip = true))
         },
     ) { n ->
-        Text("$n", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+        Text("$n", fontSize = 11.sp)
     }
 }
 
@@ -415,6 +398,7 @@ private fun AppGrid(
                 icon = icon,
                 selected = app.packageName == selected,
                 busy = app.packageName in state.busy,
+                logcat = app.packageName == state.logcatPackage,
                 appearDelay = remember {
                     val elapsed = System.currentTimeMillis() - shownAt
                     if (elapsed > STAGGER_WINDOW_MILLIS) null
@@ -441,6 +425,7 @@ private fun AppCard(
     icon: ImageBitmap?,
     selected: Boolean,
     busy: Boolean,
+    logcat: Boolean,
     appearDelay: Long?,
     actions: AppActions,
     onOpen: () -> Unit,
@@ -500,7 +485,20 @@ private fun AppCard(
             )
             VersionLine(app, fontSize = 10.5.sp)
         }
-        if (app.system) SystemBadge(Modifier.align(Alignment.TopEnd).padding(8.dp), short = true)
+        Column(
+            Modifier.align(Alignment.TopEnd).padding(8.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            if (app.system) SystemBadge(short = true)
+            AnimatedVisibility(
+                visible = logcat,
+                enter = scaleIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate), initialScale = 0.5f) + fadeIn(tween(150)),
+                exit = scaleOut(tween(150), targetScale = 0.5f) + fadeOut(tween(150)),
+            ) {
+                LogcatBadge()
+            }
+        }
         AnimatedVisibility(
             visible = busy,
             modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
@@ -527,6 +525,11 @@ private fun AppMenu(expanded: Boolean, onDismiss: () -> Unit, app: DeviceApp, ac
             text = { Text("Force stop") },
             leadingIcon = { Icon(Icons.Filled.Stop, contentDescription = null) },
             onClick = { onDismiss(); actions.forceStop(app) },
+        )
+        DropdownMenuItem(
+            text = { Text("Show in Logcat") },
+            leadingIcon = { Icon(Icons.AutoMirrored.Filled.ListAlt, contentDescription = null) },
+            onClick = { onDismiss(); actions.showInLogcat(app) },
         )
         DropdownMenuItem(
             text = { Text("Copy package name") },
@@ -592,6 +595,18 @@ private fun VersionLine(app: DeviceApp, fontSize: androidx.compose.ui.unit.TextU
             app.versionCode?.let { append(" · $it") }
         },
         fontSize = fontSize, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** Marks the app picked in the Logcat tab; [SystemBadge]'s shape in the primary container colors. */
+@Composable
+private fun LogcatBadge(modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Text(
+        "Logcat",
+        modifier.clip(RoundedCornerShape(6.dp)).background(colors.primaryContainer).padding(horizontal = 5.dp, vertical = 1.dp)
+            .semantics { contentDescription = "Picked in Logcat" },
+        fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = colors.onPrimaryContainer,
     )
 }
 
@@ -794,26 +809,41 @@ private fun ActionButtons(app: DeviceApp, actions: AppActions, onClose: () -> Un
             copied = false
         }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        SheetAction(Icons.Filled.PlayArrow, "Launch", colors.primary, colors.onPrimary, Modifier.weight(1f)) {
-            onClose()
-            actions.launch(app)
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SheetAction(Icons.Filled.PlayArrow, "Launch", colors.primary, colors.onPrimary, Modifier.weight(1f)) {
+                onClose()
+                actions.launch(app)
+            }
+            SheetAction(Icons.Filled.Stop, "Force stop", colors.surfaceContainerHigh, colors.onSurface, Modifier.weight(1f)) {
+                onClose()
+                actions.forceStop(app)
+            }
+            val copyContainer by animateColorAsState(if (copied) colors.tertiaryContainer else colors.surfaceContainerHigh, tween(200))
+            val copyContent by animateColorAsState(if (copied) colors.onTertiaryContainer else colors.onSurface, tween(200))
+            SheetAction(
+                if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                if (copied) "Copied" else "Copy package",
+                copyContainer, copyContent, Modifier.weight(1f),
+            ) {
+                copied = true
+                actions.copy(app)
+            }
+            SheetAction(Icons.Filled.Delete, "Uninstall", colors.errorContainer, colors.onErrorContainer, Modifier.weight(1f), onAskUninstall)
         }
-        SheetAction(Icons.Filled.Stop, "Force stop", colors.surfaceContainerHigh, colors.onSurface, Modifier.weight(1f)) {
-            onClose()
-            actions.forceStop(app)
-        }
-        val copyContainer by animateColorAsState(if (copied) colors.tertiaryContainer else colors.surfaceContainerHigh, tween(200))
-        val copyContent by animateColorAsState(if (copied) colors.onTertiaryContainer else colors.onSurface, tween(200))
-        SheetAction(
-            if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
-            if (copied) "Copied" else "Copy package",
-            copyContainer, copyContent, Modifier.weight(1f),
+        // Under the row: a fifth square would squeeze every label at the Apps tab's default width. The styled button, by
+        // its full name: the confirm step below needs Material's, whose error colors the styled one would override.
+        com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton(
+            onClick = {
+                onClose()
+                actions.showInLogcat(app)
+            },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         ) {
-            copied = true
-            actions.copy(app)
+            Icon(Icons.AutoMirrored.Filled.ListAlt, contentDescription = null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Show in Logcat")
         }
-        SheetAction(Icons.Filled.Delete, "Uninstall", colors.errorContainer, colors.onErrorContainer, Modifier.weight(1f), onAskUninstall)
     }
 }
 

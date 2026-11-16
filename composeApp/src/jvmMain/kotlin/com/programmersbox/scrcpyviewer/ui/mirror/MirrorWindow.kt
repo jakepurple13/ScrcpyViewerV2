@@ -23,6 +23,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -40,6 +41,16 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.CircleShape
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeWindow
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ARRANGE_LABEL
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeButton
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeMenu
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.rememberArrangeStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.ArrangePlace
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowEntry
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -59,11 +70,14 @@ import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CropSquare
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
 import com.programmersbox.scrcpyviewer.ui.mirror.files.rememberFilesBrowser
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatWindow
 import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -106,7 +120,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asComposeImageBitmap
-import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -140,7 +153,9 @@ import com.programmersbox.scrcpyviewer.AppIcon
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.Device
+import com.programmersbox.scrcpyviewer.media.GifExporter
 import com.programmersbox.scrcpyviewer.media.Recorder
+import com.programmersbox.scrcpyviewer.media.RecordingFrames
 import com.programmersbox.scrcpyviewer.media.Screenshot
 import com.programmersbox.scrcpyviewer.media.VideoDecoder
 import com.programmersbox.scrcpyviewer.media.VideoFrame
@@ -170,6 +185,28 @@ import org.koin.compose.koinInject
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.rememberCopyAction
 import com.programmersbox.scrcpyviewer.ui.devices.deviceTitle
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowRole
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowedTouchRings
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowerChip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.InputFollowing
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendInputButton
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendInputMenu
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.followGlow
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.followRunners
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberFollowStrip
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberWindowFollow
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.sendInputLabel
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.FOLLOWER_FIXED
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.MODEL_KEEP
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.SendPlace
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.ChipWidths
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.StripMins
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.rememberChipWidths
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripEnter
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripExit
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripModelStyle
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.stripRoom
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.LocalNeonGlow
@@ -179,19 +216,37 @@ import com.programmersbox.scrcpyviewer.ui.window.AppTitleBarScope
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
 import com.programmersbox.scrcpyviewer.ui.window.WindowChrome
 import dev.nucleusframework.application.LocalNucleusApplicationScope
-import com.programmersbox.scrcpyviewer.ui.window.disableMacAppearAnimation
-import com.programmersbox.scrcpyviewer.ui.window.setMacAlpha
 import java.nio.file.Paths
 import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.ImageClipboard
+import com.programmersbox.scrcpyviewer.ui.common.openExternally
+import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
+import com.programmersbox.scrcpyviewer.state.AfterScreenshot
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorWindow
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorWindowState
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.copyMarked
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.saveMarkedShot
+import com.programmersbox.scrcpyviewer.ui.mirror.files.ComposeDragOutStarter
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlash
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotFlashState
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnail
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.ScreenshotThumbnailState
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishRecording
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportWindowsState
+import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishScreenshot
 
 /** Side toolbar buttons; [keycode] buttons send that Android key down and up. */
 enum class MirrorAction(val label: String, val keycode: Int? = null) {
@@ -333,6 +388,8 @@ fun MirrorWindow(
     theme: AppTheme,
     /** `Settings.captureDir`: where screenshots and recordings started from the toolbar go. */
     captureDir: String,
+    /** `Settings.afterScreenshot`: a toolbar screenshot shows the thumbnail, or copies the image. */
+    afterScreenshot: AfterScreenshot = AfterScreenshot.Thumbnail,
     /** `Settings.animateMirrorWindows`, read when the window opens: grow from the Mirror button, wake the screen. */
     animate: Boolean = false,
     /** Runs `adb install` / `adb push` for dropped files and the Install APK… / Push file… buttons; null disables them. */
@@ -345,6 +402,12 @@ fun MirrorWindow(
     pcClipboard: PcClipboard = koinInject(),
     /** Messages about action files AI tools dropped in the inbox show in every mirror window. */
     inbox: ActionInbox = koinInject(),
+    /** The app-wide "Send input to…" link between mirror windows. */
+    following: InputFollowing = koinInject(),
+    /** The open mirror windows the arranger moves; this window joins once it has its first frame and size. */
+    mirrorWindows: MirrorWindows = koinInject(),
+    /** Arrange mirror windows: the title bar's Arrange button applies layouts through it. */
+    arranger: WindowArranger = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -369,6 +432,7 @@ fun MirrorWindow(
     val reconnectable by controller.reconnectable.collectAsState()
     val recording by session.recording.collectAsState()
     val currentCaptureDir by rememberUpdatedState(captureDir)
+    val currentAfterScreenshot by rememberUpdatedState(afterScreenshot)
     val currentModel by rememberUpdatedState(model)
     val snackbar = remember { SnackbarHostState() }
     val uiScope = rememberCoroutineScope()
@@ -376,10 +440,6 @@ fun MirrorWindow(
         uiScope.launch { snackbar.showSnackbar(message) }
     }
     val transferDialogs = fileDialogs ?: remember { NativeTransferFileDialogs(nativeFileDialogs(::notify)) }
-    // Results of this device's sessions (a previous one too, after Reconnect); the main window shows the others.
-    LaunchedEffect(serial) {
-        controller.recordingResults.filter { it.serial == serial }.collect { notify(recordResultMessage(it.result)) }
-    }
     LaunchedEffect(inbox) { inbox.messages.collect { notify(it) } }
     var recordingElapsed by remember { mutableStateOf<String?>(null) }
     /** A start is in flight (directory creation on the IO dispatcher): the Record button waits for it. */
@@ -394,31 +454,62 @@ fun MirrorWindow(
         }
     }
 
-    /** Copies the frame now (inside VideoFrame.use), encodes and writes the PNG on the IO dispatcher. */
+    // The thumbnail after a screenshot; it owns its bitmaps, released when the window closes.
+    val thumbnail = remember { ScreenshotThumbnailState(uiScope) }
+    DisposableEffect(thumbnail) { onDispose(thumbnail::dispose) }
+    // The markup editor over the window: opened from the thumbnail's Edit or right after a screenshot (by setting).
+    val markupEditor = remember { MarkupEditorWindowState(thumbnail) }
+    // Where the editor window grows from (the thumbnail's Edit button, the toolbar's camera button) and shrinks into.
+    val editButton = remember { ScreenBoundsRef() }
+    val cameraButton = remember { ScreenBoundsRef() }
+    val thumbnailCard = remember { ScreenBoundsRef() }
+    // A recording's Export GIF windows, one per recording thumbnail; they grow from its GIF button.
+    val gifWindows = remember { GifExportWindowsState(thumbnail) }
+    val gifButton = remember { ScreenBoundsRef() }
+    val recordingFrames = remember { RecordingFrames() }
+    val gifExporter = remember { GifExporter() }
+    // Results of this device's sessions (a previous one too, after Reconnect); the main window shows the others. A saved
+    // recording (the file is closed by then) shows the recording thumbnail once its first frame is read off the UI thread.
+    LaunchedEffect(serial) {
+        controller.recordingResults.filter { it.serial == serial }.collect { event ->
+            val ticket = thumbnail.begin()
+            uiScope.launch { finishRecording(event.result, thumbnail, recordingFrames::probe, ::notify, ticket) }
+        }
+    }
+    val screenshotDragStarter = remember { ComposeDragOutStarter() }
+    /** The flash over the video, once per screenshot. Out here, so the content re-entering does not replay it. */
+    val screenshotFlash = remember { ScreenshotFlashState() }
+
+    /**
+     * Copies the frame now (inside VideoFrame.use), encodes and writes the PNG on the IO dispatcher, then shows the
+     * thumbnail, copies the image or opens the markup editor, by `Settings.afterScreenshot` ([finishScreenshot]).
+     */
     fun takeScreenshot() {
         val bitmap = Screenshot.copyLatest { session.frames.value }
         if (bitmap == null) {
             notify("No frame to capture yet")
             return
         }
+        screenshotFlash.flash()
+        // Taken now, in screenshot order: saves run in parallel and may finish out of order; only the latest shows.
+        val ticket = thumbnail.begin()
         uiScope.launch {
-            try {
-                val file = withContext(Dispatchers.IO) {
-                    Screenshot.save(bitmap, Paths.get(currentCaptureDir), currentModel)
-                }
-                notify("Screenshot saved to $file")
-            } catch (e: Exception) {
-                notify("Could not save the screenshot: ${e.message ?: e}")
-            } finally {
-                bitmap.asSkiaBitmap().close() // the copy's native pixels
-            }
+            finishScreenshot(
+                bitmap, currentAfterScreenshot, thumbnail,
+                save = { withContext(Dispatchers.IO) { Screenshot.save(bitmap, Paths.get(currentCaptureDir), currentModel) } },
+                copy = { withContext(Dispatchers.IO) { ImageClipboard.copyPng(it) } }, // blocks up to 5 s
+                notify = ::notify,
+                ticket = ticket,
+                canOpenEditor = { !markupEditor.isOpen },
+                openEditor = { markupEditor.open(it, cameraButton.current()) },
+            )
         }
     }
 
     fun toggleRecording() {
         if (recordStarting) return
         if (session.recording.value != null) {
-            session.stopRecording() // "Recording saved to …" comes from recordingResults
+            session.stopRecording() // the recording thumbnail comes from recordingResults, once the file is closed
             return
         }
         recordStarting = true
@@ -445,7 +536,14 @@ fun MirrorWindow(
     // Read when a picker closes: a Reconnect meanwhile replaces the transfers (pickAndStart).
     val currentTransfers by rememberUpdatedState(transfers)
     val picker = rememberPickerGuard()
-    val quickActions = rememberQuickActions(serial, session, adb, ::notify, onManage = actionsNavigation::open)
+    val quickActions = rememberQuickActions(
+        serial, session, adb, ::notify, onManage = actionsNavigation::open, onNewAction = actionsNavigation::openNew, title = model,
+        followers = {
+            followRunners(serial, following.state.value, controller.open.value, adb) { s ->
+                devices.firstOrNull { it.serial == s }?.let(::deviceTitle) ?: s
+            }
+        },
+    )
     // Made the first time the Files tab shows, so a window that never opens it never lists a folder. A plain holder.
     val filesWanted = remember { BooleanArray(1) }
     quickActions.uiState.let { if (it.open && it.tab == SheetTab.Files) filesWanted[0] = true }
@@ -519,6 +617,10 @@ fun MirrorWindow(
     val readWake = remember(wake) { wake?.let { w -> { w.value } } }
     // True while the window's bounds animate: the first-frame sizing and the aspect lock wait.
     var zooming by remember { mutableStateOf(zoomFrom != null) }
+    // True while the arranger moves the window (Arrange mirror windows): the same effects wait, as for the zoom.
+    val arranging = remember { mutableStateOf(false) }
+    // The window's bounds are someone else's (its open / close animation, or the arranger): sizing and the lock wait.
+    val held = zooming || arranging.value
     var closing by remember { mutableStateOf(false) }
     // A growing window stays hidden until its content is composed, then shows at the button and grows at once.
     var shown by remember { mutableStateOf(zoomFrom == null) }
@@ -572,6 +674,21 @@ fun MirrorWindow(
     val clickIndicator = remember(session) {
         if ("show-touches" in e && capture == null) ClickIndicator(mapper::displayedRect) else null
     }
+    // Send input to other windows: the leader tees its pointer (not with the UHID mouse), toolbar and key messages to
+    // its followers; a follower shows the chip, the glowing border and a click ring where each followed tap lands.
+    val follow = rememberWindowFollow(serial, following, controller.open)
+    val reduceMotion = remember { systemReducesMotion() }
+    val followStrip = rememberFollowStrip(
+        serial, following, controller.open, follow,
+        devices = devices,
+        captureOn = capture != null,
+        ownFrame = frameSize,
+        reduceMotion = reduceMotion,
+        control = control,
+    )
+    val arrangeStrip = rememberArrangeStrip(serial, arranger, controller.open, reduceMotion)
+    val followRings = remember(session) { ClickIndicator(mapper::displayedRect) }
+    FollowedTouchRings(serial, following, followRings, mapper::toView)
 
     // UHID devices live as long as the session: created first thing (the control queue holds them until the
     // socket is up), destroyed when the window lets go of the session.
@@ -632,7 +749,7 @@ fun MirrorWindow(
 
     // Animated: the screen collapses to a line, the window shrinks into the device's Mirror button where it is now
     // (or a little, in place, when the main window does not show it), then it closes.
-    val requestClose: () -> Unit = close@{
+    val closeWindow: () -> Unit = close@{
         val w = windowHandle
         if (wake == null || w == null) return@close controller.close(serial)
         if (closing) return@close
@@ -648,6 +765,14 @@ fun MirrorWindow(
             } finally {
                 controller.close(serial)
             }
+        }
+    }
+    // The markup editor window closes first: with marks not saved or copied it asks, and Keep editing keeps both open.
+    // Then the Export GIF windows close with it, their exports cancelled (partial files deleted).
+    val requestClose: () -> Unit = {
+        markupEditor.closeThen(uiScope) {
+            gifWindows.closeAll()
+            closeWindow()
         }
     }
 
@@ -669,7 +794,9 @@ fun MirrorWindow(
             noControl = "no-control" in e,
             keyboardDisabled = e["keyboard"] == "disabled",
             legacyPaste = "legacy-paste" in e,
-        )
+            followerSend = follow::send,
+            followerKeyRepeat = "no-key-repeat" !in e,
+        ).also { follow.heldKeyUp = it::followerHeldKeyUp }
     }
 
     LocalNucleusApplicationScope.current.AppWindow(
@@ -684,7 +811,7 @@ fun MirrorWindow(
         onPreviewKeyEvent = keys::onKey,
         titleBar = {
             // The overflow menu's Copy command shows its "Copied" message in the window's snackbar.
-            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, applyZoom) }
+            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) { TopStrip(state, followStrip, arrangeStrip, applyZoom) }
         },
     ) {
         // Every move, resize, focus and native call on the window goes through this.
@@ -695,12 +822,23 @@ fun MirrorWindow(
         if ("print-fps" in e) {
             LaunchedEffect(session) { session.fps.collect { if (it > 0) println("[$serial] %.1f fps".format(it)) } }
         }
+        // A window that gained focus but closed before registering must not stay the "last focused".
+        DisposableEffect(serial) { onDispose { mirrorWindows.clearFocused(serial) } }
         LaunchedEffect(session, handle) {
             windowHandle = handle
-            handle.focused.collect { windowFocused = it }
+            handle.focused.collect {
+                windowFocused = it
+                // The menu bar's "Focus the front window" arranges around the window focused last.
+                if (it) mirrorWindows.focused(serial)
+            }
         }
         // Every gain and loss, not the merged state: each loss releases what the device holds.
-        LaunchedEffect(keys, handle) { handle.focusEvents.collect(keys::onFocusChanged) }
+        LaunchedEffect(keys, handle) {
+            handle.focusEvents.collect {
+                keys.onFocusChanged(it)
+                if (!it) follow.releaseAll() // a release in another window never reaches the followers either
+            }
+        }
         DisposableEffect(keys) {
             // Keys held for the device when focus moves into the sheet would never see their release: let them go.
             sheetFocus.onGained = keys::onSheetFocusGained
@@ -718,10 +856,15 @@ fun MirrorWindow(
         val lastFit = remember { BooleanArray(1) { fit } } // the same, for Fit
         // The stage's width (px) while the window grows or shrinks for the quick actions sheet (see the sheet effect).
         var pinnedStage by remember { mutableStateOf<Int?>(null) }
+        // True for a moment after the sizing effect below resizes the window (a new frame size, Fit back on): the
+        // arranger must not take that resize for the user's.
+        val appResizing = remember { mutableStateOf(false) }
+        val appResizeHold = remember { arrayOfNulls<Job>(1) }
         // Initial size from the first frame (fit to the screen), then the aspect ratio lock on every resize.
         // Keyed on the pin clearing too: a height the user dragged during a sheet animation is corrected once it ends.
-        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null, zooming) {
-            if (zooming) return@LaunchedEffect // sized once the window has grown (or not at all while it shrinks)
+        LaunchedEffect(stage, displayedSize, fit, pinnedStage == null, held) {
+            // Sized once the window has grown or been arranged (or not at all while it shrinks).
+            if (held) return@LaunchedEffect
             val fs = displayedSize ?: return@LaunchedEffect
             if (stage == IntSize.Zero || windowState.placement != WindowPlacement.Floating) return@LaunchedEffect
             if (autoSized) {
@@ -782,6 +925,13 @@ fun MirrorWindow(
             if (target != null && (abs(target.width - stage.width) > 2 || abs(target.height - stage.height) > 2)) {
                 val dw = (target.width - stage.width) / density.density
                 val dh = (target.height - stage.height) / density.density
+                appResizing.value = true
+                appResizeHold[0]?.cancel()
+                // On uiScope: this effect restarts as soon as the stage takes the new size.
+                appResizeHold[0] = uiScope.launch {
+                    delay(APP_RESIZE_HOLD_MS)
+                    appResizing.value = false
+                }
                 windowState.size = DpSize(windowState.size.width + dw.dp, windowState.size.height + dh.dp)
             }
         }
@@ -791,9 +941,9 @@ fun MirrorWindow(
         // against a window of the same moment; cleared at once while the sheet animates, with Fit off, without the
         // lock option, or when not floating. The settle correction above still fits new frames and Fit coming back
         // on, and is the whole lock where there is no live one (Windows, Linux: it corrects once a resize settles).
-        LaunchedEffect(handle, stage, displayedSize, fit, aspectLock, pinnedStage == null, zooming, windowState.placement) {
+        LaunchedEffect(handle, stage, displayedSize, fit, aspectLock, pinnedStage == null, held, windowState.placement) {
             val fs = displayedSize
-            val wanted = fit && aspectLock && pinnedStage == null && !zooming && stage != IntSize.Zero &&
+            val wanted = fit && aspectLock && pinnedStage == null && !held && stage != IntSize.Zero &&
                 windowState.placement == WindowPlacement.Floating
             if (fs == null || !wanted) {
                 handle.lockAspect(null)
@@ -817,24 +967,48 @@ fun MirrorWindow(
             displayedSize != null && (autoSized || windowState.placement != WindowPlacement.Floating),
         )
         val downForWake by rememberUpdatedState(state.disconnected)
+
+        // Arrange mirror windows: the window joins the registry once it has its first frame and its size (or is not
+        // floating, where it is skipped anyway), and leaves as it closes.
+        val arrangeFrame by rememberUpdatedState(displayedSize)
+        LaunchedEffect(handle) {
+            // After the open animation too, so a Keep tiled re-apply finds the window where it will stay.
+            snapshotFlow { sizedForWake && stage != IntSize.Zero && !zooming }.first { it }
+            val appSizing = MutableStateFlow(false)
+            // The close animation (and any zoom) moves the window too: never the user's, so Keep tiled stays on.
+            launch {
+                snapshotFlow { pinnedStage != null || appResizing.value || closing || zooming }
+                    .collect { appSizing.value = it }
+            }
+            val entry = WindowEntry(
+                handle = handle,
+                info = {
+                    val outer = handle.size
+                    ArrangeWindow(
+                        serial,
+                        arrangeFrame ?: IntSize(outer.width, outer.height),
+                        chromeW = (outer.width - stage.width / density.density).roundToInt().coerceAtLeast(0),
+                        chromeH = (outer.height - stage.height / density.density).roundToInt().coerceAtLeast(0),
+                    )
+                },
+                floating = { windowState.placement == WindowPlacement.Floating },
+                minimized = { windowState.isMinimized },
+                showing = { shown && !zooming && !closing && handle.isShowing },
+                arranging = arranging,
+                appSizing = appSizing,
+                uiContext = uiScope.coroutineContext,
+            )
+            mirrorWindows.register(serial, entry)
+            try {
+                awaitCancellation()
+            } finally {
+                mirrorWindows.unregister(serial, entry)
+            }
+        }
         if (wake != null) {
             LaunchedEffect(Unit) {
                 if (zoomFrom != null && zoomTo != null) {
-                    // macOS would play its own zoom as the window appears, on top of this one.
-                    handle.nsWindow?.let(::disableMacAppearAnimation)
-                    // A hidden window is held to the screen it was made on: macOS moves one meant for another screen
-                    // to that screen's edge (and narrows it) until it is shown. So it shows see-through, is put at
-                    // the button once on screen, and only then becomes visible.
-                    val masked = handle.nsWindow?.let { setMacAlpha(it, 0.0) } == true
-                    shown = true
-                    // Compose shows the window from a job of its own: wait until it is really on screen.
-                    withTimeoutOrNull(1_000) { while (!handle.isShowing) delay(8) }
-                    if (handle.bounds != zoomFrom) {
-                        handle.bounds = zoomFrom
-                        withTimeoutOrNull(300) { while (handle.bounds != zoomFrom) delay(8) }
-                    }
-                    repeat(2) { withFrameNanos { } }
-                    if (masked) handle.nsWindow?.let { setMacAlpha(it, 1.0) }
+                    showWindowAt(handle, zoomFrom) { shown = true }
                     animateWindowBounds(handle, zoomTo, MIRROR_ZOOM_IN_MILLIS, grow = true, screenGeometry)
                     zooming = false
                 }
@@ -859,14 +1033,17 @@ fun MirrorWindow(
         val sheetGrowth = remember { Animatable(0f) } // window units (dp) the window has grown by
         val sheetFromStage = remember { FloatArray(1) } // dp of the sheet's width the stage gave up (SheetSplit)
         val sheetShift = remember { IntArray(1) } // px the window moved left to keep the sheet on screen
+        // An arranged window's place is its own: closing the sheet must not move it back by a shift from before.
+        LaunchedEffect(arranging.value) { if (arranging.value) sheetShift[0] = 0 }
         val sheetOpen = state.quickActions.open
         val sheetTab = state.quickActions.tab
         val sheetTarget = sheetWidth(sheetOpen, sheetTab, state.quickActions.widths)
         val lastSheet = remember { SheetRun(false, sheetTab) }
-        LaunchedEffect(sheetOpen, sheetTab, sheetTarget, zooming) {
-            // While the window grows or shrinks its bounds are the zoom's: a base taken now would be pinned back on
-            // every frame below (the window jumped to where it sat before it was placed). Runs again once it ends.
-            if (zooming) return@LaunchedEffect
+        LaunchedEffect(sheetOpen, sheetTab, sheetTarget, held) {
+            // While the window grows, shrinks or is arranged its bounds are the animation's: a base taken now would be
+            // pinned back on every frame below (the window jumped to where it sat before it was placed). Runs again
+            // once it ends.
+            if (held) return@LaunchedEffect
             // Same open tab as the last run: only its width changed, by the drag bar.
             val resized = sheetOpen && lastSheet.open && lastSheet.tab == sheetTab
             lastSheet.open = sheetOpen
@@ -922,7 +1099,7 @@ fun MirrorWindow(
 
         ScrcpyViewerTheme {
             // Drops anywhere on the window but the sheet install / push (COPY only, see fileDropTarget).
-            Box(Modifier.fillMaxSize().fileDropTarget(transfers, overSheet)) {
+            Box(Modifier.fillMaxSize().fileDropTarget(transfers, overSheet).followGlow(followStrip.role is FollowRole.Follower, reduceMotion)) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                     CompositionLocalProvider(
                         LocalSnackbarHostState provides snackbar, LocalSheetFocus provides sheetFocus, LocalMirrorWindowHandle provides handle,
@@ -942,7 +1119,7 @@ fun MirrorWindow(
                                 MirrorAction.InstallApk -> picker.launch(uiScope) { pickAndStart({ currentTransfers }) { transferDialogs.chooseApks() } }
                                 MirrorAction.PushFile -> picker.launch(uiScope) { pickAndStart({ currentTransfers }, transferDialogs::chooseFiles) }
                                 MirrorAction.QuickActions -> quickActions.toggleSheet()
-                                else -> send(action.messages())
+                                else -> action.messages().let { send(it); follow.send(it) }
                             }
                         },
                         onReconnect = { controller.reconnect(serial) },
@@ -952,7 +1129,9 @@ fun MirrorWindow(
                                 capture != null -> capture.pointer(it, handle, viewSize, density.density, stageBounds, viewOrigin[0])
                                 else -> {
                                     clickIndicator?.onPointer(it, monotonicMillis())
-                                    send(mapper.pointer(it))
+                                    val msgs = mapper.pointer(it)
+                                    send(msgs)
+                                    follow.send(msgs)
                                 }
                             }
                         },
@@ -963,10 +1142,37 @@ fun MirrorWindow(
                         wake = readWake,
                         shellConsole = quickActions.console,
                         filesTab = filesTab,
+                        logcat = quickActions.logcat,
+                        links = quickActions.links,
                         onStageBounds = { stageBounds = it },
                         onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
+                        followIndicator = followRings,
                         onSheetBounds = { sheetBounds[0] = it },
+                        screenshotButton = cameraButton,
+                        stageOverlay = {
+                            ScreenshotFlash(screenshotFlash, motion = !reduceMotion)
+                            ScreenshotThumbnail(
+                                thumbnail,
+                                motion = !reduceMotion,
+                                onCopy = { file ->
+                                    withContext(Dispatchers.IO) { ImageClipboard.copyPng(file) }
+                                        .onFailure { notify("Saved, but could not copy the image: ${it.message ?: it}") }
+                                        .isSuccess
+                                },
+                                onReveal = { file -> revealInFolder(file) },
+                                onOpen = { file -> openExternally(file.toString()) },
+                                dragStarter = screenshotDragStarter,
+                                modifier = Modifier.align(Alignment.BottomEnd),
+                                // Dropped back on this window it would be pushed to the device: the drop targets refuse it.
+                                onOsDrag = { transfers.draggingOut = it },
+                                onEdit = { markupEditor.open(it, editButton.current()) },
+                                editButton = editButton,
+                                card = thumbnailCard,
+                                onExportGif = { gifWindows.open(it, gifButton.current()) },
+                                gifButton = gifButton,
+                            )
+                        },
                     )
                     }
                 }
@@ -974,6 +1180,39 @@ fun MirrorWindow(
             }
         }
     }
+    // Logcat's own window, while it is out: part of this window's composition, so it closes with it.
+    quickActions.logcat?.let { LogcatWindow(it, model, theme) }
+    // The markup editor's own window, likewise. Its keys are its own window's: none reaches the device.
+    MarkupEditorWindow(
+        markupEditor, model, theme,
+        animate = animate,
+        motion = !reduceMotion,
+        near = { windowHandle?.bounds },
+        thumbnail = { thumbnailCard.current()?.takeIf { thumbnail.shown.value != null } },
+        // Failures show in the editor window (it stays open); "Saved …" here, where the editor closes into the thumbnail.
+        onCopy = { shot, marks, say ->
+            copyMarked(shot, marks, ImageClipboard::copyPng) // the copy blocks up to 5 s: on IO in there
+                .onFailure { say("Could not copy the image: ${it.message ?: it}") }
+                .isSuccess
+        },
+        onSave = { shot, marks, say -> saveMarkedShot(shot, marks, thumbnail, ::notify, failed = say) },
+        leases = thumbnail,
+        screenGeometry = screenGeometry,
+    )
+    // The recordings' Export GIF windows, likewise: they go (exports cancelled) with this window.
+    GifExportWindows(
+        gifWindows, model, theme,
+        animate = animate,
+        motion = !reduceMotion,
+        near = { windowHandle?.bounds },
+        thumbnail = { thumbnailCard.current()?.takeIf { thumbnail.shown.value != null } },
+        export = { input, o, onProgress -> gifExporter.export(input, o, onProgress) },
+        frames = recordingFrames::frames,
+        onReveal = { file -> revealInFolder(file) },
+        notify = ::notify,
+        leases = thumbnail,
+        screenGeometry = screenGeometry,
+    )
 }
 
 /** What the window's sheet-growth effect last ran for; a plain holder, read and written only in that effect. */
@@ -990,6 +1229,9 @@ private val AtLeastAvailableWidth: Modifier = Modifier.layout { measurable, cons
 
 /** How long the stage size must hold still before the aspect ratio lock corrects the window. */
 private const val ASPECT_SETTLE_MS = 150L
+
+/** How long after the window resizes itself (new frame size, Fit) its bounds changes still count as the app's. */
+private const val APP_RESIZE_HOLD_MS = 500L
 
 /**
  * Heights (window units) on the screen [window] is on: the screen's height less the menu bar and the Dock or taskbar,
@@ -1105,8 +1347,18 @@ fun MirrorContent(
     shellConsole: ShellConsole? = null,
     /** The quick actions sheet's Files tab content; null shows an empty Files tab. */
     filesTab: (@Composable () -> Unit)? = null,
+    /** The quick actions sheet's Logcat tab; null (no adb) says adb isn't available. */
+    logcat: LogcatController? = null,
+    /** The quick actions sheet's Links tab; null (no adb) says adb isn't available. */
+    links: LinksState? = null,
     /** The quick actions sheet's bounds in root pixels while it shows, null once it is gone. */
     onSheetBounds: (Rect?) -> Unit = {},
+    /** Taps the leading window sent here: the same dot and click ring, at the spot they landed. */
+    followIndicator: ClickIndicator? = null,
+    /** Where the toolbar's Screenshot (camera) button is on screen: the markup editor window can grow from it. */
+    screenshotButton: ScreenBoundsRef? = null,
+    /** Drawn over the stage, above the video and its overlays (the screenshot flash and thumbnail). */
+    stageOverlay: @Composable BoxScope.() -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1135,7 +1387,7 @@ fun MirrorContent(
             }
         },
     ) {
-        if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom)
+        if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom = onZoom)
         HorizontalDivider(color = colors.outlineVariant)
         val density = LocalDensity.current
         var rowWidth by remember { mutableStateOf<Dp?>(null) }
@@ -1149,10 +1401,10 @@ fun MirrorContent(
             ) {
                 val disconnected = state.disconnected
                 if (wake == null) {
-                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin)
+                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator)
                 } else {
                     WakeStage(wake, standby = !disconnected) {
-                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin)
+                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator)
                     }
                 }
                 // While the screen is still asleep its standby line stands in for the skeleton.
@@ -1188,11 +1440,13 @@ fun MirrorContent(
                 ) {
                     lastHint.hint?.let { DropOverlay(it) }
                 }
+                stageOverlay()
             }
-            SideToolbar(state, onAction)
+            SideToolbar(state, onAction, screenshotButton)
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
             val panel = rememberQuickActionsPanel(
-                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab,
+                state.quickActions, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
+                links,
             )
             // Where the sheet is, so the window's file drop leaves it to the sheet (the Files tab takes drops there).
             val currentSheetBounds by rememberUpdatedState(onSheetBounds)
@@ -1231,22 +1485,39 @@ private object NoTitleBarScope : AppTitleBarScope {
 /**
  * The status dot, model, details, zoom controls and overflow menu; the mirror window's title bar. In the custom bar
  * it is transparent (the bar paints `surfaceContainer`) and as tall as the bar; its clickables are [interactive].
+ *
+ * With [follow]: the "Following" chip after the model while this window follows, and the "Send input to…" button
+ * before the copy button while other mirror windows are open (never on a follower). With [arrange] (two or more mirror
+ * windows open): the Arrange button before the copy button, in the ⋮ menu when narrow. Which parts show is [stripRoom];
+ * every part that comes or goes expands or shrinks with a fade ([stripEnter], [stripExit]), so starting or stopping
+ * following, opening a second window or resizing never changes the bar in one frame.
  */
 @Composable
-internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, onZoom: (ZoomCommand) -> Unit) {
+internal fun AppTitleBarScope.TopStrip(
+    state: MirrorUiState,
+    follow: FollowStrip? = null,
+    arrange: ArrangeStrip? = null,
+    onZoom: (ZoomCommand) -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     val custom = chrome == WindowChrome.Custom
+    val reduce = (follow?.reduceMotion ?: arrange?.reduceMotion) == true
+    val modelStyle = stripModelStyle()
+    val chip = rememberChipWidths(state.model, modelStyle, follow)
+    // The chip's widths while it leaves (following stopped, chip already null), so its width cap does not jump. A
+    // plain holder.
+    val lastChip = remember { arrayOfNulls<ChipWidths>(1) }
+    if (chip != null) lastChip[0] = chip
+    // The same for the Arrange button while it shrinks away (the second window closed, arrange already null).
+    val lastArrange = remember { arrayOfNulls<ArrangeStrip>(1) }
+    if (arrange != null) lastArrange[0] = arrange
     BoxWithConstraints(Modifier.fillMaxWidth().background(if (custom) Color.Transparent else colors.surfaceContainer)) {
         val w = maxWidth
-        val showDetails = state.details.isNotEmpty() && w >= DETAILS_MIN
-        val showCopy = w >= COPY_MIN
-        val showFit = w >= FIT_MIN
-        val showZoom = w >= ZOOM_MIN
-        val overflow = !showCopy || !showFit || !showZoom
+        val room = stripRoom(w, STRIP_MINS, state.details.isNotEmpty(), follow, chip, arrange = arrange != null)
+        val following = follow?.role is FollowRole.Follower
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (custom) 0.dp else 4.dp).heightIn(min = 40.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val dot = when (state.status) {
                 SessionStatus.Running -> colors.primary
@@ -1255,18 +1526,27 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, onZoom: (ZoomComman
             }
             Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
             // The model and the details take the room the controls leave; the controls keep their content width,
-            // and the model ellipsizes after the details (secondary text) have been dropped.
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // and the model ellipsizes after the details (secondary text) have been dropped. The chip is measured
+            // before the model but leaves it MODEL_KEEP (stripRoom moves the controls out first).
+            Row(Modifier.weight(1f).padding(start = STRIP_GAP), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     state.model,
                     Modifier.weight(1f, fill = false),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium,
+                    style = modelStyle,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (showDetails) {
+                if (follow != null) {
+                    val keep = minOf((chip ?: lastChip[0])?.model ?: MODEL_KEEP, MODEL_KEEP)
+                    FollowerChip(
+                        following, follow.leaderTitle, follow.layoutDiffers, follow.reduceMotion,
+                        Modifier.widthIn(max = (w - FOLLOWER_FIXED - keep).coerceAtLeast(STRIP_GAP * 4)),
+                        compactWarning = room.compactWarning,
+                        gap = STRIP_GAP,
+                    )
+                }
+                StripSlot(room.details, reduce) {
                     Text(
                         state.details,
                         style = MaterialTheme.typography.bodySmall,
@@ -1277,8 +1557,8 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, onZoom: (ZoomComman
                     )
                 }
             }
-            if (showZoom) ZoomControls(state, onZoom)
-            if (showFit) {
+            StripSlot(room.zoom, reduce) { ZoomControls(state, onZoom) }
+            StripSlot(room.fit, reduce) {
                 FilterChip(
                     selected = state.fit,
                     onClick = { onZoom(if (state.fit) ZoomCommand.Actual else ZoomCommand.Fit) },
@@ -1286,11 +1566,48 @@ internal fun AppTitleBarScope.TopStrip(state: MirrorUiState, onZoom: (ZoomComman
                     modifier = Modifier.interactive("fit"),
                 )
             }
-            if (showCopy) CopyButton(text = { state.command }, label = "Copy command", modifier = Modifier.interactive("copy"))
-            if (overflow) OverflowMenu(state, onZoom, showZoom = showZoom, showFit = showFit, showCopy = showCopy)
+            // A follower never shows it: it changes role only when its leader lets it go or closes.
+            val sendStrip = follow != null && !following && (room.send == SendPlace.Words || room.send == SendPlace.Icon)
+            StripSlot(sendStrip, reduce) {
+                if (follow != null) {
+                    SendInputButton(
+                        follow.role, follow.others, follow.captureOn, follow.onChange,
+                        compact = room.send != SendPlace.Words, modifier = Modifier.interactive("send-input"), reduceMotion = reduce,
+                    )
+                }
+            }
+            StripSlot(room.arrange == ArrangePlace.Strip, reduce) {
+                (arrange ?: lastArrange[0])?.let { ArrangeButton(it, Modifier.interactive("arrange")) }
+            }
+            StripSlot(room.copy, reduce) { CopyButton(text = { state.command }, label = "Copy command", modifier = Modifier.interactive("copy")) }
+            StripSlot(room.overflow, reduce) {
+                OverflowMenu(
+                    state, onZoom, showZoom = room.zoom, showFit = room.fit, showCopy = room.copy,
+                    follow = follow.takeIf { room.send == SendPlace.Overflow },
+                    arrange = arrange.takeIf { room.arrange == ArrangePlace.Overflow },
+                )
+            }
         }
     }
 }
+
+/** One title bar part, with the gap before it inside its expand / shrink + fade, so the gap comes and goes with it. */
+@Composable
+private fun StripSlot(visible: Boolean, reduce: Boolean, content: @Composable () -> Unit) {
+    // Fully qualified: no RowScope variant, the transitions are given here.
+    androidx.compose.animation.AnimatedVisibility(visible, enter = stripEnter(reduce), exit = stripExit(reduce)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.width(STRIP_GAP))
+            content()
+        }
+    }
+}
+
+/** Widths (dp) of the top strip at which secondary parts collapse into the overflow menu ([stripRoom] adds following). */
+private val STRIP_MINS = StripMins(details = DETAILS_MIN, copy = COPY_MIN, fit = FIT_MIN, zoom = ZOOM_MIN)
+
+/** Space between the title bar's parts. */
+private val STRIP_GAP = 10.dp
 
 /** "−", the zoom percent (a click toggles Fit and 100 %) and "+". */
 @Composable
@@ -1347,10 +1664,30 @@ private fun ZoomReadout(reading: ZoomReading) {
 
 /** The "⋮" menu holding what the top strip has no room for. */
 @Composable
-private fun AppTitleBarScope.OverflowMenu(state: MirrorUiState, onZoom: (ZoomCommand) -> Unit, showZoom: Boolean, showFit: Boolean, showCopy: Boolean) {
+private fun AppTitleBarScope.OverflowMenu(
+    state: MirrorUiState,
+    onZoom: (ZoomCommand) -> Unit,
+    showZoom: Boolean,
+    showFit: Boolean,
+    showCopy: Boolean,
+    /** "Send input to…" when the strip has no room for its button: the item opens its menu here. */
+    follow: FollowStrip? = null,
+    /** "Arrange mirror windows" when the strip has no room for its button: the item opens its menu here. */
+    arrange: ArrangeStrip? = null,
+) {
     var open by remember { mutableStateOf(false) }
+    var sendOpen by remember { mutableStateOf(false) }
+    var arrangeOpen by remember { mutableStateOf(false) }
     val copy = rememberCopyAction()
     Box {
+        if (follow != null) {
+            SendInputMenu(sendOpen, { sendOpen = false }, follow.role, follow.others, follow.captureOn, follow.onChange)
+        }
+        // Kept composed after the button moves back to the strip (the pick widened the window), so the menu still
+        // closes with its animation.
+        val lastArrange = remember { arrayOfNulls<ArrangeStrip>(1) }
+        if (arrange != null) lastArrange[0] = arrange
+        lastArrange[0]?.let { ArrangeMenu(arrangeOpen, { arrangeOpen = false }, it) }
         IconButton(onClick = { open = true }, Modifier.interactive("overflow").size(32.dp)) {
             Icon(Icons.Filled.MoreVert, contentDescription = "More")
         }
@@ -1373,6 +1710,12 @@ private fun AppTitleBarScope.OverflowMenu(state: MirrorUiState, onZoom: (ZoomCom
             if (!showCopy) {
                 item("Copy command") { copy(state.command) }
             }
+            if (follow != null) {
+                item(sendInputLabel(follow.role)) { sendOpen = true }
+            }
+            if (arrange != null) {
+                item(ARRANGE_LABEL) { arrangeOpen = true }
+            }
         }
     }
 }
@@ -1392,22 +1735,24 @@ private fun Stage(
     onViewSize: (IntSize) -> Unit,
     clickIndicator: ClickIndicator?,
     onViewOrigin: (Offset) -> Unit = {},
+    followIndicator: ClickIndicator? = null,
 ) {
     val pointer by rememberUpdatedState(onPointer)
     // Redraws every frame while a click dot fades out.
     var now by remember { mutableLongStateOf(monotonicMillis()) }
     val releaseTime = clickIndicator?.releaseTime
-    LaunchedEffect(clickIndicator, releaseTime) {
-        if (clickIndicator == null) return@LaunchedEffect
+    val followReleaseTime = followIndicator?.releaseTime
+    LaunchedEffect(clickIndicator, releaseTime, followIndicator, followReleaseTime) {
+        if (clickIndicator == null && followIndicator == null) return@LaunchedEffect
         do {
             withFrameNanos { now = monotonicMillis() }
-        } while (clickIndicator.isFading(now))
+        } while (clickIndicator?.isFading(now) == true || followIndicator?.isFading(now) == true)
     }
     val dotColor = MaterialTheme.colorScheme.primary
     val dotRing = MaterialTheme.colorScheme.onPrimary
     val glow = LocalNeonGlow.current?.takeIf { it.strength > 0f }
-    fun DrawScope.drawClickDot() {
-        val dot = clickIndicator?.state(now) ?: return
+    fun DrawScope.drawClickDot(indicator: ClickIndicator? = clickIndicator) {
+        val dot = indicator?.state(now) ?: return
         dot.ring?.let { ring ->
             // The release ripple: grows out of the dot and fades.
             drawCircle(
@@ -1475,6 +1820,7 @@ private fun Stage(
                 InputMapper.contentRect(orientation.orientedSize(IntSize(f.width, f.height)), Rect(0f, 0f, size.width, size.height), state.stretch)
             }
             drawClickDot()
+            drawClickDot(followIndicator)
         }
     } else {
         // Zoomed: the canvas is the image at that scale (one frame pixel is `zoom` screen pixels), centred in the
@@ -1516,6 +1862,7 @@ private fun Stage(
                         val quality = if (zoom >= 1f) FilterQuality.None else FilterQuality.Low
                         drawLatestFrame(latestFrame, quality, orientation, greyColorFilter(motion.grey.value)) { Rect(0f, 0f, size.width, size.height) }
                         drawClickDot()
+                        drawClickDot(followIndicator)
                     }
                 }
             }
@@ -1628,7 +1975,7 @@ private val toolbarIcons: Map<MirrorAction, ImageVector> = mapOf(
 internal val SIDE_TOOLBAR_WIDTH = 64.dp
 
 @Composable
-private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) {
+private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit, screenshotButton: ScreenBoundsRef? = null) {
     val colors = MaterialTheme.colorScheme
     Column(
         Modifier.width(SIDE_TOOLBAR_WIDTH).fillMaxHeight().background(colors.surfaceContainer).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
@@ -1657,6 +2004,7 @@ private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) 
                     label = if (recording) "Stop recording" else action.label,
                     tint = if (recording) colors.error else null,
                     selected = action == MirrorAction.QuickActions && state.quickActions.open,
+                    modifier = if (action == MirrorAction.Screenshot && screenshotButton != null) Modifier.screenBoundsOf(screenshotButton) else Modifier,
                 ) { onAction(action) }
             }
         }
@@ -1665,7 +2013,15 @@ private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit) 
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ToolbarButton(action: MirrorAction, enabled: Boolean, label: String, tint: Color?, selected: Boolean = false, onClick: () -> Unit) {
+private fun ToolbarButton(
+    action: MirrorAction,
+    enabled: Boolean,
+    label: String,
+    tint: Color?,
+    selected: Boolean = false,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     TooltipArea(
         tooltip = {
             Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
@@ -1684,7 +2040,7 @@ private fun ToolbarButton(action: MirrorAction, enabled: Boolean, label: String,
         } else {
             IconButtonDefaults.iconButtonColors()
         }
-        IconButton(onClick = onClick, enabled = enabled, colors = buttonColors) {
+        IconButton(onClick = onClick, modifier = modifier, enabled = enabled, colors = buttonColors) {
             Icon(
                 toolbarIcons.getValue(action),
                 contentDescription = label,

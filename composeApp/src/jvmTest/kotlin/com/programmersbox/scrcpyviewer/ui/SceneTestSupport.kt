@@ -3,6 +3,8 @@ package com.programmersbox.scrcpyviewer.ui
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
@@ -32,6 +34,12 @@ class SceneDriver(val scene: ImageComposeScene) {
     }
 
     fun frames(count: Int) = repeat(count) { frame() }
+
+    /** The next frame's pixels. */
+    fun snapshot(): androidx.compose.ui.graphics.PixelMap {
+        time += 16_000_000
+        return scene.render(time).toComposeImageBitmap().toPixelMap()
+    }
 
     fun drag(fromX: Float, toX: Float, y: Float = 300f) {
         scene.sendPointerEvent(PointerEventType.Move, Offset(fromX, y), type = PointerType.Mouse)

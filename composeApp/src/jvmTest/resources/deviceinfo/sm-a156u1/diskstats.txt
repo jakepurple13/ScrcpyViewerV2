@@ -1,0 +1,16 @@
+Latency: 2ms [512B Data Write]
+Recent Disk Write Speed (kB/s) = 21787
+Data-Free: 92237840K / 110534640K total = 83% free
+Cache-Free: 92237840K / 110534640K total = 83% free
+System-Free: 0K / 6077156K total = 0% free
+Metadata-Free: 57948K / 60392K total = 95% free
+File-based Encryption: true
+App Size: 10329260032
+App Data Size: 4519657306
+App Cache Size: 2448518656
+Photos Size: 8888320
+Videos Size: 773464064
+Audio Size: 0
+Downloads Size: 0
+System Size: 24251482112
+Other Size: 1679273984

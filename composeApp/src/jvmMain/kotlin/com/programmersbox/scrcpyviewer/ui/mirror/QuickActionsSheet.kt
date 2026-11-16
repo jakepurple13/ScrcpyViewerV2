@@ -4,10 +4,30 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.TweenSpec
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.material3.Surface
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.rememberTextMeasurer
+import com.programmersbox.scrcpyviewer.logcat.LogLevel
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatColors
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatLiveDot
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -81,13 +101,20 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
+import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.ui.mirror.files.AdbUnavailableState
+import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState
+import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksTabContent
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatSheetTab
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import kotlin.math.roundToInt
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 
 /** Default and minimum width of the open sheet on the Actions tab, its drag bar included. */
 val QUICK_ACTIONS_WIDTH = 280.dp
@@ -100,6 +127,12 @@ val QUICK_ACTIONS_APPS_WIDTH = 480.dp
 
 /** Default and minimum width of the open sheet on the Files tab, its drag bar included. */
 val QUICK_ACTIONS_FILES_WIDTH = 440.dp
+
+/** Default and minimum width of the open sheet on the Logcat tab, its drag bar included. */
+val QUICK_ACTIONS_LOGCAT_WIDTH = 560.dp
+
+/** Default and minimum width of the open sheet on the Links tab, its drag bar included. */
+val QUICK_ACTIONS_LINKS_WIDTH = 400.dp
 
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
 private val SLIDE_OFFSET = 40.dp
@@ -179,15 +212,22 @@ fun rememberQuickActionsPanel(
     console: ShellConsole?,
     rowWidth: Dp?,
     filesTab: (@Composable () -> Unit)? = null,
+    logcat: LogcatController? = null,
+    links: LinksState? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
     val currentConsole by rememberUpdatedState(console)
     val currentRowWidth by rememberUpdatedState(rowWidth)
     val currentFilesTab by rememberUpdatedState(filesTab)
+    val currentLogcat by rememberUpdatedState(logcat)
+    val currentLinks by rememberUpdatedState(links)
     return remember {
         movableContentOf { modifier: Modifier ->
-            QuickActionsPanel(currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab)
+            QuickActionsPanel(
+                currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab, currentLogcat,
+                links = currentLinks,
+            )
         }
     }
 }
@@ -197,7 +237,8 @@ fun rememberQuickActionsPanel(
  * [rowWidth] is the content row it shares with the stage and the side toolbar: the sheet leaves the stage
  * [STAGE_MIN_WIDTH] of it. Null (while the window grows or shrinks for the sheet, or unmeasured): only each tab's
  * minimum applies. A tab switch or reset animates the width with the tab switch's timing; a drag or a window resize
- * follows at once. [filesTab] is the Files tab's content (none without adb).
+ * follows at once. [filesTab] is the Files tab's content (none without adb), [logcat] the Logcat tab's controller (none
+ * without adb).
  */
 @Composable
 fun QuickActionsPanel(
@@ -207,6 +248,11 @@ fun QuickActionsPanel(
     rowWidth: Dp? = null,
     modifier: Modifier = Modifier,
     filesTab: (@Composable () -> Unit)? = null,
+    logcat: LogcatController? = null,
+    /** False under the OS's reduce motion: the Logcat segment's marks and label swap snap. */
+    motion: Boolean = remember { !systemReducesMotion() },
+    /** The Links tab's state; null (no adb) says adb isn't available. */
+    links: LinksState? = null,
 ) {
     fun fit(width: Dp, tab: SheetTab) = if (rowWidth == null) {
         width.coerceAtLeast(SheetWidths.default(tab))
@@ -266,7 +312,7 @@ fun QuickActionsPanel(
                 onEvent(QuickActionEvent.ResetWidth)
             },
         )
-        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab)
+        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab, logcat, shown, motion, links)
     }
 }
 
@@ -277,6 +323,10 @@ private fun RowScope.SheetContent(
     console: ShellConsole?,
     columns: Int,
     filesTab: (@Composable () -> Unit)?,
+    logcat: LogcatController?,
+    sheetWidth: Dp,
+    motion: Boolean,
+    links: LinksState?,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -286,7 +336,12 @@ private fun RowScope.SheetContent(
             Column(Modifier.weight(1f)) {
                 Text("Quick actions", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    if (state.tab == SheetTab.Files) "Browse and move files on this device" else "Runs adb shell on this device",
+                    when (state.tab) {
+                        SheetTab.Files -> "Browse and move files on this device"
+                        SheetTab.Logcat -> "Live log from this device"
+                        SheetTab.Links -> "Open a link or intent on this device"
+                        else -> "Runs adb shell on this device"
+                    },
                     style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
                 )
             }
@@ -307,9 +362,10 @@ private fun RowScope.SheetContent(
             }
         }
         SheetTabs(
-            state.tab, state.consoleRunning, state.filesTransfersRunning,
+            state.tab, state.consoleRunning, state.filesTransfersRunning, state.logcatPopped, state.logcatLive, sheetWidth,
             onSelect = { if (it != state.tab) onEvent(QuickActionEvent.SelectTab(it)) },
-            Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp),
+            Modifier.padding(start = TABS_SIDE_PADDING, end = TABS_SIDE_PADDING, top = 8.dp),
+            motion,
         )
         // The command field takes focus on every switch to Shell: composed afresh, or, when a switch away is reversed
         // mid-transition, kept and selected again.
@@ -324,6 +380,14 @@ private fun RowScope.SheetContent(
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
                 // No Files tab content means no adb: say so rather than show nothing.
                 SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
+                // No Links state means no adb, said the same way.
+                SheetTab.Links -> if (links != null) {
+                    LinksTabContent(links, state.apps, state.enabled, { onEvent(QuickActionEvent.Links(it)) }, motion = motion)
+                } else {
+                    AdbUnavailableState()
+                }
+                // No controller means no adb, said the same way.
+                SheetTab.Logcat -> if (logcat != null) LogcatSheetTab(logcat, sheetWidth, motion) else AdbUnavailableState()
                 SheetTab.Shell -> if (console != null) {
                     ShellTabContent(
                         console, state.custom.filterIsInstance<RunOnceAction>(), selected = state.tab == SheetTab.Shell, onEvent,
@@ -339,18 +403,55 @@ private fun RowScope.SheetContent(
 private val TrackShape = RoundedCornerShape(10.dp)
 private val SegmentShape = RoundedCornerShape(8.dp)
 
+/** Segments narrower than this use labelSmall for their labels instead of labelLarge (Linux fonts run wider). */
+private val SMALL_LABEL_UNDER = 60.dp
+
+/** Space left and right of the segmented control, and inside its track around the segments. */
+private val TABS_SIDE_PADDING = 12.dp
+private val TRACK_PADDING = 3.dp
+
+/** Segments narrower than this show their icons instead of their names (six names don't fit the narrowest sheet). */
+internal val ICON_SEGMENT_UNDER = 56.dp
+
+/** The names ⇄ icons cross-fade as the sheet is resized across [ICON_SEGMENT_UNDER]. */
+internal const val SEGMENT_ICONS_MILLIS = 200
+
+/** Segment icons, and the gap after one to the Shell dot or Files badge (smaller than a name's: segments are narrow). */
+private val SEGMENT_ICON_SIZE = 16.dp
+private val ICON_GAP = 2.dp
+
+/** Each tab's icon in the icon-only tab bar. */
+internal fun SheetTab.icon(): ImageVector = when (this) {
+    SheetTab.Actions -> Icons.Filled.Bolt
+    SheetTab.Apps -> Icons.Filled.Apps
+    SheetTab.Shell -> Icons.Filled.Terminal
+    SheetTab.Files -> Icons.Filled.Folder
+    SheetTab.Links -> Icons.Filled.Link
+    SheetTab.Logcat -> Icons.AutoMirrored.Filled.List
+}
+
 /**
- * The Actions / Apps / Shell / Files segmented control. The highlight glides to the selected segment with the tab
- * switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of running
- * transfers.
+ * The Actions / Apps / Shell / Files / Links / Logcat segmented control. The highlight glides to the selected segment
+ * with the tab switch's timing; the Shell segment shows a red dot while a console command runs, the Files one a count of
+ * running transfers, the Logcat one a window icon while Logcat is in its own window (plus a green dot while it runs
+ * there). When a segment would be narrower than [ICON_SEGMENT_UNDER] every segment shows its icon instead of its name,
+ * with the name as a tooltip, the two cross-fading over [SEGMENT_ICONS_MILLIS]; the dot, badge and window icon stay.
  */
 @Composable
 private fun SheetTabs(
     tab: SheetTab,
     consoleRunning: Boolean,
     filesRunning: Int,
+    /** Logcat is in its own window: its segment shows a window icon. */
+    logcatPopped: Boolean,
+    /** ...and running: a blinking green dot as well. */
+    logcatLive: Boolean,
+    /** The width the sheet is settling on (the selected tab's), not the animating one: the label size follows it. */
+    sheetWidth: Dp,
     onSelect: (SheetTab) -> Unit,
     modifier: Modifier = Modifier,
+    /** False under the OS's reduce motion: the Logcat segment's label swap, icon and dot snap. */
+    motion: Boolean = true,
 ) {
     val colors = MaterialTheme.colorScheme
     val segments = SheetTab.entries.size
@@ -360,7 +461,44 @@ private fun SheetTabs(
     SideEffect { previous[0] = tab }
     var lastCount by remember { mutableIntStateOf(filesRunning) } // stays readable while the badge scales out
     if (filesRunning > 0 && filesRunning != lastCount) lastCount = filesRunning
-    Box(modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest).padding(3.dp)) {
+    // Five labels fit the Actions tab's 280 dp only two sizes down (and without tracking, for the Shell dot and Files
+    // badge). Picked from the width the sheet settles on and eased with the width's own timing, so a tab switch
+    // never snaps the labels halfway through the sheet's resize.
+    val track = sheetWidth - SHEET_DRAG_BAR_WIDTH - TABS_SIDE_PADDING * 2 - TRACK_PADDING * 2
+    val compact = track / segments < SMALL_LABEL_UNDER
+    val toCompact by animateFloatAsState(if (compact) 1f else 0f, segmentSpec(!compact, motion)) // larger labels as the sheet grows
+    val typography = MaterialTheme.typography
+    val labelStyle = typography.labelLarge.copy(
+        fontSize = lerp(typography.labelLarge.fontSize, typography.labelSmall.fontSize, toCompact),
+        letterSpacing = lerp(typography.labelLarge.letterSpacing.takeIf { it.isSp } ?: 0.sp, 0.sp, toCompact),
+    )
+    // Six names don't fit the narrowest sheets: under 56 dp a segment, icons replace them (decided, like the label size,
+    // from the width the sheet settles on, so a tab switch cross-fades from its first frame).
+    val iconMode = track / segments < ICON_SEGMENT_UNDER
+    val toIconState = animateFloatAsState(if (iconMode) 1f else 0f, if (motion) tween(SEGMENT_ICONS_MILLIS) else snap())
+    val toIcon by toIconState
+    // Between a label and the Shell dot or Files badge: "Files" plus its badge needs the narrower gap at small sizes,
+    // and an icon the narrowest (a segment is then about 40 dp).
+    val gap = lerp(lerp(6.dp, 4.dp, toCompact), ICON_GAP, toIcon)
+    // While Logcat is in its own window, its segment swaps the label for the window icon when the label, dot and icon
+    // don't fit side by side: decided, like the label size, from the width the sheet settles on, in the settled style.
+    // With icons for names, the window icon (badged with the live dot) stands for Logcat.
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val logcatIconOnly = logcatPopped && iconMode || logcatPopped && run {
+        val settled = if (compact) {
+            typography.labelSmall.copy(letterSpacing = 0.sp)
+        } else {
+            typography.labelLarge
+        }
+        val label = measurer.measure(SheetTab.Logcat.name, settled.copy(fontWeight = FontWeight.SemiBold), maxLines = 1).size.width
+        val settledGap = if (compact) 4.dp else 6.dp
+        with(density) { label.toDp() } + settledGap * 2 + LIVE_DOT_SIZE + WINDOW_ICON_SIZE > track / segments
+    }
+    Box(
+        modifier.fillMaxWidth().height(36.dp).clip(TrackShape).background(colors.surfaceContainerHighest)
+            .padding(TRACK_PADDING),
+    ) {
         Box(
             Modifier.fillMaxHeight()
                 .layout { measurable, constraints ->
@@ -377,42 +515,224 @@ private fun SheetTabs(
         Row(Modifier.fillMaxSize().selectableGroup()) {
             SheetTab.entries.forEach { segment ->
                 val selected = segment == tab
-                Row(
-                    Modifier.weight(1f).fillMaxHeight().clip(SegmentShape)
-                        .selectable(selected, role = Role.Tab) { onSelect(segment) },
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        segment.name, style = MaterialTheme.typography.labelLarge,
-                        color = if (selected) colors.onSurface else colors.onSurfaceVariant,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    )
-                    if (segment == SheetTab.Shell && consoleRunning) {
-                        Box(
-                            Modifier.padding(start = 6.dp).size(6.dp).background(colors.error, CircleShape)
-                                .semantics { contentDescription = "Command running" },
-                        )
-                    }
-                    if (segment == SheetTab.Files) {
-                        AnimatedVisibility(
-                            visible = filesRunning > 0,
-                            enter = scaleIn(growSpec(true)),
-                            exit = scaleOut(growSpec(false)),
-                        ) {
-                            val count = lastCount
-                            Box(
-                                Modifier.padding(start = 6.dp).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
-                                    .background(colors.primary, CircleShape).padding(horizontal = 4.dp)
-                                    .semantics { contentDescription = if (count == 1) "1 transfer running" else "$count transfers running" },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(count.toString(), style = MaterialTheme.typography.labelSmall, color = colors.onPrimary)
+                SegmentTooltip(segment.name, show = iconMode, Modifier.weight(1f).fillMaxHeight()) {
+                    Row(
+                        Modifier.fillMaxSize().clip(SegmentShape)
+                            .selectable(selected, role = Role.Tab) { onSelect(segment) },
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val tint = if (selected) colors.onSurface else colors.onSurfaceVariant
+                        val label = @Composable { labelModifier: Modifier ->
+                            SegmentName(
+                                segment.name, segment.icon(), iconMode, { toIconState.value }, labelModifier, tint,
+                            ) { wordModifier ->
+                                Text(
+                                    segment.name, wordModifier, style = labelStyle, maxLines = 1, softWrap = false,
+                                    color = tint,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
                             }
+                        }
+                        if (segment == SheetTab.Logcat) {
+                            LogcatSegmentLabel(
+                                label, logcatIconOnly, logcatLive,
+                                ring = if (selected) colors.surface else colors.surfaceContainerHighest,
+                                tint = if (selected) colors.onSurface else colors.onSurfaceVariant,
+                                motion = motion,
+                            )
+                        } else {
+                            label(Modifier)
+                        }
+                        if (segment == SheetTab.Shell && consoleRunning) {
+                            Box(
+                                Modifier.padding(start = gap).size(6.dp).background(colors.error, CircleShape)
+                                    .semantics { contentDescription = "Command running" },
+                            )
+                        }
+                        if (segment == SheetTab.Files) {
+                            AnimatedVisibility(
+                                visible = filesRunning > 0,
+                                enter = scaleIn(growSpec(true)),
+                                exit = scaleOut(growSpec(false)),
+                            ) {
+                                val count = lastCount
+                                Box(
+                                    Modifier.padding(start = gap).defaultMinSize(minWidth = 16.dp, minHeight = 16.dp)
+                                        .semantics { contentDescription = if (count == 1) "1 transfer running" else "$count transfers running" }
+                                        .background(colors.primary, CircleShape).padding(horizontal = 4.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(count.toString(), style = MaterialTheme.typography.labelSmall, color = colors.onPrimary)
+                                }
+                            }
+                        }
+                        if (segment == SheetTab.Logcat) {
+                            LogcatSegmentMarks(logcatPopped && !logcatIconOnly, logcatLive && !logcatIconOnly, gap, motion)
                         }
                     }
                 }
             }
         }
+    }
+}
+
+private val LIVE_DOT_SIZE = 6.dp
+private val WINDOW_ICON_SIZE = 14.dp
+
+/** The label ⇄ window icon cross-fade of a narrow Logcat segment: 280 ms, eased like the segment's other changes. */
+private const val LABEL_SWAP_MILLIS = 280
+
+/** [growSpec], or a snap when [motion] is off (the OS reduces motion). */
+private fun <T> segmentSpec(grow: Boolean, motion: Boolean): FiniteAnimationSpec<T> = if (motion) growSpec(grow) else snap()
+
+/** The green live dot (the shared [LogcatLiveDot]); it blinks unless [motion] is off. */
+@Composable
+private fun LiveDot(motion: Boolean, modifier: Modifier = Modifier) {
+    LogcatLiveDot(
+        LogcatColors.level(LogLevel.Info).first, LIVE_DOT_SIZE, blinking = true,
+        modifier.semantics { contentDescription = "Logcat running" },
+        motion = motion,
+    )
+}
+
+/**
+ * After the Logcat label, where they fit: the live dot ([live], scales in) and the window icon ([popped], grows from 0
+ * to 14 dp wide), each [gap] after what comes before it. Without [motion] they appear and go at once.
+ */
+@Composable
+private fun LogcatSegmentMarks(popped: Boolean, live: Boolean, gap: Dp, motion: Boolean) {
+    AnimatedVisibility(
+        visible = live,
+        enter = scaleIn(segmentSpec(true, motion)) + expandHorizontally(segmentSpec(true, motion)),
+        exit = scaleOut(segmentSpec(false, motion)) + shrinkHorizontally(segmentSpec(false, motion)),
+    ) {
+        LiveDot(motion, Modifier.padding(start = gap))
+    }
+    AnimatedVisibility(
+        visible = popped,
+        enter = expandHorizontally(segmentSpec(true, motion)) + fadeIn(segmentSpec(true, motion)),
+        exit = shrinkHorizontally(segmentSpec(false, motion)) + fadeOut(segmentSpec(false, motion)),
+    ) {
+        Icon(
+            Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "In its own window",
+            Modifier.padding(start = gap).size(WINDOW_ICON_SIZE),
+        )
+    }
+}
+
+/**
+ * The Logcat segment's [label], or, when [iconOnly] (Logcat is in its own window and the segment is too narrow for the
+ * label and its marks), the window icon in its place, the two cross-fading over [LABEL_SWAP_MILLIS]. The icon carries
+ * the segment's name for accessibility; while [live] the green dot sits on its top-end corner as a badge, ringed in the
+ * segment's background ([ring]). Without [motion] the swap and the badge snap.
+ */
+@Composable
+private fun LogcatSegmentLabel(
+    label: @Composable (Modifier) -> Unit,
+    iconOnly: Boolean,
+    live: Boolean,
+    ring: androidx.compose.ui.graphics.Color,
+    tint: androidx.compose.ui.graphics.Color,
+    motion: Boolean,
+) {
+    val easing = if (iconOnly) EmphasizedAccelerate else EmphasizedDecelerate
+    val toIcon by animateFloatAsState(
+        if (iconOnly) 1f else 0f,
+        if (motion) tween(LABEL_SWAP_MILLIS, easing = easing) else snap(),
+    )
+    Box(contentAlignment = Alignment.Center) {
+        // Hidden behind the icon, the label keeps the segment's width and leaves the name to the icon.
+        label(
+            Modifier.graphicsLayer { alpha = 1f - toIcon }
+                .then(if (iconOnly) Modifier.clearAndSetSemantics { } else Modifier),
+        )
+        if (iconOnly || toIcon > 0f) {
+            Box(Modifier.size(WINDOW_ICON_SIZE).graphicsLayer { alpha = toIcon }) {
+                Icon(
+                    Icons.AutoMirrored.Filled.OpenInNew,
+                    contentDescription = if (iconOnly) "Logcat, open in its own window" else null,
+                    Modifier.fillMaxSize(),
+                    tint = tint,
+                )
+                AnimatedVisibility(
+                    visible = live && iconOnly,
+                    modifier = Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-4).dp),
+                    enter = scaleIn(segmentSpec(true, motion)),
+                    exit = scaleOut(segmentSpec(false, motion)),
+                ) {
+                    LiveDot(motion, Modifier.background(ring, CircleShape).padding(1.5.dp))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A segment's name: [word] (the label) or, in [iconMode], [icon], cross-fading by [toIcon] (0 the word, 1 the icon).
+ * The width eases between the two, so the Shell dot and Files badge after it slide along rather than jump. In icon mode
+ * the icon carries the name for accessibility and the hidden word is not read out.
+ */
+@Composable
+private fun SegmentName(
+    name: String,
+    icon: ImageVector,
+    iconMode: Boolean,
+    toIcon: () -> Float,
+    modifier: Modifier,
+    tint: androidx.compose.ui.graphics.Color,
+    word: @Composable (Modifier) -> Unit,
+) {
+    Layout(
+        content = {
+            word(
+                Modifier.graphicsLayer { alpha = 1f - toIcon() }
+                    .then(if (iconMode) Modifier.clearAndSetSemantics { } else Modifier),
+            )
+            Icon(
+                icon, contentDescription = if (iconMode) name else null,
+                Modifier.size(SEGMENT_ICON_SIZE).graphicsLayer { alpha = toIcon() }, tint = tint,
+            )
+        },
+        modifier = modifier,
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val wordPlaceable = measurables[0].measure(loose)
+        val iconPlaceable = measurables[1].measure(loose)
+        val t = toIcon()
+        val width = constraints.constrainWidth((wordPlaceable.width + (iconPlaceable.width - wordPlaceable.width) * t).roundToInt())
+        val height = maxOf(wordPlaceable.height, iconPlaceable.height)
+        layout(width, height) {
+            wordPlaceable.placeRelative((width - wordPlaceable.width) / 2, (height - wordPlaceable.height) / 2)
+            iconPlaceable.placeRelative((width - iconPlaceable.width) / 2, (height - iconPlaceable.height) / 2)
+        }
+    }
+}
+
+/**
+ * The segment's name as a hover tooltip while [show] (segments show icons); in name mode there is no tooltip area at
+ * all. The content is moved, not rebuilt, between the two wrappers (both a Box with [modifier]), so a mode change
+ * keeps its state and does not shift the layout.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SegmentTooltip(name: String, show: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val current by rememberUpdatedState(content)
+    val body = remember { movableContentOf { current() } }
+    if (show) {
+        TooltipArea(
+            tooltip = {
+                Surface(shape = RoundedCornerShape(4.dp), color = colors.inverseSurface) {
+                    Text(
+                        name, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall, color = colors.inverseOnSurface,
+                    )
+                }
+            },
+            modifier = modifier,
+        ) { body() }
+    } else {
+        Box(modifier) { body() }
     }
 }

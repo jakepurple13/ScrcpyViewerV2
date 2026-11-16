@@ -15,6 +15,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -44,6 +45,7 @@ class UpdateManagerTest {
         backend: UpdateBackend = FakeUpdateBackend { FakeUpdateBackend.available("1.6.0") },
         macNotInApplications: Boolean = false,
         currentVersion: String = "1.5.0",
+        autoDownload: MutableStateFlow<Boolean> = MutableStateFlow(false),
     ) = UpdateManager(
         backend = backend,
         scope = scope,
@@ -53,6 +55,7 @@ class UpdateManagerTest {
         repo = "jakepurple13/ScrcpyViewerV2",
         now = { checkedAt },
         notesTimeoutMs = 200,
+        autoDownload = autoDownload,
     )
 
     private fun <T> await(block: suspend () -> T): T = runBlocking { withTimeout(5_000) { block() } }
@@ -415,5 +418,124 @@ class UpdateManagerTest {
         } finally {
             dataDir.toFile().deleteRecursively()
         }
+    }
+
+    // Download updates automatically
+
+    @Test
+    fun `auto download fetches a found release in the background and waits as Ready`() {
+        val finish = CompletableDeferred<Unit>()
+        val file = File("ScrcpyViewer-1.6.0-mac-arm64.zip")
+        val backend = FakeUpdateBackend(downloadBlock = { emit ->
+            emit(DownloadProgress(40, 100, 40.0))
+            finish.await()
+            emit(DownloadProgress(100, 100, 100.0, file = file))
+        }) { FakeUpdateBackend.available("1.6.0") }
+        val m = manager(backend, autoDownload = MutableStateFlow(true))
+        m.check(userInitiated = false)
+        m.awaitState { it == UpdateState.Downloading(v160, 40, 100, background = true) }
+        finish.complete(Unit)
+        assertEquals(UpdateState.Ready(v160), m.awaitState { it is UpdateState.Ready })
+        assertTrue(backend.installed.isEmpty() && backend.installedQuitting.isEmpty())
+    }
+
+    @Test
+    fun `restart turns Ready into Installing, which reopens the app after installing`() {
+        val file = File("ScrcpyViewer-1.5.0-mac-arm64.zip")
+        val backend = FakeUpdateBackend { FakeUpdateBackend.available("1.6.0") }
+        val m = manager(backend, autoDownload = MutableStateFlow(true))
+        m.check(userInitiated = false)
+        m.awaitState { it is UpdateState.Ready }
+        m.restart()
+        assertEquals(UpdateState.Installing(v160), m.state.value)
+        m.installPending()
+        assertEquals(listOf(file), backend.installed)
+        assertTrue(backend.installedQuitting.isEmpty())
+    }
+
+    @Test
+    fun `quitting while Ready installs without reopening`() {
+        val file = File("ScrcpyViewer-1.5.0-mac-arm64.zip")
+        val backend = FakeUpdateBackend { FakeUpdateBackend.available("1.6.0") }
+        val m = manager(backend, autoDownload = MutableStateFlow(true))
+        m.check(userInitiated = false)
+        m.awaitState { it is UpdateState.Ready }
+        m.installPending()
+        assertEquals(listOf(file), backend.installedQuitting)
+        assertTrue(backend.installed.isEmpty())
+    }
+
+    @Test
+    fun `restart does nothing unless Ready`() {
+        val m = manager()
+        m.checkAndAwaitAvailable()
+        m.restart()
+        assertEquals(UpdateState.Available(v160), m.state.value)
+    }
+
+    @Test
+    fun `check ignored while Ready`() {
+        val backend = FakeUpdateBackend { FakeUpdateBackend.available("1.6.0") }
+        val m = manager(backend, autoDownload = MutableStateFlow(true))
+        m.check(userInitiated = false)
+        m.awaitState { it is UpdateState.Ready }
+        m.check(userInitiated = true)
+        assertIs<UpdateState.Ready>(m.state.value)
+        assertEquals(1, backend.checks.get())
+    }
+
+    @Test
+    fun `turning auto download on while a release is offered downloads it`() {
+        val auto = MutableStateFlow(false)
+        val m = manager(autoDownload = auto)
+        m.checkAndAwaitAvailable()
+        auto.value = true
+        assertEquals(UpdateState.Ready(v160), m.awaitState { it is UpdateState.Ready })
+    }
+
+    @Test
+    fun `auto download off keeps today's flow`() {
+        val backend = FakeUpdateBackend { FakeUpdateBackend.available("1.6.0") }
+        val m = manager(backend)
+        m.checkAndAwaitAvailable()
+        assertEquals(0, backend.downloads.get())
+        m.startUpdate()
+        m.awaitState { it is UpdateState.Installing }
+    }
+
+    @Test
+    fun `auto download skips copies that cannot install`() {
+        val backend = FakeUpdateBackend(canInstall = false) { FakeUpdateBackend.available("1.6.0") }
+        val m = manager(backend, autoDownload = MutableStateFlow(true))
+        m.checkAndAwaitAvailable()
+        assertEquals(0, backend.downloads.get())
+    }
+
+    @Test
+    fun `failed background download offers the release with the error and is not retried by itself`() {
+        val backend = FakeUpdateBackend(downloadBlock = { throw NetworkException("HTTP 500") }) {
+            FakeUpdateBackend.available("1.6.0")
+        }
+        val auto = MutableStateFlow(true)
+        val m = manager(backend, autoDownload = auto)
+        m.check(userInitiated = false)
+        val failed = assertIs<UpdateState.Failed>(m.awaitState { it is UpdateState.Failed })
+        assertEquals(v160, failed.release)
+        assertFalse(m.popupDismissed.value)
+        auto.value = false
+        auto.value = true
+        assertIs<UpdateState.Failed>(m.state.value)
+        assertEquals(1, backend.downloads.get())
+    }
+
+    @Test
+    fun `cancelling a background download closes the popup`() {
+        val backend = FakeUpdateBackend(downloadBlock = { awaitCancellation() }) { FakeUpdateBackend.available("1.6.0") }
+        val m = manager(backend, autoDownload = MutableStateFlow(true))
+        m.check(userInitiated = false)
+        await { backend.downloadStarted.await() }
+        m.cancel()
+        assertEquals(UpdateState.Available(v160), m.state.value)
+        assertTrue(m.popupDismissed.value)
     }
 }

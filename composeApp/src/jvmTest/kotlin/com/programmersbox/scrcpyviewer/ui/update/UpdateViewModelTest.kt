@@ -1,5 +1,9 @@
 package com.programmersbox.scrcpyviewer.ui.update
 
+import kotlin.test.assertNotNull
+import java.io.File
+import dev.nucleusframework.updater.DownloadProgress
+import kotlinx.coroutines.CompletableDeferred
 import com.programmersbox.scrcpyviewer.update.FakeUpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateManager
 import com.programmersbox.scrcpyviewer.update.UpdateState
@@ -12,6 +16,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -36,14 +41,18 @@ class UpdateViewModelTest {
         macNotInApplications: Boolean = false,
         event: UpdateEvent? = null,
         currentVersion: String = "1.5.0",
+        autoDownload: Boolean = false,
+        backend: FakeUpdateBackend =
+            FakeUpdateBackend(canInstall = canInstall, event = event) { FakeUpdateBackend.available("1.6.0") },
     ): UpdateViewModel {
         val manager = UpdateManager(
-            backend = FakeUpdateBackend(canInstall = canInstall, event = event) { FakeUpdateBackend.available("1.6.0") },
+            backend = backend,
             scope = managerScope,
             currentVersion = currentVersion,
             bundledAdbInUse = { null },
             macNotInApplications = macNotInApplications,
             repo = "jakepurple13/ScrcpyViewerV2",
+            autoDownload = MutableStateFlow(autoDownload),
         )
         return UpdateViewModel(manager, vmScope)
     }
@@ -123,5 +132,30 @@ class UpdateViewModelTest {
             "https://github.com/jakepurple13/ScrcpyViewerV2/releases/tag/v1.6.0",
             vm.checkAndAwaitAvailable().releasePageUrl,
         )
+    }
+
+    @Test
+    fun `background download hides the popup until Ready`() {
+        val finish = CompletableDeferred<Unit>()
+        val backend = FakeUpdateBackend(downloadBlock = { emit ->
+            emit(DownloadProgress(40, 100, 40.0))
+            finish.await()
+            emit(DownloadProgress(100, 100, 100.0, file = File("a.zip")))
+        }) { FakeUpdateBackend.available("1.6.0") }
+        val vm = vm(autoDownload = true, backend = backend)
+        vm.check()
+        val downloading = runBlocking { withTimeout(5_000) { vm.state.first { it.state is UpdateState.Downloading } } }
+        assertFalse(downloading.showPopup)
+        assertNotNull(downloading.available, "the badge still shows")
+        finish.complete(Unit)
+        val ready = runBlocking { withTimeout(5_000) { vm.state.first { it.state is UpdateState.Ready } } }
+        assertTrue(ready.showPopup)
+    }
+
+    @Test
+    fun `canInstall reaches the ui state`() {
+        assertTrue(vm().state.value.canInstall)
+        assertFalse(vm(canInstall = false).state.value.canInstall)
+        assertFalse(vm(macNotInApplications = true).state.value.canInstall)
     }
 }

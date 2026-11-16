@@ -2,6 +2,8 @@ package com.programmersbox.scrcpyviewer.ui.mirror
 
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
+import com.programmersbox.scrcpyviewer.adb.ShellResult
+import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import java.io.IOException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -164,5 +166,73 @@ class QuickActionsTest {
         actions.connected = false
         actions.toggleSheet()
         assertFalse(actions.open)
+    }
+
+    /** Records buffered runs; answers with [result]. */
+    private class FollowerRunner : ShellRunner(ScriptedAdb { "" }, "F") {
+        val runs = mutableListOf<String>()
+        var result: () -> ShellResult = { ShellResult("", 0, 1) }
+
+        override suspend fun run(cmd: String, timeoutMs: Long): ShellResult {
+            runs += cmd
+            return result()
+        }
+    }
+
+    @Test
+    fun `a built-in toggle sets followers to the leader's state instead of flipping them`() = runBlocking {
+        val device = FakeDevice().apply { setResult = CompletableDeferred(Unit) }
+        val pixel = FollowerRunner()
+        val offline = FollowerRunner().apply { result = { throw IOException("device offline") } }
+        val messages = mutableListOf<String>()
+        val actions = QuickActions(
+            device, eager, title = { "Galaxy A15" },
+            followers = { listOf(FollowRunner("Pixel 9", pixel, "P9"), FollowRunner("Pixel Tablet", offline, "TAB")) },
+        ) { messages += it }
+
+        // The follower may already read "on": it is set, not flipped, so it still gets the "on" command.
+        actions.onEvent(QuickActionEvent.Toggle(QuickToggle.WiFi, true))
+
+        assertEquals(listOf("svc wifi enable"), pixel.runs)
+        assertEquals(listOf("svc wifi enable"), offline.runs)
+        assertEquals(listOf("Ran on 2 of 3 devices · Pixel Tablet failed: device offline"), messages)
+    }
+
+    @Test
+    fun `a built-in toggle that succeeds on every device shows no result line`() = runBlocking {
+        val device = FakeDevice().apply { setResult = CompletableDeferred(Unit) }
+        val pixel = FollowerRunner()
+        val messages = mutableListOf<String>()
+        val actions = QuickActions(device, eager, followers = { listOf(FollowRunner("Pixel 9", pixel, "P9")) }) { messages += it }
+
+        actions.onEvent(QuickActionEvent.Toggle(QuickToggle.ShowTaps, true))
+
+        assertEquals(listOf("settings put system show_touches 1"), pixel.runs)
+        assertTrue(messages.isEmpty())
+    }
+
+    @Test
+    fun `a built-in toggle that fails on the leader is not sent to followers`() = runBlocking {
+        val device = FakeDevice()
+        val pixel = FollowerRunner()
+        val messages = mutableListOf<String>()
+        val actions = QuickActions(device, eager, followers = { listOf(FollowRunner("Pixel 9", pixel, "P9")) }) { messages += it }
+
+        actions.onEvent(QuickActionEvent.Toggle(QuickToggle.WiFi, false))
+        device.setResult.completeExceptionally(IOException("denied"))
+
+        assertTrue(pixel.runs.isEmpty())
+        assertEquals(listOf("Could not turn Wi-Fi off: denied"), messages)
+    }
+
+    @Test
+    fun `a built-in toggle without followers shows nothing on success`() = runBlocking {
+        val device = FakeDevice().apply { setResult = CompletableDeferred(Unit) }
+        val messages = mutableListOf<String>()
+        val actions = QuickActions(device, eager) { messages += it }
+
+        actions.onEvent(QuickActionEvent.Toggle(QuickToggle.WiFi, true))
+
+        assertTrue(messages.isEmpty())
     }
 }

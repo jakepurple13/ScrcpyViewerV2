@@ -86,6 +86,15 @@ class SettingsScreenshotTest {
     @Test fun `settings help light`() = category(SettingsCategoryId.Help, ThemeMode.Light)
     @Test fun `settings help dark`() = category(SettingsCategoryId.Help, ThemeMode.Dark)
 
+    // The tray icon row, found by search so it is on screen (the Appearance list runs past the fold).
+    @Test fun `settings tray icon on light`() =
+        render("settings-tray-icon-on-light.png", SettingsNav().withQuery("tray"), ThemeMode.Light)
+
+    @Test fun `settings tray icon off dark`() = render(
+        "settings-tray-icon-off-dark.png", SettingsNav().withQuery("tray"), ThemeMode.Dark,
+        state.copy(settings = state.settings.copy(showTrayIcon = false)),
+    )
+
     private fun palette(name: String, mode: ThemeMode, settings: Settings) =
         render(name, SettingsNav(selected = SettingsCategoryId.Appearance), mode, state.copy(settings = settings))
 
@@ -130,7 +139,8 @@ class SettingsScreenshotTest {
     fun `settings update badge`() =
         render("settings-update-badge.png", SettingsNav(), updates = updatesUi(UpdateState.Available(release), release))
 
-    private fun renderUpdates(name: String, ui: UpdateUiState) = render(name, SettingsNav(selected = SettingsCategoryId.Updates), updates = ui)
+    private fun renderUpdates(name: String, ui: UpdateUiState, state: SettingsUiState = this.state) =
+        render(name, SettingsNav(selected = SettingsCategoryId.Updates), state = state, updates = ui)
 
     @Test
     fun `updates available`() =
@@ -139,6 +149,13 @@ class SettingsScreenshotTest {
     @Test
     fun `updates downloading`() =
         renderUpdates("settings-updates-downloading.png", updatesUi(UpdateState.Downloading(release, 20_000_000, 50_000_000), release))
+
+    @Test
+    fun `updates ready to restart`() = renderUpdates(
+        "settings-updates-ready.png",
+        updatesUi(UpdateState.Ready(release), release).copy(canInstall = true),
+        state.copy(settings = state.settings.copy(autoDownloadUpdates = true)),
+    )
 
     @Test
     fun `updates up to date`() = renderUpdates("settings-updates-uptodate.png", updatesUi(UpdateState.UpToDate))

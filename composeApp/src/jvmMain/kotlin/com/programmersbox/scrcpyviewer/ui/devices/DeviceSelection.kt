@@ -30,18 +30,26 @@ data class DeviceSelectionState(
 
 /**
  * The device shown as selected on the Devices screen: the user's choice while it is connected, else the first ready
- * device. App-wide, so it survives tab switches and the Presets screen can apply to it.
+ * device. Never one of [hidden] (emulators still booting, left out of the device list until they are ready); once
+ * one is shown, the same rules apply to it, except that an emulator never takes the default over from another ready
+ * device already shown as selected (one that finishes booting does not move the selection to it). App-wide, so it
+ * survives tab switches and the Presets screen can apply to it.
  */
 class DeviceSelection(
     devices: StateFlow<List<Device>>,
     connected: StateFlow<Boolean>,
     scope: CoroutineScope,
+    hidden: StateFlow<Set<String>> = MutableStateFlow(emptySet()),
 ) : SelectedDevice {
     private val userSelection = MutableStateFlow<String?>(null)
 
-    val state: StateFlow<DeviceSelectionState> = combine(devices, connected, userSelection) { list, conn, chosen ->
-        val device = chosen?.let { s -> list.firstOrNull { it.serial == s } }
-            ?: list.firstOrNull { it.state == DeviceState.Device }
+    // The last default pick (no user choice); only read and written in the combine below, which runs one at a time.
+    private var lastDefault: String? = null
+
+    val state: StateFlow<DeviceSelectionState> = combine(devices, connected, userSelection, hidden) { list, conn, chosen, off ->
+        val shown = list.filter { it.serial !in off }
+        val device = chosen?.let { s -> shown.firstOrNull { it.serial == s } }
+            ?: defaultDevice(shown, lastDefault).also { lastDefault = it?.serial }
         DeviceSelectionState(list, conn, device?.serial, device?.optionsKey())
     }.stateIn(scope, SharingStarted.Eagerly, DeviceSelectionState(devices.value, connected.value))
 
@@ -56,3 +64,16 @@ class DeviceSelection(
     override fun label(key: String): String =
         state.value.devices.firstOrNull { it.optionsKey() == key }?.let(::deviceTitle) ?: key
 }
+
+/**
+ * The first ready device of [shown], unless that is an emulator other than [previous] while [previous] is still shown
+ * and ready: then [previous] stays. A real device's default is unchanged.
+ */
+internal fun defaultDevice(shown: List<Device>, previous: String?): Device? {
+    val first = shown.firstOrNull { it.state == DeviceState.Device } ?: return null
+    if (!isEmulatorSerial(first.serial) || first.serial == previous) return first
+    return shown.firstOrNull { it.serial == previous && it.state == DeviceState.Device } ?: first
+}
+
+/** An emulator's adb serial: `emulator-<port>`. */
+internal fun isEmulatorSerial(serial: String): Boolean = serial.startsWith("emulator-")

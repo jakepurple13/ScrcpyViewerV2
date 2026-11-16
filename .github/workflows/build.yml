@@ -41,15 +41,21 @@ jobs:
 
       - name: Install Linux runtime libraries and Xvfb
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1 libfontconfig1
+        # libasound2t64, libpulse0, libxcb-shm0, libdrm2: libavdevice (loaded with the bundled ffmpeg) links them;
+        # a Linux desktop has them, the runner does not.
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgl1 libfontconfig1 libasound2t64 libpulse0 libxcb1 libxcb-shm0 libdrm2 libudev1
 
       # Linux: run under a virtual display so any test that touches AWT/Skia has one.
+      # The Kotlin compiler runs inside Gradle (no separate 4 GB daemon) and the test JVM is capped (CI=true, see
+      # build.gradle.kts): the runner died mid-tests, out of memory, after the real FFmpeg tests were added.
       - name: Test (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum ./gradlew :composeApp:downloadBundledTools :composeApp:jvmTest --stacktrace
+        timeout-minutes: 25
+        run: xvfb-run --auto-servernum ./gradlew :composeApp:downloadBundledTools :composeApp:jvmTest --stacktrace -Pkotlin.compiler.execution.strategy=in-process
 
       - name: Test
         if: runner.os != 'Linux'
+        timeout-minutes: 25
         shell: bash
         run: ./gradlew :composeApp:downloadBundledTools :composeApp:jvmTest --stacktrace
 

@@ -11,8 +11,30 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.OvershootEasing
+import com.programmersbox.scrcpyviewer.ui.common.dialogEntrance
+import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
+import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,7 +43,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -30,42 +51,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.movableContentOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathMeasure
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LookaheadScope
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
-import com.programmersbox.scrcpyviewer.ui.common.OvershootEasing
 import com.programmersbox.scrcpyviewer.ui.common.animateHeight
-import com.programmersbox.scrcpyviewer.ui.common.dialogEntrance
 import com.programmersbox.scrcpyviewer.ui.common.dialogWidth
-import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
 import com.programmersbox.scrcpyviewer.ui.common.openWebUrl
-import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
 import com.programmersbox.scrcpyviewer.ui.common.stackMotion
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import com.programmersbox.scrcpyviewer.update.Release
 import com.programmersbox.scrcpyviewer.update.UpdateState
-import kotlin.math.roundToInt
-import kotlinx.coroutines.launch
 
 private const val BYTES_PER_MB = 1_000_000L
 
@@ -93,9 +94,11 @@ fun UpdateDialog(
     onLater: () -> Unit,
     onUpdate: () -> Unit,
     onCancel: () -> Unit,
+    onRestart: () -> Unit = {},
     openUrl: (String) -> Boolean = ::openWebUrl,
 ) {
     when (val state = ui.state) {
+        is UpdateState.Ready -> ReadyDialog(state.release, onLater, onRestart)
         is UpdateState.Available ->
             OfferDialog(state.release, ui.previousFailure?.let { "Last update failed: $it" }, ui, onLater, onUpdate, openUrl)
         is UpdateState.Failed -> (state.release ?: ui.available)?.let {
@@ -212,6 +215,53 @@ private fun OfferButtons(
     }
 }
 
+/**
+ * A background download finished: the check pops in and draws itself, and the user picks when to restart. "Later"
+ * leaves it ready; quitting the app installs it.
+ */
+@Composable
+private fun ReadyDialog(release: Release, onLater: () -> Unit, onRestart: () -> Unit) {
+    Dialog(onDismissRequest = onLater) {
+        DialogCard {
+            PoppingCheck(CheckCircleSize)
+            Spacer(Modifier.height(16.dp))
+            Text("Update ready", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Version ${release.versionLabel} has downloaded. Restart Scrcpy Vwr to install it.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!release.body.isNullOrBlank()) {
+                Text(
+                    release.body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .padding(top = 14.dp)
+                        .fillMaxWidth()
+                        .heightIn(max = 110.dp)
+                        .background(MaterialTheme.colorScheme.surfaceContainerLowest, MaterialTheme.shapes.medium)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
+            Text(
+                "Restarting closes open mirror windows. Your computer may ask for your password.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+            ) {
+                TextButton(onClick = onLater) { Text("Later") }
+                Button(onClick = onRestart) { Text("Restart now") }
+            }
+        }
+    }
+}
+
 internal const val INSTALLING_TEXT = "Download complete. Installing…"
 
 /**
@@ -316,30 +366,49 @@ private fun DownloadProgress(downloading: UpdateState.Downloading?) {
             null -> if (!startDone) LinearProgressIndicator(bar)
             else -> DownloadProgressBar(lastDownload, bar)
         }
-        val circleColor = MaterialTheme.colorScheme.primaryContainer
-        val checkColor = MaterialTheme.colorScheme.onPrimaryContainer
-        Canvas(
-            Modifier.requiredSize(CheckCircleSize).graphicsLayer {
-                val s = circle.value
-                scaleX = s
-                scaleY = s
-                alpha = s.coerceIn(0f, 1f)
-            },
-        ) {
-            if (circle.value == 0f) return@Canvas
-            drawCircle(circleColor)
-            val trim = check.value
-            if (trim <= 0f) return@Canvas
-            val unit = size.width / 40f
-            val mark = Path().apply {
-                moveTo(12f * unit, 20.5f * unit)
-                lineTo(17.5f * unit, 26f * unit)
-                lineTo(28.5f * unit, 14.5f * unit)
-            }
-            val measure = PathMeasure().apply { setPath(mark, false) }
-            val drawn = Path()
-            measure.getSegment(0f, measure.length * trim, drawn, true)
-            drawPath(drawn, checkColor, style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        }
+        CheckMark(CheckCircleSize, circle = { circle.value }, check = { check.value })
     }
+}
+
+/** A filled circle with a check drawn up to [check] (0..1), scaled by [circle]. Both are read in layer and draw only. */
+@Composable
+internal fun CheckMark(size: Dp, circle: () -> Float, check: () -> Float, modifier: Modifier = Modifier) {
+    val circleColor = MaterialTheme.colorScheme.primaryContainer
+    val checkColor = MaterialTheme.colorScheme.onPrimaryContainer
+    Canvas(
+        modifier.requiredSize(size).graphicsLayer {
+            val s = circle()
+            scaleX = s
+            scaleY = s
+            alpha = s.coerceIn(0f, 1f)
+        },
+    ) {
+        if (circle() == 0f) return@Canvas
+        drawCircle(circleColor)
+        val trim = check()
+        if (trim <= 0f) return@Canvas
+        val unit = this.size.width / 40f
+        val mark = Path().apply {
+            moveTo(12f * unit, 20.5f * unit)
+            lineTo(17.5f * unit, 26f * unit)
+            lineTo(28.5f * unit, 14.5f * unit)
+        }
+        val measure = PathMeasure().apply { setPath(mark, false) }
+        val drawn = Path()
+        measure.getSegment(0f, measure.length * trim, drawn, true)
+        // 3dp on the 40dp circle, scaled with it.
+        drawPath(drawn, checkColor, style = Stroke(width = 3f * unit, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+/** [CheckMark] that pops in (overshooting) and draws its stroke when it enters the composition. */
+@Composable
+internal fun PoppingCheck(size: Dp, modifier: Modifier = Modifier) {
+    val circle = remember { Animatable(0f) }
+    val check = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        launch { circle.animateTo(1f, tween(CHECK_POP_MILLIS, easing = OvershootEasing)) }
+        check.animateTo(1f, tween(CHECK_DRAW_MILLIS, delayMillis = CHECK_DRAW_DELAY_MILLIS, easing = EmphasizedDecelerate))
+    }
+    CheckMark(size, circle = { circle.value }, check = { check.value }, modifier)
 }

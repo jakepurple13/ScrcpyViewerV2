@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -32,6 +33,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.state.AfterScreenshot
+import com.programmersbox.scrcpyviewer.state.afterShot
 import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 
@@ -62,6 +65,24 @@ internal fun CaptureDirControl(b: SettingsBindings) {
             modifier = Modifier.weight(1f),
         )
         OutlinedButton(onClick = b.actions.onBrowseCaptureDir) { Text("Choose…") }
+    }
+}
+
+@Composable
+internal fun AfterScreenshotControl(b: SettingsBindings) {
+    val current = b.state.settings.afterShot
+    SingleChoiceSegmentedButtonRow {
+        AfterScreenshot.entries.forEachIndexed { i, choice ->
+            SegmentedButton(
+                selected = current == choice,
+                onClick = { b.actions.onAfterScreenshot(choice) },
+                shape = styledSegmentShape(i, AfterScreenshot.entries.size),
+            ) {
+                // The row sizes its segments by their min intrinsic width: make that the whole label, not its
+                // longest word, so "Show thumbnail" is not cut.
+                Text(choice.label, Modifier.width(IntrinsicSize.Max), maxLines = 1, softWrap = false)
+            }
+        }
     }
 }
 
@@ -134,4 +155,15 @@ internal fun animateMirrorToggle(b: SettingsBindings) = Modifier.toggleable(
 @Composable
 internal fun AnimateMirrorSwitch(b: SettingsBindings) {
     Switch(checked = b.state.settings.animateMirrorWindows, onCheckedChange = null)
+}
+
+/** The whole row toggles. */
+internal fun trayIconToggle(b: SettingsBindings) = Modifier.toggleable(
+    value = b.state.settings.showTrayIcon, role = Role.Switch,
+    onValueChange = b.actions.onShowTrayIcon,
+)
+
+@Composable
+internal fun TrayIconSwitch(b: SettingsBindings) {
+    Switch(checked = b.state.settings.showTrayIcon, onCheckedChange = null)
 }

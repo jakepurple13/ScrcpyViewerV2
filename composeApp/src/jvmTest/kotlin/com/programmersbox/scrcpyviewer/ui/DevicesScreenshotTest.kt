@@ -32,6 +32,35 @@ import com.programmersbox.scrcpyviewer.adb.MdnsType
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import androidx.compose.runtime.CompositionLocalProvider
+import com.programmersbox.scrcpyviewer.info.BatteryHealth
+import com.programmersbox.scrcpyviewer.info.BatteryInfo
+import com.programmersbox.scrcpyviewer.info.ChargeStatus
+import com.programmersbox.scrcpyviewer.info.DisplayInfo
+import com.programmersbox.scrcpyviewer.info.LiveInfo
+import com.programmersbox.scrcpyviewer.info.MemoryInfo
+import com.programmersbox.scrcpyviewer.info.NetworkInfo
+import com.programmersbox.scrcpyviewer.info.PowerSource
+import com.programmersbox.scrcpyviewer.info.SoftwareInfo
+import com.programmersbox.scrcpyviewer.info.StaticInfo
+import com.programmersbox.scrcpyviewer.info.StorageBreakdown
+import com.programmersbox.scrcpyviewer.info.StorageInfo
+import com.programmersbox.scrcpyviewer.ui.devices.info.LocalInfoNow
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
+import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoUiState
+import com.programmersbox.scrcpyviewer.ui.devices.info.Load
+import com.programmersbox.scrcpyviewer.emulator.AndroidSdk
+import com.programmersbox.scrcpyviewer.emulator.Avd
+import com.programmersbox.scrcpyviewer.emulator.AvdKind
+import com.programmersbox.scrcpyviewer.emulator.AvdState
+import com.programmersbox.scrcpyviewer.emulator.BootStage
+import com.programmersbox.scrcpyviewer.emulator.SdkLookup
+import com.programmersbox.scrcpyviewer.state.EmulatorPrefs
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorMenu
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorRow
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsUiState
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.WipeDialog
+import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
 import java.nio.file.Files
 import java.nio.file.Paths
 import kotlin.test.Test
@@ -74,15 +103,23 @@ class DevicesScreenshotTest {
         width: Int = 1280,
         listWidthPx: Int? = null,
         detailOpen: Boolean = false,
+        detailTab: DetailTab = DetailTab.Options,
+        info: DeviceInfoUiState = DeviceInfoUiState(),
+        settleMillis: Long = 1_000,
+        emulators: EmulatorsUiState? = null,
     ) {
         val out = outDir.resolve(name)
-        renderToPng(width, 800, out, settleMillis = 1_000) {
+        renderToPng(width, 800, out, settleMillis = settleMillis) {
             ScrcpyViewerTheme(mode) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                    DevicesContent(
-                        state, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
-                        panes = screenshotPanes(listWidthPx, detailOpen),
-                    )
+                    CompositionLocalProvider(LocalInfoNow provides { infoNow }) {
+                        DevicesContent(
+                            state, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                            panes = screenshotPanes(listWidthPx, detailOpen),
+                            detailTab = detailTab, info = info,
+                            emulators = emulators, motion = true, emulatorNow = { emulatorNow },
+                        )
+                    }
                 }
             }
         }
@@ -103,6 +140,68 @@ class DevicesScreenshotTest {
 
     @Test
     fun `devices dark narrow detail`() = render("devices-dark-narrow-detail.png", ThemeMode.Dark, width = 760, detailOpen = true)
+
+    private val samsungStatic = StaticInfo(
+        software = SoftwareInfo(
+            androidVersion = "16", sdk = 36, securityPatch = "2026-07-05", buildId = "BP4A.251205.006.A156U1UESCEZG1",
+            abi = "arm64-v8a", manufacturer = "samsung", model = "SM-A156U1", oneUiVersion = "8.5",
+            kernel = "5.15.189-android13-8-33641424",
+        ),
+        display = DisplayInfo(1080, 2340, 450, null, null, null, 90.0),
+        storage = StorageInfo(
+            110534640L * 1024, 18165728L * 1024,
+            // Real Samsung values; System is the system partition, which is not part of the used total.
+            StorageBreakdown(10329260032 + 4519657306, 8888320 + 773464064, 24251482112, 1679273984),
+        ),
+        network = NetworkInfo("Office-5G", "192.168.1.36", 351),
+    )
+
+    private val samsungLive = LiveInfo(
+        BatteryInfo(100, ChargeStatus.Full, PowerSource.Usb, 29.2, 4334, BatteryHealth.Good),
+        MemoryInfo(3644192, 931408),
+    )
+
+    private val infoNow = 1_800_000_000_000L
+
+    private fun infoState(
+        static: Load<StaticInfo> = Load.Ready(samsungStatic),
+        live: Load<LiveInfo> = Load.Ready(samsungLive),
+        notReady: String? = null,
+    ) = DeviceInfoUiState(
+        serial = "R5CX12GDWPZ", title = "Galaxy A15 5G", notReady = notReady, static = static, live = live,
+        liveUpdatedAt = if (live is Load.Ready) infoNow - 12_000 else null,
+    )
+
+    private fun infoDevices(deviceState: DeviceState = DeviceState.Device) = DevicesUiState(
+        devices = listOf(
+            Device("R5CX12GDWPZ", deviceState, deviceState.name.lowercase(), "SM_A156U1", null, 1, false, DeviceInfo("Galaxy A15 5G", "16", 36)),
+        ),
+        selectedSerial = "R5CX12GDWPZ", adbConnected = true, canMirror = deviceState == DeviceState.Device,
+    )
+
+    private val infoFailed = Load.Failed("Couldn't reach the device")
+
+    private fun renderInfo(name: String, mode: ThemeMode, info: DeviceInfoUiState, deviceState: DeviceState = DeviceState.Device) =
+        render(name, mode, infoDevices(deviceState), detailTab = DetailTab.Info, info = info, settleMillis = 3_000)
+
+    @Test
+    fun `devices info light`() = renderInfo("devices-info-light.png", ThemeMode.Light, infoState())
+
+    @Test
+    fun `devices info dark`() = renderInfo("devices-info-dark.png", ThemeMode.Dark, infoState())
+
+    @Test
+    fun `devices info loading`() =
+        renderInfo("devices-info-loading.png", ThemeMode.Light, infoState(Load.Loading, Load.Loading))
+
+    @Test
+    fun `devices info failed`() = renderInfo("devices-info-failed.png", ThemeMode.Dark, infoState(infoFailed, infoFailed))
+
+    @Test
+    fun `devices info not ready`() = renderInfo(
+        "devices-info-not-ready.png", ThemeMode.Light,
+        infoState(Load.Loading, Load.Loading, notReady = "Device is offline"), DeviceState.Offline,
+    )
 
     @Test
     fun `devices light`() = render("devices-light.png", ThemeMode.Light)
@@ -199,6 +298,192 @@ class DevicesScreenshotTest {
     @Test
     fun `devices context menu wifi`() =
         renderMenu("devices-light-menu-wifi.png", ThemeMode.Light, "adb-R5CT90ABCDE-xK2fPq._adb-tls-connect._tcp")
+
+    // --- Emulators section ------------------------------------------------------------------------------------------
+
+    private val emulatorNow = 1_800_000_000_000L
+    private val sdkRoot = Paths.get(System.getProperty("user.home"), "Library", "Android", "sdk")
+    private val foundSdk = SdkLookup.Found(AndroidSdk(sdkRoot, sdkRoot.resolve("emulator").resolve("emulator"), "37.3.9"))
+
+    private fun avd(id: String, name: String, api: Int, version: String, kind: AvdKind) =
+        Avd(id, name, api, version, kind, sdkRoot.resolve("$id.avd"))
+
+    private val pixel9 = avd("Pixel_9_API_36", "Pixel 9", 36, "16", AvdKind.Phone)
+    private val pixelTablet = avd("Pixel_Tablet_API_35", "Pixel Tablet", 35, "15", AvdKind.Tablet)
+    private val headsUp = avd("heads_up_api34", "heads_up_api34", 34, "14", AvdKind.Phone)
+    private val wear = avd("Wear_OS_Large_Round_API_34", "Wear OS Large Round", 34, "14", AvdKind.Watch)
+    private val tv = avd("Television_1080p_API_34", "Television (1080p)", 34, "14", AvdKind.Tv)
+
+    private fun emuRow(avd: Avd, state: AvdState, size: Long = 8_804_682_956L) =
+        EmulatorRow(avd, state, size, EmulatorPrefs(lastBootMillis = 22_000))
+
+    private val allStates = EmulatorsUiState(
+        sdk = foundSdk,
+        rows = listOf(
+            emuRow(headsUp, AvdState.Booting("emulator-5556", BootStage.Booting, emulatorNow - 12_000, cold = false), 5_476_083_302),
+            emuRow(pixel9, AvdState.Running("emulator-5554")),
+            emuRow(pixelTablet, AvdState.Stopped, 7_408_903_782),
+            emuRow(tv, AvdState.Stopping("emulator-5558"), 4_101_002_100),
+            emuRow(wear, AvdState.Failed("Emulator exited (code 1). Not enough disk space for the data image.", cold = false), 3_650_722_201),
+        ),
+        hiddenSerials = setOf("emulator-5556"),
+        home = Paths.get(System.getProperty("user.home")),
+    )
+
+    /** The running Pixel 9 shows in the connected rows with its Emulator tag; the booting one does not show yet. */
+    private val withEmulators = state.copy(
+        devices = state.devices.take(1) + listOf(
+            Device("emulator-5554", DeviceState.Device, "device", "sdk_gphone64_arm64", null, 7, false, DeviceInfo("Pixel 9", "16", 36)),
+            Device("emulator-5556", DeviceState.Offline, "offline", null, null, 8, false),
+        ),
+    )
+
+    private fun renderEmulators(name: String, mode: ThemeMode, emulators: EmulatorsUiState, listWidthPx: Int = 460, width: Int = 1280) =
+        render(name, mode, withEmulators, width = width, listWidthPx = listWidthPx, emulators = emulators.copy(hiddenSerials = setOf("emulator-5556")))
+
+    /** An emulator's right-click menu: Mirror only, no Wi-Fi item. */
+    @Test
+    fun `devices context menu emulator`() =
+        renderMenu("devices-light-menu-emulator.png", ThemeMode.Light, "emulator-5554", withEmulators)
+
+    /** A selected emulator's simple and advanced views: Mirror, no Connect over Wi-Fi. */
+    @Test
+    fun `emulator selected has no wifi button`() {
+        val selected = withEmulators.copy(selectedSerial = "emulator-5554", canMirror = true, errors = emptyMap())
+        render("emulators-light-selected-simple.png", ThemeMode.Light, selected.copy(advanced = false), emulators = allStates)
+        render("emulators-light-selected-advanced.png", ThemeMode.Light, selected, emulators = allStates)
+    }
+
+    /**
+     * heads_up_api34 running on emulator-5554 is titled with its AVD name, not its system model; an offline emulator
+     * (emulator-5560) says to stop and start it again instead of the cable hint, beside the real devices' rows.
+     */
+    @Test
+    fun `emulators avd name and offline hint`() = render(
+        "emulators-light-avd-name-offline.png", ThemeMode.Light,
+        state.copy(
+            devices = state.devices + listOf(
+                Device("emulator-5554", DeviceState.Device, "device", "sdk_gphone64_arm64", null, 7, false, DeviceInfo("sdk_gphone64_arm64", "14", 34)),
+                Device("emulator-5560", DeviceState.Offline, "offline", null, null, 9, false),
+                Device("R5CX12GDWPZ", DeviceState.Offline, "offline", "SM_A156U1", null, 10, false),
+            ),
+        ),
+        listWidthPx = 460,
+        emulators = allStates.copy(
+            rows = listOf(emuRow(headsUp, AvdState.Running("emulator-5554")), emuRow(pixel9, AvdState.Stopped)),
+            hiddenSerials = emptySet(),
+        ),
+    )
+
+    @Test
+    fun `emulators every state light`() = renderEmulators("emulators-light.png", ThemeMode.Light, allStates)
+
+    @Test
+    fun `emulators every state dark`() = renderEmulators("emulators-dark.png", ThemeMode.Dark, allStates)
+
+    @Test
+    fun `emulators collapsed`() = renderEmulators("emulators-light-collapsed.png", ThemeMode.Light, allStates.copy(expanded = false))
+
+    @Test
+    fun `emulators no sdk`() = renderEmulators(
+        "emulators-light-no-sdk.png", ThemeMode.Light,
+        EmulatorsUiState(sdk = SdkLookup.NotFound("~/Library/Android/sdk")),
+    )
+
+    @Test
+    fun `emulators no emulator dark`() = renderEmulators(
+        "emulators-dark-no-emulator.png", ThemeMode.Dark,
+        EmulatorsUiState(sdk = SdkLookup.NoEmulator(sdkRoot), home = allStates.home),
+    )
+
+    @Test
+    fun `emulators no avds`() = renderEmulators(
+        "emulators-light-no-avds.png", ThemeMode.Light, EmulatorsUiState(sdk = foundSdk, home = allStates.home),
+    )
+
+    @Test
+    fun `emulators narrow list with a long name`() = renderEmulators(
+        "emulators-light-narrow-240.png", ThemeMode.Light,
+        allStates.copy(
+            rows = listOf(
+                emuRow(
+                    avd("Pixel_9_Pro_Fold_API_36_Google_Play", "Pixel 9 Pro Fold API 36 Google Play Large Screen", 36, "16", AvdKind.Tablet),
+                    AvdState.Stopped,
+                ),
+            ) + allStates.rows,
+        ),
+        listWidthPx = 240,
+    )
+
+    @Test
+    fun `emulators narrow list dark`() = renderEmulators("emulators-dark-narrow-240.png", ThemeMode.Dark, allStates, listWidthPx = 240)
+
+    /** Popups do not render offscreen, so the More menu's items are drawn on a menu-like surface instead. */
+    private fun renderEmulatorMenu(name: String, mode: ThemeMode, row: EmulatorRow, platform: OpenPlatform = OpenPlatform.Mac) {
+        val out = outDir.resolve(name)
+        renderToPng(400, 360, out, settleMillis = 500) {
+            ScrcpyViewerTheme(mode) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    Surface(
+                        Modifier.padding(24.dp).width(260.dp),
+                        shape = MaterialTheme.shapes.extraSmall,
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        shadowElevation = 3.dp,
+                    ) {
+                        Column(Modifier.padding(vertical = 8.dp)) {
+                            EmulatorMenu(row, onEvent = {}, onDismiss = {}, motion = true, platform = platform)
+                        }
+                    }
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 3_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `emulators more menu stopped`() = renderEmulatorMenu(
+        "emulators-light-menu.png", ThemeMode.Light,
+        EmulatorRow(pixel9, AvdState.Stopped, null, EmulatorPrefs(mirrorWhenReady = true)),
+    )
+
+    @Test
+    fun `emulators more menu running dark`() = renderEmulatorMenu(
+        "emulators-dark-menu-running.png", ThemeMode.Dark,
+        EmulatorRow(pixel9, AvdState.Running("emulator-5554"), null, EmulatorPrefs(showWindow = true)),
+    )
+
+    /** Windows and Linux say Show in folder; a failed AVD can be wiped. */
+    @Test
+    fun `emulators more menu failed windows`() = renderEmulatorMenu(
+        "emulators-light-menu-failed-windows.png", ThemeMode.Light,
+        EmulatorRow(pixel9, AvdState.Failed("Emulator exited (code 1).", cold = false), null, EmulatorPrefs()),
+        platform = OpenPlatform.Windows,
+    )
+
+    private fun renderWipeDialog(name: String, mode: ThemeMode) {
+        val out = outDir.resolve(name)
+        renderToPng(1280, 800, out, settleMillis = 1_000) {
+            ScrcpyViewerTheme(mode) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        withEmulators, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        panes = screenshotPanes(460, false),
+                        emulators = allStates.copy(hiddenSerials = setOf("emulator-5556")), motion = true,
+                        emulatorNow = { emulatorNow },
+                    )
+                    // Pixel Tablet is the stopped one in [allStates].
+                    WipeDialog(visible = true, name = "Pixel Tablet", onConfirm = {}, onDismiss = {}, motion = true)
+                }
+            }
+        }
+        assertTrue(Files.size(out) > 10_000, "$name should not be blank")
+    }
+
+    @Test
+    fun `emulators wipe dialog light`() = renderWipeDialog("emulators-light-wipe-dialog.png", ThemeMode.Light)
+
+    @Test
+    fun `emulators wipe dialog dark`() = renderWipeDialog("emulators-dark-wipe-dialog.png", ThemeMode.Dark)
 
     private val pairing = WifiPairingState(
         qrName = "scrcpy-viewer-7QK2ab",
@@ -321,6 +606,35 @@ class DevicesScreenshotTest {
                     DevicesContent(
                         simple.copy(advanced = advanced), {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
                         panes = screenshotPanes(null, false),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `motion emulator start, ready and fold`() {
+        val stopped = EmulatorsUiState(sdk = foundSdk, rows = listOf(emuRow(pixel9, AvdState.Stopped)), home = allStates.home)
+        var emulators by androidx.compose.runtime.mutableStateOf(stopped)
+        val booting = AvdState.Booting("emulator-5554", BootStage.Starting, 0, cold = false)
+        renderFrames(
+            "emulator", 560, 420,
+            frames(
+                100, 150, 200, 300, 450, 600, 1100, 1150, 1200, 1300, 1500, 1800, 2000, 2050, 2100, 2200, 2400, 2700,
+                at = mapOf(
+                    100L to { emulators = stopped.copy(rows = listOf(emuRow(pixel9, booting))) },
+                    1100L to { emulators = stopped.copy(rows = listOf(emuRow(pixel9, booting.copy(stage = BootStage.Booting)))) },
+                    1500L to { emulators = stopped.copy(rows = listOf(emuRow(pixel9, AvdState.Running("emulator-5554")))) },
+                    2000L to { emulators = emulators.copy(expanded = false) },
+                ),
+            ),
+        ) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    DevicesContent(
+                        state.copy(devices = state.devices.take(1)), {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
+                        panes = screenshotPanes(560, false),
+                        emulators = emulators, motion = true, emulatorNow = { 9_000 },
                     )
                 }
             }

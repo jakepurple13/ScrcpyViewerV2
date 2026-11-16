@@ -32,6 +32,20 @@ class SettingsRegistryTest {
         assertEquals(listOf("launch-quit-animation"), hit("animation"))
         assertEquals(listOf("launch-quit-animation"), hit("startup"))
         assertEquals(listOf("animate-mirror"), hit("zoom"))
+        assertEquals(listOf("tray-icon"), hit("menu bar"))
+        assertEquals(listOf("tray-icon"), hit("system tray"))
+    }
+
+    @Test
+    fun `after a screenshot row follows the capture folder row as a segmented choice`() {
+        val entries = settingsCategories.flatMap { it.entries }
+        val i = entries.indexOfFirst { it.id == "capture-dir" }
+        val entry = entries[i + 1]
+        assertEquals("after-screenshot", entry.id)
+        assertEquals("After a screenshot", entry.title)
+        assertEquals(listOf("Show thumbnail", "Copy", "Open editor"), com.programmersbox.scrcpyviewer.state.AfterScreenshot.entries.map { it.label })
+        assertEquals(listOf("after-screenshot"), searchSettings(settingsCategories, "thumbnail").first().entries.map { it.id })
+        assertEquals(listOf("after-screenshot"), searchSettings(settingsCategories, "markup").first().entries.map { it.id })
     }
 
     @Test
@@ -42,5 +56,13 @@ class SettingsRegistryTest {
         assertEquals("Plays when Scrcpy Vwr opens and quits.", entry.description)
         // Preview tiles below the title, like the Style picker.
         assertEquals(EntryLayout.Block, entry.layout)
+    }
+
+    @Test
+    fun `tray icon row is named for the platform`() {
+        assertEquals("Show icon in menu bar", trayIconSettingTitle(isMac = true))
+        assertEquals("Show icon in system tray", trayIconSettingTitle(isMac = false))
+        val entry = settingsCategories.first { it.id == Appearance }.entries.single { it.id == "tray-icon" }
+        assertEquals(trayIconSettingTitle(), entry.title)
     }
 }

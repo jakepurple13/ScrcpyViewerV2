@@ -15,6 +15,8 @@ koin-compiler = "1.2.1"
 # Packaging plugin, updater runtime and CI composite actions (.github/workflows/build.yml) move together.
 nucleus = "2.5.18"
 jna = "5.17.0"
+# System tray / macOS menu bar icon.
+composenativetray = "2.1.7"
 # Reads app icons out of APKs for the mirror window's Apps tab.
 apk-parser = "2.6.10"
 
@@ -38,6 +40,7 @@ nucleus-application = { module = "dev.nucleusframework:nucleus.nucleus-applicati
 nucleus-window-tao = { module = "dev.nucleusframework:nucleus.decorated-window-tao", version.ref = "nucleus" }
 nucleus-window-material3 = { module = "dev.nucleusframework:nucleus.decorated-window-material3", version.ref = "nucleus" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+composenativetray = { module = "dev.nucleusframework:composenativetray", version.ref = "composenativetray" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 
 [plugins]

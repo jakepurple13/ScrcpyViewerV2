@@ -1,0 +1,225 @@
+package com.programmersbox.scrcpyviewer.ui.devices.emulators
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.programmersbox.scrcpyviewer.emulator.Avd
+import com.programmersbox.scrcpyviewer.emulator.AvdState
+import com.programmersbox.scrcpyviewer.emulator.EmulatorLauncher
+import com.programmersbox.scrcpyviewer.emulator.SdkLookup
+import com.programmersbox.scrcpyviewer.emulator.avdHome
+import com.programmersbox.scrcpyviewer.emulator.EmulatorEnvironment
+import com.programmersbox.scrcpyviewer.emulator.findSdk
+import com.programmersbox.scrcpyviewer.emulator.readAvds
+import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.state.EmulatorPrefs
+import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
+import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
+import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.koin.core.annotation.KoinViewModel
+import java.nio.file.Path
+import kotlin.coroutines.CoroutineContext
+
+/**
+ * One AVD in the Emulators section. [size] is null until its folder has been measured (or when that failed). While
+ * [wiping], its data is being deleted: it cannot start or be wiped again.
+ */
+internal data class EmulatorRow(
+    val avd: Avd,
+    val state: AvdState,
+    val size: Long?,
+    val prefs: EmulatorPrefs,
+    val wiping: Boolean = false,
+    /** An emulator process of ours for it has not exited yet (the row may already read Stopped): no wipe until then. */
+    val exiting: Boolean = false,
+)
+
+internal data class EmulatorsUiState(
+    /** Null until the first read finishes. */
+    val sdk: SdkLookup? = null,
+    /** Catalog AVDs, sorted by name; empty unless [sdk] is [SdkLookup.Found]. */
+    val rows: List<EmulatorRow> = emptyList(),
+    val expanded: Boolean = true,
+    /** Emulators still booting: the connected rows leave them out until they are ready. */
+    val hiddenSerials: Set<String> = emptySet(),
+    /** The user's home folder, shown as `~` in the SDK line. */
+    val home: Path? = null,
+) {
+    /**
+     * By serial, the display name of each catalog AVD with an emulator on it (ours, or one started elsewhere once
+     * matched): the connected rows title an emulator with it instead of its system model.
+     */
+    val avdNames: Map<String, String> by lazy {
+        rows.mapNotNull { row ->
+            val serial = when (val st = row.state) {
+                is AvdState.Booting -> st.serial
+                is AvdState.Running -> st.serial
+                is AvdState.Stopping -> st.serial
+                else -> null
+            }
+            serial?.let { it to row.avd.name }
+        }.toMap()
+    }
+}
+
+internal sealed interface EmulatorEvent {
+    data class Start(val avdId: String) : EmulatorEvent
+    data class ColdBoot(val avdId: String) : EmulatorEvent
+    data class Stop(val avdId: String) : EmulatorEvent
+    data class Retry(val avdId: String) : EmulatorEvent
+    data class ToggleMirror(val avdId: String) : EmulatorEvent
+    data class ToggleWindow(val avdId: String) : EmulatorEvent
+
+    /** Show in Finder / Show in folder: the AVD's folder in the file manager. */
+    data class Reveal(val avdId: String) : EmulatorEvent
+
+    /** Wipe data, once confirmed in the dialog. */
+    data class Wipe(val avdId: String) : EmulatorEvent
+    data class SetExpanded(val expanded: Boolean) : EmulatorEvent
+    data class SdkChosen(val path: String) : EmulatorEvent
+    data object Reload : EmulatorEvent
+}
+
+private data class Catalog(val sdk: SdkLookup?, val avds: List<Avd>)
+
+/**
+ * The Devices screen's Emulators section: the SDK and AVD catalog (read off the main thread), each AVD's launcher state,
+ * and its saved preferences. The catalog is read when the screen opens (it sends [EmulatorEvent.Reload]), after a new
+ * SDK folder is chosen, and after a start or stop. AVD folder sizes (`du`, up to 30 s each) are measured in the
+ * background on those reads except after a start: a running emulator's size need not refresh, and a Stop measures again.
+ */
+@KoinViewModel
+internal class EmulatorsViewModel(
+    private val launcher: EmulatorLauncher,
+    private val settings: AppSettings,
+    /** Env, home and folder sizes: the machine's in the app, fakes in tests (no real SDK read, no `du`). */
+    environment: EmulatorEnvironment,
+    scope: CoroutineScope = defaultViewModelScope(),
+    private val os: OpenPlatform = OpenPlatform.current(),
+    private val io: CoroutineContext = Dispatchers.IO,
+    /** Shows an AVD folder in Finder / Explorer (its parent folder on Linux); tests record it instead. */
+    private val reveal: (Path) -> Unit = { revealInFolder(it, os) },
+) : ViewModel(scope) {
+    private val env = environment.env
+    private val home = environment.home
+    private val sizeOf = environment.sizeOf
+    private val catalog = MutableStateFlow(Catalog(null, emptyList()))
+    private val sizes = MutableStateFlow<Map<String, Long>>(emptyMap())
+    private var loadJob: Job? = null
+    private var sizeJob: Job? = null
+    private var measurePending = false
+
+    val state: StateFlow<EmulatorsUiState> = combine(
+        catalog, sizes, combine(launcher.states, launcher.wiping, launcher.processAlive, ::Triple), launcher.bootingSerials,
+        settings.settings,
+    ) { cat, sizes, (states, wiping, alive), booting, s ->
+        EmulatorsUiState(
+            sdk = cat.sdk,
+            // Only catalog AVDs: the launcher's map may hold others (an emulator of a Gradle managed device).
+            rows = cat.avds.map { avd ->
+                EmulatorRow(
+                    avd, states[avd.id] ?: AvdState.Stopped, sizes[avd.id], s.emulatorPrefs[avd.id] ?: EmulatorPrefs(),
+                    wiping = avd.id in wiping,
+                    exiting = avd.id in alive,
+                )
+            },
+            expanded = s.emulatorsExpanded,
+            hiddenSerials = booting,
+            home = home,
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, EmulatorsUiState(expanded = settings.settings.value.emulatorsExpanded, home = home))
+
+    init {
+        // The first read comes from the Devices screen's Reload as it opens.
+        // A stop (here or elsewhere) changes the AVD's size on disk: read the catalog again once it is Stopped.
+        viewModelScope.launch {
+            var before = launcher.states.value.keys
+            launcher.states.collect { now ->
+                if ((before - now.keys).isNotEmpty()) reload()
+                before = now.keys
+            }
+        }
+    }
+
+    fun onEvent(event: EmulatorEvent) {
+        when (event) {
+            is EmulatorEvent.Start -> start(event.avdId, cold = false)
+            is EmulatorEvent.ColdBoot -> start(event.avdId, cold = true)
+            is EmulatorEvent.Retry -> start(event.avdId, cold = (row(event.avdId)?.state as? AvdState.Failed)?.cold == true)
+            is EmulatorEvent.Stop -> launcher.stop(event.avdId, row(event.avdId)?.avd?.name ?: event.avdId)
+            is EmulatorEvent.ToggleMirror -> updatePrefs(event.avdId) { it.copy(mirrorWhenReady = !it.mirrorWhenReady) }
+            is EmulatorEvent.ToggleWindow -> updatePrefs(event.avdId) { it.copy(showWindow = !it.showWindow) }
+            is EmulatorEvent.Reveal -> catalog.value.avds.firstOrNull { it.id == event.avdId }?.let { reveal(it.dir) }
+            is EmulatorEvent.Wipe -> wipe(event.avdId)
+            is EmulatorEvent.SetExpanded -> settings.update { it.copy(emulatorsExpanded = event.expanded) }
+            is EmulatorEvent.SdkChosen -> {
+                // Saved even when it is not an SDK: the section then says what it found there.
+                settings.update { it.copy(androidSdkPath = event.path) }
+                reload()
+            }
+            EmulatorEvent.Reload -> reload()
+        }
+    }
+
+    private fun row(avdId: String): EmulatorRow? = state.value.rows.firstOrNull { it.avd.id == avdId }
+
+    private fun start(avdId: String, cold: Boolean) {
+        val sdk = (catalog.value.sdk as? SdkLookup.Found)?.sdk ?: return
+        val avd = catalog.value.avds.firstOrNull { it.id == avdId } ?: return
+        launcher.start(avd, sdk, cold)
+        reload(measure = false)
+    }
+
+    /**
+     * The launcher refuses a running AVD and reports the result as a snackbar, in its own scope so both happen even if
+     * this view model is cleared midway; a wipe frees space, so sizes are read again.
+     */
+    private fun wipe(avdId: String) {
+        val avd = catalog.value.avds.firstOrNull { it.id == avdId } ?: return
+        val result = launcher.launchWipe(avd)
+        viewModelScope.launch {
+            if (result.await().isSuccess) reload()
+        }
+    }
+
+    private fun updatePrefs(avdId: String, change: (EmulatorPrefs) -> EmulatorPrefs) = settings.update { s ->
+        s.copy(emulatorPrefs = s.emulatorPrefs + (avdId to change(s.emulatorPrefs[avdId] ?: EmulatorPrefs())))
+    }
+
+    /**
+     * Reads the SDK and the AVD list off the main thread, then measures each AVD folder unless [measure] is false (the
+     * sizes already known stay, and a measuring read still in progress carries on); a newer read replaces it.
+     */
+    private fun reload(measure: Boolean = true) {
+        loadJob?.cancel()
+        // A measuring read this one replaces before it got to measure still measures.
+        val measuring = measure || measurePending
+        measurePending = measuring
+        loadJob = viewModelScope.launch {
+            val next = withContext(io) {
+                val sdk = findSdk(settings.settings.value.androidSdkPath, env, home, os)
+                Catalog(sdk, if (sdk is SdkLookup.Found) readAvds(avdHome(env, home)) else emptyList())
+            }
+            catalog.value = next
+            measurePending = false
+            if (!measuring) return@launch
+            sizeJob?.cancel()
+            sizeJob = viewModelScope.launch {
+                for (avd in next.avds) {
+                    val size = withContext(io) { sizeOf(avd.dir) } ?: continue
+                    sizes.update { it + (avd.id to size) }
+                }
+            }
+        }
+    }
+}

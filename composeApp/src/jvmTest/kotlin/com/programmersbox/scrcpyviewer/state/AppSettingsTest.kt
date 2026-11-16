@@ -95,6 +95,8 @@ class AppSettingsTest {
         Files.writeString(file, """{"themeMode":"Light"}""")
         val older = AppSettings(file).settings.value
         assertEquals(440, older.filesWidth)
+        assertEquals(560, older.logcatWidth)
+        assertEquals(400, older.linksWidth)
         assertEquals("name", older.filesSort)
         assertFalse(older.filesSortDescending)
         assertFalse(older.filesShowHidden)
@@ -189,5 +191,69 @@ class AppSettingsTest {
     fun `launch quit animation absent from older file loads as icon unfold`() {
         Files.writeString(file, """{"themeMode":"Light"}""")
         assertEquals(LaunchQuitAnimation.IconUnfold, AppSettings(file).settings.value.launchQuit)
+    }
+
+    @Test
+    fun `after screenshot defaults to thumbnail, falls back on unknown names and round trips`() {
+        assertEquals(AfterScreenshot.Thumbnail, Settings().afterShot)
+        assertEquals(AfterScreenshot.Thumbnail, AfterScreenshot.fromName("Sparkles"))
+        assertEquals(AfterScreenshot.Thumbnail, AfterScreenshot.fromName(null))
+        assertEquals(AfterScreenshot.Copy, AfterScreenshot.fromName("Copy"))
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertEquals(AfterScreenshot.Thumbnail, AppSettings(file).settings.value.afterShot)
+        AppSettings(file).update { it.copy(afterScreenshot = AfterScreenshot.Copy.name) }
+        assertEquals(AfterScreenshot.Copy, AppSettings(file).settings.value.afterShot)
+        AppSettings(file).update { it.copy(afterScreenshot = AfterScreenshot.OpenEditor.name) }
+        assertEquals(AfterScreenshot.OpenEditor, AppSettings(file).settings.value.afterShot)
+        assertEquals(AfterScreenshot.OpenEditor, AfterScreenshot.fromName("OpenEditor"))
+    }
+
+    @Test
+    fun `deviceDetailTab defaults to Options and round-trips`() {
+        assertEquals("Options", Settings().deviceDetailTab)
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertEquals("Options", AppSettings(file).settings.value.deviceDetailTab)
+        AppSettings(file).update { it.copy(deviceDetailTab = "Info") }
+        assertEquals("Info", AppSettings(file).settings.value.deviceDetailTab)
+    }
+
+    @Test
+    fun `showTrayIcon defaults on, loads on from an older file and round-trips`() {
+        assertTrue(Settings().showTrayIcon)
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        assertTrue(AppSettings(file).settings.value.showTrayIcon)
+        AppSettings(file).update { it.copy(showTrayIcon = false) }
+        assertFalse(AppSettings(file).settings.value.showTrayIcon)
+    }
+
+    @Test
+    fun `emulator fields default for older files and round-trip`() {
+        Files.writeString(file, """{"themeMode":"Light"}""")
+        val old = AppSettings(file).settings.value
+        assertNull(old.androidSdkPath)
+        assertTrue(old.emulatorsExpanded)
+        assertEquals(emptyMap(), old.emulatorPrefs)
+        assertEquals(EmulatorPrefs(mirrorWhenReady = false, showWindow = false, lastBootMillis = null), EmulatorPrefs())
+
+        val prefs = mapOf(
+            "Pixel_9_API_36" to EmulatorPrefs(mirrorWhenReady = true, lastBootMillis = 21_500),
+            "Tablet" to EmulatorPrefs(showWindow = true),
+        )
+        AppSettings(file).update { it.copy(androidSdkPath = "/sdk", emulatorsExpanded = false, emulatorPrefs = prefs) }
+        val loaded = AppSettings(file).settings.value
+        assertEquals("/sdk", loaded.androidSdkPath)
+        assertFalse(loaded.emulatorsExpanded)
+        assertEquals(prefs, loaded.emulatorPrefs)
+    }
+
+    @Test
+    fun `unknown emulator prefs keys are ignored`() {
+        Files.writeString(
+            file,
+            """{"emulatorPrefs":{"Pixel":{"mirrorWhenReady":true,"wipeAsked":true}},"emulatorFuture":1}""",
+        )
+        val s = AppSettings(file).settings.value
+        assertEquals(mapOf("Pixel" to EmulatorPrefs(mirrorWhenReady = true)), s.emulatorPrefs)
+        assertFalse(Files.exists(dir.resolve("settings.json.bak")))
     }
 }

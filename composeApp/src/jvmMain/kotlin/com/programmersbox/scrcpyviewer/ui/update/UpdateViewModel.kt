@@ -33,6 +33,8 @@ data class UpdateUiState(
     val showPopup: Boolean = false,
     val canSelfUpdate: Boolean = false,
     val macNotInApplications: Boolean = false,
+    /** Whether this copy can update itself at all; "Download updates automatically" is off limits otherwise. */
+    val canInstall: Boolean = false,
 )
 
 /** Shortest gap between two download progress updates shown; Nucleus reports every 8 KiB read. */
@@ -60,9 +62,12 @@ class UpdateViewModel(
             previousFailure = manager.previousFailure,
             updatedFrom = manager.updatedFrom,
             releasePageUrl = releasePageUrl(available),
-            showPopup = available != null && !dismissed && state !is UpdateState.UpToDate,
+            // A background download stays out of the way until it is Ready.
+            showPopup = available != null && !dismissed && state !is UpdateState.UpToDate &&
+                !(state is UpdateState.Downloading && state.background),
             canSelfUpdate = available?.let(manager::canSelfUpdate) ?: false,
             macNotInApplications = manager.macNotInApplications,
+            canInstall = manager.canInstall,
         )
     }.stateIn(
         viewModelScope,
@@ -72,6 +77,7 @@ class UpdateViewModel(
             previousFailure = manager.previousFailure,
             updatedFrom = manager.updatedFrom,
             macNotInApplications = manager.macNotInApplications,
+            canInstall = manager.canInstall,
         ),
     )
 
@@ -82,6 +88,8 @@ class UpdateViewModel(
     fun cancel() = manager.cancel()
 
     fun later() = manager.dismissPopup()
+
+    fun restart() = manager.restart()
 
 }
 

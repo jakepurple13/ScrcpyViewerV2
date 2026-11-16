@@ -25,6 +25,7 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.state.appTheme
+import com.programmersbox.scrcpyviewer.state.afterShot
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.neonText
 import com.programmersbox.scrcpyviewer.ui.window.AppWindow
@@ -44,6 +45,8 @@ import com.programmersbox.scrcpyviewer.ui.mirror.LocalMirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindow
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.ui.App
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
@@ -81,6 +84,15 @@ import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchMotion
 import com.programmersbox.scrcpyviewer.ui.window.launch.launchWatchdog
 import com.programmersbox.scrcpyviewer.ui.window.launch.setWindowAlpha
 import com.programmersbox.scrcpyviewer.ui.window.launch.QuitScrim
+import com.programmersbox.scrcpyviewer.di.DataDir
+import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
+import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
+import com.programmersbox.scrcpyviewer.ui.devices.canMirror
+import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
+import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
+import com.programmersbox.scrcpyviewer.ui.tray.ScrcpyTray
+import com.programmersbox.scrcpyviewer.ui.tray.TrayCommands
+import com.programmersbox.scrcpyviewer.ui.tray.trayIconFiles
 
 fun main() {
     // Files a crashed or killed run left in the Files tab's cache (drags, opened files, APKs being installed).
@@ -92,6 +104,16 @@ fun main() {
     val adbClient = koin.get<AdbClient>()
     val updateManager = koin.get<UpdateManager>()
     val actionsNavigation = koin.get<ActionsNavigation>()
+    val mainWindowRequests = koin.get<MainWindowRequests>()
+    val mirrorRequests = koin.get<MirrorRequests>()
+    val deviceOptions = koin.get<DeviceOptionsStore>()
+    val deviceSelection = koin.get<DeviceSelection>()
+    val mirrorWindows = koin.get<MirrorWindows>()
+    val arranger = koin.get<WindowArranger>()
+    // Fixed files the native tray reads (see trayIconFiles); without them the app runs with no tray icon.
+    val trayIcons = runCatching { trayIconFiles(koin.get<DataDir>().path.resolve("tray")) }
+        .onFailure { System.getLogger("scrcpyviewer.Tray").log(System.Logger.Level.WARNING, "No tray icon files", it) }
+        .getOrNull()
     // Single instance off: a dev run next to the installed app must not hand off to it and exit.
     nucleusApplication(enableSingleInstance = false) {
         val settings by appSettings.settings.collectAsState()
@@ -116,6 +138,28 @@ fun main() {
             )
         }
         val shutdownState by shutdown.state.collectAsState()
+        // The tray menu: in the application scope, so it lives as long as the app (closing the main window still quits).
+        // It goes once quitting starts, so nothing opens a mirror while the sessions close.
+        if (settings.showTrayIcon && trayIcons != null && shutdownState == AppShutdown.State.Running) {
+            val devices by mirrorController.devices.collectAsState()
+            val trayCommands = remember {
+                TrayCommands(
+                    mirrorRequests = mirrorRequests,
+                    mainWindow = mainWindowRequests,
+                    canMirror = { serial ->
+                        mirrorController.devices.value.firstOrNull { it.serial == serial }?.let(deviceOptions::canMirror) == true
+                    },
+                    focus = mirrorController::focus,
+                    select = deviceSelection::select,
+                    quit = shutdown::request,
+                    // Focus from the menu bar arranges around the mirror window focused last.
+                    arrange = { layout -> arranger.apply(layout, focus = mirrorWindows.lastFocused.value) },
+                    keepTiled = arranger::setKeepTiled,
+                )
+            }
+            val arrangeState by arranger.state.collectAsState()
+            ScrcpyTray(trayIcons, devices, mirrors.keys, arrangeState, trayCommands::dispatch)
+        }
         // Cmd+Q, the app menu's Quit and the Dock's go through the shutdown too (MacQuitHook).
         DisposableEffect(Unit) {
             shutdown.installQuitHandler(shutdown::request)
@@ -209,6 +253,10 @@ fun main() {
             LaunchedEffect(actionsNavigation) {
                 actionsNavigation.requests.collect { bringToFront(nucleusWindow) }
             }
+            // The tray menu's Open / Settings…: App selects the destination, this brings the window forward.
+            LaunchedEffect(mainWindowRequests) {
+                mainWindowRequests.requests.collect { bringToFront(nucleusWindow) }
+            }
             // Device clipboard sync and the mirror paste go through Compose's clipboard, bound here.
             val clipboard = LocalClipboard.current
             val clipboardScope = rememberCoroutineScope()
@@ -216,6 +264,13 @@ fun main() {
             LaunchedEffect(clipboard) { pcClipboard.bind(clipboard, clipboardScope) }
             // The Mirror buttons' screen bounds (mirrorOrigin) are read through it.
             val handle = remember(nucleusWindow) { TaoMirrorWindowHandle(nucleusWindow, koin.get<ScreenGeometry>()) }
+            // Arrange mirror windows lays them out on the screen the main window is on.
+            DisposableEffect(handle) {
+                val windows = koin.get<MirrorWindows>()
+                val bounds: () -> java.awt.Rectangle? = { handle.bounds.takeIf { it.width > 0 && it.height > 0 } }
+                windows.mainWindowBounds = bounds
+                onDispose { if (windows.mainWindowBounds === bounds) windows.mainWindowBounds = { null } }
+            }
             CompositionLocalProvider(LocalMirrorWindowHandle provides handle, LocalLaunchEntrance provides entrance) {
                 Box(Modifier.fillMaxSize().recordInto(picture)) { App() }
             }
@@ -247,7 +302,7 @@ fun main() {
         }
         for ((serial, session) in mirrors) {
             key(serial) {
-                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.captureDir, animate = settings.animateMirrorWindows, adb = adbClient)
+                MirrorWindow(serial, session, mirrorController, settings.appTheme, settings.captureDir, afterScreenshot = settings.afterShot, animate = settings.animateMirrorWindows, adb = adbClient)
             }
         }
         if (shuttingDown?.finishingRecording == true && !quit.keepsWindow) FinishingRecordingWindow(settings.appTheme)

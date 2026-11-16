@@ -7,6 +7,10 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -53,15 +57,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import androidx.compose.material3.AssistChip
 import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.AssistChip
+import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.HorizontalDivider
@@ -109,17 +113,42 @@ import org.koin.compose.viewmodel.koinViewModel
 import com.programmersbox.scrcpyviewer.ui.common.OptionRow
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import com.programmersbox.scrcpyviewer.ui.theme.selectedRow
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTabRow
+import com.programmersbox.scrcpyviewer.ui.devices.info.DetailPane
+import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoUiState
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorEvent
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorSection
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsUiState
+import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsViewModel
+import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import androidx.compose.runtime.rememberCoroutineScope
+import java.nio.file.Path
 
 @Composable
-fun DevicesScreen(
+internal fun DevicesScreen(
     viewModel: DevicesViewModel,
+    emulatorsViewModel: EmulatorsViewModel,
+    /** Asks for the Android SDK folder (Choose SDK folder / Change); null when cancelled. */
+    chooseSdkFolder: suspend () -> Path?,
     modifier: Modifier = Modifier,
     panes: ListDetailPanes = rememberListDetailPanes(),
+    detailTab: DetailTab = DetailTab.Options,
+    onDetailTab: (DetailTab) -> Unit = {},
+    info: DeviceInfoUiState = DeviceInfoUiState(),
+    onInfoActive: (Boolean) -> Unit = {},
+    onInfoRetry: () -> Unit = {},
 ) {
     val pageState by viewModel.state.collectAsStateWithLifecycle()
     val query by viewModel.query.collectAsStateWithLifecycle()
     // The search field needs each key at once (see DevicesViewModel.query); the list may follow an event later.
     val state = pageState.copy(query = query)
+    val emulators by emulatorsViewModel.state.collectAsStateWithLifecycle()
+    // The AVD list is read each time the screen opens.
+    LaunchedEffect(emulatorsViewModel) { emulatorsViewModel.onEvent(EmulatorEvent.Reload) }
+    val pickerScope = rememberCoroutineScope()
+    val picker = rememberPickerGuard()
     var pairing by remember { mutableStateOf(false) }
     val pairAnchor = remember { PairDialogAnchor() }
     val snackbar = LocalSnackbarHostState.current
@@ -179,6 +208,18 @@ fun DevicesScreen(
         restartSucceeded = pageState.restartSucceeded,
         pairAnchor = pairAnchor,
         onAdvanced = viewModel::setAdvanced,
+        detailTab = detailTab,
+        onDetailTab = onDetailTab,
+        info = info,
+        onInfoActive = onInfoActive,
+        onInfoRetry = onInfoRetry,
+        emulators = emulators,
+        onEmulator = emulatorsViewModel::onEvent,
+        onChooseSdk = {
+            picker.launch(pickerScope) {
+                chooseSdkFolder()?.let { emulatorsViewModel.onEvent(EmulatorEvent.SdkChosen(it.toString())) }
+            }
+        },
     )
     state.restartConfirm?.let { impact ->
         RestartAdbDialog(impact, onConfirm = viewModel::confirmRestartAdb, onDismiss = viewModel::cancelRestartAdb)
@@ -194,7 +235,7 @@ val DEVICE_OPTIONS_MIN_WIDTH = 640.dp
 
 /** Stateless Devices screen (Concept C: device column, searchable option grid, command footer). */
 @Composable
-fun DevicesContent(
+internal fun DevicesContent(
     state: DevicesUiState,
     onSelect: (String) -> Unit,
     onOpen: (String) -> Unit,
@@ -225,8 +266,24 @@ fun DevicesContent(
     pairAnchor: PairDialogAnchor? = null,
     /** Switches the detail pane between the simple view (false) and every option (true). */
     onAdvanced: (Boolean) -> Unit = {},
+    /** The detail pane's Options | Info tab. */
+    detailTab: DetailTab = DetailTab.Options,
+    onDetailTab: (DetailTab) -> Unit = {},
+    info: DeviceInfoUiState = DeviceInfoUiState(),
+    /** True while the Info tab is on screen; the Info view model polls only then. */
+    onInfoActive: (Boolean) -> Unit = {},
+    onInfoRetry: () -> Unit = {},
+    /** The Emulators section under the connected devices; null leaves it out. */
+    emulators: EmulatorsUiState? = null,
+    onEmulator: (EmulatorEvent) -> Unit = {},
+    onChooseSdk: () -> Unit = {},
+    motion: Boolean = remember { !systemReducesMotion() },
+    /** The wall clock the emulators' boot timers read (screenshots pass a fixed one). */
+    emulatorNow: () -> Long = System::currentTimeMillis,
 ) {
     val rowActions = RowActions(onOpen = onOpen, onConnectWifi = onConnectWifi, onDisconnect = onDisconnect, canMirror = canMirror)
+    // The detail pane's view switch has a motion of its own; an emulator's title change follows this one.
+    val titleMotion = motion
     Column(modifier.fillMaxSize()) {
         state.persistenceError?.let {
             Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
@@ -245,34 +302,43 @@ fun DevicesContent(
                 DeviceColumn(
                     state, onSelect = { onSelect(it); panes.navigation.openDetail() }, onSelect, rowActions, onPairWifi,
                     contextMenuSerial, onRestartAdb, restartSucceeded, pairAnchor,
+                    emulators, onEmulator, onChooseSdk, motion, emulatorNow,
                 )
             },
             detail = { onBack ->
                 Column(Modifier.fillMaxSize()) {
-                    if (state.selectedSerial == null) {
-                        if (onBack != null) DetailBackButton(onBack, Modifier.padding(start = 6.dp, top = 6.dp))
-                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Text("Select a device to choose its options", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    } else {
-                        ViewSwitch(state.advanced, Modifier.weight(1f)) { advanced, motion ->
+                    // The back button lives in the tab row, so the panes below get none of their own.
+                    DetailTabRow(state.selectedSerial != null, detailTab, onDetailTab, onBack)
+                    // Each device's content (and none) animates in and out as a whole; `shown` is that device's state.
+                    DetailPane(
+                        state, { it.selectedSerial }, state.devices.map { it.serial }, detailTab, info, onInfoActive, onInfoRetry,
+                        Modifier.weight(1f).fillMaxWidth(),
+                        empty = { emptyModifier ->
+                            Box(emptyModifier, contentAlignment = Alignment.Center) {
+                                Text("Select a device to choose its options", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                    ) { shown, tabModifier ->
+                        ViewSwitch(shown.advanced, tabModifier) { advanced, motion ->
                             if (advanced) {
                                 Box(Modifier.fillMaxSize()) {
                                     ViewSwitchContainer(motion, isPane = true, Modifier.matchParentSize())
                                     Column(Modifier.fillMaxSize()) {
                                         OptionsPane(
-                                            state, onQuery, onGroup, onToggle, onValue, onBack,
+                                            shown, onQuery, onGroup, onToggle, onValue, onBack = null,
                                             onSimple = { onAdvanced(false) },
                                             modifier = Modifier.weight(1f).advancedContentMotion(motion),
                                         )
-                                        Footer(state, onSave, onSaveAsNew, onMirror, onPreset, presetMenuOpen, onConnectWifi, motion)
+                                        Footer(shown, onSave, onSaveAsNew, onMirror, onPreset, presetMenuOpen, onConnectWifi, motion)
                                     }
                                 }
                             } else {
                                 SimpleDevicePane(
-                                    state, onPreset, onMirror, onConnectWifi,
-                                    onAdvanced = { onAdvanced(true) }, onBack = onBack, presetMenuOpen = presetMenuOpen,
+                                    shown, onPreset, onMirror, onConnectWifi,
+                                    onAdvanced = { onAdvanced(true) }, onBack = null, presetMenuOpen = presetMenuOpen,
                                     motion = motion,
+                                    avdName = emulators?.avdNames?.get(shown.selectedSerial),
+                                    titleMotion = titleMotion,
                                 )
                             }
                         }
@@ -304,9 +370,17 @@ private fun DeviceColumn(
     onRestartAdb: () -> Unit,
     restartSucceeded: Boolean?,
     pairAnchor: PairDialogAnchor?,
+    emulators: EmulatorsUiState?,
+    onEmulator: (EmulatorEvent) -> Unit,
+    onChooseSdk: () -> Unit,
+    motion: Boolean,
+    emulatorNow: () -> Long,
 ) {
     val live = state.adbConnected && !state.restartingAdb
-    val list = rememberDeviceEntries(state.devices, live)
+    // Emulators still booting are left out until they are ready; they then arrive like any new device.
+    val hidden = emulators?.hiddenSerials.orEmpty()
+    val devices = remember(state.devices, hidden) { connectedRows(state.devices, hidden) }
+    val list = rememberDeviceEntries(devices, live)
     val entries = list.entries
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp),
@@ -314,31 +388,32 @@ private fun DeviceColumn(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                if (state.adbConnected && !state.restartingAdb) deviceSummary(state.devices) else "Devices",
+                if (state.adbConnected && !state.restartingAdb) deviceSummary(devices) else "Devices",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
             RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb, succeeded = restartSucceeded)
         }
-        when {
-            !live -> Row(
-                Modifier.padding(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                Text("Starting adb…", style = MaterialTheme.typography.bodyMedium)
-            }
-            entries.isEmpty() -> Text(
-                "No devices. Connect a device with USB debugging on, or pair one over Wi-Fi.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(4.dp),
-            )
-            // Each row carries its own gap below it, so a leaving row's gap collapses along with it.
-            else -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                entries.forEachIndexed { index, entry ->
+        // The device rows (or what stands in for them) and the Emulators section scroll together.
+        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+            when {
+                !live -> Row(
+                    Modifier.padding(4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text("Starting adb…", style = MaterialTheme.typography.bodyMedium)
+                }
+                entries.isEmpty() -> Text(
+                    "No devices. Connect a device with USB debugging on, or pair one over Wi-Fi.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(4.dp),
+                )
+                // Each row carries its own gap below it, so a leaving row's gap collapses along with it.
+                else -> entries.forEachIndexed { index, entry ->
                     AnimatedDeviceItem(entry, onExited = list::exited) { glow ->
                         val device = entry.device
                         DeviceRow(
@@ -353,15 +428,21 @@ private fun DeviceColumn(
                             interactive = entry.present,
                             status = chipStatus(device, switching = device.serial in state.switching),
                             glow = glow,
+                            avdName = emulators?.avdNames?.get(device.serial),
+                            motion = motion,
                             // Icon unfold's launch: the rows fade up in a stagger as the window appears.
                             modifier = Modifier.launchEntrance(index).padding(bottom = 6.dp),
                         )
                     }
                 }
             }
+            if (emulators != null) {
+                EmulatorSection(
+                    emulators, onEmulator, onChooseSdk,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 6.dp), motion = motion, now = emulatorNow,
+                )
+            }
         }
-        // The device list takes the free space when present; otherwise this pushes the button to the bottom.
-        if (!live || entries.isEmpty()) Spacer(Modifier.weight(1f))
         FilledTonalButton(
             onClick = onPairWifi,
             modifier = Modifier.fillMaxWidth().then(pairAnchor?.let { Modifier.pairDialogOrigin(it) } ?: Modifier),
@@ -373,7 +454,14 @@ private fun DeviceColumn(
     }
 }
 
-/** The right-click menu's items: Mirror, plus Connect over Wi-Fi (USB) or Disconnect (Wi-Fi). Internal for screenshots. */
+/** The devices the connected rows show: all but the emulators still booting ([hidden]). */
+internal fun connectedRows(devices: List<Device>, hidden: Set<String>): List<Device> =
+    if (hidden.isEmpty()) devices else devices.filter { it.serial !in hidden }
+
+/**
+ * The right-click menu's items: Mirror, plus Connect over Wi-Fi (USB) or Disconnect (Wi-Fi); an emulator gets no Wi-Fi
+ * item. Internal for screenshots.
+ */
 @Composable
 internal fun DeviceMenu(device: Device, state: DevicesUiState, actions: RowActions, onDismiss: () -> Unit) {
     DropdownMenuItem(
@@ -389,7 +477,8 @@ internal fun DeviceMenu(device: Device, state: DevicesUiState, actions: RowActio
             onClick = { onDismiss(); actions.onDisconnect(device.serial) },
             leadingIcon = { Icon(Icons.Filled.LinkOff, contentDescription = null, Modifier.size(18.dp)) },
         )
-    } else {
+    } else if (!isEmulatorSerial(device.serial)) {
+        // An emulator is reached over its own adb port: it has no Wi-Fi to switch to.
         val switching = device.serial in state.switching
         val onWifi = isOnWifi(device, state.devices)
         DropdownMenuItem(
@@ -425,20 +514,19 @@ private fun DeviceRow(
     modifier: Modifier = Modifier,
     /** False while the row plays its exit: it ignores clicks and opens no menu. */
     interactive: Boolean = true,
+    /** An emulator's AVD display name once the launcher knows it: its title instead of the system model. */
+    avdName: String? = null,
+    motion: Boolean = true,
 ) {
     var menuAt by remember { mutableStateOf(if (menuInitiallyOpen) Offset(120f, 40f) else null) }
     val shape = styledCorner(12.dp)
+    val emulator = isEmulatorSerial(device.serial)
     val dot = when (device.state) {
         DeviceState.Device -> MaterialTheme.colorScheme.primary
         DeviceState.Unauthorized -> warnColor()
         DeviceState.Offline, DeviceState.Other -> MaterialTheme.colorScheme.error
     }
-    val hint = when (device.state) {
-        DeviceState.Device -> null
-        DeviceState.Unauthorized -> "Accept the USB debugging prompt on the device"
-        DeviceState.Offline -> "Reconnect the cable or run adb reconnect"
-        DeviceState.Other -> device.rawState
-    }
+    val hint = deviceHint(device)
     Box(modifier) {
     Row(
         Modifier
@@ -458,28 +546,48 @@ private fun DeviceRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
-        Column(Modifier.weight(1f)) {
-            val title = deviceTitle(device)
-            val serialText = @Composable { modifier: Modifier ->
-                Text(
-                    device.serial,
-                    style = if (title == device.serial) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelSmall,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = modifier,
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (title != device.serial) {
-                    Text(title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                } else {
-                    serialText(Modifier.weight(1f, fill = false))
+        Column(
+            Modifier.weight(1f).then(
+                // An emulator's title can change while it shows (its AVD is matched): the row's height follows.
+                if (emulator && motion) Modifier.animateContentSize(tween(EMULATOR_TITLE_MILLIS, easing = EmphasizedDecelerate)) else Modifier,
+            ),
+        ) {
+            val title = connectedTitle(device, avdName)
+            // The title line (name and tag) and the serial under it; the serial is the title when there is no name.
+            val titleBlock = @Composable { shownTitle: String ->
+                Column {
+                    val serialText = @Composable { modifier: Modifier ->
+                        Text(
+                            device.serial,
+                            style = if (shownTitle == device.serial) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = modifier,
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (shownTitle != device.serial) {
+                            Text(shownTitle, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        } else {
+                            serialText(Modifier.weight(1f, fill = false))
+                        }
+                        // An emulator's connection is no USB cable: its tag says what it is (the dot gives its state).
+                        if (emulator) EmulatorTag() else StatusChip(status)
+                    }
+                    if (shownTitle != device.serial) serialText(Modifier)
                 }
-                StatusChip(status)
             }
-            if (title != device.serial) serialText(Modifier)
+            if (emulator) {
+                // Serial or model, then the AVD's name once matched: the whole title block crossfades (the column's
+                // height follows), never a swap.
+                Crossfade(title, animationSpec = if (motion) tween(EMULATOR_TITLE_MILLIS) else snap(), label = "emulatorTitle") {
+                    titleBlock(it)
+                }
+            } else {
+                titleBlock(title)
+            }
             if (hint != null) {
                 Text(hint, style = MaterialTheme.typography.labelSmall, color = dot)
             }
@@ -492,6 +600,37 @@ private fun DeviceRow(
         }
     }
     }
+}
+
+/** An emulator row's title crossfades to its AVD's name (and its row's height follows) over this long. */
+internal const val EMULATOR_TITLE_MILLIS = 250
+
+/** The hint an offline emulator shows instead of the cable hint. */
+internal const val EMULATOR_OFFLINE_HINT = "Emulator offline. Stop and start it again from Emulators."
+
+/** A connected row's title: an emulator's AVD name once known, else [deviceTitle]. */
+internal fun connectedTitle(device: Device, avdName: String?): String =
+    avdName?.takeIf { isEmulatorSerial(device.serial) && it.isNotBlank() } ?: deviceTitle(device)
+
+/** The line under a connected row that needs attention; null for a ready device. */
+internal fun deviceHint(device: Device): String? = when (device.state) {
+    DeviceState.Device -> null
+    DeviceState.Unauthorized -> "Accept the USB debugging prompt on the device"
+    DeviceState.Offline -> if (isEmulatorSerial(device.serial)) EMULATOR_OFFLINE_HINT else "Reconnect the cable or run adb reconnect"
+    DeviceState.Other -> device.rawState
+}
+
+/** The "Emulator" pill after an emulator's name in the connected rows. */
+@Composable
+private fun EmulatorTag() {
+    Text(
+        "Emulator",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier.clip(styledCorner(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 6.dp, vertical = 1.dp),
+    )
 }
 
 @Composable
@@ -683,7 +822,8 @@ private fun Footer(
                 TextButton({ naming = true }, Modifier.advancedContentMotion(motion)) { Text("Save as new preset") }
             }
             Spacer(Modifier.weight(1f))
-            state.devices.firstOrNull { it.serial == state.selectedSerial }?.let { device ->
+            // An emulator has no Wi-Fi to switch to: no button.
+            state.devices.firstOrNull { it.serial == state.selectedSerial && !isEmulatorSerial(it.serial) }?.let { device ->
                 val wifi = wifiButtonState(device, state)
                 OutlinedButton(
                     onClick = { onConnectWifi(device.serial) },

@@ -154,6 +154,39 @@ internal fun DrawScope.drawEtch(bevel: Bevel) {
     ring(Offset.Zero, size, px, px, bevel.highlight, bevel.shadow)
 }
 
+/** A sunken field's thin edge, like a Windows 95 status-bar box: one ring, shadow top-left and highlight bottom-right. */
+internal fun DrawScope.drawFieldEdge(bevel: Bevel) {
+    ring(Offset.Zero, size, 0f, 1.dp.toPx().coerceAtLeast(1f), bevel.shadow, bevel.highlight)
+}
+
+/**
+ * Soft's raised and pressed looks blended, under a [fill] in [shape]: at [depth] 0 the element is lifted (4 dp paired
+ * shadows), at 1 it is pressed in (inner shadows); between, the outer shadows fade and close in as the inner ones grow,
+ * so an animated [depth] shows the element sinking into the surface. Apply it outside any clip.
+ */
+@Composable
+internal fun Modifier.softPress(shape: Shape, fill: Color, depth: () -> Float): Modifier {
+    val t = LocalStyleTokens.current
+    return this
+        .dropShadow(shape) {
+            val k = 1f - depth()
+            radius = 9.dp.toPx(); offset = Offset(4.dp.toPx() * k, 4.dp.toPx() * k); color = t.softDark; alpha = k
+        }
+        .dropShadow(shape) {
+            val k = 1f - depth()
+            radius = 9.dp.toPx(); offset = Offset(-4.dp.toPx() * k, -4.dp.toPx() * k); color = t.softLight; alpha = k
+        }
+        .background(fill, shape)
+        .innerShadow(shape) {
+            val k = depth()
+            radius = 6.dp.toPx(); offset = Offset(3.dp.toPx() * k, 3.dp.toPx() * k); color = t.softDark; alpha = k
+        }
+        .innerShadow(shape) {
+            val k = depth()
+            radius = 6.dp.toPx(); offset = Offset(-3.dp.toPx() * k, -3.dp.toPx() * k); color = t.softLight; alpha = k
+        }
+}
+
 private fun DrawScope.ring(origin: Offset, area: Size, inset: Float, px: Float, topLeft: Color, bottomRight: Color) {
     val w = area.width - inset * 2
     val h = area.height - inset * 2

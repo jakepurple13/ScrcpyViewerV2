@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.actions.SkillTarget
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
@@ -11,7 +12,9 @@ import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
+import com.programmersbox.scrcpyviewer.ui.update.AutoDownloadSwitch
 import com.programmersbox.scrcpyviewer.ui.update.UpdatesContent
+import com.programmersbox.scrcpyviewer.ui.update.autoDownloadToggle
 
 enum class SettingsCategoryId { Appearance, Mirroring, Adb, Ai, Updates, Help }
 
@@ -39,15 +42,19 @@ class SettingsActions(
     val onGlassOpacity: (Float) -> Unit = {},
     val onDefaultPreset: (String?) -> Unit = {},
     val onAnimateMirrorWindows: (Boolean) -> Unit = {},
+    val onShowTrayIcon: (Boolean) -> Unit = {},
     val onLaunchQuitAnimation: (com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation) -> Unit = {},
     val onUseBundledAdb: () -> Unit = {},
     val onUseCustomAdb: (String) -> Unit = {},
     val onBrowseAdb: () -> Unit = {},
     val onBrowseCaptureDir: () -> Unit = {},
+    val onAfterScreenshot: (com.programmersbox.scrcpyviewer.state.AfterScreenshot) -> Unit = {},
     val onShowOnboarding: () -> Unit = {},
     val onCheckUpdates: () -> Unit = {},
     val onUpdate: () -> Unit = {},
     val onCancelUpdate: () -> Unit = {},
+    val onRestartToUpdate: () -> Unit = {},
+    val onAutoDownloadUpdates: (Boolean) -> Unit = {},
     val onOpenAiSkill: () -> Unit = {},
     val onInstallAiSkill: (List<SkillTarget>) -> Unit = {},
     val onChooseAiSkillFolder: () -> Unit = {},
@@ -72,6 +79,10 @@ class SettingEntry(
 )
 
 class SettingsCategory(val id: SettingsCategoryId, val title: String, val entries: List<SettingEntry>)
+
+/** macOS calls it the menu bar; Windows and Linux the system tray. */
+internal fun trayIconSettingTitle(isMac: Boolean = Os.isMac): String =
+    if (isMac) "Show icon in menu bar" else "Show icon in system tray"
 
 /** Every Settings category and setting. The list pane, the detail pane and search all read this. */
 val settingsCategories: List<SettingsCategory> = listOf(
@@ -108,6 +119,14 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 layout = EntryLayout.Block,
                 content = { PaletteControl(it) },
             ),
+            // Shown on Linux too: ComposeNativeTray 2.1.7 has no way to ask whether the desktop has a tray.
+            SettingEntry(
+                "tray-icon", trayIconSettingTitle(),
+                "Lists your devices. Mirror one, bring its window forward, open Settings or quit from there.",
+                keywords = listOf("tray", "system tray", "menu bar", "menubar", "status bar", "notification area", "taskbar", "icon"),
+                rowModifier = { trayIconToggle(it) },
+                content = { TrayIconSwitch(it) },
+            ),
             SettingEntry(
                 "launch-quit-animation", "Launch & quit animation", "Plays when Scrcpy Vwr opens and quits.",
                 keywords = listOf("animation", "motion", "launch", "startup", "quit", "shutdown", "splash", "open", "close"),
@@ -136,6 +155,11 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 keywords = listOf("screenshot", "recording", "capture", "save", "directory", "path"),
                 layout = EntryLayout.Block,
                 content = { CaptureDirControl(it) },
+            ),
+            SettingEntry(
+                "after-screenshot", "After a screenshot", "What happens once a screenshot is saved.",
+                keywords = listOf("screenshot", "thumbnail", "copy", "clipboard", "image", "capture", "preview", "edit", "editor", "markup", "annotate", "draw"),
+                content = { AfterScreenshotControl(it) },
             ),
         ),
     ),
@@ -166,10 +190,24 @@ val settingsCategories: List<SettingsCategory> = listOf(
         SettingsCategoryId.Updates, "Updates",
         listOf(
             SettingEntry(
+                "auto-download-updates", "Download updates automatically",
+                "New versions download in the background. You choose when to restart.",
+                keywords = listOf("auto", "automatic", "background", "update", "download", "install"),
+                rowModifier = {
+                    autoDownloadToggle(it.updates.canInstall, it.state.settings.autoDownloadUpdates, it.actions.onAutoDownloadUpdates)
+                },
+                content = { AutoDownloadSwitch(it.updates.canInstall, it.state.settings.autoDownloadUpdates) },
+            ),
+            SettingEntry(
                 "updates", "App updates", "Check for new versions and download them.",
                 keywords = listOf("version", "upgrade", "release", "download", "github"),
                 layout = EntryLayout.Block,
-                content = { UpdatesContent(it.updates, it.actions.onCheckUpdates, it.actions.onUpdate, it.actions.onCancelUpdate) },
+                content = {
+                    UpdatesContent(
+                        it.updates, it.actions.onCheckUpdates, it.actions.onUpdate, it.actions.onCancelUpdate,
+                        onRestart = it.actions.onRestartToUpdate,
+                    )
+                },
             ),
         ),
     ),

@@ -9,7 +9,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.sun.jna.Pointer
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.awt.Rectangle
 import kotlin.math.roundToInt
@@ -25,6 +27,12 @@ interface MirrorWindowHandle {
     /** The window's outer size. */
     val size: IntSize
     val isShowing: Boolean
+
+    /**
+     * A signal for every move or resize of the window, whoever caused it (the user, the app, the OS); none replayed.
+     * Empty where the platform does not report them.
+     */
+    val boundsChanges: Flow<Unit> get() = emptyFlow()
 
     /** Whether the window has the keyboard focus; the current value first, then each change. */
     val focused: StateFlow<Boolean>
