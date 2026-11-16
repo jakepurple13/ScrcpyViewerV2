@@ -177,9 +177,15 @@ nucleus.application {
             iconFile.set(project.file("icons/icon.png"))
             // electron-builder's deb target needs a maintainer; without one it requires an author email instead.
             debMaintainer = "jakepurple13 <jakepurple13@users.noreply.github.com>"
-            // The system libraries the bundled FFmpeg's libavdevice links (ALSA, PulseAudio, XCB, DRM) and udev.
-            // Ubuntu 24.04+ renamed ALSA's package to libasound2t64; older releases and Debian have libasound2.
-            debDepends = listOf("libasound2t64 | libasound2", "libpulse0", "libxcb1", "libxcb-shm0", "libdrm2", "libudev1")
+            // Setting this replaces electron-builder's default Depends, so those are listed first (as in the v1.22.0
+            // .deb: GTK 3 for the window, xdg-utils, …). Then the system libraries the bundled FFmpeg's libavdevice
+            // links (ALSA, PulseAudio, XCB, DRM) and udev. Ubuntu 24.04+ renamed ALSA's package to libasound2t64;
+            // older releases and Debian have libasound2.
+            debDepends = listOf(
+                "libgtk-3-0", "libnotify4", "libnss3", "libxss1", "libxtst6", "xdg-utils", "libatspi2.0-0", "libuuid1",
+                "libsecret-1-0",
+                "libasound2t64 | libasound2", "libpulse0", "libxcb1", "libxcb-shm0", "libdrm2", "libudev1",
+            )
         }
     }
 }
