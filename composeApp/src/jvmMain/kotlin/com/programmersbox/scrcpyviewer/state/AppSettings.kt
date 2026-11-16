@@ -46,6 +46,8 @@ data class Settings(
     val filesSortDescending: Boolean = false,
     /** Whether the Files tab lists hidden (dot) files. */
     val filesShowHidden: Boolean = false,
+    /** Whether the Files tab's crumbs show the real path ("/ › sdcard › DCIM") instead of "Device › Internal storage". */
+    val filesRealPaths: Boolean = false,
     /** Folders the user picked to install the AI skill into (absolute paths, no duplicates). */
     val aiSkillFolders: List<String> = emptyList(),
     /** Whether the Devices screen shows the full options pane instead of the simple one (preset, Mirror, Wi-Fi). */

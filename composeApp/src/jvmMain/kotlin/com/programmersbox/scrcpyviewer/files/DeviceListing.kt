@@ -6,42 +6,60 @@ data class DeviceEntry(
     val size: Long,
     val mtimeMillis: Long,
     val itemCount: Int? = null,
+    /**
+     * A folder whose permissions keep adb from listing it (`test -r` / `test -x` fail). A hint only: a folder Android
+     * blocks some other way (SELinux, storage rules) is not marked and shows [Listing.Blocked] once opened.
+     */
+    val locked: Boolean = false,
 ) {
     val hidden get() = name.startsWith(".")
 }
 
 sealed interface Listing {
-    data class Entries(val entries: List<DeviceEntry>) : Listing
-    data object Blocked : Listing
+    /** The folder's [entries]; [writable] false when adb can't add or change anything in it (`test -w` fails). */
+    data class Entries(val entries: List<DeviceEntry>, val writable: Boolean = true) : Listing
+
+    /** Android refused the listing; [message] is the device's own error line. */
+    data class Blocked(val message: String) : Listing
     data class Failed(val reason: String) : Listing
 }
 
-private const val MARKER = "|__svend__"
+internal const val MARKER = "|__svend__"
 private const val BLOCKED_EXIT = 13
 
-private const val STAT_FORMAT = "'%F|%s|%Y|%n$MARKER'"
+internal const val STAT_FORMAT = "'%F|%s|%Y|%n$MARKER'"
 
 /** Every entry of the current folder, hidden ones included; the shell expands them (no process). */
 private const val ALL_ENTRIES = "./.[!.]* ./..?* ./*"
 
 /**
  * One shell: exits 13 when [dir] cannot be listed, else prints one stat record per entry ("./name" after a `cd`, so a
- * name starting with "-" is no option and the folder may be a link like /sdcard).
+ * name starting with "-" is no option and the folder may be a link like /sdcard). It runs in a subshell: a bare
+ * `exit` would end the device shell before [com.programmersbox.scrcpyviewer.adb.ShellRunner]'s exit marker, and
+ * the exit code would be lost.
  *
  * One `stat` per entry costs a fork and exec each (1–4 ms), so thousands of files took longer than the shell's
  * timeout. `find -exec stat {} +` stats them in a few processes, split under the argument limit by find. `stat -L`
  * fails on a broken link and prints nothing for it, so a loop of shell builtins adds those as "broken". A device
  * whose find lacks `-exec {} +` (or `-mindepth`) gets the old loop of one `stat` per entry.
+ *
+ * The same loop adds a "locked" record for each folder adb can't read or enter, and a last "readonly" record when
+ * the folder itself isn't writable. `[` is a shell builtin, so neither starts a process.
  */
 fun listCommand(dir: String): String =
-    "d=${shellQuote(dir)}; ls -A \"\$d\" >/dev/null || exit $BLOCKED_EXIT; cd \"\$d\" || exit $BLOCKED_EXIT; " +
+    "(d=${shellQuote(dir)}; ls -A \"\$d\" >/dev/null || exit $BLOCKED_EXIT; cd \"\$d\" || exit $BLOCKED_EXIT; " +
         "if find . -mindepth 0 -maxdepth 0 -exec stat -c %n {} + >/dev/null 2>&1; then " +
         "find . -mindepth 1 -maxdepth 1 -exec stat -L -c $STAT_FORMAT {} + 2>/dev/null; " +
-        "for f in $ALL_ENTRIES; do if [ -L \"\$f\" ] && [ ! -e \"\$f\" ]; then printf 'broken|0|0|%s$MARKER\\n' \"\$f\"; fi; done; " +
+        "for f in $ALL_ENTRIES; do if [ -L \"\$f\" ] && [ ! -e \"\$f\" ]; then printf 'broken|0|0|%s$MARKER\\n' \"\$f\"; fi; $LOCKED_CHECK done; " +
         "else " +
         "for f in $ALL_ENTRIES; do [ -e \"\$f\" ] || [ -L \"\$f\" ] || continue; " +
-        "stat -L -c $STAT_FORMAT \"\$f\" 2>/dev/null || printf 'broken|0|0|%s$MARKER\\n' \"\$f\"; done; " +
-        "fi"
+        "stat -L -c $STAT_FORMAT \"\$f\" 2>/dev/null || printf 'broken|0|0|%s$MARKER\\n' \"\$f\"; $LOCKED_CHECK done; " +
+        "fi; " +
+        "[ -w . ] || printf 'readonly|0|0|./$MARKER\\n')"
+
+/** A statement of the listing loop: "locked|0|0|./name" for a folder that `[ -r ]` or `[ -x ]` refuses. */
+private const val LOCKED_CHECK =
+    "if [ -d \"\$f\" ] && ! { [ -r \"\$f\" ] && [ -x \"\$f\" ]; }; then printf 'locked|0|0|%s$MARKER\\n' \"\$f\"; fi;"
 
 /** Splits [output] into records ending in the marker, tolerating a missing final newline. */
 private fun records(output: String): List<String> {
@@ -53,6 +71,8 @@ private fun records(output: String): List<String> {
 fun parseListing(output: String, exitCode: Int?): Listing {
     if (exitCode == 0) {
         val entries = ArrayList<DeviceEntry>()
+        val locked = HashSet<String>()
+        var writable = true
         for (record in records(output)) {
             val a = record.indexOf('|')
             if (a < 0) continue
@@ -61,19 +81,30 @@ fun parseListing(output: String, exitCode: Int?): Listing {
             val c = record.indexOf('|', b + 1)
             if (c < 0) continue
             // Anything before the type field is stray stderr noise.
-            val type = record.substring(0, a).substringAfterLast('\n')
+            val type = record.substring(0, a).substringAfterLast('\n').trim()
             val size = record.substring(a + 1, b).trim().toLongOrNull() ?: continue
             val mtime = record.substring(b + 1, c).trim().toLongOrNull() ?: continue
+            if (type == "readonly") {
+                writable = false
+                continue
+            }
             val name = record.substring(c + 1).substringAfterLast('/')
             if (name.isEmpty()) continue
-            entries += DeviceEntry(name, type.trim() == "directory", size, mtime * 1000)
+            if (type == "locked") {
+                locked += name
+                continue
+            }
+            entries += DeviceEntry(name, type == "directory", size, mtime * 1000)
         }
-        return Listing.Entries(entries)
+        if (locked.isNotEmpty()) {
+            for (i in entries.indices) if (entries[i].isDir && entries[i].name in locked) entries[i] = entries[i].copy(locked = true)
+        }
+        return Listing.Entries(entries, writable)
     }
-    if (exitCode == BLOCKED_EXIT &&
-        ("Permission denied" in output || "Operation not permitted" in output)
-    ) {
-        return Listing.Blocked
+    if (exitCode == BLOCKED_EXIT) {
+        val denied = output.lineSequence().map { it.trim() }
+            .lastOrNull { "Permission denied" in it || "Operation not permitted" in it }
+        if (denied != null) return Listing.Blocked(denied)
     }
     val last = output.lineSequence().map { it.trim() }.lastOrNull { it.isNotEmpty() }
     return Listing.Failed(last ?: if (exitCode == null) "No response from device" else "Exit code $exitCode")

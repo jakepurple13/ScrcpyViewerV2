@@ -1,44 +1,72 @@
 package com.programmersbox.scrcpyviewer.files
 
+/** Internal storage: where the Files tab opens, named "Internal storage" by the friendly crumbs. */
 const val DEVICE_ROOT = "/sdcard"
 
+/** The top of the device's file system; Up stops here. */
+const val FS_ROOT = "/"
+
 private const val EMULATED_ROOT = "/storage/emulated/0"
+
+/** Other spellings of [DEVICE_ROOT]. */
+private val STORAGE_ALIASES = listOf(EMULATED_ROOT, "/storage/self/primary")
 
 /** POSIX single-quote [s] so the device shell treats it as one literal word. */
 fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
 fun devicePath(dir: String, name: String): String = dir.trimEnd('/') + "/" + name
 
-/** Parent directory of [path], or null at [DEVICE_ROOT] (or above it). */
+/** Parent directory of [path]: [FS_ROOT] for [DEVICE_ROOT] (a link there) and the root's own folders; null at [FS_ROOT]. */
 fun parentOf(path: String): String? {
     val p = normalizeDir(path)
-    if (p == DEVICE_ROOT) return null
+    if (p == FS_ROOT) return null
+    if (p == DEVICE_ROOT) return FS_ROOT
     val i = p.lastIndexOf('/')
-    if (i <= 0) return null
-    return p.substring(0, i)
+    if (i < 0) return null
+    return if (i == 0) FS_ROOT else p.substring(0, i)
 }
 
-/** (label, path) pairs from the storage root down to [path]. */
-fun crumbs(path: String): List<Pair<String, String>> {
+/**
+ * (label, path) pairs from the device root down to [path]. Friendly crumbs start at "Device" and name [DEVICE_ROOT]
+ * "Internal storage"; [realPaths] crumbs are "/" and then the path's own segments.
+ */
+fun crumbs(path: String, realPaths: Boolean = false): List<Pair<String, String>> {
     val p = normalizeDir(path)
-    val result = mutableListOf("Internal storage" to DEVICE_ROOT)
-    if (p == DEVICE_ROOT || !isInside(p, DEVICE_ROOT)) return result
-    var current = DEVICE_ROOT
-    for (segment in p.removePrefix("$DEVICE_ROOT/").split('/').filter { it.isNotEmpty() }) {
+    val result = mutableListOf((if (realPaths) FS_ROOT else "Device") to FS_ROOT)
+    var current = FS_ROOT
+    var rest = p
+    if (!realPaths && isInside(p, DEVICE_ROOT)) {
+        result += "Internal storage" to DEVICE_ROOT
+        current = DEVICE_ROOT
+        rest = p.removePrefix(DEVICE_ROOT)
+    }
+    for (segment in rest.split('/').filter { it.isNotEmpty() }) {
         current = devicePath(current, segment)
         result += segment to current
     }
     return result
 }
 
+/** Without a trailing "/", every spelling of internal storage as [DEVICE_ROOT]; "" is [DEVICE_ROOT], "/" stays. */
 fun normalizeDir(path: String): String {
+    if (path.isEmpty()) return DEVICE_ROOT
     val trimmed = path.trimEnd('/')
-    return when {
-        trimmed.isEmpty() -> DEVICE_ROOT
-        trimmed == EMULATED_ROOT -> DEVICE_ROOT
-        trimmed.startsWith("$EMULATED_ROOT/") -> DEVICE_ROOT + trimmed.removePrefix(EMULATED_ROOT)
-        else -> trimmed
+    if (trimmed.isEmpty()) return FS_ROOT
+    for (alias in STORAGE_ALIASES) {
+        if (trimmed == alias) return DEVICE_ROOT
+        if (trimmed.startsWith("$alias/")) return DEVICE_ROOT + trimmed.removePrefix(alias)
     }
+    return trimmed
+}
+
+/**
+ * A readable folder inside the blocked folder [path], as (button label, path), when one is known: adb can't list
+ * `/data` but can open `/data/local/tmp`, and on some devices can't list `/storage/emulated` but can open its `0`.
+ */
+fun wayInto(path: String): Pair<String, String>? = when (normalizeDir(path)) {
+    "/data" -> "Open /data/local/tmp" to "/data/local/tmp"
+    "/storage/emulated" -> "Open Internal storage" to DEVICE_ROOT
+    else -> null
 }
 
 /**

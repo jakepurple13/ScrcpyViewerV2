@@ -40,22 +40,50 @@ class DevicePathTest {
 
     @Test
     fun parentOfWalksUp() {
-        assertNull(parentOf(DEVICE_ROOT))
         assertEquals("/sdcard", parentOf("/sdcard/DCIM"))
         assertEquals("/sdcard/DCIM", parentOf("/sdcard/DCIM/Camera"))
+    }
+
+    @Test
+    fun parentOfReachesTheDeviceRoot() {
+        assertEquals("/", parentOf(DEVICE_ROOT))
+        assertEquals("/", parentOf("/storage/emulated/0"))
+        assertEquals("/", parentOf("/data"))
+        assertEquals("/data", parentOf("/data/local"))
+        assertNull(parentOf("/"))
     }
 
     @Test
     fun crumbsFromRoot() {
         assertEquals(
             listOf(
+                "Device" to "/",
                 "Internal storage" to "/sdcard",
                 "DCIM" to "/sdcard/DCIM",
                 "Camera" to "/sdcard/DCIM/Camera",
             ),
             crumbs("/sdcard/DCIM/Camera"),
         )
-        assertEquals(listOf("Internal storage" to "/sdcard"), crumbs("/sdcard"))
+        assertEquals(listOf("Device" to "/", "Internal storage" to "/sdcard"), crumbs("/sdcard"))
+    }
+
+    @Test
+    fun crumbsOutsideInternalStorage() {
+        assertEquals(listOf("Device" to "/"), crumbs("/"))
+        assertEquals(
+            listOf("Device" to "/", "data" to "/data", "local" to "/data/local", "tmp" to "/data/local/tmp"),
+            crumbs("/data/local/tmp"),
+        )
+    }
+
+    @Test
+    fun realPathCrumbs() {
+        assertEquals(listOf("/" to "/"), crumbs("/", realPaths = true))
+        assertEquals(
+            listOf("/" to "/", "sdcard" to "/sdcard", "DCIM" to "/sdcard/DCIM"),
+            crumbs("/sdcard/DCIM", realPaths = true),
+        )
+        assertEquals(listOf("/" to "/", "system" to "/system"), crumbs("/system", realPaths = true))
     }
 
     @Test
@@ -66,6 +94,24 @@ class DevicePathTest {
         assertEquals("/sdcard", normalizeDir("/storage/emulated/0/"))
         assertEquals("/sdcard/DCIM", normalizeDir("/storage/emulated/0/DCIM"))
         assertEquals("/sdcard", normalizeDir("/sdcard"))
+        assertEquals("/sdcard", normalizeDir("/storage/self/primary"))
+        assertEquals("/sdcard/DCIM", normalizeDir("/storage/self/primary/DCIM"))
+        assertEquals("/sdcard", normalizeDir(""))
+        assertEquals("/", normalizeDir("/"))
+        assertEquals("/", normalizeDir("//"))
+        assertEquals("/data", normalizeDir("/data/"))
+    }
+
+    @Test
+    fun devicePathJoinsAtTheDeviceRoot() {
+        assertEquals("/data", devicePath("/", "data"))
+    }
+
+    @Test
+    fun wayIntoBlockedFolders() {
+        assertEquals("/data/local/tmp", wayInto("/data")?.second)
+        assertEquals("/sdcard", wayInto("/storage/emulated")?.second)
+        assertNull(wayInto("/cache"))
     }
 
     @Test

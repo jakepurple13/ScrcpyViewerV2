@@ -23,7 +23,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -41,6 +44,8 @@ import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
@@ -138,8 +143,18 @@ internal fun FileRow(
     dropTarget: Boolean = false,
     spring: () -> Float = { 0f },
     moving: Boolean = false,
+    locked: Boolean = false,
+    flash: Boolean = false,
+    match: String? = null,
 ) {
     val colors = MaterialTheme.colorScheme
+    // A folder adb can't read: dimmed, with a lock badge that pops onto its icon once the row is in.
+    val lockBadge = remember { Animatable(if (locked && !motion) 1f else 0f) }
+    LaunchedEffect(locked, motion) {
+        val target = if (locked) 1f else 0f
+        if (motion) lockBadge.animateTo(target, tween(OPEN_MILLIS, delayMillis = if (locked) LOCK_BADGE_DELAY_MILLIS else 0, easing = EmphasizedDecelerate)) else lockBadge.snapTo(target)
+    }
+    val lockedAlpha by animateFloatAsState(if (locked) LOCKED_ALPHA else 1f, if (motion) tween(OPEN_MILLIS) else snap())
     // A drop target: primary container and outline fade in, the icon grows to 112%.
     val lit by animateFloatAsState(if (dropTarget) 1f else 0f, if (motion) tween(150) else snap())
     val movingAlpha by animateFloatAsState(if (moving) MOVING_ALPHA else 1f, if (motion) tween(150) else snap())
@@ -150,6 +165,12 @@ internal fun FileRow(
         if (!arriving || !motion) return@LaunchedEffect
         grow.animateTo(1f, tween(OPEN_MILLIS, easing = EmphasizedDecelerate))
         highlight.snapTo(1f)
+        highlight.animateTo(0f, tween(ARRIVING_FADE_MILLIS.toInt(), easing = LinearEasing))
+    }
+    // A row shown by a search's Show in folder: the highlight rises once the folder has slid in, then fades.
+    LaunchedEffect(flash) {
+        if (!flash || !motion) return@LaunchedEffect
+        highlight.animateTo(1f, tween(OPEN_MILLIS, delayMillis = OPEN_MILLIS, easing = EmphasizedDecelerate))
         highlight.animateTo(0f, tween(ARRIVING_FADE_MILLIS.toInt(), easing = LinearEasing))
     }
     val leaving = leavingIndex >= 0
@@ -189,7 +210,7 @@ internal fun FileRow(
             .then(if (focused) Modifier.border(1.5.dp, colors.primary, shape) else Modifier)
             .drawBehind {
                 // Without motion the highlight simply holds while the browser marks the row as arriving.
-                val h = if (motion) highlight.value else if (arriving) 1f else 0f
+                val h = if (motion) highlight.value else if (arriving || flash) 1f else 0f
                 if (h > 0f) drawRect(colors.primaryContainer.copy(alpha = h * 0.9f))
                 if (lit > 0f) drawRect(colors.primaryContainer.copy(alpha = lit))
             }
@@ -226,15 +247,18 @@ internal fun FileRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(COLUMN_GAP),
     ) {
-        val dim = Modifier.graphicsLayer { alpha = if (hidden) HIDDEN_ALPHA else 1f }
-        KindTile(
-            kind,
-            selected,
-            dim.graphicsLayer {
-                scaleX = 1f + (DROP_ICON_SCALE - 1f) * lit
-                scaleY = scaleX
-            },
-        )
+        val dim = Modifier.graphicsLayer { alpha = (if (hidden) HIDDEN_ALPHA else 1f) * lockedAlpha }
+        Box {
+            KindTile(
+                kind,
+                selected,
+                dim.graphicsLayer {
+                    scaleX = 1f + (DROP_ICON_SCALE - 1f) * lit
+                    scaleY = scaleX
+                },
+            )
+            if (locked || lockBadge.value > 0f) LockBadge({ lockBadge.value }, Modifier.align(Alignment.BottomEnd).offset(3.dp, 3.dp))
+        }
         if (renaming) {
             RenameField(name, kind == FileKind.Folder, renameError != null, motion, onRenameCommit, Modifier.weight(1f))
             if (renameError != null) {
@@ -258,7 +282,10 @@ internal fun FileRow(
             },
             modifier = Modifier.weight(1f).then(dim),
         ) {
-            Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = content)
+            val mark = colors.primaryContainer
+            val onMark = colors.onPrimaryContainer
+            val text = remember(name, match, mark, onMark) { highlighted(name, match, SpanStyle(background = mark, color = onMark)) }
+            Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = content)
         }
         // The item count fades in when it arrives after the listing; a count already there just shows.
         val countAlpha by animateFloatAsState(if (sizeText != null) 1f else 0f, if (motion) tween(OPEN_MILLIS) else snap())
@@ -273,6 +300,43 @@ internal fun FileRow(
             fontSize = CELL_FONT, color = muted, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.End,
         )
+    }
+}
+
+/** Rows of folders adb can't read. */
+private const val LOCKED_ALPHA = 0.62f
+
+/** The lock badge pops in this long after its row starts to rise in. */
+private const val LOCK_BADGE_DELAY_MILLIS = 120
+
+/** Test tag of a locked folder row's lock badge. */
+const val LOCK_BADGE_TAG = "files-lock-badge"
+
+/** The lock on a locked folder's icon, at [scale] (0 to 1, read at draw time). */
+@Composable
+private fun LockBadge(scale: () -> Float, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        modifier.testTag(LOCK_BADGE_TAG).size(15.dp)
+            .graphicsLayer {
+                scaleX = scale()
+                scaleY = scaleX
+            }
+            .clip(styledCorner(8.dp)).background(colors.surface),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Filled.Lock, contentDescription = "No access", Modifier.size(11.dp), tint = colors.onSurfaceVariant)
+    }
+}
+
+/** [name] with the first case-insensitive match of [query] in [style]; plain without a query or a match. */
+internal fun highlighted(name: String, query: String?, style: SpanStyle): AnnotatedString {
+    val q = query?.trim().orEmpty()
+    val at = if (q.isEmpty()) -1 else name.indexOf(q, ignoreCase = true)
+    if (at < 0) return AnnotatedString(name)
+    return buildAnnotatedString {
+        append(name)
+        addStyle(style, at, at + q.length)
     }
 }
 
