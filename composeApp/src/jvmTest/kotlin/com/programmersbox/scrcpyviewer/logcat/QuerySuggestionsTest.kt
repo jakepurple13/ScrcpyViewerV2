@@ -110,4 +110,19 @@ class QuerySuggestionsTest {
         assertEquals("level:warn tag:x" to 11, accept("level:wa tag:x", 7, "level:warn"))
         assertEquals("level:error " to 12, accept("level:erorr", 8, "level:error")) // level:er|orr
     }
+
+    @Test
+    fun `nothing to complete before an existing key`() {
+        assertEquals(emptyList(), suggest("is:cra", 0, ctx)) // |is:cra must not offer tag: over is:
+        assertEquals(emptyList(), suggest("level:warn is:cra", 11, ctx)) // level:warn |is:cra
+        assertEquals(emptyList(), suggest("-is:crash", 1, ctx)) // -|is:crash
+        assertEquals(emptyList(), suggest("-tag:x", 0, ctx)) // |-tag:x
+        assertEquals(listOf("tag:"), suggest("tagz", 0, ctx).take(1).map { it.insert }) // no key yet: still offered
+    }
+
+    @Test
+    fun `is value suggestion completes crash`() {
+        val r = suggest("is:cra", 6, ctx).single()
+        assertEquals("is:crash " to 9, r.applyTo("is:cra"))
+    }
 }

@@ -117,7 +117,7 @@ internal fun highlightQuery(text: String, spans: List<QuerySpan>, color: (SpanKi
     }
 
 /** What the autocomplete shows: [items] for the token at [start]; [keys] when they are filter keys (with the footer). */
-private class Shown(val items: List<Suggestion>, val start: Int, val keys: Boolean)
+private class Shown(val items: List<Suggestion>, val start: Int, val keys: Boolean, val text: String)
 
 /**
  * The filter field: the query in monospace with syntax colors, a clear button, autocomplete under the caret's token
@@ -157,10 +157,10 @@ internal fun LogcatFilterField(
     }
     var selected by remember(suggestions) { mutableIntStateOf(0) }
     val open = focused && !dismissed && suggestions.isNotEmpty()
-    val held = remember { arrayOf(Shown(emptyList(), 0, true)) }
+    val held = remember { arrayOf(Shown(emptyList(), 0, true, "")) }
     if (open) {
         val start = suggestions.first().replaceStart
-        held[0] = Shown(suggestions, start, ':' !in shown.text.substring(start, caret))
+        held[0] = Shown(suggestions, start, ':' !in shown.text.substring(start, caret), shown.text)
     }
     val focus = filterFocus.requester
     val selectAll = filterFocus.selectAllRequests
@@ -170,8 +170,7 @@ internal fun LogcatFilterField(
         change(TextFieldValue(text, TextRange(0, text.length)))
         focus.requestFocus()
     }
-    fun accept(i: Int) {
-        val s = suggestions.getOrNull(i) ?: return
+    fun accept(s: Suggestion) {
         val (t, c) = s.applyTo(shown.text)
         change(TextFieldValue(t, TextRange(c)))
         focus.requestFocus()
@@ -262,7 +261,7 @@ internal fun LogcatFilterField(
                                 when (e.key) {
                                     Key.DirectionDown -> { selected = (selected + 1) % suggestions.size; true }
                                     Key.DirectionUp -> { selected = (selected - 1 + suggestions.size) % suggestions.size; true }
-                                    Key.Tab, Key.Enter, Key.NumPadEnter -> { accept(selected); true }
+                                    Key.Tab, Key.Enter, Key.NumPadEnter -> { suggestions.getOrNull(selected)?.let(::accept); true }
                                     Key.Escape -> { dismissed = true; true }
                                     else -> false
                                 }
@@ -301,7 +300,12 @@ internal fun LogcatFilterField(
                         },
                         exit = if (motion) fadeOut(tween(120)) + scaleOut(tween(120), 0.94f, TransformOrigin(0f, 0f)) else ExitTransition.None,
                     ) {
-                        SuggestionList(s, selected, motion, onPick = ::accept)
+                        // The row clicked is from the list on screen, which the live list may no longer match
+                        // (the click can move the caret first); its ranges hold only for the text it was made from.
+                        SuggestionList(s, selected, motion) { i ->
+                            val picked = s.items.getOrNull(i)
+                            if (picked != null && s.text == shown.text) accept(picked)
+                        }
                     }
                 }
             }
