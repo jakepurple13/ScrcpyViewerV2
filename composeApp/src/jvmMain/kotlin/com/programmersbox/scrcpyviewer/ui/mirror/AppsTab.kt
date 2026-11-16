@@ -5,7 +5,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateBounds
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -14,6 +16,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -37,7 +40,10 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -59,6 +65,7 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ListAlt
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -108,6 +115,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.semantics.contentDescription
@@ -124,7 +132,9 @@ import com.programmersbox.scrcpyviewer.apps.DeviceApp
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import java.awt.datatransfer.StringSelection
 import kotlinx.coroutines.delay
@@ -147,6 +157,12 @@ private const val STAGGER_MAX_MILLIS = 220L
 
 /** How long the copy button shows "Copied". */
 private const val COPIED_MILLIS = 1_600L
+
+/** Narrower than this, the three filter chips fold into one chip with a menu. */
+fun appsFiltersCompact(width: Dp): Boolean = width < 400.dp
+
+/** Narrower than this, the options sheet stacks its version boxes and lays its actions out as a 2 x 2 grid. */
+fun appOptionsCompact(width: Dp): Boolean = width < 360.dp
 
 /** What the tab body shows; [AnimatedContent] fades between them. */
 private enum class AppsBody { Loading, Empty, Grid }
@@ -186,13 +202,16 @@ fun AppsTabContent(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) ->
         )
     }
 
-    Box(Modifier.fillMaxSize()) {
+    // The sheet's width reaches the tab as its own max width: both reflows read it here.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val filtersCompact = appsFiltersCompact(maxWidth)
+        val optionsCompact = appOptionsCompact(maxWidth)
         Column(Modifier.fillMaxSize()) {
             // Sets the tab's own controls apart from the tab bar above them, the same gap on both sides (the tab bar
             // ends where this content starts).
             HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
             SearchField(state.query, onChange = { onEvent(AppsEvent.Search(it)) }, Modifier.padding(horizontal = 12.dp))
-            FilterRow(state, enabled, onEvent, Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp))
+            FilterRow(state, enabled, onEvent, filtersCompact, Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp))
             val body = when {
                 state.loading || state.apps == null -> AppsBody.Loading
                 state.visible.isEmpty() -> AppsBody.Empty
@@ -228,6 +247,7 @@ fun AppsTabContent(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) ->
             onConfirmChange = { confirm = it },
             onClose = { selected = null },
             actions = actions,
+            compact = optionsCompact,
         )
     }
 }
@@ -323,21 +343,81 @@ internal fun SearchField(query: String, onChange: (String) -> Unit, modifier: Mo
     }
 }
 
-/** The filter chips, each with its count for the current search, and the reload button. */
+/**
+ * The filter chips, each with its count for the current search, and the reload button. [compact]: one chip showing
+ * the current filter that opens a menu of all three; the two layouts cross-fade.
+ */
 @Composable
-private fun FilterRow(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) -> Unit, modifier: Modifier = Modifier) {
+private fun FilterRow(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) -> Unit, compact: Boolean, modifier: Modifier = Modifier) {
+    val reduceMotion = LocalReduceMotion.current
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        AppFilter.entries.forEach { filter ->
-            val selected = filter == state.filter
-            FilterChip(
-                selected = selected,
-                onClick = { if (!selected) onEvent(AppsEvent.Filter(filter)) },
-                label = { Text(filter.name) },
-                trailing = if (state.apps != null) ({ Counter(state.count(filter)) }) else null,
-            )
+        AnimatedContent(
+            targetState = compact,
+            transitionSpec = {
+                fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
+                    .using(SizeTransform(clip = false) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
+            },
+        ) { folded ->
+            if (folded) {
+                CompactFilter(state, onEvent)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppFilter.entries.forEach { filter ->
+                        val selected = filter == state.filter
+                        FilterChip(
+                            selected = selected,
+                            onClick = { if (!selected) onEvent(AppsEvent.Filter(filter)) },
+                            label = { Text(filter.name) },
+                            trailing = if (state.apps != null) ({ Counter(state.count(filter)) }) else null,
+                        )
+                    }
+                }
+            }
         }
         Spacer(Modifier.weight(1f))
         ReloadButton(state.loading, enabled) { onEvent(AppsEvent.Reload) }
+    }
+}
+
+/** One chip: the current filter, its count and a drop-down arrow; its menu opens at the chip and lists All / User / System. */
+@Composable
+private fun CompactFilter(state: AppsUiState, onEvent: (AppsEvent) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        FilterChip(
+            selected = true,
+            onClick = { open = true },
+            label = { Text(state.filter.name) },
+            trailing = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (state.apps != null) Counter(state.count(state.filter))
+                    Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose a filter", Modifier.size(18.dp))
+                }
+            },
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            AppFilter.entries.forEach { filter ->
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(filter.name)
+                            if (state.apps != null) {
+                                Spacer(Modifier.width(16.dp))
+                                Text("${state.count(filter)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    },
+                    leadingIcon = {
+                        if (filter == state.filter) Icon(Icons.Filled.Check, contentDescription = "Current filter", Modifier.size(18.dp))
+                        else Spacer(Modifier.size(18.dp))
+                    },
+                    onClick = {
+                        open = false
+                        if (filter != state.filter) onEvent(AppsEvent.Filter(filter))
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -691,6 +771,7 @@ private fun OptionsOverlay(
     onConfirmChange: (Boolean) -> Unit,
     onClose: () -> Unit,
     actions: AppActions,
+    compact: Boolean,
 ) {
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(visible, enter = fadeIn(tween(OPEN_MILLIS)), exit = fadeOut(tween(CLOSE_MILLIS))) {
@@ -705,7 +786,7 @@ private fun OptionsOverlay(
             enter = slideInVertically(tween(340, easing = EmphasizedDecelerate)) { it },
             exit = slideOutVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { it },
         ) {
-            if (app != null) OptionsSheet(app, icon, confirm, onConfirmChange, onClose, actions)
+            if (app != null) OptionsSheet(app, icon, confirm, onConfirmChange, onClose, actions, compact)
         }
     }
 }
@@ -718,6 +799,7 @@ private fun AnimatedVisibilityScope.rise(delayMillis: Int): Modifier = Modifier.
     exit = fadeOut(tween(120)),
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AnimatedVisibilityScope.OptionsSheet(
     app: DeviceApp,
@@ -726,8 +808,10 @@ private fun AnimatedVisibilityScope.OptionsSheet(
     onConfirmChange: (Boolean) -> Unit,
     onClose: () -> Unit,
     actions: AppActions,
+    compact: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
+    val reduceMotion = LocalReduceMotion.current
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Column(
@@ -764,9 +848,22 @@ private fun AnimatedVisibilityScope.OptionsSheet(
             }
             IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close app options") }
         }
-        Row(rise(100).padding(vertical = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            InfoBox("Version name", app.versionName ?: "Unknown", Modifier.weight(1f))
-            InfoBox("Version code", app.versionCode?.toString() ?: "Unknown", Modifier.weight(1f), mono = true)
+        // One box a row when compact, two otherwise; the boxes keep their identity so they glide between the layouts.
+        // The enter slide sits on a wrapper outside the lookahead scope, so the boxes' glide never touches it; the
+        // wrapper's height follows the stacking with the same spring.
+        Box(rise(100).padding(vertical = 16.dp).then(resize(reduceMotion))) {
+            LookaheadScope {
+                val glide = glide(this, reduceMotion)
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    maxItemsInEachRow = if (compact) 1 else 2,
+                ) {
+                    InfoBox("Version name", app.versionName ?: "Unknown", Modifier.weight(1f).then(glide))
+                    InfoBox("Version code", app.versionCode?.toString() ?: "Unknown", Modifier.weight(1f).then(glide), mono = true)
+                }
+            }
         }
         AnimatedContent(
             targetState = confirm,
@@ -781,11 +878,19 @@ private fun AnimatedVisibilityScope.OptionsSheet(
             if (confirming) {
                 ConfirmUninstall(app, onCancel = { onConfirmChange(false) }, onConfirm = { onClose(); actions.uninstall(app) })
             } else {
-                ActionButtons(app, actions, onClose, onAskUninstall = { onConfirmChange(true) })
+                ActionButtons(app, actions, compact, reduceMotion, onClose, onAskUninstall = { onConfirmChange(true) })
             }
         }
     }
 }
+
+/** A size change follows [layoutSpring]; none under reduced motion. */
+private fun resize(reduceMotion: Boolean): Modifier =
+    if (reduceMotion) Modifier else Modifier.animateContentSize(layoutSpring())
+
+/** Position changes glide with [layoutSpring]; none under reduced motion. */
+private fun glide(scope: LookaheadScope, reduceMotion: Boolean): Modifier =
+    if (reduceMotion) Modifier else Modifier.animateBounds(scope, boundsTransform = { _, _ -> layoutSpring() })
 
 @Composable
 private fun InfoBox(label: String, value: String, modifier: Modifier = Modifier, mono: Boolean = false) {
@@ -799,8 +904,16 @@ private fun InfoBox(label: String, value: String, modifier: Modifier = Modifier,
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ActionButtons(app: DeviceApp, actions: AppActions, onClose: () -> Unit, onAskUninstall: () -> Unit) {
+private fun ActionButtons(
+    app: DeviceApp,
+    actions: AppActions,
+    compact: Boolean,
+    reduceMotion: Boolean,
+    onClose: () -> Unit,
+    onAskUninstall: () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) {
@@ -810,26 +923,38 @@ private fun ActionButtons(app: DeviceApp, actions: AppActions, onClose: () -> Un
         }
     }
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SheetAction(Icons.Filled.PlayArrow, "Launch", colors.primary, colors.onPrimary, Modifier.weight(1f)) {
-                onClose()
-                actions.launch(app)
+        // One row of four, or a 2 x 2 grid when compact; the buttons keep their identity so they glide between the two.
+        Box(Modifier.fillMaxWidth().then(resize(reduceMotion))) {
+            LookaheadScope {
+                val glide = glide(this, reduceMotion)
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    maxItemsInEachRow = if (compact) 2 else 4,
+                ) {
+                    val cell = Modifier.weight(1f).then(glide)
+                    SheetAction(Icons.Filled.PlayArrow, "Launch", colors.primary, colors.onPrimary, cell, compact) {
+                        onClose()
+                        actions.launch(app)
+                    }
+                    SheetAction(Icons.Filled.Stop, "Force stop", colors.surfaceContainerHigh, colors.onSurface, cell, compact) {
+                        onClose()
+                        actions.forceStop(app)
+                    }
+                    val copyContainer by animateColorAsState(if (copied) colors.tertiaryContainer else colors.surfaceContainerHigh, tween(200))
+                    val copyContent by animateColorAsState(if (copied) colors.onTertiaryContainer else colors.onSurface, tween(200))
+                    SheetAction(
+                        if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                        if (copied) "Copied" else "Copy package",
+                        copyContainer, copyContent, cell, compact,
+                    ) {
+                        copied = true
+                        actions.copy(app)
+                    }
+                    SheetAction(Icons.Filled.Delete, "Uninstall", colors.errorContainer, colors.onErrorContainer, cell, compact, onAskUninstall)
+                }
             }
-            SheetAction(Icons.Filled.Stop, "Force stop", colors.surfaceContainerHigh, colors.onSurface, Modifier.weight(1f)) {
-                onClose()
-                actions.forceStop(app)
-            }
-            val copyContainer by animateColorAsState(if (copied) colors.tertiaryContainer else colors.surfaceContainerHigh, tween(200))
-            val copyContent by animateColorAsState(if (copied) colors.onTertiaryContainer else colors.onSurface, tween(200))
-            SheetAction(
-                if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
-                if (copied) "Copied" else "Copy package",
-                copyContainer, copyContent, Modifier.weight(1f),
-            ) {
-                copied = true
-                actions.copy(app)
-            }
-            SheetAction(Icons.Filled.Delete, "Uninstall", colors.errorContainer, colors.onErrorContainer, Modifier.weight(1f), onAskUninstall)
         }
         // Under the row: a fifth square would squeeze every label at the Apps tab's default width. The styled button, by
         // its full name: the confirm step below needs Material's, whose error colors the styled one would override.
@@ -858,17 +983,15 @@ private fun SheetAction(
     container: Color,
     content: Color,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
     val interactions = remember { MutableInteractionSource() }
     val pressed by interactions.collectIsPressedAsState()
     val press by animateFloatAsState(if (pressed) 0.95f else 1f, spring(stiffness = 1_500f))
-    Column(
-        modifier.height(72.dp).graphicsLayer { scaleX = press; scaleY = press }.clip(ActionShape).background(container)
-            .clickable(interactions, LocalIndication.current, onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
+    val surface = modifier.height(if (compact) 56.dp else 72.dp).graphicsLayer { scaleX = press; scaleY = press }.clip(ActionShape)
+        .background(container).clickable(interactions, LocalIndication.current, onClick = onClick)
+    val iconSlot: @Composable () -> Unit = {
         AnimatedContent(
             targetState = icon,
             transitionSpec = {
@@ -878,12 +1001,42 @@ private fun SheetAction(
         ) { vector ->
             Icon(vector, contentDescription = null, Modifier.size(22.dp), tint = content)
         }
-        Spacer(Modifier.height(6.dp))
+    }
+    val labelSlot: @Composable () -> Unit = {
         AnimatedContent(
             targetState = label,
             transitionSpec = { fadeIn(tween(160, delayMillis = 60)).togetherWith(fadeOut(tween(100))) },
         ) { text ->
-            Text(text, style = MaterialTheme.typography.labelMedium, color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text, style = MaterialTheme.typography.labelMedium, color = content,
+                maxLines = if (compact) 2 else 1, overflow = TextOverflow.Ellipsis,
+                textAlign = if (compact) TextAlign.Start else null,
+            )
+        }
+    }
+    // The cell's bounds glide (animateBounds on [modifier]); the two forms cross-fade inside it, so the content never
+    // snaps while the cell moves. The cell's height is fixed per form, so a label's line count never resizes it.
+    AnimatedContent(
+        targetState = compact,
+        modifier = surface,
+        transitionSpec = { fadeIn(tween(150)).togetherWith(fadeOut(tween(150))).using(SizeTransform(clip = false) { _, _ -> snap() }) },
+        contentAlignment = Alignment.Center,
+    ) { folded ->
+        if (folded) {
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            ) {
+                iconSlot()
+                Box(Modifier.weight(1f, fill = false)) { labelSlot() }
+            }
+        } else {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                iconSlot()
+                Spacer(Modifier.height(6.dp))
+                labelSlot()
+            }
         }
     }
 }
