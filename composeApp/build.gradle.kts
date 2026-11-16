@@ -347,6 +347,16 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         if (!deviceTests) excludeTestsMatching("*DeviceTest")
         if (!macCursorSmoke) excludeTestsMatching("*MacSmokeTest")
     }
+    // LeakedCoroutineReporter (jvmTest) writes each coroutine exception that escaped its test to stderr, tagged.
+    // Print those in the build log with the test that was running: runTest later fails some other test with
+    // UncaughtExceptionsBeforeTest, and without this line nothing names the test that leaked.
+    (this as Test).addTestOutputListener(object : TestOutputListener {
+        override fun onOutput(test: TestDescriptor, event: TestOutputEvent) {
+            if ("[leaked-coroutine-exception]" in event.message) {
+                logger.lifecycle("Leaked coroutine exception while running ${test.className ?: "-"} > ${test.name}:\n${event.message}")
+            }
+        }
+    })
     // On CI, log each test as it starts: when a job hangs and times out, the last STARTED line names the test.
     if (System.getenv("CI") == "true") {
         testLogging { events("started", "failed", "skipped") }
