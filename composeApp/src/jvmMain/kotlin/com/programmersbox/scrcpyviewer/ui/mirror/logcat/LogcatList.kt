@@ -229,8 +229,8 @@ internal class LogcatFollow(val state: LazyListState) {
 /**
  * The log: a column header, then the rows of [LogcatController.visible] newest at the bottom, the paused banner,
  * the "N new lines" pill, the empty-filter message and, before the first play, the start card. While an export runs
- * its bar ([LogcatExportBar]) crosses the top edge and the rows dim to 0.55 (300 ms). Rows are monospace
- * and selectable; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
+ * its bar ([LogcatExportBar]) crosses the top edge and the rows dim to 0.55 (300 ms). Rows are monospace with
+ * selectable messages and traces; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
