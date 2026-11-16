@@ -5,4 +5,5 @@ plugins {
     alias(libs.plugins.composeMultiplatform) apply false
     alias(libs.plugins.koinCompiler) apply false
     alias(libs.plugins.nucleus) apply false
+    alias(libs.plugins.aboutLibraries) apply false
 }
