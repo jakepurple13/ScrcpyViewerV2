@@ -51,6 +51,7 @@ import java.awt.datatransfer.StringSelection
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -227,6 +228,15 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val follow = remember(listState) { LogcatFollow(listState) }
     val columns = rememberLogcatColumns(controller.compact, sheetWidth < 600.dp, motion)
     val words = controller.parsed.highlightWords
+    // `age:` is judged against the clock, which isn't state: re-check it on showing and every second after.
+    val ageing = controller.parsed.ageLimits.isNotEmpty()
+    LaunchedEffect(controller, ageing) {
+        if (!ageing) return@LaunchedEffect
+        while (true) {
+            controller.tickAge()
+            delay(1_000)
+        }
+    }
     val mine = controller.mine
     val wrap = controller.wrap
     val run = controller.run

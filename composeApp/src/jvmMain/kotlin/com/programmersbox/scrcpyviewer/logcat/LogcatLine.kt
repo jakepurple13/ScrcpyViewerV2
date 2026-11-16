@@ -57,12 +57,15 @@ class LineSplitter {
     fun feed(chunk: String): List<String> {
         pending.append(chunk)
         val lines = mutableListOf<String>()
+        // Scan from a moving start and drop the consumed text once: deleting per line copies the rest each time.
+        var start = 0
         while (true) {
-            val nl = pending.indexOf('\n')
+            val nl = pending.indexOf('\n', start)
             if (nl < 0) break
-            lines += pending.substring(0, nl).trimEnd('\r')
-            pending.delete(0, nl + 1)
+            lines += pending.substring(start, nl).trimEnd('\r')
+            start = nl + 1
         }
+        if (start > 0) pending.delete(0, start)
         return lines
     }
 

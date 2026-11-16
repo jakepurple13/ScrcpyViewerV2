@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.logcat.EntryInfo
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
 import com.programmersbox.scrcpyviewer.logcat.LogcatLine
 import com.programmersbox.scrcpyviewer.logcat.LogcatSource
@@ -8,6 +9,7 @@ import java.io.IOException
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -568,20 +570,133 @@ class LogcatControllerTest {
         assertTrue(c.visible.isNotEmpty())
 
         val times = mutableListOf<Long>()
+        val batchTimes = mutableListOf<Long>()
         repeat(40) { round ->
+            val b0 = System.nanoTime()
             batch(100)
             val t0 = System.nanoTime()
             val visible = c.visible
             val counts = c.levelCounts
             val took = System.nanoTime() - t0
+            c.suggestionContext()
+            val batchTook = System.nanoTime() - b0
             assertTrue(visible.isNotEmpty() && counts.isNotEmpty())
-            if (round >= 10) times += took // the first 10 warm up the JIT
+            // The first 10 warm up the JIT.
+            if (round >= 10) {
+                times += took
+                batchTimes += batchTook
+            }
         }
         assertEquals(LOGCAT_MAX_ENTRIES, c.totalLines)
         val median = times.sorted()[times.size / 2] / 1_000_000.0
+        val batchMedian = batchTimes.sorted()[batchTimes.size / 2] / 1_000_000.0
         println("Logcat refilter of $LOGCAT_MAX_ENTRIES entries: median %.2f ms over ${times.size} rounds".format(median))
+        println("Logcat 100-line batch with filter and suggestions: median %.2f ms".format(batchMedian))
         // Budget is 8 ms on a dev machine; the assert is generous so a slow CI box doesn't flake.
         assertTrue(median < 25.0, "median refilter took $median ms")
+    }
+
+    /** What [LogcatController.visible] and the counts must be, filtered from scratch over every item at [now]. */
+    private fun LogcatController.assertMatchesScratch(now: Long, what: String) {
+        val scratch = items.filter { it !is LogcatItem.Line || parsed.matches(it.entry, EntryInfo(it.pkg, it.process), mine, now) }
+        assertEquals(scratch, visible, "visible after $what")
+        val shown = scratch.filterIsInstance<LogcatItem.Line>()
+        assertEquals(shown.groupingBy { it.entry.line.level }.eachCount(), levelCounts, "levelCounts after $what")
+        val all = items.filterIsInstance<LogcatItem.Line>()
+        assertEquals(all.size, totalLines, "totalLines after $what")
+        val ctx = suggestionContext()
+        assertEquals(all.groupingBy { it.entry.line.tag }.eachCount(), ctx.tags, "tags after $what")
+        assertEquals(all.mapNotNullTo(HashSet()) { it.pkg }, ctx.packages, "packages after $what")
+        assertEquals(all.mapNotNullTo(HashSet()) { it.process }, ctx.processes, "processes after $what")
+    }
+
+    @Test
+    fun `incremental filtering matches filtering from scratch`() {
+        val queries = listOf(
+            "", "Ok", "tag:Sync", "-tag:Sync", "level:warn", "message:at", "message~:Foo\\.b", "is:crash", "is:stacktrace",
+            "-is:stacktrace", "retry | level:error", "package:mine", "-package:mine", "process:com.app2", "package:com.app1",
+            "age:2s", "-age:1s", "age:3s -age:1s", "age:1s | is:crash", "level:info age:2s",
+        )
+        val tags = listOf("OkHttp", "SyncManager", "Choreographer", "AndroidRuntime")
+        for (seed in 1..6) runTest {
+            val rnd = Random(seed)
+            val source = FakeSource()
+            source.ps = mapOf(1 to "com.app1", 2 to "com.app2")
+            val c = controller(source, maxEntries = 60)
+            c.play()
+            runCurrent()
+            var t = 0
+            fun time() = "10:%02d:%02d.%03d".format(t / 60_000 % 60, t / 1_000 % 60, t % 1_000)
+            repeat(300) { step ->
+                when (rnd.nextInt(20)) {
+                    0 -> c.query = queries.random(rnd)
+                    1 -> c.pick("com.app${rnd.nextInt(1, 4)}")
+                    2 -> if (c.run == LogcatRun.Running) c.pause() else c.play()
+                    3 -> source.ps = (1..4).filter { rnd.nextBoolean() }.associateWith { "com.app${rnd.nextInt(1, 5)}" }
+                    4 -> if (rnd.nextInt(5) == 0) c.clear()
+                    else -> if (c.run == LogcatRun.Running) {
+                        repeat(rnd.nextInt(1, 25)) {
+                            if (rnd.nextInt(4) != 0) t += rnd.nextInt(0, 40)
+                            val pid = rnd.nextInt(1, 6)
+                            when (rnd.nextInt(8)) {
+                                0 -> {
+                                    // A crash head, its Process: line and a trace.
+                                    val crash = line(time(), "FATAL EXCEPTION: main", pid, pid, "AndroidRuntime", LogLevel.Error)
+                                    source.stream.trySend(crash)
+                                    source.stream.trySend(crash.copy(message = "Process: com.app$pid, PID: $pid"))
+                                    repeat(rnd.nextInt(3)) { source.stream.trySend(crash.copy(message = "    at com.example.Foo.bar(Foo.kt:$it)")) }
+                                }
+                                1 -> {
+                                    val head = line(time(), "java.lang.IllegalStateException: retry", pid, pid, "W", LogLevel.Warn)
+                                    source.stream.trySend(head)
+                                    repeat(rnd.nextInt(4)) { source.stream.trySend(head.copy(message = "    at com.example.Foo.baz(Foo.kt:$it)")) }
+                                }
+                                // A trace line that may fold into the entry the previous batch ended with.
+                                2 -> source.stream.trySend(line(time(), "    at com.example.Foo.qux(Foo.kt:1)", pid, pid, "W", LogLevel.Warn))
+                                else -> source.stream.trySend(
+                                    line(time(), "request ${if (rnd.nextBoolean()) "retry" else "ok"}", pid, rnd.nextInt(1, 3), tags.random(rnd), LogLevel.entries.random(rnd)),
+                                )
+                            }
+                        }
+                    }
+                }
+                advanceTimeBy(rnd.nextLong(0, 700))
+                runCurrent()
+                // The list's ticker would call this; age: is judged at its last tick.
+                c.tickAge()
+                c.assertMatchesScratch(start + testScheduler.currentTime, "step $step of seed $seed, query \"${c.query}\"")
+            }
+        }
+    }
+
+    @Test
+    fun `age filter drops lines as time passes on a quiet stream`() = runTest {
+        val source = FakeSource()
+        val c = controller(source)
+        c.play()
+        runCurrent()
+        source.stream.trySend(line(message = "old", level = LogLevel.Warn))
+        advanceTimeBy(60)
+        runCurrent()
+        advanceTimeBy(20_000)
+        source.stream.trySend(line(message = "new"))
+        advanceTimeBy(60)
+        runCurrent()
+        c.query = "age:30s"
+        assertEquals(listOf("old", "new"), c.visible.map { (it as LogcatItem.Line).entry.line.message })
+        c.pause()
+        advanceTimeBy(15_000)
+        c.tickAge()
+        assertEquals(listOf("new"), c.visible.map { (it as LogcatItem.Line).entry.line.message })
+        assertEquals(mapOf(LogLevel.Info to 1), c.levelCounts)
+        advanceTimeBy(30_000)
+        c.tickAge()
+        assertTrue(c.visible.isEmpty())
+        assertTrue(c.levelCounts.isEmpty())
+        assertEquals(2, c.totalLines)
+        // Negated, the same lines come back once they are older than the limit.
+        c.query = "-age:40s"
+        assertEquals(listOf("old", "new"), c.visible.map { (it as LogcatItem.Line).entry.line.message })
     }
 
     @Test
