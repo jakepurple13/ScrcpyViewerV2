@@ -102,6 +102,17 @@ class ZoomTest {
     }
 
     @Test
+    fun `AltGr is not the zoom modifier off macOS`() {
+        // Windows reports AltGr as Ctrl+Alt: AltGr+0 is '}' on a German layout, AltGr+'+' is '~'.
+        val altGr = AwtKeyEvent.CTRL_DOWN_MASK or AwtKeyEvent.ALT_DOWN_MASK
+        assertNull(Zoom.shortcut(AwtKeyEvent.VK_0, altGr, mac = false))
+        assertNull(Zoom.shortcut(AwtKeyEvent.VK_PLUS, altGr, mac = false))
+        assertNull(Zoom.shortcut(AwtKeyEvent.VK_MINUS, AwtKeyEvent.ALT_GRAPH_DOWN_MASK or AwtKeyEvent.CTRL_DOWN_MASK, mac = false))
+        // Cmd+Option still zooms on a Mac.
+        assertEquals(ZoomCommand.Fit, Zoom.shortcut(AwtKeyEvent.VK_0, AwtKeyEvent.META_DOWN_MASK or AwtKeyEvent.ALT_DOWN_MASK, mac = true))
+    }
+
+    @Test
     fun `zoom shortcut keys inject nothing when they do reach the mapper`() {
         // The window consumes them first; the mapper must not turn Cmd/Ctrl + these into device keys either way.
         val mapper = InputMapper(frameSize = { IntSize(100, 200) }, viewRect = { Rect(0f, 0f, 100f, 200f) })

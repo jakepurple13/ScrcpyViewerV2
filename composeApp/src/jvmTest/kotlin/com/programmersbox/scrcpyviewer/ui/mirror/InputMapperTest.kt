@@ -105,6 +105,43 @@ class InputMapperTest {
     }
 
     @Test
+    fun `AltGr characters type, reported as Ctrl+Alt (Windows) or AltGraph`() {
+        val altGr = InputMapper(frameSize = { size }, viewRect = { view }, ctrlAltIsAltGr = true)
+        val ctrlAlt = AwtKeyEvent.CTRL_DOWN_MASK or AwtKeyEvent.ALT_DOWN_MASK
+        for (c in listOf('@', '€', '{', '[', '\\', '}')) {
+            assertEquals(listOf<ControlMessage>(ControlMessage.InjectText("$c")), altGr.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, c, ctrlAlt), "typed $c")
+        }
+        // AltGr + Shift (e.g. a capital letter with an accent).
+        assertEquals(
+            listOf<ControlMessage>(ControlMessage.InjectText("Ł")),
+            altGr.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, 'Ł', ctrlAlt or AwtKeyEvent.SHIFT_DOWN_MASK),
+        )
+        assertEquals(
+            listOf<ControlMessage>(ControlMessage.InjectText("@")),
+            mapper.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, '@', AwtKeyEvent.ALT_GRAPH_DOWN_MASK),
+        )
+    }
+
+    @Test
+    fun `Ctrl or Cmd shortcuts still type nothing`() {
+        val altGr = InputMapper(frameSize = { size }, viewRect = { view }, ctrlAltIsAltGr = true)
+        val ctrl = AwtKeyEvent.CTRL_DOWN_MASK
+        val alt = AwtKeyEvent.ALT_DOWN_MASK
+        val meta = AwtKeyEvent.META_DOWN_MASK
+        // Windows Ctrl+C / Ctrl+V type control characters; Ctrl without Alt is a shortcut whatever character it reports.
+        assertTrue(altGr.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, '\u0003', ctrl).isEmpty())
+        assertTrue(altGr.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, '\u0016', ctrl).isEmpty())
+        assertTrue(altGr.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, 'c', ctrl).isEmpty())
+        assertTrue(altGr.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, '@', ctrl or AwtKeyEvent.SHIFT_DOWN_MASK).isEmpty())
+        // The Windows key with Ctrl+Alt is not AltGr.
+        assertTrue(altGr.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, '@', ctrl or alt or meta).isEmpty())
+        // macOS: Ctrl+Option is a shortcut, not AltGr; Cmd never types.
+        val mac = InputMapper(frameSize = { size }, viewRect = { view }, ctrlAltIsAltGr = false)
+        assertTrue(mac.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, '@', ctrl or alt).isEmpty())
+        assertTrue(mac.awtKey(AwtKeyEvent.KEY_TYPED, AwtKeyEvent.VK_UNDEFINED, '@', meta).isEmpty())
+    }
+
+    @Test
     fun `default sdk bindings - right BACK, middle HOME, 4th APP_SWITCH, 5th notifications`() {
         assertEquals(listOf<ControlMessage>(ControlMessage.InjectKeycode(0, InputMapper.KEYCODE_HOME, 0, 0)), mapper.press(center, PointerButton.Tertiary))
         assertEquals(listOf<ControlMessage>(ControlMessage.InjectKeycode(1, InputMapper.KEYCODE_HOME, 0, 0)), mapper.release(center, PointerButton.Tertiary))

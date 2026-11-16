@@ -354,6 +354,13 @@ class QuickActions internal constructor(
     private var custom by mutableStateOf(store?.actions?.value.orEmpty())
     private var customState by mutableStateOf(rememberedToggles(custom))
     private var customPending by mutableStateOf<Set<String>>(emptySet())
+    /**
+     * How many times each toggle was switched (built-ins by [QuickToggle], custom ones by id). A read keeps a toggle's
+     * sample only when its count is the same as when the read started: an older sample must not undo a newer switch.
+     * Used on the UI thread.
+     */
+    private val toggleSwitches = HashMap<QuickToggle, Int>()
+    private val customSwitches = HashMap<String, Int>()
     private var prompt by mutableStateOf<PendingRun?>(null)
     private var promptToConsole = false
     private var packages by mutableStateOf<List<String>?>(null)
@@ -538,13 +545,18 @@ class QuickActions internal constructor(
     private fun refresh() {
         val d = device ?: return
         val toggleActions = custom.filterIsInstance<ToggleAction>()
+        val switchesAtStart = HashMap(toggleSwitches)
+        val customSwitchesAtStart = HashMap(customSwitches)
         scope.launch {
             val read = runCatching { d.read(toggleActions) }.getOrNull() ?: return@launch
-            // A toggle being switched keeps its optimistic state until its command answers.
-            toggles = read.builtIn + toggles.filterKeys { it in pending }
+            // A toggle being switched keeps its optimistic state until its command answers, and one switched since the
+            // read started keeps its state: the sample is older than the switch.
+            toggles = read.builtIn + toggles.filterKeys { it in pending || toggleSwitches[it] != switchesAtStart[it] }
             // Only toggles that still exist: one deleted during the read must not get its state back.
             val ids = custom.mapTo(HashSet()) { it.id }
-            customState = customState + read.custom.filterKeys { it in ids && it !in customPending }
+            customState = customState + read.custom.filterKeys {
+                it in ids && it !in customPending && customSwitches[it] == customSwitchesAtStart[it]
+            }
         }
     }
 
@@ -555,6 +567,7 @@ class QuickActions internal constructor(
         val targets = followers()
         val turns = takeTurns(targets, "builtin:${toggle.name}")
         pending = pending + toggle
+        toggleSwitches.merge(toggle, 1, Int::plus)
         toggles = toggles + (toggle to on)
         scope.launch {
             try {
@@ -586,6 +599,7 @@ class QuickActions internal constructor(
         val turns = takeTurns(targets, "custom:$id")
         val cmd = if (on) action.on else action.off
         customPending = customPending + id
+        customSwitches.merge(id, 1, Int::plus)
         customState = customState + (id to on)
         scope.launch {
             try {

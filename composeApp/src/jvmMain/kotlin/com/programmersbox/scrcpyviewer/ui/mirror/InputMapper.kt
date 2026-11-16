@@ -9,6 +9,7 @@ import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.unit.IntSize
+import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.scrcpy.ControlMessage
 import com.programmersbox.scrcpyviewer.scrcpy.Position
@@ -54,6 +55,8 @@ class InputMapper(
     private val mouseEnabled: Boolean = true,
     private val keyboardEnabled: Boolean = true,
     private val orientation: DisplayOrientation = DisplayOrientation.R0,
+    /** Ctrl+Alt (without Meta) is AltGr, as Windows reports it: its typed characters are text. Off on macOS. */
+    private val ctrlAltIsAltGr: Boolean = !Os.isMac,
 ) {
     private var buttons = 0
     /** Device position of the last forwarded SDK mouse event, for [releaseButtons]. */
@@ -282,8 +285,9 @@ class InputMapper(
     private fun textEvent(c: Char, mods: Int): List<ControlMessage> {
         if (keyMode == KeyInjectMode.Raw) return emptyList()
         if (c.isISOControl() || c == AwtKeyEvent.CHAR_UNDEFINED) return emptyList()
-        // Shortcuts (Ctrl/Cmd + key) are key events, not text.
-        if (mods and (AwtKeyEvent.CTRL_DOWN_MASK or AwtKeyEvent.META_DOWN_MASK) != 0) return emptyList()
+        // Shortcuts (Ctrl/Cmd + key) are key events, not text. AltGr is not a shortcut: on Windows it comes as
+        // Ctrl+Alt, and `@ € { [ \` on many layouts are AltGr characters.
+        if (!isAltGr(mods, ctrlAltIsAltGr) && mods and (AwtKeyEvent.CTRL_DOWN_MASK or AwtKeyEvent.META_DOWN_MASK) != 0) return emptyList()
         if (keyMode == KeyInjectMode.Mixed && (c in 'a'..'z' || c in 'A'..'Z' || c == ' ')) return emptyList()
         return listOf(ControlMessage.InjectText(c.toString()))
     }
@@ -339,6 +343,17 @@ class InputMapper(
         private const val META_META_LEFT_ON = 0x20000
 
         private const val EPSILON = 1e-6
+
+        /**
+         * True when [modifiersEx] are AltGr: AltGraph itself, or with [ctrlAlt] Ctrl+Alt (Windows reports AltGr that
+         * way, and Compose key events carry no AltGraph flag at all). Never with Meta (Cmd / Windows key): a shortcut.
+         */
+        fun isAltGr(modifiersEx: Int, ctrlAlt: Boolean = !Os.isMac): Boolean {
+            if (modifiersEx and AwtKeyEvent.META_DOWN_MASK != 0) return false
+            if (modifiersEx and AwtKeyEvent.ALT_GRAPH_DOWN_MASK != 0) return true
+            val both = AwtKeyEvent.CTRL_DOWN_MASK or AwtKeyEvent.ALT_DOWN_MASK
+            return ctrlAlt && (modifiersEx and both) == both
+        }
 
         /** Rectangle the frame is drawn in: aspect-fit (letterbox) inside [view], or [view] itself when stretched. */
         fun contentRect(frame: IntSize, view: Rect, stretch: Boolean = false): Rect {

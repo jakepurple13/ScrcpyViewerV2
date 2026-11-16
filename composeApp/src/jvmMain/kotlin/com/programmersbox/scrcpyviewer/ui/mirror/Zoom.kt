@@ -71,6 +71,8 @@ object Zoom {
     fun shortcut(keyCode: Int, modifiersEx: Int, mac: Boolean): ZoomCommand? {
         val mod = if (mac) AwtKeyEvent.META_DOWN_MASK else AwtKeyEvent.CTRL_DOWN_MASK
         if (modifiersEx and mod == 0) return null
+        // Off macOS, Ctrl+Alt is AltGr typing a character (AltGr+0 is '}' on a German layout), not Ctrl.
+        if (!mac && InputMapper.isAltGr(modifiersEx, ctrlAlt = true)) return null
         return when (keyCode) {
             AwtKeyEvent.VK_EQUALS, AwtKeyEvent.VK_PLUS, AwtKeyEvent.VK_ADD -> ZoomCommand.In
             AwtKeyEvent.VK_MINUS, AwtKeyEvent.VK_SUBTRACT -> ZoomCommand.Out

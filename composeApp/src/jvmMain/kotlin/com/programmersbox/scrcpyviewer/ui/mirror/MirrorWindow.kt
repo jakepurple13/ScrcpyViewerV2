@@ -1135,6 +1135,15 @@ fun MirrorWindow(
                                 }
                             }
                         },
+                        onInputDetached = {
+                            if ("no-control" !in e) {
+                                clickIndicator?.release(monotonicMillis())
+                                val msgs = mapper.releaseButtons()
+                                send(msgs)
+                                // Followers got the press only from the SDK mouse (onPointer above).
+                                if (capture == null) follow.send(msgs)
+                            }
+                        },
                         onViewSize = { viewSize = it },
                         onStageSize = { stage = it },
                         onQuickAction = quickActions::onEvent,
@@ -1359,6 +1368,11 @@ fun MirrorContent(
     screenshotButton: ScreenBoundsRef? = null,
     /** Drawn over the stage, above the video and its overlays (the screenshot flash and thumbnail). */
     stageOverlay: @Composable BoxScope.() -> Unit = {},
+    /**
+     * The view that took [onPointer]'s events is gone (Fit and zoom swapped canvases, or the stage left): a release of
+     * a button pressed on it will never come.
+     */
+    onInputDetached: () -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1401,10 +1415,10 @@ fun MirrorContent(
             ) {
                 val disconnected = state.disconnected
                 if (wake == null) {
-                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator)
+                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator, onInputDetached)
                 } else {
                     WakeStage(wake, standby = !disconnected) {
-                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator)
+                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator, onInputDetached)
                     }
                 }
                 // While the screen is still asleep its standby line stands in for the skeleton.
@@ -1736,8 +1750,10 @@ private fun Stage(
     clickIndicator: ClickIndicator?,
     onViewOrigin: (Offset) -> Unit = {},
     followIndicator: ClickIndicator? = null,
+    onInputDetached: () -> Unit = {},
 ) {
     val pointer by rememberUpdatedState(onPointer)
+    val inputDetached by rememberUpdatedState(onInputDetached)
     // Redraws every frame while a click dot fades out.
     var now by remember { mutableLongStateOf(monotonicMillis()) }
     val releaseTime = clickIndicator?.releaseTime
@@ -1793,6 +1809,11 @@ private fun Stage(
     val disconnected = state.disconnected
     val waiting = !disconnected && (state.status == SessionStatus.Connecting || state.frameSize == null)
     val stretch = state.stretch && zoom == null
+    // The pointer input sits on the Fit canvas or on the zoomed one. Switching between them (Cmd/Ctrl+0, zooming in
+    // from Fit, the first frame's zoom) disposes the node that saw a press, so its release never comes: held buttons
+    // are released here, as is everything when the stage goes.
+    val fitCanvas = zoom == null || fs == null
+    DisposableEffect(fitCanvas) { onDispose { inputDetached() } }
     val motion = rememberStageMotion(
         revealed = hasFrame && !waiting,
         disconnected = disconnected,
