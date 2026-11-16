@@ -149,6 +149,20 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `bundled adb is located off the thread that builds the view model`() {
+        // The real lookup copies and hashes a large file; the view model is built on the UI thread.
+        val caller = Thread.currentThread()
+        val lookedUpOn = java.util.concurrent.atomic.AtomicReference<Thread>()
+        val vm = SettingsViewModel(
+            settings, presets, adb(bundledAdb = { lookedUpOn.set(Thread.currentThread()); bundled }, version = { "1.0.41 (35.0.2)" }),
+            installer(), scope,
+        )
+        assertEquals("1.0.41 (35.0.2)", vm.settled { it.bundledAdbVersion != null }.bundledAdbVersion)
+        assertNotNull(lookedUpOn.get())
+        kotlin.test.assertNotSame(caller, lookedUpOn.get())
+    }
+
+    @Test
     fun `default preset can be set and cleared with None`() {
         val vm = vm()
         presets.upsert(Preset("qa", "QA default", options = OptionValues(emptyMap())))

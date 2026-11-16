@@ -14,10 +14,12 @@ private class FakeRunner(var result: ShellResult = ShellResult("", 0, 0)) :
     ShellRunner(object : AdbClient(adbPath = { error("no adb") }) {}, "serial") {
     val commands = mutableListOf<String>()
     val timeouts = mutableListOf<Long>()
+    /** When set, the result of each call by its index; [result] otherwise. */
+    var results: ((Int) -> ShellResult)? = null
     override suspend fun run(cmd: String, timeoutMs: Long): ShellResult {
         commands += cmd
         timeouts += timeoutMs
-        return result
+        return results?.invoke(commands.size - 1) ?: result
     }
 }
 
@@ -46,6 +48,72 @@ class DeviceFilesTest {
             runner.commands,
         )
         assertEquals(listOf("/sdcard/Download"), scans)
+    }
+
+    @Test
+    fun renameByCaseOnlyGoesThroughATemporaryName() = runBlocking<Unit> {
+        // /sdcard ignores case: photo.jpg -> Photo.jpg finds the target is the source itself.
+        files.rename("/sdcard/DCIM", "photo.jpg", "Photo.jpg")
+        val s = "'/sdcard/DCIM/photo.jpg'"
+        val t = "'/sdcard/DCIM/Photo.jpg'"
+        val cmd = runner.commands.single()
+        val tmp = Regex("mv $s ('/sdcard/DCIM/\\.rename-[0-9a-f-]+') && ").find(cmd)?.groupValues?.get(1)
+        kotlin.test.assertNotNull(tmp, cmd)
+        assertEquals(
+            "if [ $s -ef $t ]; then mv $s $tmp && mv $tmp $t; " +
+                "elif [ -e $t ] || [ -L $t ]; then printf '%s: already exists\\n' 'Photo.jpg'; false; else mv -n $s $t; fi",
+            cmd,
+        )
+        assertEquals(listOf("/sdcard/DCIM"), scans)
+    }
+
+    @Test
+    fun bulkDeleteRunsInBatchesUnderTheRequestLimit() = runBlocking<Unit> {
+        val names = List(3000) { "IMG_20261116_${"%06d".format(it)}_long_name.jpg" }
+        files.delete("/sdcard/DCIM/Camera", names)
+        assertTrue(runner.commands.size > 1, "expected several batches")
+        for (cmd in runner.commands) {
+            assertTrue(cmd.startsWith("rm -rf -- "), cmd.take(40))
+            assertTrue(cmd.toByteArray().size <= 32 * 1024, "${cmd.toByteArray().size} bytes")
+        }
+        val deleted = runner.commands.flatMap { c ->
+            Regex("'/sdcard/DCIM/Camera/([^']+)'").findAll(c).map { it.groupValues[1] }.toList()
+        }
+        assertEquals(names, deleted)
+        assertTrue(runner.timeouts.all { it == 120_000L })
+        assertEquals(listOf("/sdcard/DCIM/Camera"), scans)
+    }
+
+    @Test
+    fun bulkDeleteStopsAtTheFirstFailingBatch() = runBlocking<Unit> {
+        val names = List(3000) { "IMG_20261116_${"%06d".format(it)}_long_name.jpg" }
+        runner.results = { i -> if (i == 1) ShellResult("rm: x: Permission denied", 1, 0) else ShellResult("", 0, 0) }
+        val e = assertFailsWith<IOException> { files.delete("/sdcard/DCIM/Camera", names) }
+        assertEquals("rm: x: Permission denied", e.message)
+        assertEquals(2, runner.commands.size)
+        // The first batch is gone, so the folder is rescanned.
+        assertEquals(listOf("/sdcard/DCIM/Camera"), scans)
+    }
+
+    @Test
+    fun bulkMoveRunsInBatchesAndStopsAtTheFirstFailure() = runBlocking<Unit> {
+        val names = List(1500) { "IMG_20261116_${"%06d".format(it)}.jpg" }
+        files.move("/sdcard/DCIM/Camera", names, "/sdcard/Pictures")
+        assertTrue(runner.commands.size > 1, "expected several batches")
+        assertTrue(runner.commands.all { it.toByteArray().size <= 32 * 1024 })
+        val moved = runner.commands.flatMap { c ->
+            Regex("else mv '/sdcard/DCIM/Camera/([^']+)'").findAll(c).map { it.groupValues[1] }.toList()
+        }
+        assertEquals(names, moved)
+        // Items within a batch still chain with && so the first failure stops the rest.
+        assertTrue("; fi && if " in runner.commands.first())
+
+        runner.commands.clear()
+        scans.clear()
+        runner.results = { i -> if (i == 0) ShellResult("x: already exists", 1, 0) else ShellResult("", 0, 0) }
+        assertFailsWith<IOException> { files.move("/sdcard/DCIM/Camera", names, "/sdcard/Pictures") }
+        assertEquals(1, runner.commands.size)
+        assertEquals(listOf("/sdcard/DCIM/Camera", "/sdcard/Pictures"), scans)
     }
 
     @Test

@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.withTimeout
 import java.io.IOException
 import java.net.ServerSocket
@@ -134,6 +136,47 @@ class DeviceTrackerTest {
         val tracker = DeviceTracker(client, scope, infoRetryMs = 10)
         withTimeout(2000) { tracker.devices.first { it.firstOrNull()?.info != null } }
         assertEquals(2, client.shellCalls.get())
+    }
+
+    /** Streams [payloads] as the device list, with no socket, so a test can run in virtual time. */
+    private class ListClient(
+        val payloads: kotlinx.coroutines.flow.MutableStateFlow<String>,
+        private val failures: Int,
+    ) : AdbClient({ Paths.get("adb") }) {
+        val shellCalls = AtomicInteger()
+        override suspend fun startServer() = Unit
+        override fun trackDevices(): kotlinx.coroutines.flow.Flow<String> = payloads
+        override suspend fun shell(serial: String, cmd: String): String {
+            if (shellCalls.incrementAndGet() <= failures) throw IOException("no answer yet")
+            return "Pixel 8 Pro\n15\n35\n39121FDJH004AB\n"
+        }
+    }
+
+    @Test
+    fun `keeps retrying the info fetch with a capped backoff while the device is listed`() = kotlinx.coroutines.test.runTest {
+        val client = ListClient(kotlinx.coroutines.flow.MutableStateFlow(one), failures = 10)
+        val tracker = DeviceTracker(client, backgroundScope, infoRetryMs = 500, maxInfoRetryMs = 30_000)
+        val info = tracker.devices.first { it.firstOrNull()?.info != null }.first().info
+        assertEquals("39121FDJH004AB", info?.serialNo)
+        assertEquals(11, client.shellCalls.get())
+        // 0.5 + 1 + 2 + 4 + 8 + 16 s, then 30 s per retry instead of doubling on.
+        assertEquals(31_500L + 4 * 30_000L, currentTime)
+    }
+
+    @Test
+    fun `stops retrying the info fetch once the device is gone`() = kotlinx.coroutines.test.runTest {
+        val payloads = kotlinx.coroutines.flow.MutableStateFlow(one)
+        val client = ListClient(payloads, failures = Int.MAX_VALUE)
+        val tracker = DeviceTracker(client, backgroundScope, infoRetryMs = 500, maxInfoRetryMs = 30_000)
+        advanceTimeBy(10 * 60_000L)
+        val whileListed = client.shellCalls.get()
+        assertTrue(whileListed > 20, "only $whileListed attempts in 10 minutes")
+        payloads.value = ""
+        advanceTimeBy(60_000L)
+        val afterGone = client.shellCalls.get()
+        advanceTimeBy(10 * 60_000L)
+        assertEquals(afterGone, client.shellCalls.get())
+        assertTrue(tracker.devices.value.isEmpty())
     }
 
     @Test

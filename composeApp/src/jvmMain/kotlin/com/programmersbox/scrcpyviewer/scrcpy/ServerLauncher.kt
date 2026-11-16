@@ -116,6 +116,8 @@ class ServerLauncher(
     private val stopTimeoutMs: Long = 1_000,
     /** Bound of each `adb reverse/forward --remove` run by cleanup, so a hung adb cannot stall a teardown. */
     private val cleanupAdbTimeoutMs: Long = 3_000,
+    /** Bound of the `adb push` of the server jar. */
+    private val pushTimeoutMs: Long = PUSH_TIMEOUT_MS,
     /** Opens the reverse-tunnel listener on a local port (a seam for tests). */
     private val listen: (port: Int) -> ServerSocket = ::listenLoopback,
 ) : ConnectionStarter {
@@ -154,7 +156,9 @@ class ServerLauncher(
     }
 
     private suspend fun push(serial: String) {
-        val r = adb.exec("-s", serial, "push", tools.serverJar.toString(), DEVICE_SERVER_PATH)
+        // Bounded: on a wedged link adb push never returns and the mirror would stay Connecting forever.
+        val r = adb.execWithTimeout(pushTimeoutMs, "-s", serial, "push", tools.serverJar.toString(), DEVICE_SERVER_PATH)
+            ?: throw IOException("adb push timed out")
         if (r.exitCode != 0) throw IOException("adb push failed: ${(r.stderr + r.stdout).trim()}")
     }
 
@@ -390,6 +394,7 @@ class ServerLauncher(
 
         const val DEVICE_SERVER_PATH = "/data/local/tmp/scrcpy-server.jar"
         const val SERVER_CLASS = "com.genymobile.scrcpy.Server"
+        private const val PUSH_TIMEOUT_MS = 30_000L
         private const val SOCKET_NAME_PREFIX = "scrcpy_"
         private const val LOCALHOST = "127.0.0.1"
         /** scrcpy listens with a backlog of 1; macOS then drops back-to-back connects, so allow the three streams. */

@@ -252,6 +252,7 @@ class SettingsViewModel(
         }
     }
 
+    /** [path] runs on IO: the bundled adb's first lookup copies and hashes the binary, too slow for the UI thread. */
     private suspend fun versionOf(path: () -> Path): String =
-        runCatching { adb.version(path()) }.getOrNull() ?: UNKNOWN_VERSION
+        runCatching { adb.version(withContext(Dispatchers.IO) { path() }) }.getOrNull() ?: UNKNOWN_VERSION
 }

@@ -41,26 +41,58 @@ class BundledTools(
     val serverJarOrNull: Path?
         get() = findOrNull("scrcpy-server")
 
-    /** Copies adb (and the Windows DLLs) into `dataDir/tools/adb-<sha256 prefix>/` once and returns the copy. */
+    /** The bundled adb this instance resolved last and its copy; reading and hashing adb on every call is slow. */
+    private class ResolvedAdb(val source: Path, val copy: Path)
+
+    @Volatile
+    private var resolvedAdb: ResolvedAdb? = null
+    private val adbLock = Any()
+
+    /**
+     * Copies adb (and the Windows DLLs) into `dataDir/tools/adb-<sha256 prefix>/` once and returns the copy. The
+     * result is remembered, so later calls (one per adb command) only look the source up again; a different source
+     * path, or a deleted copy, resolves it anew. Callers are serialized so only one copies at a time.
+     */
     fun adbExecutable(): Path {
+        val source = find(if (isWindows()) "adb.exe" else "adb")
+        resolvedAdb?.let { if (it.source == source && Files.isRegularFile(it.copy)) return it.copy }
+        synchronized(adbLock) {
+            resolvedAdb?.let { if (it.source == source && Files.isRegularFile(it.copy)) return it.copy }
+            val copy = copyAdb(source)
+            resolvedAdb = ResolvedAdb(source, copy)
+            return copy
+        }
+    }
+
+    private fun copyAdb(source: Path): Path {
         val windows = isWindows()
-        val source = find(if (windows) "adb.exe" else "adb")
         val prefix = sha256(source).take(12)
         val targetDir = dataDir.resolve("tools").resolve("adb-$prefix")
         Files.createDirectories(targetDir)
         val names = if (windows) listOf("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll") else listOf("adb")
         for (name in names) {
             val src = if (name == source.fileName.toString()) source else findOrNull(name) ?: continue
-            copyIfMissing(src, targetDir.resolve(name))
+            copyIfMissing(src, targetDir.resolve(name), executable = !windows)
         }
         val adb = targetDir.resolve(source.fileName.toString())
         if (!windows) adb.toFile().setExecutable(true)
         return adb
     }
 
-    private fun copyIfMissing(src: Path, dest: Path) {
+    /**
+     * Copies through a temp file in the same folder that is then moved into place, so neither another thread nor a
+     * second app instance can run a half-written adb.
+     */
+    private fun copyIfMissing(src: Path, dest: Path, executable: Boolean) {
         if (Files.exists(dest) && Files.size(dest) == Files.size(src)) return
-        Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING)
+        val tmp = Files.createTempFile(dest.parent, dest.fileName.toString(), ".tmp")
+        try {
+            Files.copy(src, tmp, StandardCopyOption.REPLACE_EXISTING)
+            if (executable) tmp.toFile().setExecutable(true)
+            Files.move(tmp, dest, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } finally {
+            Files.deleteIfExists(tmp)
+        }
     }
 
     private fun findOrNull(name: String): Path? =
