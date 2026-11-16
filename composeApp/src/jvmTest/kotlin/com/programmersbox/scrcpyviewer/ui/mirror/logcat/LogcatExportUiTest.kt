@@ -225,6 +225,24 @@ class LogcatExportUiTest {
     }
 
     @Test
+    fun `the next export's ring and bar start empty, not from the last one`() {
+        var shown = 0f
+        shown = exportFraction(LogcatExport.Running(ExportFormat.Text, 50, 100), shown)
+        assertEquals(0.5f, shown)
+        shown = exportFraction(LogcatExport.Done(Path.of("/x/a.txt"), 100), shown)
+        assertEquals(1f, shown)
+        shown = exportFraction(LogcatExport.Idle, shown)
+        assertEquals(0f, shown, "idle empties it while hidden")
+        shown = exportFraction(LogcatExport.Running(ExportFormat.Text, 0, 100), shown)
+        assertEquals(0f, shown)
+        shown = exportFraction(LogcatExport.Running(ExportFormat.Text, 30, 100), shown)
+        shown = exportFraction(LogcatExport.Canceled, shown)
+        assertEquals(0.3f, shown, "canceled keeps its fraction while the ring fades")
+        assertEquals(0f, exportFraction(LogcatExport.Idle, shown))
+        assertEquals(0f, exportFraction(LogcatExport.Running(ExportFormat.Text, 0, 0), 1f))
+    }
+
+    @Test
     fun `done toast offers reveal`() = onEdt {
         feed(3)
         target = dir.resolve("a.logcat")

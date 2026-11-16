@@ -102,6 +102,17 @@ internal fun exportStatusText(state: LogcatExport): String? = when (state) {
 }
 
 /**
+ * How far the ring and bar show for [state], given [last] shown: running, done of total; done, full; canceled keeps
+ * [last] while they fade; idle, empty, so the next export starts from 0 instead of draining from the last one.
+ */
+internal fun exportFraction(state: LogcatExport, last: Float): Float = when (state) {
+    is LogcatExport.Running -> if (state.total == 0) 0f else state.done.toFloat() / state.total
+    is LogcatExport.Done -> 1f
+    LogcatExport.Canceled -> last
+    LogcatExport.Idle -> 0f
+}
+
+/**
  * Export, 36 dp: opens the format menu ([ExportMenu]), which exports through [pick]. Download, progress ring and
  * check are stacked: running, the download drops 8 dp, shrinks to 0.7 and fades (280 ms) as the ring grows in from
  * 0.4, turning once per 1,400 ms; done, the ring goes and the check pops 0.3 → 1.18 → 1 (420 ms); canceled, the
@@ -150,13 +161,8 @@ internal fun LogcatExportButton(controller: LogcatController, motion: Boolean, p
             else -> check.animateTo(0f, tween(280, easing = EmphasizedDecelerate))
         }
     }
-    // The ring keeps the last fraction while it goes; done fills it.
     val fraction = remember { floatArrayOf(0f) }
-    when (state) {
-        is LogcatExport.Running -> fraction[0] = if (state.total == 0) 0f else state.done.toFloat() / state.total
-        is LogcatExport.Done -> fraction[0] = 1f
-        else -> Unit
-    }
+    fraction[0] = exportFraction(state, fraction[0])
     val progress by animateFloatAsState(fraction[0], if (motion) tween(80, easing = LinearEasing) else snap())
     val spin = remember { Animatable(0f) }
     LaunchedEffect(running, motion) {
@@ -335,11 +341,7 @@ internal fun LogcatExportBar(controller: LogcatController, motion: Boolean, modi
     val state = controller.export
     val running = state is LogcatExport.Running
     val fraction = remember { floatArrayOf(0f) }
-    when (state) {
-        is LogcatExport.Running -> fraction[0] = if (state.total == 0) 0f else state.done.toFloat() / state.total
-        is LogcatExport.Done -> fraction[0] = 1f
-        else -> Unit
-    }
+    fraction[0] = exportFraction(state, fraction[0])
     val width by animateFloatAsState(fraction[0], if (motion) tween(80, easing = LinearEasing) else snap())
     val alpha by animateFloatAsState(if (running) 1f else 0f, if (motion) tween(300) else snap())
     val color = MaterialTheme.colorScheme.primary

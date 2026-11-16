@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -234,9 +235,10 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val mine = controller.mine
     val wrap = controller.wrap
     val run = controller.run
-    // The rows dim while an export runs.
+    // The rows dim while an export runs. Derived: progress replaces the export state often, the list need not see it.
+    val exporting by remember(controller) { derivedStateOf { controller.export is LogcatExport.Running } }
     val rowsAlpha by animateFloatAsState(
-        if (controller.export is LogcatExport.Running) 0.55f else 1f,
+        if (exporting) 0.55f else 1f,
         if (motion) tween(300) else snap(),
     )
     // Entries whose fold the user flipped from the default; kept by the controller, so they move with the panel.

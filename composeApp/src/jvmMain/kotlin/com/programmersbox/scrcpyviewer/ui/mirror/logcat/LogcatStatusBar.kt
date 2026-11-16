@@ -68,8 +68,6 @@ private val IconShape = RoundedCornerShape(8.dp)
  */
 @Composable
 internal fun LogcatStatusBar(controller: LogcatController, motion: Boolean) {
-    val scheme = MaterialTheme.colorScheme
-    val style = MaterialTheme.typography.bodySmall
     Row(
         Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -82,43 +80,53 @@ internal fun LogcatStatusBar(controller: LogcatController, motion: Boolean) {
         StatusIcon(Icons.Filled.ViewHeadline, "Compact view", controller.compact, motion) { controller.compact = !controller.compact }
         val counts = controller.levelCounts
         val shown = counts.values.sum()
-        val shift = with(LocalDensity.current) { 10.dp.roundToPx() }
-        // Keyed on the export's stage: progress and new lines update the text in place.
-        AnimatedContent(
-            controller.export,
-            contentKey = { it::class },
-            transitionSpec = {
-                if (motion) {
-                    (slideInVertically(tween(260, easing = EmphasizedDecelerate)) { shift } + fadeIn(tween(200)))
-                        .togetherWith(slideOutVertically(tween(260, easing = EmphasizedDecelerate)) { -shift } + fadeOut(tween(200)))
-                        .using(SizeTransform(clip = false))
-                } else {
-                    EnterTransition.None.togetherWith(ExitTransition.None)
-                }
-            },
-        ) { export ->
-            val status = exportStatusText(export)
-            Text(
-                if (status != null) {
-                    AnnotatedString(status)
-                } else {
-                    buildAnnotatedString {
-                        val num = SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)
-                        withStyle(num) { append("%,d".format(shown)) }
-                        append(" of ")
-                        withStyle(num) { append("%,d".format(controller.totalLines)) }
-                        append(" lines")
-                    }
-                },
-                style = style.copy(fontFeatureSettings = "tnum"),
-                color = scheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        CountsText(controller, shown, motion)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
             LevelMix(counts, shown, motion, Modifier.widthIn(min = 60.dp, max = 220.dp).fillMaxWidth())
         }
+    }
+}
+
+/**
+ * "[shown] of N lines", or the export's [exportStatusText] while one shows. Its own composable, so export progress
+ * recomposes only this. Keyed on the export's stage: progress and new lines update the text in place.
+ */
+@Composable
+private fun CountsText(controller: LogcatController, shown: Int, motion: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    val style = MaterialTheme.typography.bodySmall
+    val shift = with(LocalDensity.current) { 10.dp.roundToPx() }
+    AnimatedContent(
+        controller.export,
+        contentKey = { it::class },
+        transitionSpec = {
+            if (motion) {
+                (slideInVertically(tween(260, easing = EmphasizedDecelerate)) { shift } + fadeIn(tween(200)))
+                    .togetherWith(slideOutVertically(tween(260, easing = EmphasizedDecelerate)) { -shift } + fadeOut(tween(200)))
+                    .using(SizeTransform(clip = false))
+            } else {
+                EnterTransition.None.togetherWith(ExitTransition.None)
+            }
+        },
+    ) { export ->
+        val status = exportStatusText(export)
+        Text(
+            if (status != null) {
+                AnnotatedString(status)
+            } else {
+                buildAnnotatedString {
+                    val num = SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)
+                    withStyle(num) { append("%,d".format(shown)) }
+                    append(" of ")
+                    withStyle(num) { append("%,d".format(controller.totalLines)) }
+                    append(" lines")
+                }
+            },
+            style = style.copy(fontFeatureSettings = "tnum"),
+            color = scheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
