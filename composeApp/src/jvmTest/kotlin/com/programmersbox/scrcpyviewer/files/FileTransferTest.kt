@@ -494,6 +494,29 @@ class FileTransferTest {
     }
 
     @Test
+    fun `a folder pull samples its growing folder less often than a file pull`() {
+        assertEquals(250L, pullPollMillis(isDirectory = false))
+        assertEquals(2_000L, pullPollMillis(isDirectory = true))
+    }
+
+    @Test
+    fun `folder pull progress sums the files written so far`() = runBlocking<Unit> {
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args ->
+            val folder = java.nio.file.Files.createDirectories(Paths.get(args.last()))
+            java.nio.file.Files.write(folder.resolve("a.jpg"), ByteArray(300))
+            java.nio.file.Files.write(java.nio.file.Files.createDirectories(folder.resolve("sub")).resolve("b.jpg"), ByteArray(200))
+            awaitCancellation()
+        }
+        val q = queue(adb)
+        val id = q.enqueue(listOf(pull(dir, "Camera").copy(isDirectory = true))).single()
+        val job = q.awaitJob(id) { it.bytes == 500L }
+        assertNull(job.total, "a folder has no known total")
+        q.cancel(id)
+        q.awaitJob(id) { it.state == JobState.Cancelled }
+    }
+
+    @Test
     fun `push progress polls the device file and stops when the job ends`() = runBlocking<Unit> {
         val src = tmp.resolve("p.bin")
         java.nio.file.Files.write(src, ByteArray(800))

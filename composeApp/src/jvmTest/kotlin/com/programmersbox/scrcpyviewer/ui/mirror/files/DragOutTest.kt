@@ -27,11 +27,15 @@ import kotlin.test.assertTrue
 internal class FakeStarter(var result: Boolean = true, var dropped: Boolean? = true) : OutboundDragStarter {
     val starts = mutableListOf<Pair<List<File>, Offset>>()
 
+    /** The last drag's end handler, for a completion that comes after the start returned. */
+    var onEnd: ((Boolean) -> Unit)? = null
+
     /** Runs inside the "native loop", before it returns. */
     var during: () -> Unit = {}
 
     override fun start(files: List<File>, at: Offset, onEnd: (dropped: Boolean) -> Unit): Boolean {
         starts += files to at
+        this.onEnd = onEnd
         during()
         if (result) dropped?.let(onEnd)
         return result
@@ -174,14 +178,14 @@ class DragOutTest {
         assertEquals(DragOutPhase.Idle, c.phase)
         assertEquals(1, finished)
         assertTrue(cancelled.isEmpty())
-        // The drop target gets time to copy before the folder goes.
-        advanceTimeBy(DRAG_DIR_KEEP_MILLIS - 1_000)
+        // The drop target may read the files much later (a mail attachment): the folder stays for the start-up sweep,
+        // the window closing included, and the finished pulls leave the tray.
+        advanceTimeBy(10 * 60_000)
         runCurrent()
-        assertTrue(Files.exists(dir))
-        advanceTimeBy(2_000)
-        runCurrent()
-        assertFalse(Files.exists(dir))
+        assertTrue(Files.exists(dir.resolve("a.jpg")))
         assertEquals(listOf(10L, 11L), dismissed.sorted())
+        cache.deleteSession("192.168.1.5:5555")
+        assertTrue(Files.exists(dir.resolve("a.jpg")))
     }
 
     @Test
@@ -264,26 +268,66 @@ class DragOutTest {
     }
 
     @Test
-    fun `a drag whose completion never comes is still cleaned up`() = runTest {
+    fun `a drag dropped nowhere deletes the folder at once`() = runTest {
+        starter.dropped = false
+        val c = controller(this)
+        c.begin(listOf("a.jpg"), Offset.Zero)
+        ready(c, "a.jpg")
+        assertEquals(DragOutPhase.Idle, c.phase)
+        assertFalse(Files.exists(dragDir()))
+        assertEquals(listOf(10L), dismissed)
+    }
+
+    @Test
+    fun `a drag whose completion has not come keeps its folder, until it says nothing was dropped`() = runTest {
         starter.dropped = null
         val c = controller(this)
         c.begin(listOf("a.jpg"), Offset.Zero)
         ready(c, "a.jpg")
         assertEquals(DragOutPhase.Idle, c.phase)
-        advanceTimeBy(DRAG_DIR_KEEP_MILLIS + 1_000)
+        advanceTimeBy(10 * 60_000)
         runCurrent()
-        assertFalse(Files.exists(dragDir()))
+        assertTrue(Files.exists(dragDir()), "it may have been dropped: never pulled from under a drop target")
+        checkNotNull(starter.onEnd)(false)
+        runCurrent()
+        assertFalse(Files.exists(dragDir()), "a late answer of nothing dropped deletes it")
     }
 
     @Test
-    fun `the delete after a drop outlives the tab's scope`() = runTest {
+    fun `a late drop answer keeps the folder`() = runTest {
+        starter.dropped = null
+        val c = controller(this)
+        c.begin(listOf("a.jpg"), Offset.Zero)
+        ready(c, "a.jpg")
+        checkNotNull(starter.onEnd)(true)
+        runCurrent()
+        assertTrue(Files.exists(dragDir()))
+        assertEquals(listOf(10L), dismissed, "dismissed once")
+    }
+
+    @Test
+    fun `the window closing deletes undropped drag folders and keeps dropped ones`() = runTest {
+        val c = controller(this)
+        c.begin(listOf("a.jpg"), Offset.Zero)
+        ready(c, "a.jpg")
+        val dropped = dragDir()
+        // A drag given up while its pull still ran, its folder left behind when the window closed.
+        val left = Files.createDirectories(cache.newDragDir("192.168.1.5:5555"))
+        Files.writeString(left.resolve("b.jpg"), "data")
+        cache.deleteSession("192.168.1.5:5555")
+        assertTrue(Files.exists(dropped.resolve("a.jpg")))
+        assertFalse(Files.exists(left))
+    }
+
+    @Test
+    fun `the delete after a drag nothing took outlives the tab's scope`() = runTest {
+        starter.dropped = false
         val tab = CoroutineScope(coroutineContext + Job())
         val c = controller(tab, cleanupScope = this)
         c.begin(listOf("a.jpg"), Offset.Zero)
         ready(c, "a.jpg")
         assertEquals(1, starter.starts.size)
         tab.cancel() // the sheet closed
-        advanceTimeBy(DRAG_DIR_KEEP_MILLIS + 1_000)
         runCurrent()
         assertFalse(Files.exists(dragDir()))
     }

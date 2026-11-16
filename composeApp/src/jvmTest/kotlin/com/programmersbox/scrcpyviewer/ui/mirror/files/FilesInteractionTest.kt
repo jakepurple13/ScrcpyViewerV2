@@ -87,9 +87,9 @@ class FilesInteractionTest {
     /** Set when an Esc reached the stand-in sheet (nothing in the tab used it). */
     private var sheetClosed = false
 
-    private fun browser() = FilesBrowser(
+    private fun browser(start: String = "/sdcard/Download") = FilesBrowser(
         "SER", files, FileTransfers(queue = null, pushTarget = "/sdcard/Download/") {}, QuickActionsMemory(),
-        AppSettings(Files.createTempDirectory("files-interaction").resolve("settings.json")), "/sdcard/Download",
+        AppSettings(Files.createTempDirectory("files-interaction").resolve("settings.json")), start,
         CoroutineScope(UnconfinedTestDispatcher(scheduler)), {}, enqueue = { emptyList() }, jobs = emptyFlow(),
     )
 
@@ -462,6 +462,53 @@ class FilesInteractionTest {
         driver.key(Key.Backspace)
         assertNull(b.dialog)
         assertEquals(setOf("notes.txt"), b.selection.names)
+    }
+
+    /** A folder of 60 files, far more rows than the list shows. */
+    private fun bigFolder(): FilesBrowser {
+        files.dirs["/sdcard/Big"] = Listing.Entries((0 until 60).map { file("f%02d.txt".format(it)) })
+        return browser("/sdcard/Big")
+    }
+
+    /** True when [node] lies wholly inside the list's bounds. */
+    private fun SceneDriver.inList(node: SemanticsNode): Boolean {
+        val list = checkNotNull(nodes().firstOrNull { SemanticsActions.ScrollToIndex in it.config }).boundsInRoot
+        val b = node.boundsInRoot
+        return b.top >= list.top && b.bottom <= list.bottom
+    }
+
+    private fun arrowsScrollTheCursorIntoView(motion: Boolean) = onEdt {
+        val b = bigFolder()
+        val driver = scene(b, motion)
+        driver.frames(60)
+        driver.press(driver.text("f00.txt"))
+        repeat(30) { driver.key(Key.DirectionDown) }
+        assertEquals("f30.txt", b.selection.cursor)
+        assertTrue(driver.inList(driver.text("f30.txt")), "the cursor row scrolled into view")
+        repeat(30) { driver.key(Key.DirectionUp) }
+        assertEquals("f00.txt", b.selection.cursor)
+        assertTrue(driver.inList(driver.text("f00.txt")), "and back up")
+    }
+
+    @Test
+    fun `arrow keys scroll the cursor row into view`() = arrowsScrollTheCursorIntoView(motion = false)
+
+    @Test
+    fun `arrow keys scroll the cursor row into view with motion`() = arrowsScrollTheCursorIntoView(motion = true)
+
+    @Test
+    fun `New folder off screen scrolls to its row and takes the typing`() = onEdt {
+        files.dirs["/sdcard/Big"] = Listing.Entries(listOf(dir("Alpha")) + (0 until 60).map { file("f%02d.txt".format(it)) })
+        val b = browser("/sdcard/Big")
+        val driver = scene(b)
+        driver.press(driver.text("Alpha"))
+        repeat(40) { driver.key(Key.DirectionDown) }
+        assertTrue(driver.inList(driver.text("f39.txt")))
+        driver.key(Key.N, cmd = true, shift = true)
+        assertEquals("New folder", b.renaming)
+        val field = checkNotNull(driver.renameField()) { "the new folder's row is composed" }
+        assertTrue(driver.inList(field), "and in view")
+        assertEquals(true, field.config.getOrNull(SemanticsProperties.Focused), "it has the typing")
     }
 
     @Test
