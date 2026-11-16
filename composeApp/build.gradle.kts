@@ -282,6 +282,9 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         // A fixed heap instead of a quarter of the runner's memory: with Gradle, xvfb, native Skia surfaces and
         // FFmpeg processes alongside, an uncapped test JVM ran the Linux runner out of memory.
         (this as Test).maxHeapSize = "2g"
+        // The heap cap doesn't bound native memory (Skia surfaces, FFmpeg): one test JVM grew to 13 GB resident on
+        // the 16 GB Linux runner and the runner died mid-step. A fresh JVM every 200 test classes releases it.
+        forkEvery = 200
     }
     if (deviceTests) {
         systemProperty("scrcpyviewer.bundledDir", layout.projectDirectory.dir("bundled").asFile.absolutePath)
