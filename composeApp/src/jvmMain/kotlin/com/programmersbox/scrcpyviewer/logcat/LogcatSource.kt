@@ -1,8 +1,10 @@
 package com.programmersbox.scrcpyviewer.logcat
 
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import java.time.ZonedDateTime
 
 private val sinceFormat = Regex("""^\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}$""")
 
@@ -45,4 +47,14 @@ open class LogcatSource(private val adb: AdbClient, private val serial: String) 
 
     /** Pid to process name for every running process. */
     open suspend fun processes(): Map<Int, String> = parsePs(adb.shell(serial, "ps -A -o PID,NAME"))
+
+    /** Device facts for an export; any failure (except cancellation) falls back to host time and blanks. */
+    open suspend fun exportDevice(hostNow: ZonedDateTime = ZonedDateTime.now()): ExportDevice =
+        try {
+            parseExportDevice(serial, adb.shell(serial, EXPORT_DEVICE_COMMAND), hostNow)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            parseExportDevice(serial, "", hostNow)
+        }
 }

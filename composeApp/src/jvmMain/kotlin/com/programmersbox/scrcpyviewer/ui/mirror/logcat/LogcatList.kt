@@ -2,30 +2,33 @@ package com.programmersbox.scrcpyviewer.ui.mirror.logcat
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.LocalScrollbarStyle
 import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.rememberScrollbarAdapter
-import androidx.compose.foundation.v2.ScrollbarAdapter
-import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.v2.ScrollbarAdapter
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -224,8 +228,9 @@ internal class LogcatFollow(val state: LazyListState) {
 
 /**
  * The log: a column header, then the rows of [LogcatController.visible] newest at the bottom, the paused banner,
- * the "N new lines" pill, the empty-filter message and, before the first play, the start card. Rows are monospace
- * with selectable messages and traces; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
+ * the "N new lines" pill, the empty-filter message and, before the first play, the start card. While an export runs
+ * its bar ([LogcatExportBar]) crosses the top edge and the rows dim to 0.55 (300 ms). Rows are monospace with
+ * selectable messages and traces; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -252,6 +257,12 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val mine = controller.mine
     val wrap = controller.wrap
     val run = controller.run
+    // The rows dim while an export runs. Derived: progress replaces the export state often, the list need not see it.
+    val exporting by remember(controller) { derivedStateOf { controller.export is LogcatExport.Running } }
+    val rowsAlpha by animateFloatAsState(
+        if (exporting) 0.55f else 1f,
+        if (motion) tween(300) else snap(),
+    )
     // Entries whose fold the user flipped from the default; kept by the controller, so they move with the panel.
     val flipped = controller.traceFlips
     val clipboard = LocalClipboard.current
@@ -285,7 +296,9 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     Column(modifier.background(scheme.surfaceContainerLowest)) {
         LogcatHeader(columns)
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            SelectionContainer(Modifier.fillMaxSize().holdWhilePressed(follow) { controller.visible }) {
+            SelectionContainer(
+                Modifier.fillMaxSize().holdWhilePressed(follow) { controller.visible }.graphicsLayer { alpha = rowsAlpha },
+            ) {
                 LazyColumn(
                     Modifier.fillMaxSize().nestedScroll(follow.connection),
                     state = listState,
@@ -325,6 +338,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
                 Modifier.align(Alignment.BottomCenter),
             )
             LogcatStartCard(run == LogcatRun.NotStarted, motion, controller.canPlay, controller::play)
+            LogcatExportBar(controller, motion, Modifier.align(Alignment.TopCenter).fillMaxWidth())
         }
     }
 }

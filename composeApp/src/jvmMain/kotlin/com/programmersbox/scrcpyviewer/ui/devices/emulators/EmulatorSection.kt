@@ -103,6 +103,7 @@ import com.programmersbox.scrcpyviewer.emulator.BootStage
 import com.programmersbox.scrcpyviewer.emulator.SdkLookup
 import com.programmersbox.scrcpyviewer.emulator.formatSize
 import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
+import com.programmersbox.scrcpyviewer.ui.common.revealLabel
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.Button
@@ -639,9 +640,6 @@ private fun MoreButton(
         }
     }
 }
-
-/** The reveal item's label: Finder on macOS, the file manager elsewhere. */
-internal fun revealLabel(platform: OpenPlatform): String = if (platform == OpenPlatform.Mac) "Show in Finder" else "Show in folder"
 
 /**
  * Wipe data… is offered only for an AVD that is not running (Stopped or Failed), whose emulator process has exited,

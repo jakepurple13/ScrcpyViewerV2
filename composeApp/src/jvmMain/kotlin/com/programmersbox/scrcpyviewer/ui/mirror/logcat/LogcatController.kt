@@ -7,6 +7,8 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.programmersbox.scrcpyviewer.logcat.EntryInfo
+import com.programmersbox.scrcpyviewer.logcat.ExportFormat
+import com.programmersbox.scrcpyviewer.logcat.ExportRow
 import com.programmersbox.scrcpyviewer.logcat.FoldResult
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
 import com.programmersbox.scrcpyviewer.logcat.LogcatEntry
@@ -15,9 +17,23 @@ import com.programmersbox.scrcpyviewer.logcat.LogcatQuery
 import com.programmersbox.scrcpyviewer.logcat.LogcatSource
 import com.programmersbox.scrcpyviewer.logcat.SuggestionContext
 import com.programmersbox.scrcpyviewer.logcat.TraceFolder
+import com.programmersbox.scrcpyviewer.logcat.exportFileName
 import com.programmersbox.scrcpyviewer.logcat.packageOf
+import com.programmersbox.scrcpyviewer.logcat.parseExportDevice
 import com.programmersbox.scrcpyviewer.logcat.withTerm
+import com.programmersbox.scrcpyviewer.logcat.writeStudioLogcat
+import com.programmersbox.scrcpyviewer.logcat.writeThreadtime
+import java.nio.charset.StandardCharsets
+import java.nio.file.AccessDeniedException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileSystemException
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZonedDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.coroutines.CoroutineContext
@@ -25,9 +41,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Lines kept per window; older ones drop off. */
 const val LOGCAT_MAX_ENTRIES = 20_000
@@ -44,7 +62,42 @@ private const val LOOKUP_MILLIS = 1_000L
 /** A pid `ps` didn't list is asked about again after this long, in case Android reused it. */
 private const val MISSED_RETRY_MILLIS = 10_000L
 
+/** An export stays shown as running at least this long, so a tiny one doesn't flash. */
+internal const val EXPORT_MIN_RUN_MILLIS = 400L
+
+/** How long the finished export is shown before going back to idle. */
+internal const val EXPORT_DONE_MILLIS = 3_600L
+
+/** How long the canceled export is shown before going back to idle. */
+internal const val EXPORT_CANCELED_MILLIS = 2_800L
+
 enum class LogcatRun { NotStarted, Running, Paused, StoppedByLeaving }
+
+/** Where an export of the list to a file stands. */
+sealed interface LogcatExport {
+    data object Idle : LogcatExport
+
+    /** Writing [done] of [total] lines. */
+    data class Running(val format: ExportFormat, val done: Int, val total: Int) : LogcatExport
+
+    /** Finished: [lines] lines are in the file at [path]. */
+    data class Done(val path: Path, val lines: Int) : LogcatExport
+
+    data object Canceled : LogcatExport
+}
+
+/**
+ * What a failed export's toast says went wrong. A file system error's message is just its file (the `.part`), so
+ * its reason is used, or a plain phrase for its kind.
+ */
+internal fun exportFailureReason(e: Exception): String = when (e) {
+    is FileSystemException -> e.reason?.takeIf { it.isNotBlank() } ?: when (e) {
+        is AccessDeniedException -> "Permission denied"
+        is NoSuchFileException -> "Folder not found"
+        else -> "Could not write file"
+    }
+    else -> e.message ?: e.toString()
+}
 
 /** A row of the Logcat list. */
 sealed interface LogcatItem {
@@ -84,6 +137,7 @@ class LogcatController(
     private val clock: () -> Long = System::currentTimeMillis,
     private val maxEntries: Int = LOGCAT_MAX_ENTRIES,
     private val io: CoroutineContext = Dispatchers.IO,
+    private val now: () -> LocalDateTime = LocalDateTime::now,
 ) {
     var run by mutableStateOf(LogcatRun.NotStarted)
         private set
@@ -320,6 +374,122 @@ class LogcatController(
 
     /** The Gap to put before the first line that survives dedup after a resume. */
     private var pendingGap: Pair<String, String>? = null
+
+    private var exportState by mutableStateOf<LogcatExport>(LogcatExport.Idle)
+
+    /** The export in progress or just finished; [LogcatExport.Idle] otherwise. */
+    var export: LogcatExport
+        get() = exportState
+        private set(value) {
+            exportState = value
+        }
+
+    private var exportJob: Job? = null
+    private var exportPart: Path? = null
+
+    /** Called on [io] for each export progress report; the cancel test hooks it. */
+    internal var onExportProgress: (Int) -> Unit = {}
+
+    /** Called on [io] just before the finished `.part` is moved over the target; the cancel test hooks it. */
+    internal var onExportMove: () -> Unit = {}
+
+    /** True while the finished file is moved over the target; a cancel then does nothing. */
+    private var exportMoving = false
+
+    /** Shows Done or Canceled for a while, then goes back to idle; its own job, so a click can cut it short. */
+    private var exportResultJob: Job? = null
+
+    /**
+     * Exports every line in [items] (the filter never limits it) as [format]. The lines are those at this call;
+     * later ones aren't in it. [pick] asks for the target file (null = canceled, nothing happens). The file is
+     * written beside the target as `.part` and moved over it when complete. Does nothing unless idle with lines
+     * and no other export is asking for its file.
+     */
+    fun export(format: ExportFormat, pick: suspend (suggestedName: String, extension: String) -> Path?) {
+        if (export !is LogcatExport.Idle || exportJob?.isActive == true || totalLines == 0) return
+        val rows = items.filterIsInstance<LogcatItem.Line>().map { ExportRow(it.entry, it.process) }
+        val filter = query
+        val projectIds = listOfNotNull(mine)
+        exportJob = scope.launch {
+            val device = source?.exportDevice() ?: parseExportDevice("", "", ZonedDateTime.now())
+            val ext = format.extension
+            val target = pick(exportFileName(device, now(), ext), ext) ?: return@launch
+            val part = target.resolveSibling(target.fileName.toString() + ".part")
+            exportPart = part
+            val startedAt = clock()
+            export = LogcatExport.Running(format, 0, rows.size)
+            val onProgress = { n: Int ->
+                onExportProgress(n)
+                scope.launch { (export as? LogcatExport.Running)?.let { export = it.copy(done = n) } }
+                Unit
+            }
+            try {
+                withContext(io) {
+                    Files.newBufferedWriter(part, StandardCharsets.UTF_8).use { out ->
+                        when (format) {
+                            ExportFormat.Studio -> writeStudioLogcat(out, rows, device, filter, projectIds, onProgress)
+                            ExportFormat.Text -> writeThreadtime(out, rows, onProgress)
+                        }
+                    }
+                }
+                val wait = EXPORT_MIN_RUN_MILLIS - (clock() - startedAt)
+                if (wait > 0) delay(wait)
+                // Past here the target may already be replaced, so the move always finishes and cancel is ignored.
+                exportMoving = true
+                withContext(NonCancellable + io) {
+                    onExportMove()
+                    try {
+                        Files.move(part, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                    } catch (e: AtomicMoveNotSupportedException) {
+                        Files.move(part, target, StandardCopyOption.REPLACE_EXISTING)
+                    }
+                }
+            } catch (e: CancellationException) {
+                runCatching { Files.deleteIfExists(part) }
+                throw e
+            } catch (e: Exception) {
+                runCatching { Files.deleteIfExists(part) }
+                exportPart = null
+                toast("Could not export: ${exportFailureReason(e)}")
+                export = LogcatExport.Idle
+                return@launch
+            } finally {
+                exportMoving = false
+            }
+            exportPart = null
+            showExportResult(LogcatExport.Done(target, rows.size), EXPORT_DONE_MILLIS)
+        }
+    }
+
+    /**
+     * Stops a running export, removes its `.part` file and leaves any existing target as it was. Does nothing once
+     * the finished file is being moved over the target.
+     */
+    fun cancelExport() {
+        if (export !is LogcatExport.Running || exportMoving) return
+        exportJob?.cancel()
+        exportJob = null
+        exportPart?.let { runCatching { Files.deleteIfExists(it) } }
+        exportPart = null
+        showExportResult(LogcatExport.Canceled, EXPORT_CANCELED_MILLIS)
+    }
+
+    /** Goes back to idle at once from Done or Canceled, so a new export can start. */
+    fun dismissExportResult() {
+        if (export !is LogcatExport.Done && export !is LogcatExport.Canceled) return
+        exportResultJob?.cancel()
+        exportResultJob = null
+        export = LogcatExport.Idle
+    }
+
+    private fun showExportResult(result: LogcatExport, millis: Long) {
+        exportResultJob?.cancel()
+        export = result
+        exportResultJob = scope.launch {
+            delay(millis)
+            if (export == result) export = LogcatExport.Idle
+        }
+    }
 
     private val unknownPids = HashSet<Int>()
     /** Pids `ps` didn't list, with when that was. */
