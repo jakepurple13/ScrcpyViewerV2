@@ -24,6 +24,10 @@ import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -131,6 +135,45 @@ class GifExportContentTest {
         assertTrue(s.canExport)
         s.trimEnd(60_001)
         assertFalse(s.canExport)
+    }
+
+    @Test
+    fun `a cancel while the finished GIF's size is read keeps it done and says nothing`() = runBlocking {
+        val s = GifExportState(file, video)
+        val gif = Files.write(tmp.resolve("done.gif"), ByteArray(10))
+        val reading = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val said = mutableListOf<String>()
+        s.export(this, { _, _, _ -> Result.success(gif) }, { said += it }) {
+            reading.complete(Unit)
+            release.await()
+            10L
+        }
+        withTimeout(5_000) { reading.await() }
+        val cancelled = async { s.cancelExport() }
+        yield()
+        release.complete(Unit)
+        assertFalse(withTimeout(5_000) { cancelled.await() }, "not reported as cancelled")
+        assertEquals(gif, s.done?.file)
+        assertEquals(10L, s.done?.bytes)
+        assertTrue(said.isEmpty())
+        assertTrue(Files.exists(gif))
+        assertFalse(s.exporting)
+    }
+
+    @Test
+    fun `a cancel while it encodes is reported as cancelled`() = runBlocking {
+        val s = GifExportState(file, video)
+        val fake = FakeExport()
+        val said = mutableListOf<String>()
+        s.export(this, fake.fn, { said += it })
+        withTimeout(5_000) { while (fake.progress == null) yield() }
+        fake.progress!!(GifExporter.Phase.Encode, 0.5f)
+        assertTrue(withTimeout(5_000) { s.cancelExport() })
+        assertEquals(1, fake.cancelled)
+        assertNull(s.done)
+        assertTrue(said.isEmpty())
+        assertFalse(s.exporting)
     }
 
     // The composable.

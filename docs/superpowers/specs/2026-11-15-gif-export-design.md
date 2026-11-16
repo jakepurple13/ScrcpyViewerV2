@@ -26,7 +26,10 @@ Turn a screen recording into a GIF: trim it, pick a size and frame rate, export.
   green row with a check, "<file name>" and "<size> · <w> × <h> · <len> s", plus **Show in folder**; the button reads
   **Export again**. The window stays open.
 - File: next to the recording, `<recording name>.gif`, then `-2`, …; never overwrites. Cancel stops FFmpeg and deletes
-  the partial file and the palette; snackbar "Export cancelled. The partial GIF was deleted." Failure keeps the window
+  the partial file and the palette; snackbar "Export cancelled. The partial GIF was deleted." A cancel that arrives after
+  the GIF has been moved into place counts as done (the done row; nothing is deleted). Quitting cleans up running exports
+  (a JVM shutdown hook also kills FFmpeg and deletes partial files on a hard quit). The GIF gets the user's normal file
+  mode (umask), not owner-only. Failure keeps the window
   with "Couldn't make the GIF: <reason>". A folder the app can't write to gives the reason "Can't write next to the
   recording (<dir>)".
 - The partial GIF (`.gif-export-*.part`) is written next to the recording, not in the cache, so the finished file is
