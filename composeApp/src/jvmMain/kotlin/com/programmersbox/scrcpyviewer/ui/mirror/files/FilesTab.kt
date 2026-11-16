@@ -13,8 +13,11 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
@@ -310,7 +313,11 @@ internal fun FilesTab(
     }
     val listFocus = remember { FocusRequester() }
     var filterFocused by remember { mutableStateOf(false) }
+    var searchFocused by remember { mutableStateOf(false) }
+    // Bumped by ⌘F while search is open: the field takes focus again.
+    val searchFocusAgain = remember { mutableStateOf(0) }
     var listFocused by remember { mutableStateOf(false) }
+    val search = browser.search
     // The transfers tray's height in px: the snackbar sits above it.
     var trayHeight by remember { mutableStateOf(0) }
     // The tab's own coordinates and the last pointer position in them, for menus opened at the pointer. Plain holders.
@@ -326,7 +333,21 @@ internal fun FilesTab(
             pullTo = { names -> currentPullTo(names) },
             pushFiles = { currentPushFiles() },
             copy = { text -> scope.launch { runCatching { clipboard.setClipEntry(ClipEntry(StringSelection(text))) } } },
+            pullHitsToDownloads = { hits -> browser.pullHits(hits, downloads) },
         )
+    }
+    fun openSearch() {
+        menu = null
+        browser.clearSelection()
+        // Already open: the field takes focus again (its own effect runs only when it appears).
+        if (search.active) searchFocusAgain.value++ else search.open()
+    }
+    fun closeSearch() {
+        search.close()
+        runCatching { listFocus.requestFocus() }
+    }
+    fun revealCurrent() {
+        (search.current ?: search.shown.firstOrNull())?.let(browser::reveal)
     }
     // A menu opened for a selection that has since changed, another folder, or a dropped session closes.
     val selected = browser.selection.names
@@ -347,6 +368,7 @@ internal fun FilesTab(
             menu != null -> menu = null
             browser.dialog != null -> browser.dismissDialog()
             browser.renaming != null -> browser.cancelRename()
+            search.active -> closeSearch()
             browser.filter.isNotEmpty() -> browser.setFilter("")
             browser.selection.names.isNotEmpty() -> browser.clearSelection()
             else -> return false
@@ -391,6 +413,19 @@ internal fun FilesTab(
                 val key = filesKeyAction(event, isMac) ?: return@onKeyEvent false
                 when {
                     key == FilesKey.Escape || menu != null || browser.dialog != null || browser.renaming != null -> false
+                    key == FilesKey.Search -> {
+                        if (browser.connected) openSearch()
+                        browser.connected
+                    }
+                    // While searching, the arrows move through the matches; Enter shows one in its folder, ⌘↓ opens it.
+                    search.active -> when {
+                        searchFocused -> false
+                        key == FilesKey.Up || key == FilesKey.ExtendUp -> { search.moveCursor(-1); true }
+                        key == FilesKey.Down || key == FilesKey.ExtendDown -> { search.moveCursor(1); true }
+                        key == FilesKey.Enter -> { revealCurrent(); true }
+                        key == FilesKey.Open -> { search.current?.let(browser::openHit); true }
+                        else -> false
+                    }
                     // The filter field keeps its own keys; only the tab-wide shortcuts reach the tab from it.
                     filterFocused && key != FilesKey.Refresh && key != FilesKey.NewFolder -> false
                     else -> browser.onKey(key)
@@ -411,24 +446,68 @@ internal fun FilesTab(
         }
         Column(Modifier.fillMaxSize()) {
             Column(commitOnPress) {
-                Toolbar(browser, drop, motion, onPushFiles, onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) })
+                // Search and the toolbar trade places on the vertical axis: search rises in from below.
+                AnimatedContent(
+                    search.active,
+                    transitionSpec = { searchBarTransform(targetState, motion) },
+                    contentAlignment = Alignment.TopStart,
+                ) { searching ->
+                    if (searching) {
+                        SearchBar(
+                            search,
+                            onFocus = { searchFocused = it },
+                            onDown = {
+                                if (search.cursor == null) search.moveCursor(1)
+                                runCatching { listFocus.requestFocus() }
+                            },
+                            onEnter = ::revealCurrent,
+                            onClose = ::closeSearch,
+                            motion = motion,
+                            focusKey = searchFocusAgain.value,
+                        )
+                    } else {
+                        Toolbar(
+                            browser, drop, motion, onPushFiles,
+                            onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) },
+                            onSearch = ::openSearch,
+                        )
+                    }
+                }
                 // Fully qualified: the Column's ColumnScope.AnimatedVisibility would otherwise win.
                 androidx.compose.animation.AnimatedVisibility(
-                    visible = browser.listingPath == browser.path && (browser.listing as? Listing.Entries)?.writable == false,
+                    visible = !search.active && browser.listingPath == browser.path && (browser.listing as? Listing.Entries)?.writable == false,
                     enter = if (motion) expandFadeIn() else EnterTransition.None,
                     exit = if (motion) shrinkFadeOut() else ExitTransition.None,
                 ) {
                     ReadOnlyStrip()
                 }
-                FilterRow(
-                    browser, motion,
-                    onFocus = { filterFocused = it },
-                    onDown = {
-                        if (browser.selection.names.isEmpty()) browser.moveSelection(1, extend = false)
-                        runCatching { listFocus.requestFocus() }
-                    },
-                )
-                ColumnHeader(browser, motion)
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !search.active,
+                    enter = if (motion) expandFadeIn() else EnterTransition.None,
+                    exit = if (motion) shrinkFadeOut() else ExitTransition.None,
+                ) {
+                    Column {
+                        FilterRow(
+                            browser, motion,
+                            onFocus = { filterFocused = it },
+                            onDown = {
+                                if (browser.selection.names.isEmpty()) browser.moveSelection(1, extend = false)
+                                runCatching { listFocus.requestFocus() }
+                            },
+                        )
+                        ColumnHeader(browser, motion)
+                    }
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = search.active,
+                    enter = if (motion) expandFadeIn() else EnterTransition.None,
+                    exit = if (motion) shrinkFadeOut() else ExitTransition.None,
+                ) {
+                    Column {
+                        SearchChips(search, motion)
+                        SearchStatus(search, motion)
+                    }
+                }
             }
             HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
             // Fully qualified: the Column's ColumnScope.AnimatedVisibility would otherwise win.
@@ -480,20 +559,40 @@ internal fun FilesTab(
                         }
                     },
             ) {
-                ListHost(
-                    browser, drop, motion, onPushFiles, zone, locale, listFocused,
-                    onCopyPath = { actions.copy(browser.path) },
-                    onRowPress = { runCatching { listFocus.requestFocus() } },
-                    onRowMenu = { name ->
-                        // Rows of the folder before, while the open one loads, take no action.
-                        if (browser.listingPath != browser.path) return@ListHost
-                        if (name !in browser.selection.names) browser.click(name)
-                        runCatching { listFocus.requestFocus() }
-                        menu = FilesMenu.Item(pointer[0], browser.selection.names)
-                    },
-                )
+                // Into search the folder slides back and the results come in from the forward side; out, the reverse.
+                val density = LocalDensity.current
+                AnimatedContent(
+                    search.active,
+                    Modifier.fillMaxSize(),
+                    transitionSpec = { navTransform(if (targetState) 1 else -1, motion, density) },
+                    contentAlignment = Alignment.TopStart,
+                ) { searching ->
+                    if (searching) {
+                        SearchResults(
+                            browser, search, motion, zone, locale, listFocused,
+                            onRowPress = { runCatching { listFocus.requestFocus() } },
+                            onMenu = { hit ->
+                                runCatching { listFocus.requestFocus() }
+                                menu = FilesMenu.Hit(pointer[0], hit)
+                            },
+                        )
+                    } else {
+                        ListHost(
+                            browser, drop, motion, onPushFiles, zone, locale, listFocused,
+                            onCopyPath = { actions.copy(browser.path) },
+                            onRowPress = { runCatching { listFocus.requestFocus() } },
+                            onRowMenu = { name ->
+                                // Rows of the folder before, while the open one loads, take no action.
+                                if (browser.listingPath != browser.path) return@ListHost
+                                if (name !in browser.selection.names) browser.click(name)
+                                runCatching { listFocus.requestFocus() }
+                                menu = FilesMenu.Item(pointer[0], browser.selection.names)
+                            },
+                        )
+                    }
+                }
                 androidx.compose.animation.AnimatedVisibility(
-                    visible = browser.loading,
+                    visible = browser.loading && !search.active,
                     enter = fadeIn(if (motion) tween(150) else snap()),
                     exit = fadeOut(if (motion) tween(150) else snap()),
                     modifier = Modifier.align(Alignment.TopCenter),
@@ -550,8 +649,26 @@ internal fun FilesTab(
     }
 }
 
+/** Toolbar and search bar trading places: the incoming one slides in from below (search) or above (toolbar). */
+private fun AnimatedContentTransitionScope<Boolean>.searchBarTransform(searching: Boolean, motion: Boolean): ContentTransform {
+    if (!motion) return EnterTransition.None togetherWith ExitTransition.None
+    val sign = if (searching) 1 else -1
+    val enter = slideInVertically(tween(OPEN_MILLIS, delayMillis = NAV_IN_DELAY_MILLIS, easing = EmphasizedDecelerate)) { sign * it / 2 } +
+        fadeIn(tween(OPEN_MILLIS, delayMillis = NAV_IN_DELAY_MILLIS, easing = EmphasizedDecelerate))
+    val exit = slideOutVertically(tween(NAV_OUT_MILLIS, easing = LinearEasing)) { -sign * it / 2 } +
+        fadeOut(tween(NAV_OUT_MILLIS, easing = LinearEasing))
+    return (enter togetherWith exit).using(SizeTransform(clip = true))
+}
+
 @Composable
-private fun Toolbar(browser: FilesBrowser, drop: FilesDropState, motion: Boolean, onPushFiles: () -> Unit, onViewMenu: (Offset) -> Unit) {
+private fun Toolbar(
+    browser: FilesBrowser,
+    drop: FilesDropState,
+    motion: Boolean,
+    onPushFiles: () -> Unit,
+    onViewMenu: (Offset) -> Unit,
+    onSearch: () -> Unit,
+) {
     val connected = browser.connected
     val listed = browser.listingPath == browser.path
     val scope = rememberCoroutineScope()
@@ -564,6 +681,7 @@ private fun Toolbar(browser: FilesBrowser, drop: FilesDropState, motion: Boolean
         ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", connected && browser.canGoBack, onClick = browser::back)
         ToolButton(Icons.Filled.ArrowUpward, "Up one folder", connected && browser.canGoUp, onClick = browser::up)
         Crumbs(browser, drop, motion, Modifier.weight(1f))
+        ToolButton(Icons.Filled.Search, "Search device", connected, onClick = onSearch)
         ToolButton(Icons.Filled.Refresh, "Refresh", connected, iconModifier = Modifier.graphicsLayer { rotationZ = spin.value }) {
             browser.refresh()
             if (motion) {
@@ -869,7 +987,7 @@ private fun ListHost(
     }
 }
 
-private fun AnimatedContentTransitionScope<String?>.navTransform(direction: Int, motion: Boolean, density: Density): ContentTransform {
+private fun <T> AnimatedContentTransitionScope<T>.navTransform(direction: Int, motion: Boolean, density: Density): ContentTransform {
     if (!motion) return EnterTransition.None togetherWith ExitTransition.None
     val sign = if (direction < 0) -1 else 1
     val shift = with(density) { NAV_SHIFT.roundToPx() }
@@ -960,6 +1078,8 @@ private fun Rows(
                 dropTarget = target,
                 spring = { if (target) drop.spring.value else 0f },
                 moving = entry.name in moving,
+                flash = entry.name == browser.revealed && dir == browser.path,
+                match = browser.filter,
                 onSecondaryPress = { if (dir == browser.path && browser.renaming != entry.name) onRowMenu(entry.name) },
                 focused = listFocused && entry.name == cursor,
                 renaming = entry.name == renaming,
@@ -998,7 +1118,7 @@ private fun Rows(
  * Scrolls the row at [index] fully into view (above the bottom padding the tray and snackbar sit over), by as little as
  * it takes; nothing when it already is. A row far off screen comes in at the top.
  */
-private suspend fun LazyListState.bringIntoView(index: Int, animate: Boolean) {
+internal suspend fun LazyListState.bringIntoView(index: Int, animate: Boolean) {
     // Before the first layout there is nothing to measure against.
     val info = snapshotFlow { layoutInfo }.first { it.visibleItemsInfo.isNotEmpty() }
     val item = info.visibleItemsInfo.firstOrNull { it.index == index }

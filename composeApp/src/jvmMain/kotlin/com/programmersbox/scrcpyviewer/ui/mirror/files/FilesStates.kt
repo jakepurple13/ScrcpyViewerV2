@@ -268,6 +268,33 @@ internal fun DisconnectedBanner(modifier: Modifier = Modifier) {
     }
 }
 
+/** Search open with nothing typed. */
+@Composable
+internal fun SearchPromptState() {
+    StateMessage(Icons.Filled.Search, "Search this device", "Type part of a file or folder name. Android/data and Android/obb are skipped.")
+}
+
+/** A finished search that found nothing ([kindsOn]: it found some, but none of the chosen types). */
+@Composable
+internal fun SearchNoMatchState(query: String, kindsOn: Boolean) {
+    if (kindsOn) {
+        StateMessage(Icons.Filled.Search, "None of the chosen types", "Turn a chip off to see the other matches for “$query”.")
+    } else {
+        StateMessage(Icons.Filled.Search, "Nothing on the device matches “$query”", "The search looks at names only, in every folder of internal storage.")
+    }
+}
+
+@Composable
+internal fun SearchFailedState(reason: String, onRetry: () -> Unit) {
+    StateMessage(Icons.Filled.ErrorOutline, "Could not search", reason, monospace = true) {
+        FilledTonalButton(onClick = onRetry, contentPadding = ButtonDefaults.ButtonWithIconContentPadding) {
+            Icon(Icons.Filled.Refresh, contentDescription = null, Modifier.size(18.dp))
+            Spacer(Modifier.size(6.dp))
+            Text("Retry")
+        }
+    }
+}
+
 @Composable
 private fun StateMessage(
     icon: ImageVector,

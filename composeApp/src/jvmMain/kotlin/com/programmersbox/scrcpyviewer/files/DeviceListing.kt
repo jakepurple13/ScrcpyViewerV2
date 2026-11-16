@@ -24,10 +24,10 @@ sealed interface Listing {
     data class Failed(val reason: String) : Listing
 }
 
-private const val MARKER = "|__svend__"
+internal const val MARKER = "|__svend__"
 private const val BLOCKED_EXIT = 13
 
-private const val STAT_FORMAT = "'%F|%s|%Y|%n$MARKER'"
+internal const val STAT_FORMAT = "'%F|%s|%Y|%n$MARKER'"
 
 /** Every entry of the current folder, hidden ones included; the shell expands them (no process). */
 private const val ALL_ENTRIES = "./.[!.]* ./..?* ./*"

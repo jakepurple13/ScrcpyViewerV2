@@ -32,7 +32,10 @@ import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
+import com.programmersbox.scrcpyviewer.files.SearchHit
 import java.nio.file.Files
 import java.time.ZoneOffset
 import java.util.Locale
@@ -53,6 +56,14 @@ private class ScriptedFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath
     override suspend fun list(dir: String): Listing = dirs[dir] ?: Listing.Failed("ls: $dir: No such file or directory")
     override suspend fun counts(dir: String, folders: List<String>): Map<String, Int> = folders.associateWith { 3 }
     override suspend fun freeSpace() = DeviceSpace(44_236_955_648, 122_880_000_000)
+
+    override fun search(query: String, includeHidden: Boolean): Flow<List<SearchHit>> = flowOf(
+        dirs.flatMap { (d, l) ->
+            (l as? Listing.Entries)?.entries.orEmpty()
+                .filter { it.name.contains(query, ignoreCase = true) && (includeHidden || !it.hidden) }
+                .map { SearchHit(d, it) }
+        },
+    )
 }
 
 /** The Files tab over a scripted device: layout, states, navigation and sorting. */
@@ -384,5 +395,47 @@ class FilesTabTest {
         driver.frames(40)
         assertNull(driver.texts().firstOrNull { it == "Device disconnected" })
         assertNotNull(driver.texts().firstOrNull { it == "notes.txt" })
+    }
+
+    @Test
+    fun `search finds matches across folders and Show in folder opens one`() = onEdt {
+        val b = browser("/sdcard")
+        val driver = scene(b)
+        driver.click(driver.described("Search device"))
+        assertTrue(b.search.active)
+        assertTrue("Search this device" in driver.texts(), "an empty search explains itself")
+        assertNull(driver.texts().firstOrNull { it.startsWith("Filter in") }, "the folder filter steps aside")
+        val field = driver.described("Search this device")
+        field.config[SemanticsActions.SetText].action?.invoke(AnnotatedString("o"))
+        // Skip the typing pause: the scene's scope has no virtual clock.
+        b.search.rerun()
+        driver.frames(40)
+        val texts = driver.texts()
+        assertTrue("Download/Telegram" in texts && "Download" in texts && "Internal storage" in texts, "grouped by folder: $texts")
+        assertTrue("voice.ogg" in texts && "notes.txt" in texts && "Documents" in texts)
+        assertTrue(texts.any { it.startsWith("5 matches in 3 folders") }, "status: $texts")
+
+        driver.click(driver.text("voice.ogg"))
+        driver.click(driver.text("Show in folder"))
+        assertTrue(!b.search.active)
+        assertEquals("/sdcard/Download/Telegram", b.path)
+        assertEquals(setOf("voice.ogg"), b.selection.names)
+        assertTrue(driver.texts().any { it.startsWith("Filter in") })
+    }
+
+    @Test
+    @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
+    fun `Esc leaves search and keeps the folder as it was`() = onEdt {
+        val b = browser()
+        val driver = scene(b)
+        driver.click(driver.described("Search device"))
+        for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
+            driver.scene.sendKeyEvent(KeyEvent(key = Key.Escape, type = type))
+            driver.frame()
+        }
+        driver.frames(40)
+        assertTrue(!b.search.active)
+        assertEquals("/sdcard/Download", b.path)
+        assertTrue("notes.txt" in driver.texts())
     }
 }

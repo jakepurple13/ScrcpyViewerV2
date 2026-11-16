@@ -7,6 +7,9 @@ import com.programmersbox.scrcpyviewer.files.DeviceFiles
 import com.programmersbox.scrcpyviewer.files.DeviceSpace
 import com.programmersbox.scrcpyviewer.files.JobState
 import com.programmersbox.scrcpyviewer.files.Listing
+import com.programmersbox.scrcpyviewer.files.SearchHit
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import com.programmersbox.scrcpyviewer.files.TransferRequest
@@ -63,6 +66,22 @@ private class FakeFiles : DeviceFiles(ShellRunner(object : AdbClient(adbPath = {
     }
 
     override suspend fun freeSpace() = DeviceSpace(5_000, 20_000)
+
+    /** When set, a search waits for it before finding anything. */
+    var searchGate: CompletableDeferred<Unit>? = null
+
+    /** Every listed file whose name contains [query], from the scripted folders. */
+    override fun search(query: String, includeHidden: Boolean): Flow<List<SearchHit>> = flow {
+        calls += "search $query $includeHidden"
+        searchGate?.await()
+        emit(
+            dirs.flatMap { (d, l) ->
+                (l as? Listing.Entries)?.entries.orEmpty()
+                    .filter { it.name.contains(query, ignoreCase = true) && (includeHidden || !it.hidden) }
+                    .map { SearchHit(d, it) }
+            },
+        )
+    }
 
     override suspend fun mkdir(dir: String, name: String) {
         calls += "mkdir $dir $name"
@@ -885,5 +904,92 @@ class FilesBrowserTest {
         assertEquals(setOf("new.ogg"), b.arriving)
         b.up()
         assertEquals(emptySet(), b.arriving)
+    }
+
+    private fun hit(dir: String, entry: DeviceEntry) = SearchHit(dir, entry)
+
+    @Test
+    fun `Show in folder leaves search, opens the folder and selects the match`() = runTest {
+        val b = browser(start = "/sdcard")
+        b.search.open()
+        b.reveal(hit("/sdcard/Download/Telegram", file("voice.ogg")))
+        runCurrent()
+        assertFalse(b.search.active)
+        assertEquals("/sdcard/Download/Telegram", b.path)
+        assertEquals(setOf("voice.ogg"), b.selection.names)
+        assertEquals("voice.ogg", b.revealed)
+        settle()
+        assertNull(b.revealed, "the flash is once")
+        b.back()
+        runCurrent()
+        assertEquals("/sdcard", b.path, "Back returns to where the search started")
+    }
+
+    @Test
+    fun `Show in folder for a match in the open folder selects it there`() = runTest {
+        val b = browser()
+        b.search.open()
+        b.reveal(hit("/sdcard/Download", file("notes.txt", 50)))
+        runCurrent()
+        assertEquals("/sdcard/Download", b.path)
+        assertEquals(setOf("notes.txt"), b.selection.names)
+    }
+
+    @Test
+    fun `opening matches works from their own folders`() = runTest {
+        val b = browser(start = "/sdcard")
+        b.openHit(hit("/sdcard/Download", file("notes.txt", 50)))
+        b.openHit(hit("/sdcard/Download", file("app.apk", 900)))
+        assertEquals(
+            listOf(
+                TransferRequest(Paths.get(""), TransferKind.Pull, "/sdcard/Download", "notes.txt", opensAfter = true, size = 50),
+                TransferRequest(Paths.get(""), TransferKind.InstallFromDevice, "/sdcard/Download", "app.apk", size = 900),
+            ),
+            requests,
+        )
+        b.search.open()
+        b.openHit(hit("/sdcard/Download", dir("Telegram")))
+        runCurrent()
+        assertFalse(b.search.active)
+        assertEquals("/sdcard/Download/Telegram", b.path)
+    }
+
+    @Test
+    fun `pulling matches takes each from its folder`() = runTest {
+        val b = browser(start = "/sdcard")
+        val to = Paths.get("/tmp/dl")
+        b.pullHits(listOf(hit("/sdcard/Download", file("a.jpg", 20)), hit("/sdcard/Download", dir("Telegram"))), to)
+        assertEquals(
+            listOf(
+                TransferRequest(to, TransferKind.Pull, "/sdcard/Download", "a.jpg", size = 20),
+                TransferRequest(to, TransferKind.Pull, "/sdcard/Download", "Telegram", size = 4096, isDirectory = true),
+            ),
+            requests,
+        )
+    }
+
+    @Test
+    fun `Show hidden files reruns an open search with hidden files`() = runTest {
+        val b = browser()
+        b.search.open()
+        b.search.setQuery("voice")
+        settle()
+        assertEquals(listOf("search voice false"), files.calls.filter { it.startsWith("search") })
+        assertEquals(listOf("voice.ogg"), b.search.hits.map { it.entry.name })
+        b.toggleHidden()
+        settle()
+        assertEquals(listOf("search voice false", "search voice true"), files.calls.filter { it.startsWith("search") })
+    }
+
+    @Test
+    fun `a dropped session stops the search`() = runTest {
+        files.searchGate = CompletableDeferred()
+        val b = browser()
+        b.search.open()
+        b.search.setQuery("voice")
+        settle()
+        assertTrue(b.search.running)
+        b.onConnectionChanged(false)
+        assertFalse(b.search.running)
     }
 }
