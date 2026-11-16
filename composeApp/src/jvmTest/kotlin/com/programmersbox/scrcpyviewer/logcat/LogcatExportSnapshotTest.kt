@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.logcat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import kotlin.test.Test
@@ -46,6 +47,23 @@ class LogcatExportSnapshotTest {
         assertEquals(0, d.sdk)
         assertEquals(LocalDate.of(2026, 1, 2), d.today)
         assertEquals(ZoneOffset.UTC, d.offset)
+    }
+
+    @Test
+    fun `parses the device time zone`() {
+        assertEquals(ZoneId.of("America/Denver"), parseExportDevice("X", output() + "\ntz=America/Denver", host).zone)
+        assertEquals(null, parseExportDevice("X", output() + "\ntz=", host).zone)
+        assertEquals(null, parseExportDevice("X", output() + "\ntz=Not/AZone", host).zone)
+    }
+
+    @Test
+    fun `epoch uses the zone's offset on the line's own date across DST`() {
+        val denver = ZoneId.of("America/Denver")
+        // Today (03-10) is MDT, -06:00; the line (03-07) was before the switch on 03-08, so MST, -07:00.
+        val i = epochOf(line("03-07", "12:00:00.000"), LocalDate.of(2026, 3, 10), ZoneOffset.ofHours(-6), denver)
+        assertEquals(Instant.parse("2026-03-07T19:00:00Z"), i)
+        val same = epochOf(line("03-10", "12:00:00.000"), LocalDate.of(2026, 3, 10), ZoneOffset.ofHours(-6), denver)
+        assertEquals(Instant.parse("2026-03-10T18:00:00Z"), same)
     }
 
     @Test

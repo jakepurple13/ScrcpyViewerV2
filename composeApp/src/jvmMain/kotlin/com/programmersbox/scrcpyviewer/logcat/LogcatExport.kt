@@ -10,13 +10,16 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.YearMonth
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
- * Device facts an export needs. [today] and [offset] are the device's own clock, because logcat
- * timestamps carry no year or zone and must be read in the device's frame.
+ * Device facts an export needs. [today], [offset] and [zone] are the device's own clock, because logcat
+ * timestamps carry no year or zone and must be read in the device's frame. [zone] is null when the
+ * device reports none; then [offset] is used for every line.
  */
 data class ExportDevice(
     val serial: String,
@@ -27,19 +30,21 @@ data class ExportDevice(
     val type: String,
     val today: LocalDate,
     val offset: ZoneOffset,
+    val zone: ZoneId? = null,
 )
 
-/** One round trip that prints the props and the device date as `key=value` lines. */
+/** One round trip that prints the props, the device date and its time zone as `key=value` lines. */
 const val EXPORT_DEVICE_COMMAND: String =
     "for p in ro.product.manufacturer ro.product.model ro.build.version.release " +
         "ro.build.version.sdk ro.build.characteristics; do echo \"\$p=\$(getprop \$p)\"; done; " +
-        "echo \"date=\$(date +%Y-%m-%d%z)\""
+        "echo \"date=\$(date +%Y-%m-%d%z)\"; echo \"tz=\$(getprop persist.sys.timezone)\""
 
 private val dateLine = Regex("""^(\d{4}-\d\d-\d\d)([+-])(\d\d)(\d\d)$""")
 
 /**
  * Parses [EXPORT_DEVICE_COMMAND] output. Missing values become empty (sdk 0); a bad or missing
- * `date=` line falls back to [hostNow] so export still works on a device that answers badly.
+ * `date=` line falls back to [hostNow] so export still works on a device that answers badly. A blank
+ * or unknown `tz=` gives a null zone.
  */
 fun parseExportDevice(serial: String, output: String, hostNow: ZonedDateTime): ExportDevice {
     val values = output.lineSequence()
@@ -72,22 +77,25 @@ fun parseExportDevice(serial: String, output: String, hostNow: ZonedDateTime): E
         type = type,
         today = today,
         offset = offset,
+        zone = values["tz"]?.takeIf { it.isNotBlank() }?.let { runCatching { ZoneId.of(it) }.getOrNull() },
     )
 }
 
 /**
  * Absolute time of [line]. Logcat has no year, so use [today]'s year, or the previous one when the
  * line's `MM-DD` is later than today (a log that spans New Year). `02-29` in a non-leap year is
- * clamped to `02-28`.
+ * clamped to `02-28`. Read in [zone] when known, so lines before a DST change get their own offset;
+ * else in [offset].
  */
-fun epochOf(line: LogcatLine, today: LocalDate, offset: ZoneOffset): Instant {
+fun epochOf(line: LogcatLine, today: LocalDate, offset: ZoneOffset, zone: ZoneId? = null): Instant {
     val month = line.date.substring(0, 2).toInt()
     val day = line.date.substring(3, 5).toInt()
     val afterToday = month > today.monthValue || (month == today.monthValue && day > today.dayOfMonth)
     val year = if (afterToday) today.year - 1 else today.year
     val safeDay = minOf(day, YearMonth.of(year, month).lengthOfMonth())
     val time = LocalTime.parse(line.time)
-    return LocalDateTime.of(LocalDate.of(year, month, safeDay), time).toInstant(offset)
+    val local = LocalDateTime.of(LocalDate.of(year, month, safeDay), time)
+    return if (zone != null) ZonedDateTime.of(local, zone).toInstant() else local.toInstant(offset)
 }
 
 private val unsafeChars = Regex("[^A-Za-z0-9._-]")
@@ -190,7 +198,7 @@ suspend fun writeStudioLogcat(
         currentCoroutineContext().ensureActive()
         val line = row.entry.line
         val process = row.process ?: "pid-${line.pid}"
-        val instant = epochOf(line, device.today, device.offset)
+        val instant = epochOf(line, device.today, device.offset, device.zone)
         val message = StudioMessage(
             header = StudioHeader(
                 logLevel = line.level.name.uppercase(),
@@ -211,13 +219,16 @@ suspend fun writeStudioLogcat(
     onProgress(rows.size)
 }
 
-/** Writes [rows] as `logcat -v threadtime` text: one line per entry plus one per folded trace line. */
+/**
+ * Writes [rows] as `logcat -v threadtime` text: one line per entry plus one per folded trace line.
+ * Formatted in [Locale.ROOT], so pid and tid are ASCII digits whatever the host locale.
+ */
 suspend fun writeThreadtime(out: Appendable, rows: List<ExportRow>, onProgress: (Int) -> Unit) {
     rows.forEachIndexed { i, row ->
         currentCoroutineContext().ensureActive()
         val l = row.entry.line
         (listOf(l.message) + row.entry.trace).forEach { text ->
-            out.append("%s %s %5d %5d %c %-8s: %s".format(l.date, l.time, l.pid, l.tid, l.level.letter, l.tag, text))
+            out.append(String.format(Locale.ROOT, "%s %s %5d %5d %c %-8s: %s", l.date, l.time, l.pid, l.tid, l.level.letter, l.tag, text))
             out.append('\n')
         }
         if ((i + 1) % PROGRESS_EVERY == 0 && i + 1 < rows.size) onProgress(i + 1)

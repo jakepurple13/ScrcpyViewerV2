@@ -11,8 +11,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import java.time.LocalDate
 import java.time.ZoneOffset
+import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class LogcatExportWriterTest {
     private val device = ExportDevice(
@@ -125,6 +127,21 @@ class LogcatExportWriterTest {
         )
         val sb = StringBuilder()
         writeThreadtime(sb, lines.map { ExportRow(entry(it), null) }) {}
+        assertEquals(lines, sb.lines().filter { it.isNotEmpty() }.map { parseThreadtime(it) })
+    }
+
+    @Test
+    fun `threadtime digits are ascii in any locale`() = runTest {
+        val lines = listOf(line("one", pid = 4211), line("two", LogLevel.Warn, 99999))
+        val default = Locale.getDefault()
+        val sb = StringBuilder()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ar"))
+            writeThreadtime(sb, lines.map { ExportRow(entry(it), null) }) {}
+        } finally {
+            Locale.setDefault(default)
+        }
+        assertTrue(sb.all { it.code < 128 }, sb.toString())
         assertEquals(lines, sb.lines().filter { it.isNotEmpty() }.map { parseThreadtime(it) })
     }
 
