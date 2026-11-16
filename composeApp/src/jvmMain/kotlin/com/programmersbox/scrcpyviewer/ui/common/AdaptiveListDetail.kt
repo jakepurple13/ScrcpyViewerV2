@@ -234,7 +234,7 @@ fun AdaptiveListDetail(
             val start = panes.listWidth?.coerceIn(currentMin, currentMax) ?: currentTwoPaneWidth
             panes.listWidth = start + with(currentDensity) { panes.limits.consume(delta).toDp() }
         }
-        val openSwitcher: () -> Unit = remember(panes) { { panes.overlayOpen = true } }
+        val openSwitcher: () -> Unit = remember(panes) { { panes.openSwitcher() } }
         // Picking an item (a selection change) or leaving item view ends the overlay.
         LaunchedEffect(mode) { if (mode != PaneMode.ItemView) panes.closeOverlay() }
         // Only a change closes it, not the first composition.
@@ -333,6 +333,11 @@ private fun Modifier.keepWidthWhile(keep: Boolean): Modifier = composed {
         val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
         layout(constraints.maxWidth, placeable.height) { placeable.place(0, 0) }
     }
+}
+
+/** Shows the full list over the open item (item view), as the switcher chip does. */
+fun ListDetailPanes.openSwitcher() {
+    overlayOpen = true
 }
 
 /** Closes the full list shown over the open item; call it after a pick. */

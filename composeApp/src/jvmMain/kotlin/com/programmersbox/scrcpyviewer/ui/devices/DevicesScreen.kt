@@ -44,6 +44,9 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Devices
+import com.programmersbox.scrcpyviewer.emulator.SdkLookup
+import com.programmersbox.scrcpyviewer.ui.common.openSwitcher
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TabletAndroid
 import androidx.compose.material.icons.filled.Usb
@@ -332,6 +335,10 @@ internal fun DevicesContent(
                         )
                         ListPresentation.Strip -> DeviceStrip(
                             state, emulators, onSelect, onShowList = panes.navigation::backToList,
+                            onShowEmulators = {
+                                onEmulator(EmulatorEvent.SetExpanded(true))
+                                panes.openSwitcher()
+                            },
                             onRestartAdb, restartSucceeded, onPairWifi, pairAnchor,
                         )
                     }
@@ -570,9 +577,14 @@ private fun statusDotColor(state: DeviceState): Color = when (state) {
     DeviceState.Offline, DeviceState.Other -> MaterialTheme.colorScheme.error
 }
 
+/** The strip's emulator tile: opens the full list at the Emulators section. */
+private object EmulatorTileKey
+
 /**
- * The device list beside an open device: an avatar per connected device (emulators are left out), with the restart
- * button and an icon-only Pair over Wi-Fi under them.
+ * The device list beside an open device: an avatar per connected device, then, after an "AVD" divider, the emulator
+ * tile (the AVD count on it; it opens the full list over the device with the Emulators section expanded) and an
+ * avatar per running emulator, selectable like a device. The restart button and an icon-only Pair over Wi-Fi sit
+ * under them.
  */
 @Composable
 private fun DeviceStrip(
@@ -580,29 +592,45 @@ private fun DeviceStrip(
     emulators: EmulatorsUiState?,
     onSelect: (String) -> Unit,
     onShowList: () -> Unit,
+    onShowEmulators: () -> Unit,
     onRestartAdb: () -> Unit,
     restartSucceeded: Boolean?,
     onPairWifi: () -> Unit,
     pairAnchor: PairDialogAnchor?,
 ) {
-    val devices = connectedRows(state.devices, emulators?.hiddenSerials.orEmpty()).filterNot { isEmulatorSerial(it.serial) }
-    val items = devices.map { device ->
-        val title = deviceTitle(device)
+    val (running, devices) = connectedRows(state.devices, emulators?.hiddenSerials.orEmpty()).partition { isEmulatorSerial(it.serial) }
+    @Composable
+    fun deviceItem(device: Device, title: String, divider: String?) = StripItem(
+        key = device.serial,
+        label = title,
+        avatar = {
+            Icon(
+                if (title.contains("Tablet", ignoreCase = true)) Icons.Filled.TabletAndroid else Icons.Filled.PhoneAndroid,
+                contentDescription = null,
+                Modifier.size(22.dp),
+            )
+        },
+        badgeColor = statusDotColor(device.state),
+        dividerLabel = divider,
+    )
+    val tile = emulators?.let { avds ->
         StripItem(
-            key = device.serial,
-            label = title,
-            avatar = {
-                Icon(
-                    if (title.contains("Tablet", ignoreCase = true)) Icons.Filled.TabletAndroid else Icons.Filled.PhoneAndroid,
-                    contentDescription = null,
-                    Modifier.size(22.dp),
-                )
-            },
-            badgeColor = statusDotColor(device.state),
+            key = EmulatorTileKey,
+            label = "Emulators",
+            avatar = { Icon(Icons.Filled.Devices, contentDescription = null, Modifier.size(22.dp)) },
+            dividerLabel = "AVD",
+            badgeCount = if (avds.sdk is SdkLookup.Found) avds.rows.size else null,
         )
     }
+    val items = devices.map { deviceItem(it, deviceTitle(it), divider = null) } +
+        listOfNotNull(tile) +
+        running.mapIndexed { i, device ->
+            deviceItem(device, connectedTitle(device, emulators?.avdNames?.get(device.serial)), divider = if (tile == null && i == 0) "AVD" else null)
+        }
     ListStrip(
-        items, state.selectedSerial, onSelect = { onSelect(it as String) }, onShowList = onShowList,
+        items, state.selectedSerial,
+        onSelect = { key -> if (key == EmulatorTileKey) onShowEmulators() else onSelect(key as String) },
+        onShowList = onShowList,
         modifier = Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb, succeeded = restartSucceeded)

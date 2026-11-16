@@ -24,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -48,13 +50,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 
-/** One entry of a [ListStrip]: [avatar] sits in a 40 dp circle, [label] sits under it and in its tooltip. */
+/**
+ * One entry of a [ListStrip]: [avatar] sits in a 40 dp circle, [label] sits under it and in its tooltip. [badgeColor]
+ * puts a status dot on the avatar and [badgeCount] a count on its top corner. [dividerLabel] draws a labelled divider
+ * above the entry, starting a group.
+ */
 @Immutable
 data class StripItem(
     val key: Any,
     val label: String,
     val avatar: @Composable () -> Unit,
     val badgeColor: Color? = null,
+    val dividerLabel: String? = null,
+    val badgeCount: Int? = null,
 )
 
 private val AvatarSize = 40.dp
@@ -90,6 +98,7 @@ fun ListStrip(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             for (item in items) {
+                item.dividerLabel?.let { StripDivider(it) }
                 StripEntry(item, selected = item.key == selectedKey, onClick = { onSelect(item.key) })
             }
         }
@@ -119,6 +128,19 @@ private fun StripEntry(item: StripItem, selected: Boolean, onClick: () -> Unit) 
                 ) {
                     CompositionLocalProvider(LocalContentColor provides onFill) { item.avatar() }
                 }
+                item.badgeCount?.let { count ->
+                    Box(
+                        Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-2).dp)
+                            .background(colors.surface, CircleShape)
+                            .padding(BadgeRing)
+                            .background(colors.tertiary, CircleShape)
+                            .widthIn(min = 16.dp)
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(count.toString(), color = colors.onTertiary, fontSize = 10.sp, lineHeight = 16.sp, maxLines = 1)
+                    }
+                }
                 item.badgeColor?.let { badge ->
                     Box(
                         Modifier.align(Alignment.BottomEnd).size(BadgeSize)
@@ -137,6 +159,22 @@ private fun StripEntry(item: StripItem, selected: Boolean, onClick: () -> Unit) 
                 textAlign = TextAlign.Center,
             )
         }
+    }
+}
+
+/** Starts a group of strip entries: a short hairline with [label] under it. */
+@Composable
+private fun StripDivider(label: String) {
+    Column(Modifier.padding(top = 6.dp, bottom = 2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        HorizontalDivider(Modifier.width(32.dp), color = MaterialTheme.colorScheme.outlineVariant)
+        Text(
+            label,
+            Modifier.padding(top = 4.dp),
+            fontSize = 10.sp,
+            letterSpacing = 0.6.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
     }
 }
 

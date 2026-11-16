@@ -103,6 +103,11 @@ import com.programmersbox.scrcpyviewer.emulator.BootStage
 import com.programmersbox.scrcpyviewer.emulator.SdkLookup
 import com.programmersbox.scrcpyviewer.emulator.formatSize
 import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
+import androidx.compose.ui.layout.LookaheadScope
 import com.programmersbox.scrcpyviewer.ui.common.revealLabel
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
@@ -392,7 +397,10 @@ internal fun EmulatorRowItem(
         motion = motion,
     )
     EmulatorRowLayout(
+        motion = motion,
+        // The row's height springs as its controls move between one line and two.
         modifier = modifier.fillMaxWidth()
+            .then(if (motion) Modifier.animateHeight() else Modifier)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surface)
             .mirrorOrigin(row.state.serialOrNull)
@@ -415,16 +423,21 @@ internal fun EmulatorRowItem(
 /**
  * Glyph, text and More on one line, with the controls between text and More when the row is at least
  * [EMULATOR_ROW_ONE_LINE_MIN_WIDTH] wide; narrower, the controls go on a second line at the end, so they never clip.
+ * With [motion] the controls (chip and button) and More glide to their new places ([layoutSpring]).
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun EmulatorRowLayout(
+    motion: Boolean,
     modifier: Modifier,
     glyph: @Composable () -> Unit,
     text: @Composable () -> Unit,
     controls: @Composable () -> Unit,
     more: @Composable () -> Unit,
-) {
-    Layout(contents = listOf(glyph, text, controls, more), modifier = modifier) { (g, t, c, m), constraints ->
+) = LookaheadScope {
+    val glide = if (motion) Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() }) else Modifier
+    val contents = listOf<@Composable () -> Unit>(glyph, text, { Box(glide) { controls() } }, { Box(glide) { more() } })
+    Layout(contents = contents, modifier = modifier) { (g, t, c, m), constraints ->
         val gap = 8.dp.roundToPx()
         val smallGap = 2.dp.roundToPx()
         val lineGap = 6.dp.roundToPx()
