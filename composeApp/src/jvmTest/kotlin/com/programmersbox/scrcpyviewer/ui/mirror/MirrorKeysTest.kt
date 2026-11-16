@@ -40,6 +40,8 @@ class MirrorKeysTest {
         hid: HidKeyboard? = null,
         legacyPaste: Boolean = false,
         followerKeyRepeat: Boolean = true,
+        mac: Boolean = true,
+        mapper: InputMapper = this.mapper,
     ) = MirrorKeys(
         mapper = mapper,
         hidKeyboard = hid,
@@ -52,7 +54,7 @@ class MirrorKeysTest {
         closeSheet = { sheetCloses++ },
         applyZoom = { zooms += it },
         captureFocus = { captureFocus += it },
-        mac = true,
+        mac = mac,
         legacyPaste = legacyPaste,
         followerKeyRepeat = followerKeyRepeat,
     )
@@ -285,6 +287,65 @@ class MirrorKeysTest {
 
         keys.onFocusChanged(true)
         assertEquals(listOf(false, false, true), captureFocus)
+    }
+
+    @Test
+    fun focusLost_sdkKeyboard_releasesHeldKey() {
+        val keys = keys()
+        assertTrue(keys.onKey(down(Key.DirectionLeft)))
+        mapper.press(Offset(270f, 600f), PointerButton.Primary)
+        sent.clear()
+
+        keys.onFocusChanged(false)
+        assertEquals(2, sent.size)
+        val up = assertIs<ControlMessage.InjectKeycode>(sent[0])
+        assertEquals(InputMapper.KEY_ACTION_UP, up.action)
+        assertEquals(21, up.keycode) // KEYCODE_DPAD_LEFT
+        assertEquals(InputMapper.ACTION_UP, assertIs<ControlMessage.InjectTouch>(sent[1]).action)
+
+        // Forgotten: a second loss has nothing left to release.
+        sent.clear()
+        keys.onFocusChanged(false)
+        assertTrue(sent.isEmpty())
+    }
+
+    @Test
+    fun altGr_offMac_typesAndNeitherPastesNorZooms() {
+        val windowsMapper = InputMapper(frameSize = { IntSize(1080, 2400) }, viewRect = { Rect(0f, 0f, 540f, 1200f) }, ctrlAltIsAltGr = true)
+        val k = keys(mac = false, mapper = windowsMapper)
+        clipboard = "clip"
+        fun altGrDown(key: Key) = KeyEvent(key, KeyEventType.KeyDown, isCtrlPressed = true, isAltPressed = true)
+        fun altGrTyped(c: Char) = KeyEvent(Key.Unknown, KeyEventType.Unknown, codePoint = c.code, isCtrlPressed = true, isAltPressed = true)
+
+        // Hungarian AltGr+V is '@', German AltGr+0 is '}': text, not a paste or a zoom.
+        k.onKey(altGrDown(Key.V))
+        assertTrue(k.onKey(altGrTyped('@')))
+        k.onKey(altGrDown(Key.Zero))
+        assertTrue(k.onKey(altGrTyped('}')))
+        assertTrue(zooms.isEmpty())
+        val texts = sent.filterIsInstance<ControlMessage.InjectText>()
+        assertEquals(listOf(ControlMessage.InjectText("@"), ControlMessage.InjectText("}")), texts)
+        assertTrue(sent.none { it is ControlMessage.SetClipboard })
+        assertEquals(texts, followerSent.filterIsInstance<ControlMessage.InjectText>())
+
+        // Plain Ctrl still pastes and zooms.
+        sent.clear()
+        assertTrue(k.onKey(KeyEvent(Key.V, KeyEventType.KeyDown, isCtrlPressed = true)))
+        assertEquals(listOf<ControlMessage>(ControlMessage.SetClipboard(0, paste = true, text = "clip")), sent)
+        k.onKey(KeyEvent(Key.Zero, KeyEventType.KeyDown, isCtrlPressed = true))
+        assertEquals(listOf(ZoomCommand.Fit), zooms)
+    }
+
+    @Test
+    fun sheetFocus_sdkKeyboard_releasesHeldKey() {
+        val keys = keys()
+        assertTrue(keys.onKey(down(Key.ShiftLeft)))
+        sent.clear()
+
+        keys.onSheetFocusGained()
+        val up = assertIs<ControlMessage.InjectKeycode>(sent.single())
+        assertEquals(InputMapper.KEY_ACTION_UP, up.action)
+        assertEquals(59, up.keycode) // KEYCODE_SHIFT_LEFT
     }
 
     // --- follower output ---

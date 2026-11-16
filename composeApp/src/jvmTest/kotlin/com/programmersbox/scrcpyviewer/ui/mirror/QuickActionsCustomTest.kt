@@ -188,6 +188,23 @@ class QuickActionsCustomTest {
     }
 
     @Test
+    fun `a read started before a custom switch does not undo it`() {
+        store.upsert(stayAwake)
+        val builtIns = QuickToggle.entries.joinToString("\n__scrcpyviewer_sep__\n") { "0" }
+        val adb = ShellAdb { "$builtIns\n__scrcpyviewer_sep__\n0\n" } // read as off
+        adb.streamGate = CompletableDeferred()
+        val qa = quickActions(adb)
+
+        qa.toggleSheet()
+        qa.onEvent(QuickActionEvent.CustomToggle("stay", true))
+        assertTrue(qa.uiState.customPending.isEmpty()) // the switch already answered
+        adb.streamGate!!.complete(Unit)
+
+        assertEquals(true, qa.uiState.customState["stay"])
+        assertEquals(false, qa.uiState.toggles[QuickToggle.WiFi]) // the read did answer
+    }
+
+    @Test
     fun `a toggle deleted during the read does not get its state back`() {
         store.upsert(stayAwake)
         val builtIns = QuickToggle.entries.joinToString("\n__scrcpyviewer_sep__\n") { "0" }

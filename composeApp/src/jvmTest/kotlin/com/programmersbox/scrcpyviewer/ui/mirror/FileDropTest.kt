@@ -237,6 +237,55 @@ class FileDropTest {
     }
 
     @Test
+    fun `the hint is worked out once per drag, never when it is read`() {
+        val looked = mutableListOf<Path>()
+        val transfers = FileTransfers(
+            queue = null, pushTarget = "/sdcard/Download/", isDirectory = { looked.add(it); it.fileName.toString() == "dir" },
+        ) {}
+        transfers.connected = true
+        val apk = Paths.get("/x/a.apk")
+        val dir = Paths.get("/x/dir")
+        val target = CopyOnlyFileDropTarget(transfers) { filesOf(apk, dir) }
+        target.onStarted(fakeEvent())
+        target.onEntered(fakeEvent()) // the same files: the hint stays
+        repeat(3) { target.onMoved(fakeEvent()) }
+        // No adb: "Device not connected" without a lookup; the worked-out hint is kept for when it is not.
+        repeat(5) { assertEquals("Device not connected", transfers.hint?.label) }
+        assertEquals(2, looked.size, "one lookup per dragged path")
+
+        // New files: worked out again.
+        val other = CopyOnlyFileDropTarget(transfers) { filesOf(apk) }
+        other.onEntered(fakeEvent())
+        assertEquals(3, looked.size)
+        other.onExited(fakeEvent())
+        assertNull(transfers.hint)
+    }
+
+    @Test
+    fun `the hint's disk lookups run off the caller's thread`() = kotlinx.coroutines.runBlocking<Unit> {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val lookupThread = arrayOfNulls<Thread>(1)
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        try {
+            val queue = FileTransferQueue("SER", AdbClient({ Paths.get("adb") }), "/sdcard/Download/", { false }, {}, scope)
+            val transfers = FileTransfers(
+                queue, "/sdcard/Download/", hintScope = CoroutineScope(Dispatchers.Unconfined), hintIo = Dispatchers.IO,
+                isDirectory = { lookupThread[0] = Thread.currentThread(); release.await(); false },
+            ) {}
+            val target = CopyOnlyFileDropTarget(transfers) { filesOf(Paths.get("/x/a.apk"), Paths.get("/x/b.jpg")) }
+            target.onEntered(fakeEvent()) // returns while the lookup still waits
+            assertTrue(transfers.dragging)
+            assertNull(transfers.hint, "no hint until it is worked out")
+            release.countDown()
+            kotlinx.coroutines.withTimeout(5_000) { while (transfers.hint == null) kotlinx.coroutines.delay(5) }
+            assertEquals(DropHint("Drop to install 1 APK and push 1 file", null, true), transfers.hint)
+            assertTrue(lookupThread[0] !== Thread.currentThread())
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `a move-only source is refused at the drop`() {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         try {

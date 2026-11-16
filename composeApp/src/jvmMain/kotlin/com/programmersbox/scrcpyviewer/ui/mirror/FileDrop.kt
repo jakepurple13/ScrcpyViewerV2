@@ -29,6 +29,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -74,7 +75,12 @@ import java.nio.file.Paths
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 
 /** Native file pickers for Install APK… and Push file…, behind an interface so tests never open a window. */
 interface TransferFileDialogs {
@@ -109,6 +115,13 @@ class FileTransfers internal constructor(
     val pushTarget: String,
     /** Where files dragged out of the window wait ([transferCacheRoot]): such files are never taken back in. */
     private val cacheRoot: Path = transferCacheRoot(),
+    /**
+     * Where the drop hint is worked out ([drag]): launched on [hintScope] (the UI thread), the disk lookups on
+     * [hintIo]. The defaults work it out at once, on the caller's thread (tests).
+     */
+    private val hintScope: CoroutineScope = CoroutineScope(Dispatchers.Unconfined),
+    private val hintIo: CoroutineContext = EmptyCoroutineContext,
+    private val isDirectory: (Path) -> Boolean = Files::isDirectory,
     private val notify: (String) -> Unit,
 ) {
     /** The session is not Disconnected or Failed. */
@@ -142,8 +155,44 @@ class FileTransfers internal constructor(
     /** Install APK… / Push file… can be used and drops are accepted. */
     val enabled: Boolean get() = queue != null && connected
 
-    /** The overlay to show, or null when nothing is dragged. */
-    val hint: DropHint? get() = if (dragging) dropHint(dragPaths, pushTarget, enabled) else null
+    /** The hint for [dragPaths] while transfers are enabled, worked out once per drag ([drag]); null until it is. */
+    private var readyHint by mutableStateOf<DropHint?>(null)
+    private var hintJob: Job? = null
+
+    /**
+     * The overlay to show, or null when nothing is dragged. Read in composition: never touches the disk (whether a
+     * dragged path is a folder is looked up once, in [drag]).
+     */
+    val hint: DropHint?
+        get() = when {
+            !dragging -> null
+            !enabled -> dropHint(null, pushTarget, connected = false)
+            else -> readyHint
+        }
+
+    /**
+     * A drag of [paths] is over the window: shows the overlay, its hint once worked out off the UI thread (it looks at
+     * the disk). The same files again keep the hint they have.
+     */
+    internal fun drag(paths: List<Path>?) {
+        dragging = true
+        if (paths == dragPaths && (readyHint != null || hintJob?.isActive == true)) return
+        dragPaths = paths
+        readyHint = null
+        hintJob?.cancel()
+        hintJob = hintScope.launch {
+            readyHint = withContext(hintIo) { dropHint(paths, pushTarget, connected = true, isDirectory) }
+        }
+    }
+
+    /** The drag left, ended or dropped: no overlay. */
+    internal fun endDrag() {
+        dragging = false
+        dragPaths = null
+        hintJob?.cancel()
+        hintJob = null
+        readyHint = null
+    }
 
     /** Queues [paths]; false when nothing was queued (no adb, device disconnected, empty list). */
     fun start(paths: List<Path>): Boolean {
@@ -183,6 +232,8 @@ fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient
     val currentNotify by rememberUpdatedState(notify)
     val scope = remember(session) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     DisposableEffect(scope) { onDispose { scope.cancel() } }
+    // The drop hint is written on the UI thread; its disk lookups run on IO.
+    val uiScope = rememberCoroutineScope()
     val transfers = remember(session, adb) {
         val target = pushTarget(session.values)
         val queue = adb?.let {
@@ -193,7 +244,7 @@ fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient
                 scope = scope,
             )
         }
-        FileTransfers(queue, target) { currentNotify(it) }
+        FileTransfers(queue, target, hintScope = uiScope, hintIo = Dispatchers.IO) { currentNotify(it) }
     }
     LaunchedEffect(transfers) { session.status.collect { transfers.connected = it.isConnected() } }
     transfers.queue?.let { queue ->
@@ -336,14 +387,10 @@ internal data class CopyOnlyFileDropTarget(
         val paths = dropPaths(event, read)
         // No overlay for the window's own drag out: it never drops here.
         if (transfers.isOwnDragOut(paths)) return endDrag()
-        transfers.dragging = true
-        transfers.dragPaths = paths
+        transfers.drag(paths)
     }
 
-    private fun endDrag() {
-        transfers.dragging = false
-        transfers.dragPaths = null
-    }
+    private fun endDrag() = transfers.endDrag()
 }
 
 /**
