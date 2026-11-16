@@ -139,6 +139,9 @@ import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.files.DeviceEntry
 import com.programmersbox.scrcpyviewer.files.DeviceSpace
 import com.programmersbox.scrcpyviewer.files.Listing
+import com.programmersbox.scrcpyviewer.files.FS_ROOT
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.ui.text.font.FontFamily
 import com.programmersbox.scrcpyviewer.files.crumbs
 import com.programmersbox.scrcpyviewer.files.formatFree
 import com.programmersbox.scrcpyviewer.files.formatItemCount
@@ -163,7 +166,7 @@ const val CRUMBS_TAG = "files-crumbs"
 /** Opening a folder: the old list leaves this far toward the back side, the new one enters from the forward side. */
 private val NAV_SHIFT = 32.dp
 private const val NAV_OUT_MILLIS = 150
-private const val NAV_IN_DELAY_MILLIS = 50
+internal const val NAV_IN_DELAY_MILLIS = 50
 
 /** The first rows of a folder rise into place one after another. */
 private const val STAGGER_ROWS = 14
@@ -409,6 +412,14 @@ internal fun FilesTab(
         Column(Modifier.fillMaxSize()) {
             Column(commitOnPress) {
                 Toolbar(browser, drop, motion, onPushFiles, onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) })
+                // Fully qualified: the Column's ColumnScope.AnimatedVisibility would otherwise win.
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = browser.listingPath == browser.path && (browser.listing as? Listing.Entries)?.writable == false,
+                    enter = if (motion) expandFadeIn() else EnterTransition.None,
+                    exit = if (motion) shrinkFadeOut() else ExitTransition.None,
+                ) {
+                    ReadOnlyStrip()
+                }
                 FilterRow(
                     browser, motion,
                     onFocus = { filterFocused = it },
@@ -471,6 +482,7 @@ internal fun FilesTab(
             ) {
                 ListHost(
                     browser, drop, motion, onPushFiles, zone, locale, listFocused,
+                    onCopyPath = { actions.copy(browser.path) },
                     onRowPress = { runCatching { listFocus.requestFocus() } },
                     onRowMenu = { name ->
                         // Rows of the folder before, while the open one loads, take no action.
@@ -564,10 +576,10 @@ private fun Toolbar(browser: FilesBrowser, drop: FilesDropState, motion: Boolean
         }
         ToolButton(
             Icons.Filled.CreateNewFolder, "New folder",
-            connected && listed && browser.listing is Listing.Entries && browser.pendingNewFolder == null,
+            connected && listed && browser.listing is Listing.Entries && browser.pendingNewFolder == null && !browser.readOnlyHere,
             onClick = browser::newFolder,
         )
-        ToolButton(Icons.Filled.FileUpload, "Push files here", connected && !(listed && browser.listing == Listing.Blocked), onClick = onPushFiles)
+        ToolButton(Icons.Filled.FileUpload, "Push files here", connected && !browser.readOnlyHere, onClick = onPushFiles)
         val more = remember { arrayOfNulls<LayoutCoordinates>(1) }
         Box(Modifier.onGloballyPositioned { more[0] = it }) {
             ToolButton(Icons.Filled.MoreVert, "View options", enabled = true) {
@@ -627,7 +639,8 @@ private fun Modifier.edgeFades(start: () -> Float, end: () -> Float): Modifier =
 private fun Crumbs(browser: FilesBrowser, drop: FilesDropState, motion: Boolean, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val path = browser.path
-    val items = remember(path) { crumbs(path) }
+    val realPaths = browser.realPaths
+    val items = remember(path, realPaths) { crumbs(path, realPaths) }
     val scroll = rememberScrollState()
     LaunchedEffect(items, scroll.maxValue) {
         if (motion) scroll.animateScrollTo(scroll.maxValue) else scroll.scrollTo(scroll.maxValue)
@@ -644,7 +657,8 @@ private fun Crumbs(browser: FilesBrowser, drop: FilesDropState, motion: Boolean,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         items.forEachIndexed { index, (label, dir) ->
-            key(dir) {
+            // Keyed by the style too: switching it brings the crumbs back in, in the new style.
+            key(dir, realPaths) {
                 val appear = remember { Animatable(if (settled[0] && motion) 0f else 1f) }
                 LaunchedEffect(Unit) { appear.animateTo(1f, tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) }
                 Row(
@@ -673,11 +687,20 @@ private fun Crumbs(browser: FilesBrowser, drop: FilesDropState, motion: Boolean,
                             .padding(horizontal = 8.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            label, fontSize = 13.sp, maxLines = 1,
-                            fontWeight = if (last) FontWeight.SemiBold else null,
-                            color = if (last) colors.onSurface else colors.onSurfaceVariant,
-                        )
+                        val tint = if (last) colors.onSurface else colors.onSurfaceVariant
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            // The friendly root crumb: "Device" with a phone.
+                            if (!realPaths && dir == FS_ROOT) {
+                                Icon(Icons.Filled.PhoneAndroid, contentDescription = null, Modifier.size(15.dp), tint = tint)
+                            }
+                            Text(
+                                label, maxLines = 1,
+                                fontSize = if (realPaths) 12.5.sp else 13.sp,
+                                fontFamily = if (realPaths) FontFamily.Monospace else null,
+                                fontWeight = if (last) FontWeight.SemiBold else null,
+                                color = tint,
+                            )
+                        }
                     }
                 }
             }
@@ -813,6 +836,7 @@ private fun ListHost(
     zone: ZoneId,
     locale: Locale,
     listFocused: Boolean,
+    onCopyPath: () -> Unit,
     onRowPress: () -> Unit,
     onRowMenu: (String) -> Unit,
 ) {
@@ -831,12 +855,15 @@ private fun ListHost(
         if (dir == null) return@AnimatedContent
         when (val listing = page.listing) {
             null -> Unit
-            Listing.Blocked -> BlockedState(dir, browser.canGoUp && browser.connected, browser::up)
+            is Listing.Blocked -> BlockedState(
+                dir, listing.message, browser.connected, browser.canGoUp, motion,
+                onUp = browser::up, onOpen = browser::open, onCopyPath = onCopyPath,
+            )
             is Listing.Failed -> ListingFailedState(listing.reason, browser.connected, browser::refresh)
             is Listing.Entries -> when {
                 page.rows.isNotEmpty() -> Rows(browser, drop, dir, page.rows, motion, zone, locale, listFocused, onRowPress, onRowMenu)
                 page.filter.isNotBlank() -> NoMatchState(page.filter)
-                else -> EmptyFolderState(folderLabel(dir), browser.connected, onPushFiles)
+                else -> EmptyFolderState(folderLabel(dir), browser.connected, onPushFiles, readOnly = !listing.writable)
             }
         }
     }
@@ -893,7 +920,11 @@ private fun Rows(
     }
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(start = 6.dp, end = 6.dp, top = 4.dp, bottom = 64.dp)) {
         itemsIndexed(rows, key = { _, e -> e.name }) { index, entry ->
-            val sizeText = if (entry.isDir) entry.itemCount?.let(::formatItemCount) else formatSize(entry.size)
+            val sizeText = when {
+                entry.locked -> "No access"
+                entry.isDir -> entry.itemCount?.let(::formatItemCount)
+                else -> formatSize(entry.size)
+            }
             DisposableEffect(dir, entry.name) { onDispose { drop.removeRow(dir, entry.name) } }
             val target = entry.name == hoverRow
             FileRow(
@@ -902,6 +933,7 @@ private fun Rows(
                 sizeText = sizeText,
                 dateText = remember(entry.mtimeMillis, zone, locale) { formatModified(entry.mtimeMillis, zone, locale) },
                 hidden = entry.hidden,
+                locked = entry.locked,
                 selected = entry.name in selection,
                 arriving = entry.name in arriving || entry.name == browser.pendingNewFolder,
                 leavingIndex = leavingOrder.indexOf(entry.name),

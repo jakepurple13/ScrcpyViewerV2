@@ -23,6 +23,24 @@ class DeviceFilesDeviceTest {
     private val serial: String = System.getProperty("scrcpyviewer.deviceSerials")?.split(',')?.first() ?: "R5CX12GDWPZ"
 
     @Test
+    fun `the device root lists with locked folders marked and is read-only`() = runBlocking<Unit> {
+        val files = DeviceFiles(ShellRunner(adb, serial)) {}
+        val root = files.list("/") as Listing.Entries
+        assertTrue(!root.writable, "adb can't write to /")
+        val byName = root.entries.associateBy { it.name }
+        assertTrue(byName.getValue("data").locked, "/data is locked")
+        assertTrue(!byName.getValue("system").locked && !byName.getValue("sdcard").locked)
+        // Every folder marked locked really fails to list, and every other one lists.
+        for (entry in root.entries.filter { it.isDir }) {
+            val listing = files.list(devicePath("/", entry.name))
+            assertEquals(entry.locked, listing is Listing.Blocked, "${entry.name}: $listing")
+        }
+        assertTrue((files.list(DEVICE_ROOT) as Listing.Entries).writable)
+        val blocked = files.list("/data")
+        assertTrue(blocked is Listing.Blocked && "Permission denied" in blocked.message, blocked.toString())
+    }
+
+    @Test
     fun `mkdir, list, rename, move and delete a tricky folder name`() = runBlocking<Unit> {
         val scans = mutableListOf<String>()
         val files = DeviceFiles(ShellRunner(adb, serial)) { scans += it }

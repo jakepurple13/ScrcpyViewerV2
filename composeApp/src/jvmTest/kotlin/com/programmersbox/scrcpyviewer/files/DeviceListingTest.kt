@@ -70,8 +70,11 @@ class DeviceListingTest {
 
     @Test
     fun blockedAndFailed() {
-        assertEquals(Listing.Blocked, parseListing(res("blocked.txt"), 13))
-        assertEquals(Listing.Blocked, parseListing("ls: /sdcard/x: Operation not permitted", 13))
+        assertEquals(Listing.Blocked("ls: /sdcard/Android/data: Permission denied"), parseListing(res("blocked.txt"), 13))
+        assertEquals(
+            Listing.Blocked("ls: /sdcard/x: Operation not permitted"),
+            parseListing("noise\nls: /sdcard/x: Operation not permitted\n", 13),
+        )
         assertEquals(
             Listing.Failed("ls: x: No such file or directory"),
             parseListing("ls: x: No such file or directory", 13),
@@ -113,6 +116,20 @@ class DeviceListingTest {
         assertEquals(listOf("Camera", ".nomedia", "two\nlines", "it's ü", "-x", "dangling"), e.map { it.name })
         assertEquals(listOf(true, false, false, false, false, false), e.map { it.isDir })
         assertEquals(DeviceEntry("dangling", false, 0, 0), e.last())
+    }
+
+    @Test
+    fun `locked records mark their folders and readonly marks the listing`() {
+        val out = "directory|3452|1700000000|./data|__svend__\n" +
+            "directory|3452|1700000000|./system|__svend__\n" +
+            "regular file|5|1700000000|./locked|__svend__\n" +
+            "locked|0|0|./data|__svend__\n" +
+            "readonly|0|0|./|__svend__\n"
+        val l = parseListing(out, 0) as Listing.Entries
+        assertEquals(listOf("data", "system", "locked"), l.entries.map { it.name })
+        assertEquals(listOf(true, false, false), l.entries.map { it.locked })
+        assertEquals(false, l.writable)
+        assertEquals(true, (parseListing("directory|1|1|./a|__svend__\n", 0) as Listing.Entries).writable)
     }
 
     /**
@@ -180,6 +197,45 @@ class DeviceListingTest {
         checkOdd(out, exit)
     }
 
+    /** A writable folder holding an unreadable folder, an open one, and a read-only folder; null when run as root. */
+    private fun permissionsFolder(): Path? {
+        val dir = Files.createTempDirectory("svw-perm")
+        Files.createDirectory(dir.resolve("open"))
+        val locked = Files.createDirectory(dir.resolve("locked dir"))
+        locked.toFile().setReadable(false, false)
+        locked.toFile().setExecutable(false, false)
+        val ro = Files.createDirectory(dir.resolve("ro"))
+        ro.toFile().setWritable(false, false)
+        // Root reads and writes everything: these checks mean nothing there.
+        return dir.takeIf { !Files.isReadable(locked) && !Files.isWritable(ro) }
+    }
+
+    private fun checkPermissions(findWorks: Boolean) {
+        var dir: Path? = null
+        val (out, exit) = runListOnHost(findWorks) { (permissionsFolder() ?: Files.createTempDirectory("svw-root")).also { dir = it } }
+            ?: return
+        val base = dir ?: return
+        if (!Files.exists(base.resolve("locked dir"))) return
+        try {
+            assertEquals(0, exit, out)
+            val l = parseListing(out, exit) as Listing.Entries
+            assertTrue(l.writable)
+            assertEquals(mapOf("open" to false, "locked dir" to true, "ro" to false), l.entries.associate { it.name to it.locked })
+            val (roOut, roExit) = runListOnHost(findWorks) { base.resolve("ro") } ?: return
+            assertEquals(false, (parseListing(roOut, roExit) as Listing.Entries).writable)
+        } finally {
+            base.resolve("locked dir").toFile().setReadable(true, false)
+            base.resolve("locked dir").toFile().setExecutable(true, false)
+            base.resolve("ro").toFile().setWritable(true, false)
+        }
+    }
+
+    @Test
+    fun `list command marks folders adb can't read, and a folder it can't write`() = checkPermissions(findWorks = true)
+
+    @Test
+    fun `list command without find -exec still marks locked and read-only folders`() = checkPermissions(findWorks = false)
+
     @Test
     fun `list command on the host shell lists a big folder in a few processes`() {
         var started = 0L
@@ -204,6 +260,16 @@ class DeviceListingTest {
         p.waitFor(10, TimeUnit.SECONDS)
         assertEquals(13, p.exitValue())
         assertTrue(parseListing(out, p.exitValue()) is Listing.Failed, out)
+    }
+
+    @Test
+    fun `list command's exit code survives the shell runner's exit marker`() {
+        if (System.getProperty("os.name").startsWith("Windows")) return
+        val wrapped = com.programmersbox.scrcpyviewer.adb.ShellRunner.wrap(listCommand("/nonexistent/svw"))
+        val p = ProcessBuilder("/bin/sh", "-c", wrapped).redirectErrorStream(true).start()
+        val out = String(p.inputStream.readBytes(), Charsets.UTF_8)
+        p.waitFor(10, TimeUnit.SECONDS)
+        assertTrue("${com.programmersbox.scrcpyviewer.adb.ShellRunner.EXIT_MARKER}13" in out, out)
     }
 
     @Test

@@ -204,7 +204,7 @@ class DeviceFilesTest {
     @Test
     fun listBlocked() = runBlocking<Unit> {
         runner.result = ShellResult("ls: /sdcard/Android/data: Permission denied", 13, 0)
-        assertEquals(Listing.Blocked, files.list("/sdcard/Android/data"))
+        assertEquals(Listing.Blocked("ls: /sdcard/Android/data: Permission denied"), files.list("/sdcard/Android/data"))
     }
 
     @Test
