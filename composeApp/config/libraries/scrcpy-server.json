@@ -1,0 +1,13 @@
+{
+  "uniqueId": "bundled:scrcpy-server",
+  "artifactVersion": "5.0",
+  "name": "scrcpy-server",
+  "description": "Runs on the device to stream its screen and take input.",
+  "website": "https://github.com/Genymobile/scrcpy",
+  "developers": [
+    { "name": "Genymobile" },
+    { "name": "Romain Vimont" }
+  ],
+  "licenses": ["Apache-2.0"],
+  "tag": "bundled"
+}

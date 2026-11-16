@@ -19,6 +19,8 @@ jna = "5.17.0"
 composenativetray = "2.1.7"
 # Reads app icons out of APKs for the mirror window's Apps tab.
 apk-parser = "2.6.10"
+# Settings › Help › Open-source licenses: the Gradle plugin generates the list at build time.
+aboutlibraries = "15.3.0"
 
 [libraries]
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
@@ -41,6 +43,8 @@ nucleus-window-tao = { module = "dev.nucleusframework:nucleus.decorated-window-t
 nucleus-window-material3 = { module = "dev.nucleusframework:nucleus.decorated-window-material3", version.ref = "nucleus" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 composenativetray = { module = "dev.nucleusframework:composenativetray", version.ref = "composenativetray" }
+aboutlibraries-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "aboutlibraries" }
+aboutlibraries-compose-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutlibraries" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 
 [plugins]
@@ -50,3 +54,4 @@ composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "k
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "compose-multiplatform" }
 koinCompiler = { id = "io.insert-koin.compiler.plugin", version.ref = "koin-compiler" }
 nucleus = { id = "dev.nucleusframework", version.ref = "nucleus" }
+aboutLibraries = { id = "com.mikepenz.aboutlibraries.plugin", version.ref = "aboutlibraries" }

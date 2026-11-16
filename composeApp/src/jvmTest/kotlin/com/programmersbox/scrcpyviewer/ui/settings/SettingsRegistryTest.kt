@@ -37,6 +37,16 @@ class SettingsRegistryTest {
     }
 
     @Test
+    fun `about and licences are found from Help`() {
+        fun help(q: String) = searchSettings(settingsCategories, q).single { it.category.id == Help }.entries.map { it.id }
+        assertEquals(listOf("welcome-guide", "about", "licenses"), settingsCategories.single { it.id == Help }.entries.map { it.id })
+        assertEquals(listOf("about"), help("about"))
+        assertEquals(listOf("about"), help("version"))
+        for (q in listOf("license", "licence", "oss", "attribution", "open source")) assertEquals(listOf("licenses"), help(q), q)
+        assertEquals(listOf("about", "licenses"), help("ffmpeg"))
+    }
+
+    @Test
     fun `after a screenshot row follows the capture folder row as a segmented choice`() {
         val entries = settingsCategories.flatMap { it.entries }
         val i = entries.indexOfFirst { it.id == "capture-dir" }

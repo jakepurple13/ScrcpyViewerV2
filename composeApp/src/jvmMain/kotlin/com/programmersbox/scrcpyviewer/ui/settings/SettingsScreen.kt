@@ -22,7 +22,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
 import com.programmersbox.scrcpyviewer.ui.update.UpdateViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.nio.file.Paths
+
+/** About's "Open-source licenses" opens the licenses this long after About starts closing. */
+internal const val ABOUT_TO_LICENSES_DELAY_MILLIS = 180L
 
 @Composable
 fun SettingsScreen(
@@ -35,6 +40,15 @@ fun SettingsScreen(
     val nav by viewModel.nav.collectAsStateWithLifecycle()
     val updates by updateViewModel.state.collectAsStateWithLifecycle()
     var showAiSkillDialog by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
+    var showLicenses by remember { mutableStateOf(false) }
+    // The licence list loads the first time the licenses open, then stays for the next time.
+    var licensesLoaded by remember { mutableStateOf(false) }
+    val openLicenses = {
+        licensesLoaded = true
+        showLicenses = true
+    }
+    val dialogScope = rememberCoroutineScope()
     // Pickers run through onPickerThread (off the UI thread on Windows / Linux), so they are suspending.
     // One at a time (PickerGuard): off macOS the UI stays live while a picker is open.
     val pickerScope = rememberCoroutineScope()
@@ -63,6 +77,8 @@ fun SettingsScreen(
         },
         onAfterScreenshot = viewModel::setAfterScreenshot,
         onShowOnboarding = viewModel::showOnboarding,
+        onShowAbout = { showAbout = true },
+        onShowLicenses = openLicenses,
         onCheckUpdates = updateViewModel::check,
         onUpdate = updateViewModel::update,
         onCancelUpdate = updateViewModel::cancel,
@@ -87,6 +103,23 @@ fun SettingsScreen(
         )
     }
     state.aiInstallResult?.let { AiInstallResultDialog(it, actions.onDismissAiInstall) }
+    AboutDialog(
+        visible = showAbout,
+        info = remember(state.bundledAdbVersion) { AboutInfo.current(state.bundledAdbVersion) },
+        onOpenLicenses = {
+            // About closes first, then the licenses open over the settling scrim.
+            showAbout = false
+            dialogScope.launch {
+                delay(ABOUT_TO_LICENSES_DELAY_MILLIS)
+                openLicenses()
+            }
+        },
+        onDismiss = { showAbout = false },
+    )
+    if (licensesLoaded) {
+        val entries by rememberLicenseEntries(platformToolsVersion(state.bundledAdbVersion))
+        LicensesDialog(visible = showLicenses, entries = entries, onDismiss = { showLicenses = false })
+    }
 }
 
 @Composable

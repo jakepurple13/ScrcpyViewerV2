@@ -1,0 +1,12 @@
+{
+  "uniqueId": "bundled:adb",
+  "name": "adb (Android SDK Platform-Tools)",
+  "description": "Talks to your devices over USB and Wi-Fi.",
+  "website": "https://developer.android.com/tools/releases/platform-tools",
+  "developers": [
+    { "name": "The Android Open Source Project" }
+  ],
+  "scm": { "url": "https://android.googlesource.com/platform/packages/modules/adb" },
+  "licenses": ["Apache-2.0"],
+  "tag": "bundled"
+}
