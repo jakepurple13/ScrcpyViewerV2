@@ -20,6 +20,9 @@
 **Spec:** `docs/superpowers/specs/2026-11-12-narrow-window-layouts-design.md`
 **Mockup:** https://claude.ai/artifact/UfUaFu8LacPbdangsuXvA3 ("With E" mode). Match its behavior and motion.
 **Mockup addendum (mirror sheet tabs, Tasks 13, 16, 17):** https://claude.ai/artifact/6wsGe9iFtdpu4JJPkzcTi7.
+**Mockup addendum 2 (main v1.18–v1.22 screens, Tasks 18–21, spec 6b):** https://claude.ai/artifact/SnenwvS9QBF519Wmg8geoL (version 2).
+
+**Run order (updated 2026-11-16):** 1, 7, 12, 2, 5, 4, 14 (done) → 3 → 6 → 8 → 20 → 9 → 10 → 13 → 16 → 17 → 18 → 19 → 11 → 21 → 15.
 
 All paths below are relative to `composeApp/src/jvmMain/kotlin/com/programmersbox/scrcpyviewer/` (main) or `composeApp/src/jvmTest/kotlin/com/programmersbox/scrcpyviewer/` (test).
 
@@ -33,6 +36,7 @@ All paths below are relative to `composeApp/src/jvmMain/kotlin/com/programmersbo
 
 - Every layout state change in this work is animated. Nothing snaps. The exception is reduced motion: when `LocalReduceMotion.current` is true, movement becomes a ≤150 ms fade or an instant change.
 - Movement uses `LayoutSpring` (Task 1). Content swaps use `itemSwitchTransform` (Task 1). Both are defined once.
+- Every size, position and reflow animation in the app uses `layoutSpring()`, including main's own screens (spec 6b, user decision 2026-11-16). Fades, color, scale pulses and content enter/exit keep their short tweens.
 - No visual change above the new breakpoints, except that item switches now animate on Devices, Presets and Actions.
 - Primary actions never fold into ⋮:
   - Mirror (Devices footer)
@@ -729,9 +733,137 @@ Changes:
 
 ---
 
+### Task 18: Logcat narrow (spec 6b, added 2026-11-16)
+
+**Files:**
+- Modify:
+  - `ui/mirror/logcat/LogcatTab.kt`: the top row (148), `PlayPauseButton` (168), `ChipsRow` (356), `MineLabel` (374).
+  - `ui/mirror/logcat/LogcatRow.kt`: `rememberLogcatColumns` (126), `LogcatHeader` (154), `LogcatLineRow` (193).
+  - `ui/mirror/logcat/LogcatStatusBar.kt`: `LogcatStatusBar` (62), `LevelMix` (159).
+  - `ui/mirror/logcat/LogcatWindow.kt`: the window's minimum size.
+- Create: `ui/mirror/logcat/LogcatNarrow.kt`
+- Test: `ui/mirror/logcat/LogcatNarrowTest.kt`
+
+**Interfaces:**
+- Consumes: `layoutSpring`, `LocalReduceMotion` (Task 1); `PriorityBar`/`BarItem` (Task 4) if it fits the status bar, else `AnimatedVisibility` per icon.
+- Produces, in `LogcatNarrow.kt`:
+  - `enum class LogcatRowShape { Full, NoIds, Stacked }`
+  - `fun logcatRowShape(width: Dp): LogcatRowShape`: `Full` at ≥ 600, `NoIds` at 420–599, `Stacked` under 420.
+  - `fun logcatToolbarCompact(width: Dp): Boolean = width < 420.dp` (icon Play/Pause, label on its own line, compact status bar).
+
+Changes:
+- **Toolbar:** compact → Play/Pause is a 40 dp icon button keeping its content description and `playPulse`, with a tooltip "Pause"/"Resume". The width change uses `layoutSpring`.
+- **Chips:** `ChipsRow` becomes a `FlowRow` (6 dp gaps); when compact, `MineLabel` takes a full line. Chips glide with `LookaheadScope` + `animateBounds(layoutSpring)`.
+- **Rows:** `Stacked` keeps the same badge, tag, time and message `Text` nodes and moves them: line 1 badge, tag (weight, ellipsized), time as HH:mm:ss at the end; line 2 the message indented under the tag, `maxLines = 2` (no limit when Wrap is on). The header row hides when `Stacked`. Cells move with `animateBounds`; the existing ID-column hide keeps its behavior but its width animation moves to `layoutSpring`.
+- **Status bar:** compact → `LevelMix` becomes a 3 dp full-width strip at the top edge of the bar; Wrap and Compact fold into a ⋮ menu (checked items keep their check); Clear stays; the count reads "1,234/5,678".
+- **Window:** `LogcatWindow` sets a minimum of 360 × 360 dp through the same API `AppWindow` uses for `MirrorWindowMinSize`.
+- Reduced motion: no glides; folds fade ≤ 150 ms.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `logcatRowShape` at 599 / 600 and 419 / 420 flips exactly there; `logcatToolbarCompact(419.dp)` true, `(420.dp)` false.
+  - Scene, `LogcatTab` in a 280 × 600 box with the fake controller from `LogcatToolbarTest` (pass `motion = false` explicitly; CI runners report reduce motion on): a line's message text node is displayed with width ≥ 200 and its top is below its tag's bottom; the "Crashes" chip is displayed inside 280; the Pause control has width ≤ 48; "Wrap lines" is not displayed until ⋮ is opened.
+  - Scene at 720: header cells "PID-TID" and "Package" displayed; the Wrap icon displayed (unchanged).
+  - Scene, resize 720 → 300 with `motion = true` on a paused clock: one frame in, a message node's top is between its old and new top.
+  - `LogcatWindow`'s minimum is 360 × 360 (assert the constant the window passes).
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them, every `ui/mirror/logcat` test class and the full suite.** Expected: PASS.
+- [ ] **Step 5: Commit.** `feat(logcat): logcat reflows in a narrow sheet and window`
+
+---
+
+### Task 19: Links tab and GIF export narrow (spec 6b, added 2026-11-16)
+
+**Files:**
+- Modify:
+  - `ui/mirror/links/LinksTab.kt`: the dropdown row (~245), `DetailsBody` extras (522–548), the Open / Save FlowRow.
+  - `ui/mirror/shots/gif/GifExportContent.kt`: the preview / controls Row (474–577).
+- Test: `ui/mirror/links/LinksNarrowTest.kt`, additions to `ui/mirror/shots/gif/GifExportContentTest.kt`
+
+**Interfaces:**
+- Consumes: `layoutSpring`, `LocalReduceMotion` (Task 1).
+- Produces: `fun linksStacked(contentWidth: Dp): Boolean = contentWidth < 300.dp`; `fun gifPreviewWidth(available: Dp, fullHeightWidth: Dp): Dp = minOf(fullHeightWidth, available - 16.dp - 340.dp).coerceAtLeast(0.dp)` (in `GifExportContent.kt`).
+
+Changes:
+- **Links, stacked:** the two `DropdownField`s become a Column, full width, 14 dp gap. Each extra: type field (92 dp) with its delete button at the end on line 1, key and value full width under it, a 2 dp `outlineVariant` rule at the group's start. Moves use `LookaheadScope` + `animateBounds(layoutSpring)`. The Open / Save FlowRow items glide when they wrap.
+- **GIF:** the preview gets `width(gifPreviewWidth(...))` and centers vertically at its aspect height; the controls column keeps ≥ 340 dp. Width follows the window directly while dragging; a switch between clips animates with `layoutSpring`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `linksStacked(299.dp)` true, `(300.dp)` false. `gifPreviewWidth(552.dp, 1014.dp)` = 196.dp; `gifPreviewWidth(1200.dp, 1014.dp)` = 1014.dp.
+  - Scene, `LinksTabContent` 260 wide with details open and one extra (reuse `LinksTabTest` fakes, `motion = false`): "Before opening" sits below "Open with"; the extra's key and value fields are each ≥ 200 wide; "Open on device" is displayed.
+  - Scene at 520: the dropdowns share one top (unchanged).
+  - GIF scene at 600 × 500 with a 2340 × 1080 clip: "Export" and "Close" are displayed and inside 600; a portrait clip at 600 keeps its full-height preview.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them, `LinksTabTest`, `GifExportContentTest`, `GifExportWindowTest` and the full suite.** Expected: PASS.
+- [ ] **Step 5: Commit.** `feat(links, gif): links tab stacks and gif controls keep their room when narrow`
+
+---
+
+### Task 20: Devices detail tabs, info footer and emulators (spec 6b, added 2026-11-16)
+
+Runs after Task 8.
+
+**Files:**
+- Modify:
+  - `ui/devices/info/DetailTabMotion.kt`: `DetailTabRow` (173).
+  - `ui/devices/info/DeviceInfoPane.kt`: `FooterRow` (240).
+  - `ui/devices/info/InfoCards.kt`: `CopyableKvRow` (795).
+  - `ui/devices/emulators/EmulatorSection.kt`: `EmulatorRowLayout` (419–450) and a strip form.
+  - `ui/devices/DevicesScreen.kt`: the `ListStrip` items (Task 8) gain the divider and the emulator tile.
+- Test: `ui/devices/info/DetailNarrowTest.kt`, `ui/devices/emulators/EmulatorStripTest.kt`
+
+**Interfaces:**
+- Consumes: `AdaptiveSegmentedButtons`, `SegmentOption`, `ControlSize` (Tasks 2–3); `ListStrip`, `StripItem`, `openSwitcher` (Task 6); `layoutSpring`, `LocalReduceMotion`.
+- Produces: `fun detailTabsSize(paneWidth: Dp): ControlSize` (`Full` at ≥ 344 dp, else `Menu`); `fun infoFooterIconCopy(contentWidth: Dp): Boolean = contentWidth < 220.dp`. If `ListStrip` has no divider slot, add `val dividerLabel: String? = null` to `StripItem` (a divider with that label renders above the item).
+
+Changes:
+- **Tabs:** `DetailTabRow` renders `AdaptiveSegmentedButtons(options = Options/Info, size = detailTabsSize(width))`, centered in the space after the back button so they never overlap.
+- **Footer:** "Updated …" takes the remaining width (ellipsized); Copy as text becomes a copy `IconButton` with a tooltip when `infoFooterIconCopy`, cross-faded.
+- **Long values:** `CopyableKvRow` puts its value under the label and wraps it when it doesn't fit beside it, the same way `KvRow` does; the copy button stays at the end of the value.
+- **Emulator rows:** the two-line switch under 300 dp keeps its threshold; chip and button glide (`animateBounds(layoutSpring)`) and the row height springs.
+- **Strip:** after the device items, a divider labeled "AVD", then an emulator tile (avatar with the AVD count badge) whose click calls `openSwitcher()` with the emulators section expanded, then one item per running emulator (selectable like a device).
+
+- [ ] **Step 1: Write the failing tests.**
+  - `detailTabsSize(343.dp)` Menu, `(344.dp)` Full; `infoFooterIconCopy(219.dp)` true, `(220.dp)` false.
+  - Scene, detail pane 224 wide: one clickable "Info" node, no "Options" node until it is clicked; the back button's right edge ≤ the tab control's left edge; the "Copy as text" node (icon with that content description) is displayed inside 224.
+  - Scene at 640: "Options" and "Info" both displayed (unchanged).
+  - Strip scene with 2 devices and 3 AVDs (1 running): the "AVD" divider is below both device avatars; clicking the emulator tile opens the overlay and shows the emulators header; the running emulator's avatar is displayed.
+  - Emulator list resized 360 → 280 on a paused clock: one frame in, "Stop"'s top is between its old and new top.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them, `DetailTabMotionTest`, `EmulatorSectionTest`, `DevicesNarrowTest` and the full suite.** Expected: PASS.
+- [ ] **Step 5: Commit.** `feat(devices): detail tabs, info footer and emulators in narrow windows`
+
+---
+
+### Task 21: One motion feel and shared reduce motion (spec 6b, added 2026-11-16)
+
+Runs after Task 11, before Task 15.
+
+**Files:**
+- Modify (layout movement → `layoutSpring`): `ui/devices/info/InfoCards.kt`, `DeviceInfoPane.kt`, `DetailTabMotion.kt`; `ui/devices/emulators/EmulatorMotion.kt`, `EmulatorSection.kt`; `ui/devices/DevicesScreen.kt`, `SimpleDevicePane.kt`; `ui/mirror/links/LinksTab.kt`; `ui/mirror/logcat/*`; `ui/mirror/follow/FollowControls.kt`, `StripRoom.kt`; `ui/mirror/arrange/ArrangeControls.kt`; `ui/mirror/QuickActionsSheet.kt`; `ui/mirror/shots/ScreenshotThumbnail.kt`; `ui/mirror/shots/markup/MarkupEditor.kt`, `MarkupEditorWindow.kt`; `ui/mirror/shots/gif/GifExportContent.kt`, `GifExportWindow.kt`; `ui/theme/StyledControls.kt`.
+- Modify (reduce motion): every window root (`MirrorWindow`, `LogcatWindow`, `MarkupEditorWindow`, `GifExportWindow`; `AppWindow` already does) provides `LocalReduceMotion`. Every `motion: Boolean = remember { !systemReducesMotion() }` / `reduceMotion: Boolean = remember { systemReducesMotion() }` default becomes `!LocalReduceMotion.current` / `LocalReduceMotion.current`. `LocalInfoReduceMotion` is removed in favor of `LocalReduceMotion`.
+- Modify: `ui/mirror/QuickActionsSheet.kt:338` subtitle `maxLines = 1`, ellipsis.
+- Test: `ui/common/MotionConsistencyTest.kt`; update timing asserts in existing tests.
+
+**Interfaces:** Consumes `layoutSpring`, `LocalReduceMotion`. Produces nothing new.
+
+Rule for each animation site: if it animates a size, offset, position or bounds (`animateBounds`, `animateContentSize`, `expand*`/`shrink*` size specs, `animateDpAsState`/`animateIntOffsetAsState` for widths and offsets, `Modifier.animateItem` placement), its spec becomes `layoutSpring()`. Alpha, color, scale pulses and `AnimatedContent` fade halves keep their tweens. Window open/close motion (`animateMirrorWindows`, launch/quit) is out of scope.
+
+- [ ] **Step 1: Write the failing tests.**
+  - `MotionConsistencyTest`: a window-root scene with `LocalReduceMotion provides true` renders `LogcatTab`, `LinksTabContent` and `EmulatorSection` without passing `motion`; resizing them across a breakpoint settles in one frame (no in-between positions).
+  - Same with `false`: one frame after resizing across a breakpoint, a moved node sits between its old and new position, and it settles within 60 frames.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.** Existing tests that assert positions at fixed tween fractions (e.g. `FollowTitleBarMotionTest`, `DetailTabMotionTest`, `EmulatorSectionTest`, `MarkupEditorTest`, `GifExportContentTest`, `ScreenshotThumbnailTest`) change to "between old and new, then settled" asserts. Don't weaken what they check otherwise.
+- [ ] **Step 4: Run the full suite.** Expected: PASS.
+- [ ] **Step 5: Commit.** `refactor(motion): one spring for every layout movement, shared reduce motion in every window`
+
+---
+
 ### Task 15: Width-matrix tests and hand-check notes
 
-Runs last, after Tasks 16 and 17.
+Runs last, after Tasks 16–21.
 
 **Files:**
 - Create: `ui/NarrowWidthsTest.kt`
@@ -743,12 +875,15 @@ Runs last, after Tasks 16 and 17.
     - No `Text` node in the detail has a width < 40 px while its text is longer than 3 characters. This catches letter-per-line wrapping.
   - Reuse the fakes from Tasks 8–11.
   - The mirror sheet's Apps, Shell and Files tabs at sheet widths **280, 340, 400 and their minimum**: Pull (Files, with a selection), Run (Shell) and Reload (Apps) are displayed and inside the sheet, and the same short-text check holds.
+  - The Logcat and Links tabs at sheet widths **280, 340, 420 and 600**: Pause (Logcat) and Open on device (Links) are displayed and inside the sheet; same short-text check. The GIF export window at 600 × 500 with a landscape clip: Export is inside the window.
 - [ ] **Step 2: Run it.** Expected: PASS. If it fails, fix the owning task's code, not the test.
 - [ ] **Step 3: Write the hand-check list.** For each screen, the transitions to watch on macOS:
   - two panes ↔ strip, strip ↔ list, the overlay, item switch
   - rows stacking, ⋮ folding, segments → icons → menu
   - mirror docked ↔ floating, dialog stacking
   - the window minimum
+  - logcat rows stacking, links stacking, the GIF preview cap, the emulator strip divider, detail tabs → menu
+  - main's screens now moving with the shared spring (info cards, follow strip, sheet tabs, markup toolbar)
   - reduced motion on (System Settings › Accessibility › Display › Reduce motion): fades only
 - [ ] **Step 4: Run the full suite.** Run `./gradlew :composeApp:jvmTest`. Expected: all pass.
 - [ ] **Step 5: Commit.** `test: width matrix for every screen; narrow-layout hand-check list`

@@ -249,11 +249,55 @@ Approved through the addendum mockup https://claude.ai/artifact/6wsGe9iFtdpu4JJP
   - The drop chip keeps a 12 dp margin and ellipsizes the folder name.
 - **Motion:** as everywhere else: moves use `layoutSpring`, folds fade, reduced motion fades or snaps.
 
+### 6b. Screens from main v1.18–v1.22 (added 2026-11-16)
+
+Main gained device info, emulators, links, logcat, follow/arrange, screenshot markup and GIF export.
+Approved through the mockup https://claude.ai/artifact/SnenwvS9QBF519Wmg8geoL (version 2).
+
+Already fine, no layout change: the follow/arrange strip (folds by priority), the sheet tab row (labels →
+icons), the markup toolbar (wraps), the device info card grid (1 → N columns), the screenshot thumbnail,
+styled chips, the tray menu. They still take the motion rules below.
+
+- **Logcat tab** (sheet down to 280 dp; also the pop-out window):
+  - Toolbar: under 420 dp the 104 dp Play/Pause button becomes a 40 dp icon button with a tooltip.
+  - Chips wrap. Under 420 dp the "mine = package" label takes its own line.
+  - Rows: at 600 dp and up all columns; 420–600 the PID-TID and Package columns hide (today's behavior);
+    under 420 each line stacks: level badge, tag (ellipsized) and short time (HH:mm:ss) on line 1, the
+    message under it, indented under the tag, up to 2 lines (or wrapped fully when Wrap is on). Cells glide.
+  - Status bar under 420 dp: the level mix becomes a 3 dp strip along its top edge, Wrap and Compact fold
+    into ⋮ (Clear stays), and the count shortens to "1,234/5,678".
+  - The pop-out logcat window gets a minimum size of 360 × 360 dp.
+- **Links tab:** under 300 dp of content the Open with and Before opening dropdowns stack full width, and
+  each intent extra becomes a group: type with its delete button, then key, then value, marked by a thin
+  rule at its start. The Open / Save buttons already wrap; they now glide.
+- **GIF export window** (minimum stays 600 × 500): the preview's width is capped so the controls column keeps
+  340 dp; the preview centers vertically at its own height. Portrait recordings don't change.
+- **Devices detail:**
+  - The Options | Info tabs use the rule-4 segmented control: no icons, so Full → Menu, switching under
+    344 dp of pane width. The back button never overlaps it.
+  - Info footer: under 220 dp of content, Copy as text becomes a copy icon with a tooltip. Long copyable
+    values (IPv6, fingerprint) move under their label and wrap, like other info rows.
+- **Emulators section:**
+  - The existing switch to a second line under 300 dp (chip and Start/Stop under the name) glides, and the
+    row height springs.
+  - In the 76 dp strip: connected devices first, then a divider labeled "AVD", then one emulator tile
+    (count badge) and an avatar for each running emulator. Clicking the tile opens the switcher overlay
+    with the emulators section expanded; clicking a running emulator selects it like a device.
+- **Small fixes:** the sheet header subtitle stays on one line with an ellipsis. The Devices list row
+  (title + Emulator tag / status chip) and the simple device pane's chip rows glide when they wrap.
+- **Motion (user decision 2026-11-16):** one feel everywhere. Every size, position and reflow movement on
+  these screens, including main's existing ones (info cards, detail tabs, emulator rows, logcat columns,
+  follow/arrange strip, sheet tab labels, markup toolbar, GIF pills), uses `layoutSpring`. Fades, color,
+  scale pulses and content enter/exit keep their short tweens. Every window provides `LocalReduceMotion`,
+  and each screen's `motion` / `reduceMotion` default reads it instead of asking the OS itself.
+
 ### Window minimums
 
 A floor, not the fix:
 - **Main window:** 360 × 480 dp.
 - **Mirror window:** 344 dp wide (toolbar + Actions sheet minimum) × 360 dp.
+- **Logcat window:** 360 × 360 dp (added 2026-11-16). Markup (360 × 420) and GIF export (600 × 500) keep
+  main's minimums.
 
 Set them through the Tao/Nucleus window API (min inner size). Build on `main` at or after `007f35a`, where the
 Tao window backend is merged. This branch has been fast-forwarded there.
@@ -278,6 +322,7 @@ Tao window backend is merged. This branch has been fast-forwarded there.
   - Pane mode (two panes / list view / item view) from window width and `detailOpen`.
   - Mirror sheet docked / floating / full, per tab minimum.
   - Sheet tab breakpoints (tab control, Apps, Files, Shell) from the sheet width.
+  - Logcat and Links breakpoints from the sheet width; the GIF preview cap from the window width.
 - Compose UI tests (existing jvmTest setup) at **360, 520, 700 and 1000 dp** for each top-level screen.
   Assert that the primary actions are displayed and not clipped, and that no row's text gets less than its
   minimum width.
