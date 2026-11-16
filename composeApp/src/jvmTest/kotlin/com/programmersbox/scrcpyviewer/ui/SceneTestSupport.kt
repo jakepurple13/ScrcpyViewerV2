@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.ui
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.input.pointer.PointerButton
@@ -23,6 +24,16 @@ fun onEdt(block: () -> Unit) {
     error?.let { throw it }
 }
 
+/** This rendered image's pixels, read onto the heap; the image and the bitmap copied from it are closed. */
+fun org.jetbrains.skia.Image.pixelsAndClose(): androidx.compose.ui.graphics.PixelMap = use { image ->
+    val bitmap = image.toComposeImageBitmap()
+    try {
+        bitmap.toPixelMap()
+    } finally {
+        bitmap.asSkiaBitmap().close()
+    }
+}
+
 /** Drives an offscreen scene with a virtual clock: frames, mouse drags. */
 @OptIn(ExperimentalComposeUiApi::class)
 class SceneDriver(val scene: ImageComposeScene) {
@@ -30,7 +41,9 @@ class SceneDriver(val scene: ImageComposeScene) {
 
     fun frame() {
         time += 16_000_000
-        scene.render(time)
+        // Each render snapshots the scene into a new native image. Closed at once, not left to the GC: with CI's
+        // 2 GB heap the GC seldom runs, and these piled up by gigabytes of native memory.
+        scene.render(time).close()
     }
 
     fun frames(count: Int) = repeat(count) { frame() }
@@ -38,7 +51,7 @@ class SceneDriver(val scene: ImageComposeScene) {
     /** The next frame's pixels. */
     fun snapshot(): androidx.compose.ui.graphics.PixelMap {
         time += 16_000_000
-        return scene.render(time).toComposeImageBitmap().toPixelMap()
+        return scene.render(time).pixelsAndClose()
     }
 
     fun drag(fromX: Float, toX: Float, y: Float = 300f) {

@@ -302,7 +302,7 @@ class FilesTabTest {
         driver.frames(30)
         val up = driver.described("Up one folder").boundsInRoot
         val refresh = driver.described("Refresh").boundsInRoot
-        val bitmap = org.jetbrains.skia.Bitmap.makeFromImage(driver.scene.render(10_000_000_000))
+        val bitmap = driver.scene.render(10_000_000_000).use { org.jetbrains.skia.Bitmap.makeFromImage(it) }
         val y0 = up.top.toInt()
         val y1 = up.bottom.toInt()
         val background = bitmap.getColor(refresh.left.toInt() - 1, y0 + 1)

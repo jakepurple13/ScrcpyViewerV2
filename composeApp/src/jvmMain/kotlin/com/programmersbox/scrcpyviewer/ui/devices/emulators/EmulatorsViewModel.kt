@@ -6,6 +6,7 @@ import com.programmersbox.scrcpyviewer.emulator.Avd
 import com.programmersbox.scrcpyviewer.emulator.AvdState
 import com.programmersbox.scrcpyviewer.emulator.EmulatorLauncher
 import com.programmersbox.scrcpyviewer.emulator.SdkLookup
+import com.programmersbox.scrcpyviewer.emulator.avdFingerprint
 import com.programmersbox.scrcpyviewer.emulator.avdHome
 import com.programmersbox.scrcpyviewer.emulator.EmulatorEnvironment
 import com.programmersbox.scrcpyviewer.emulator.findSdk
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import org.koin.core.annotation.KoinViewModel
 import java.nio.file.Path
@@ -97,6 +99,7 @@ private data class Catalog(val sdk: SdkLookup?, val avds: List<Avd>)
  * and its saved preferences. The catalog is read when the screen opens (it sends [EmulatorEvent.Reload]), after a new
  * SDK folder is chosen, and after a start or stop. AVD folder sizes (`du`, up to 30 s each) are measured in the
  * background on those reads except after a start: a running emulator's size need not refresh, and a Stop measures again.
+ * A folder whose fingerprint is unchanged since it was measured keeps its size without running `du` again.
  */
 @KoinViewModel
 internal class EmulatorsViewModel(
@@ -109,6 +112,8 @@ internal class EmulatorsViewModel(
     private val io: CoroutineContext = Dispatchers.IO,
     /** Shows an AVD folder in Finder / Explorer (its parent folder on Linux); tests record it instead. */
     private val reveal: (Path) -> Unit = { revealInFolder(it, os) },
+    /** A cheap check of whether an AVD folder changed since it was last measured (see [avdFingerprint]). */
+    private val fingerprintOf: (Path) -> Any? = ::avdFingerprint,
 ) : ViewModel(scope) {
     private val env = environment.env
     private val home = environment.home
@@ -118,6 +123,9 @@ internal class EmulatorsViewModel(
     private var loadJob: Job? = null
     private var sizeJob: Job? = null
     private var measurePending = false
+
+    /** By AVD id, the folder's fingerprint when its size in [sizes] was measured: unchanged ones are not measured again. */
+    private val measuredAs = mutableMapOf<String, Any>()
 
     val state: StateFlow<EmulatorsUiState> = combine(
         catalog, sizes, combine(launcher.states, launcher.wiping, launcher.processAlive, ::Triple), launcher.bootingSerials,
@@ -145,7 +153,10 @@ internal class EmulatorsViewModel(
         viewModelScope.launch {
             var before = launcher.states.value.keys
             launcher.states.collect { now ->
-                if ((before - now.keys).isNotEmpty()) reload()
+                val stopped = before - now.keys
+                // A run changes the folder even if its fingerprint happens to look the same: always measure it again.
+                stopped.forEach(measuredAs::remove)
+                if (stopped.isNotEmpty()) reload()
                 before = now.keys
             }
         }
@@ -188,7 +199,10 @@ internal class EmulatorsViewModel(
         val avd = catalog.value.avds.firstOrNull { it.id == avdId } ?: return
         val result = launcher.launchWipe(avd)
         viewModelScope.launch {
-            if (result.await().isSuccess) reload()
+            if (result.await().isSuccess) {
+                measuredAs.remove(avdId)
+                reload()
+            }
         }
     }
 
@@ -216,8 +230,13 @@ internal class EmulatorsViewModel(
             sizeJob?.cancel()
             sizeJob = viewModelScope.launch {
                 for (avd in next.avds) {
-                    val size = withContext(io) { sizeOf(avd.dir) } ?: continue
+                    // Each visit to the Devices tab reads the catalog again: only measure folders that changed.
+                    val print = withContext(io) { fingerprintOf(avd.dir) }
+                    if (print != null && measuredAs[avd.id] == print && avd.id in sizes.value) continue
+                    // Interruptible, so a newer read cancelling this one also stops the running `du`.
+                    val size = runInterruptible(io) { sizeOf(avd.dir) } ?: continue
                     sizes.update { it + (avd.id to size) }
+                    if (print != null) measuredAs[avd.id] = print else measuredAs.remove(avd.id)
                 }
             }
         }

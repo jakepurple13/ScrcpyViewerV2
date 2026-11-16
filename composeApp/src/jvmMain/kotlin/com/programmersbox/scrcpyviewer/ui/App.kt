@@ -74,6 +74,7 @@ import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
 import com.programmersbox.scrcpyviewer.ui.devices.DevicesScreen
 import com.programmersbox.scrcpyviewer.ui.devices.info.DeviceInfoViewModel
 import com.programmersbox.scrcpyviewer.ui.devices.DevicesViewModel
+import com.programmersbox.scrcpyviewer.ui.devices.showNotices
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import com.programmersbox.scrcpyviewer.ui.mirror.recordResultMessage
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavDisplay
@@ -253,13 +254,13 @@ fun App(
     actionsNavigation: ActionsNavigation = koinInject(),
     mainWindowRequests: MainWindowRequests = koinInject(),
     inbox: ActionInbox = koinInject(),
+    snackbar: SnackbarHostState = remember { SnackbarHostState() },
 ) {
     val update by updateViewModel.state.collectAsStateWithLifecycle()
     val deviceInfo by deviceInfoViewModel.state.collectAsStateWithLifecycle()
     val detailTab by deviceInfoViewModel.tab.collectAsStateWithLifecycle()
     // Read from the store, not the ViewModel's state, so the first frame already has the saved theme.
     val settings by appSettings.settings.collectAsStateWithLifecycle()
-    val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     // No picker can be shown (Linux without zenity or kdialog, a failed native call): say so in the snackbar.
     val nativeDialogs = remember { nativeFileDialogs { message -> scope.launch { snackbar.showSnackbar(message) } } }
@@ -287,6 +288,10 @@ fun App(
             .filter { it.serial !in mirrorController.open.value }
             .collect { snackbar.showSnackbar(recordResultMessage(it.result)) }
     }
+    // Collected here rather than by their screens: only the shown tab is composed, so a Wi-Fi connect or adb
+    // restart result (or an Actions message) arriving while another tab is up would be lost.
+    LaunchedEffect(devicesViewModel, snackbar) { devicesViewModel.showNotices(snackbar) }
+    LaunchedEffect(actionsViewModel, snackbar) { actionsViewModel.messages.collect { snackbar.showSnackbar(it) } }
     // Files AI tools dropped in the actions inbox: say what was added, changed or rejected.
     LaunchedEffect(inbox) { inbox.messages.collect { snackbar.showSnackbar(it) } }
     // A mirror window asked for the Actions screen: show it and open the requested action.

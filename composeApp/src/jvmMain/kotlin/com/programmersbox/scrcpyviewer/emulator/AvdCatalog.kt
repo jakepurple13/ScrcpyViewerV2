@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.extension
@@ -106,7 +107,15 @@ internal fun avdSize(
             val out = Files.createTempFile("avd-size", ".txt")
             try {
                 val p = ProcessBuilder(du(dir)).redirectErrorStream(true).redirectOutput(out.toFile()).start()
-                if (!p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
+                val finished = try {
+                    p.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+                } catch (e: InterruptedException) {
+                    // The caller was cancelled (runInterruptible): don't leave du running. Keep the interrupt for it.
+                    p.destroyForcibly()
+                    Thread.currentThread().interrupt()
+                    throw e
+                }
+                if (!finished) {
                     p.destroyForcibly()
                     return@runCatching null
                 }
@@ -117,6 +126,26 @@ internal fun avdSize(
         }
     }.getOrNull()
 }
+
+/**
+ * A cheap stand-in for [avdSize]'s answer: the file count, total length and newest modified time under [dir]. It
+ * only reads file attributes, so it is much faster than `du`; an unchanged one means the folder needs no new
+ * measurement. Null when unreadable.
+ */
+internal fun avdFingerprint(dir: Path): List<Long>? = runCatching {
+    var count = 0L
+    var bytes = 0L
+    var newest = Files.getLastModifiedTime(dir).toMillis()
+    Files.walk(dir).use { s ->
+        s.forEach { f ->
+            val attrs = Files.readAttributes(f, BasicFileAttributes::class.java)
+            count++
+            if (attrs.isRegularFile) bytes += attrs.size()
+            newest = maxOf(newest, attrs.lastModifiedTime().toMillis())
+        }
+    }
+    listOf(count, bytes, newest)
+}.getOrNull()
 
 /** "8.2 GB" or "512.0 MB": one decimal, binary units. */
 internal fun formatSize(bytes: Long): String {

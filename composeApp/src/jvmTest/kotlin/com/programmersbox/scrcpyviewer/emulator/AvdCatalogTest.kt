@@ -1,6 +1,13 @@
 package com.programmersbox.scrcpyviewer.emulator
 
 import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
@@ -121,6 +128,39 @@ class AvdCatalogTest {
         val started = System.nanoTime()
         assertNull(avdSize(dir, timeoutMs = 300, du = { listOf("sleep", "20") }))
         assertTrue(System.nanoTime() - started < 10_000_000_000L, "returned after the timeout, not after du")
+    }
+
+    @Test
+    fun `cancelling a size measurement kills du`() = runBlocking {
+        if (OpenPlatform.current() == OpenPlatform.Windows) return@runBlocking
+        val dir = Files.createDirectories(home.resolve("cancelled"))
+        val pidFile = home.resolve("du.pid")
+        val job = launch(Dispatchers.IO) {
+            runInterruptible { avdSize(dir, du = { listOf("sh", "-c", "echo $$ > '$pidFile'; exec sleep 20") }) }
+        }
+        // du is running once the shell has written its pid (exec keeps the pid for sleep).
+        var proc: ProcessHandle? = null
+        withTimeout(10_000) {
+            while (proc == null) {
+                proc = runCatching { Files.readString(pidFile).trim().toLong() }.getOrNull()?.let { ProcessHandle.of(it).orElse(null) }
+                if (proc == null) delay(20)
+            }
+        }
+        val started = System.nanoTime()
+        job.cancelAndJoin()
+        assertTrue(System.nanoTime() - started < 5_000_000_000L, "cancel did not wait for du")
+        withTimeout(5_000) { while (proc!!.isAlive) delay(20) }
+    }
+
+    @Test
+    fun `fingerprint changes when a file in the folder changes`() {
+        val dir = Files.createDirectories(home.resolve("print"))
+        Files.write(dir.resolve("userdata.img"), ByteArray(10))
+        val before = avdFingerprint(dir)
+        assertEquals(before, avdFingerprint(dir), "stable while nothing changes")
+        Files.write(dir.resolve("userdata.img"), ByteArray(20))
+        assertTrue(before != avdFingerprint(dir), "a grown image changes it")
+        assertNull(avdFingerprint(home.resolve("missing")))
     }
 
     @Test

@@ -30,9 +30,9 @@ class LogcatLiveDotTest {
             for (target in millis) {
                 while (t < target) {
                     t = minOf(t + 16, target)
-                    scene.render(t * 1_000_000)
+                    scene.render(t * 1_000_000).close()
                 }
-                out += Bitmap.makeFromImage(scene.render(t * 1_000_000)).getColor(10, 10)
+                out += scene.render(t * 1_000_000).use { Bitmap.makeFromImage(it) }.use { it.getColor(10, 10) }
             }
             return out
         } finally {

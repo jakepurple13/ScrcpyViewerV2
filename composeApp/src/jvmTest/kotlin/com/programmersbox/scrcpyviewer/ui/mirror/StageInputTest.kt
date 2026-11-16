@@ -63,7 +63,7 @@ class StageInputTest {
             }
         }
         try {
-            scene.render(0)
+            scene.render(0).close()
             block(scene, state, sent) { detached }
         } finally {
             scene.close()
@@ -86,18 +86,18 @@ class StageInputTest {
     fun `switching from Fit to zoom mid-drag releases the held button once`() = withStage(base) { scene, state, sent, detached ->
         val at = Offset(450f, 400f)
         scene.press(at)
-        scene.render(16_000_000)
+        scene.render(16_000_000).close()
         assertEquals(1, sent.touches(InputMapper.ACTION_DOWN).size, "the press reached the device")
 
         state.value = base.copy(zoom = 1f) // Cmd/Ctrl+= (or the first frame's zoom) while the button is held
-        scene.render(32_000_000)
+        scene.render(32_000_000).close()
         assertEquals(1, detached())
         assertEquals(1, sent.touches(InputMapper.ACTION_UP).size, "released as the Fit canvas went")
 
         // The real release comes later: no second UP, and the next moves hover rather than drag.
         scene.release(at)
         scene.sendPointerEvent(PointerEventType.Move, at + Offset(5f, 5f), type = PointerType.Mouse)
-        scene.render(48_000_000)
+        scene.render(48_000_000).close()
         assertEquals(1, sent.touches(InputMapper.ACTION_UP).size)
         assertTrue(sent.touches(InputMapper.ACTION_MOVE).isEmpty(), "no drag after the release")
     }
@@ -106,11 +106,11 @@ class StageInputTest {
     fun `switching from zoom back to Fit mid-drag releases the held button`() = withStage(base.copy(zoom = 0.5f)) { scene, state, sent, detached ->
         val at = Offset(450f, 400f)
         scene.press(at)
-        scene.render(16_000_000)
+        scene.render(16_000_000).close()
         assertEquals(1, sent.touches(InputMapper.ACTION_DOWN).size, "the press reached the device")
 
         state.value = base // Cmd/Ctrl+0
-        scene.render(32_000_000)
+        scene.render(32_000_000).close()
         assertEquals(1, detached())
         assertEquals(1, sent.touches(InputMapper.ACTION_UP).size)
     }
@@ -118,7 +118,7 @@ class StageInputTest {
     @Test
     fun `zoom steps within the zoomed canvas keep the input`() = withStage(base.copy(zoom = 0.5f)) { scene, state, sent, detached ->
         state.value = base.copy(zoom = 0.6f)
-        scene.render(16_000_000)
+        scene.render(16_000_000).close()
         assertEquals(0, detached())
         assertTrue(sent.isEmpty())
     }

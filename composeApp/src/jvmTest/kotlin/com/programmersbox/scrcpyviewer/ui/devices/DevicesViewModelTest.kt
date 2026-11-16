@@ -74,6 +74,25 @@ class DevicesViewModelTest {
     }
 
     @Test
+    fun `a newly selected device is never shown with the previous device's options`() {
+        devices.value = listOf(ready, readyToo)
+        val vm = vm()
+        vm.select("R1")
+        vm.toggle("no-audio", true)
+        val seen = java.util.Collections.synchronizedList(ArrayList<DevicesUiState>())
+        val job = scope.launch { vm.state.collect { seen += it } }
+        vm.select("R2")
+        vm.select("R1")
+        vm.select("R2")
+        job.cancel()
+        assertTrue(seen.any { it.selectedSerial == "R2" }, "R2 was shown")
+        val mixed = seen.filter { it.selectedSerial == "R2" && "no-audio" in it.values.entries }
+        assertTrue(mixed.isEmpty(), "R2 paired with R1's options: $mixed")
+        val r1WithoutOwn = seen.filter { it.selectedSerial == "R1" && "no-audio" !in it.values.entries }
+        assertTrue(r1WithoutOwn.isEmpty(), "R1 paired with R2's options: $r1WithoutOwn")
+    }
+
+    @Test
     fun `wifi device shares options with its usb twin`() {
         devices.value = listOf(usbAbc)
         val vm = vm()

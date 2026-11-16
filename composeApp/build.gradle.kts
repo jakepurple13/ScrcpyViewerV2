@@ -355,7 +355,8 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         (this as Test).maxHeapSize = "2g"
         // The heap cap doesn't bound native memory (Skia surfaces, FFmpeg): one test JVM grew to 13 GB resident on
         // the 16 GB Linux runner and the runner died mid-step. A fresh JVM every 25 test classes (of about 220)
-        // releases it; the markup, GIF and screenshot tests alone added about 3 GB.
+        // releases it. Most of that was tests not closing the images ImageComposeScene.render() returns (fixed in
+        // SceneDriver); a fork of 25 classes now peaks near 1.4 GB, so this is a safety margin.
         forkEvery = 25
     }
     if (deviceTests) {
