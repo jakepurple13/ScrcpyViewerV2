@@ -51,7 +51,15 @@ jobs:
       - name: Test (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 25
-        run: xvfb-run --auto-servernum ./gradlew :composeApp:downloadBundledTools :composeApp:jvmTest --stacktrace -Pkotlin.compiler.execution.strategy=in-process
+        # A monitor prints memory, disk and the biggest processes every 10 s: the runner has died mid-tests with no
+        # error, so the last lines show what it was doing.
+        run: |
+          ( while true; do
+              echo "[monitor] $(date +%T) $(free -m | awk '/Mem:/{print "mem used " $3 "/" $2 " MB, avail " $7}') $(df -h / | awk 'NR==2{print "disk " $5}') procs $(ps -e --no-headers | wc -l)"
+              ps -eo rss,comm --sort=-rss --no-headers | head -4 | awk '{printf "[monitor]   %d MB %s\n", $1/1024, $2}'
+              sleep 10
+            done ) &
+          xvfb-run --auto-servernum ./gradlew :composeApp:downloadBundledTools :composeApp:jvmTest --stacktrace -Pkotlin.compiler.execution.strategy=in-process
 
       - name: Test
         if: runner.os != 'Linux'
