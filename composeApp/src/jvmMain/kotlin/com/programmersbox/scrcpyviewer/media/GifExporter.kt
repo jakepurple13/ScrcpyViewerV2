@@ -212,13 +212,17 @@ class GifExporter(
     private val cacheDir: () -> Path = ::gifCacheDir,
     private val starter: GifProcessStarter = SystemStarter,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Where its FFmpeg processes and temp files are registered, for the cleanup on quit. */
+    private val runs: FfmpegRuns = FfmpegRuns.shared,
 ) {
     enum class Phase { Palette, Encode }
 
     /**
      * Exports [o] of [input]. Suspends until done; never blocks the caller's thread. [onProgress] is called from a
      * background thread with the phase and its fraction done (0..1). Cancelling the calling coroutine stops FFmpeg
-     * (and anything it started), deletes the partial GIF and the palette, then rethrows the cancellation.
+     * (and anything it started), deletes the partial GIF and the palette, then rethrows the cancellation. Once the GIF
+     * has been moved into place the export is done: a cancel arriving after that returns the finished file (the
+     * caller's coroutine stays cancelled), never deletes it.
      *
      * Failure is a [GifExportException] whose message is the reason, e.g. the last FFmpeg error line.
      */
@@ -226,6 +230,21 @@ class GifExporter(
         if (o.durationMs > GIF_MAX_DURATION_MS) return failure("Trim to 60 s or less to export")
         if (o.durationMs <= 0) return failure("The trimmed part is empty")
         if (o.width <= 0 || o.fps <= 0) return failure("Pick a width and a frame rate")
+        // Set once the GIF is in place: from then on the export counts as done, whatever cancel arrives.
+        var finished: Path? = null
+        return try {
+            exportOnIo(input, o, onProgress) { finished = it }
+        } catch (e: CancellationException) {
+            finished?.let { Result.success(it) } ?: throw e
+        }
+    }
+
+    private suspend fun exportOnIo(
+        input: Path,
+        o: GifOptions,
+        onProgress: (Phase, Float) -> Unit,
+        onFinished: (Path) -> Unit,
+    ): Result<Path> {
         return withContext(io) {
             if (!Files.isRegularFile(input)) return@withContext Result.failure(RecordingGoneException(input))
             val ffmpeg = try {
@@ -242,13 +261,15 @@ class GifExporter(
             var done = false
             try {
                 val dir = input.toAbsolutePath().parent
-                palette = Files.createTempFile(Files.createDirectories(cacheDir()), "palette-", ".png")
+                palette = Files.createTempFile(Files.createDirectories(cacheDir()), "palette-", ".png").also(runs::addFile)
                 // The partial GIF lives next to the recording, so the final move is an atomic rename in one folder.
+                // Made with the user's normal file mode (umask), not a temp file's owner-only one: the GIF keeps it.
                 partial = try {
-                    Files.createTempFile(dir, ".gif-export-", ".part")
+                    createPartial(dir)
                 } catch (e: AccessDeniedException) {
                     throw GifExportException("Can't write next to the recording ($dir)", e)
                 }
+                runs.addFile(partial)
                 val (paletteArgv, encodeArgv) = gifArgv(ffmpeg, input.toAbsolutePath(), palette, partial, o)
                 val durationUs = o.durationMs * 1000
                 onProgress(Phase.Palette, 0f)
@@ -259,6 +280,8 @@ class GifExporter(
                 if (Files.size(partial) == 0L) throw GifExportException("FFmpeg wrote an empty file")
                 val out = moveToFree(partial, input)
                 done = true
+                runs.removeFile(partial)
+                onFinished(out)
                 onProgress(Phase.Encode, 1f)
                 Result.success(out)
             } catch (e: CancellationException) {
@@ -272,6 +295,8 @@ class GifExporter(
                     // A delete that fails (a file still locked on Windows) must not hide the result or the cancel.
                     palette?.let { runCatching { Files.deleteIfExists(it) } }
                     if (!done) partial?.let { runCatching { Files.deleteIfExists(it) } }
+                    palette?.let(runs::removeFile)
+                    partial?.let(runs::removeFile)
                 }
             }
         }
@@ -279,6 +304,18 @@ class GifExporter(
 
     private fun failure(reason: String, cause: Throwable? = null): Result<Path> =
         Result.failure(GifExportException(reason, cause))
+
+    /** A new empty `.gif-export-<random>.part` in [dir], created with the default file mode. */
+    private fun createPartial(dir: Path): Path {
+        repeat(100) {
+            val name = ".gif-export-${java.lang.Long.toUnsignedString(random.nextLong(), 36)}.part"
+            try {
+                return Files.createFile(dir.resolve(name))
+            } catch (_: FileAlreadyExistsException) {
+            }
+        }
+        throw GifExportException("No free temp file name next to the recording")
+    }
 
     /** Moves [partial] to the first free [gifFile] name; a name taken meanwhile is skipped, never replaced. */
     private fun moveToFree(partial: Path, input: Path): Path {
@@ -302,6 +339,7 @@ class GifExporter(
         } catch (e: IOException) {
             throw GifExportException("FFmpeg couldn't start: ${e.message ?: e.javaClass.simpleName}", e)
         }
+        runs.add(process)
         val tail = OutputTail(STDERR_TAIL_LINES)
         try {
             runCatching { process.outputStream.close() }
@@ -314,6 +352,7 @@ class GifExporter(
             if (code != 0) throw GifExportException(tail.reason() ?: "FFmpeg stopped with exit code $code")
         } finally {
             if (process.isAlive) kill(process)
+            runs.remove(process)
         }
     }
 
@@ -336,6 +375,7 @@ class GifExporter(
         const val STDERR_TAIL_LINES = 20
         const val MAX_LINE_CHARS = 500
         val CONTEXT_PREFIX = Regex("""^\[[^\]]* @ (0x)?[0-9a-fA-F]+]\s*""")
+        val random = java.security.SecureRandom()
 
         fun InputStream.forEachLineQuietly(onLine: (String) -> Unit) {
             try {

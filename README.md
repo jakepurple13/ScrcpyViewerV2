@@ -72,6 +72,10 @@ The app checks for updates when it opens and can install them itself (Settings >
 > **macOS:** the builds are not signed. The first time you open the app, right-click it and choose **Open**. When
 > macOS asks for Local Network access, allow it. Wi-Fi debugging does not work without it.
 
+> **Linux requirements:** GIF export uses the bundled FFmpeg, which needs `libasound2t64` (or `libasound2` before
+> Ubuntu 24.04), `libpulse0`, `libxcb1`, `libxcb-shm0`, `libdrm2` and `libudev1`. The `.deb` installs them; when you
+> run the app another way, install them with your package manager.
+
 ## Getting started
 
 1. On the Android device, turn on **Developer options**, then turn on **USB debugging**.

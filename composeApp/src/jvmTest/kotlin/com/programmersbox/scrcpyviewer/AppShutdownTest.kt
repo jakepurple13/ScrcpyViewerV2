@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer
 
 import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceState
+import com.programmersbox.scrcpyviewer.media.FfmpegRuns
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.scrcpy.LocalPairLauncher
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
@@ -13,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
@@ -189,6 +191,78 @@ class AppShutdownTest {
         withTimeout(5_000) { shutdown.run() }
         assertEquals(1, installs.get())
     }
+
+    /** A process that runs until destroyed. */
+    private class HangingProcess : Process() {
+        private val exited = java.util.concurrent.CountDownLatch(1)
+        @Volatile var destroyed = false
+        override fun getOutputStream(): java.io.OutputStream = java.io.OutputStream.nullOutputStream()
+        override fun getInputStream(): java.io.InputStream = java.io.InputStream.nullInputStream()
+        override fun getErrorStream(): java.io.InputStream = java.io.InputStream.nullInputStream()
+        override fun waitFor(): Int {
+            exited.await()
+            return 137
+        }
+        override fun waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean = exited.await(timeout, unit)
+        override fun exitValue(): Int = if (exited.count > 0) throw IllegalThreadStateException() else 137
+        override fun isAlive(): Boolean = exited.count > 0
+        override fun destroy() {
+            destroyForcibly()
+        }
+        override fun destroyForcibly(): Process {
+            destroyed = true
+            exited.countDown()
+            return this
+        }
+    }
+
+    @Test
+    fun `run waits for exports to clean up by themselves`() = runBlocking<Unit> {
+        val runs = FfmpegRuns()
+        val process = HangingProcess()
+        val partial = Files.createTempFile("shutdown", ".part")
+        runs.add(process)
+        runs.addFile(partial)
+        val events = java.util.Collections.synchronizedList(ArrayList<String>())
+        // The export's own cancel: FFmpeg stopped, its partial deleted, a little later.
+        scope.launch {
+            kotlinx.coroutines.delay(100)
+            Files.deleteIfExists(partial)
+            runs.removeFile(partial)
+            runs.remove(process)
+            events += "export cleaned up"
+        }
+        val shutdown = AppShutdown(controller, exit = { events += "exit" }, ffmpegRuns = runs, ffmpegTimeoutMs = 5_000)
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(listOf("export cleaned up", "exit"), events)
+        assertFalse(process.destroyed, "not forced")
+    }
+
+    @Test
+    fun `run kills FFmpeg and deletes its temp files when they outlast the wait`() = runBlocking<Unit> {
+        val runs = FfmpegRuns()
+        val process = HangingProcess()
+        val partial = Files.createTempFile("shutdown", ".part")
+        val gif = Files.createTempFile("shutdown", ".gif")
+        runs.add(process)
+        runs.addFile(partial)
+        var stateAtExit: Pair<Boolean, Boolean>? = null
+        val shutdown = AppShutdown(
+            controller, exit = { stateAtExit = process.destroyed to Files.exists(partial) },
+            ffmpegRuns = runs, ffmpegTimeoutMs = 100,
+        )
+        shutdown.request()
+        withTimeout(5_000) { shutdown.run() }
+        assertEquals(true to false, stateAtExit, "killed and deleted before exit")
+        assertEquals(0, runs.active.value)
+        assertTrue(Files.exists(gif), "unregistered files are left alone")
+        Files.deleteIfExists(gif)
+    }
+
+    @Test
+    fun `the default FFmpeg wait is two seconds`() =
+        assertEquals(2_000L, AppShutdown.DEFAULT_FFMPEG_TIMEOUT_MS)
 
     @Test
     fun `the default animate timeout is one second`() =

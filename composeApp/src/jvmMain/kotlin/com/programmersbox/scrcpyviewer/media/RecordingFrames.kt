@@ -108,6 +108,8 @@ class RecordingFrames(
     private val ffmpegPath: () -> Path = ::bundledFfmpeg,
     private val starter: GifProcessStarter = SystemStarter,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** Where its FFmpeg processes are registered, for the cleanup on quit. */
+    private val runs: FfmpegRuns = FfmpegRuns.shared,
 ) {
     /**
      * [input]'s length, its picture's size and its first frame. Throws [GifExportException] with a reason when the
@@ -149,6 +151,7 @@ class RecordingFrames(
         } catch (e: IOException) {
             throw GifExportException("FFmpeg couldn't start: ${e.message ?: e.javaClass.simpleName}", e)
         }
+        runs.add(process)
         try {
             runCatching { process.outputStream.close() }
             val stdout = async(io) { readQuietly { process.inputStream.readAllBytes() } }
@@ -159,6 +162,7 @@ class RecordingFrames(
             stdout.await() to err
         } finally {
             if (process.isAlive) killProcessTree(process)
+            runs.remove(process)
         }
     }
 
