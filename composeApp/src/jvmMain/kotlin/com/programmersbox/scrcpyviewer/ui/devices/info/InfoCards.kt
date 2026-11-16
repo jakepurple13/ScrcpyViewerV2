@@ -84,6 +84,8 @@ import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.text.style.TextOverflow
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.layout.MeasureResult
@@ -206,6 +208,8 @@ internal fun TickingText(
     color: Color = Color.Unspecified,
     fontFamily: FontFamily? = null,
     textAlign: TextAlign? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
 ) {
     val reduce = LocalInfoReduceMotion.current
     val tabular = style.merge(TextStyle(fontFeatureSettings = "tnum"))
@@ -226,7 +230,7 @@ internal fun TickingText(
         contentAlignment = if (textAlign == TextAlign.End) Alignment.CenterEnd else Alignment.CenterStart,
         label = "tick",
     ) {
-        Text(it, style = tabular, color = color, fontFamily = fontFamily, textAlign = textAlign)
+        Text(it, style = tabular, color = color, fontFamily = fontFamily, textAlign = textAlign, maxLines = maxLines, overflow = overflow)
     }
 }
 
@@ -551,11 +555,17 @@ private fun KvRow(
     }
 }
 
+private val KvRowPolicy = KvRowMeasure(centerInline = false)
+
+/** [CopyableKvRow]'s value carries its copy icon: label and value centre on their shared line, as in a Row. */
+private val CopyKvRowPolicy = KvRowMeasure(centerInline = true)
+
 /**
  * Lays out a [KvRow]: label left and value right-aligned on one line when the value fits beside the label without
- * wrapping; otherwise the label on its own line and the value below it at full width, left-aligned.
+ * wrapping; otherwise the label on its own line and the value below it at full width, left-aligned. [centerInline]
+ * centres label and value on their shared line (for a value taller than the label line).
  */
-private object KvRowPolicy : MeasurePolicy {
+private class KvRowMeasure(private val centerInline: Boolean) : MeasurePolicy {
     private val gap = 12.dp
 
     override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
@@ -567,9 +577,10 @@ private object KvRowPolicy : MeasurePolicy {
         return if (inline) {
             val value = valueM.measure(Constraints(maxWidth = if (constraints.hasBoundedWidth) width - label.width - gapPx else Constraints.Infinity))
             val rowWidth = if (constraints.hasBoundedWidth) width else label.width + gapPx + value.width
-            layout(rowWidth, maxOf(label.height, value.height)) {
-                label.placeRelative(0, 0)
-                value.placeRelative(rowWidth - value.width, 0)
+            val height = maxOf(label.height, value.height)
+            layout(rowWidth, height) {
+                label.placeRelative(0, if (centerInline) (height - label.height) / 2 else 0)
+                value.placeRelative(rowWidth - value.width, if (centerInline) (height - value.height) / 2 else 0)
             }
         } else {
             val value = valueM.measure(Constraints(maxWidth = width))
@@ -779,6 +790,7 @@ internal fun NetworkCard(network: NetworkInfo, modifier: Modifier = Modifier) {
 }
 
 /** A key/value row whose value copies on click; the trailing copy icon morphs into a check while "Copied" shows. */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun CopyableKvRow(label: String, value: String) {
     val copy = rememberCopyAction()
@@ -792,41 +804,54 @@ private fun CopyableKvRow(label: String, value: String) {
     val tint by animateColorAsState(
         if (copies > 0) readyColor() else MaterialTheme.colorScheme.onSurfaceVariant, tween(260), label = "ipCopyTint",
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.weight(1f))
-        Row(
-            Modifier
-                .clip(styledCorner(4.dp))
-                .clickable(onClickLabel = "Copy $label") { copy(value); copies++ }
-                .pointerHoverIcon(PointerIcon.Hand)
-                .padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            AnimatedContent(value, transitionSpec = { crossFade(reduce) }, label = "copyValue") { v ->
-                Text(
-                    v,
-                    style = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFeatureSettings = "tnum")),
-                    fontFamily = FontFamily.Monospace,
-                )
-            }
-            AnimatedContent(
-                copies > 0,
-                transitionSpec = {
-                    val millis = if (reduce) REDUCED_FADE_MILLIS else 300
-                    (fadeIn(tween(millis, easing = EmphasizedDecelerate)) + scaleIn(tween(millis, easing = EmphasizedDecelerate), initialScale = if (reduce) 1f else 0.3f)) togetherWith
-                        (fadeOut(tween(millis, easing = EmphasizedAccelerate)) + scaleOut(tween(millis, easing = EmphasizedAccelerate), targetScale = if (reduce) 1f else 0.3f))
-                },
-                label = "ipCopyIcon",
-            ) { copied ->
-                Icon(
-                    if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(12.dp),
-                )
-            }
+    // Like KvRow: the value sits beside the label while it fits, else under it, wrapping; the copy icon stays at the
+    // value's end. Moving between the two springs ([layoutSpring]), or is instant under reduced motion.
+    LookaheadScope {
+        val move = if (reduce) Modifier else Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
+        Layout(
+            content = {
+                Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = move)
+                CopyableValue(label, value, copies, tint, reduce, move) { copy(value); copies++ }
+            },
+            measurePolicy = CopyKvRowPolicy,
+        )
+    }
+}
+
+/** [CopyableKvRow]'s value and its copy icon, clickable as one. */
+@Composable
+private fun CopyableValue(label: String, value: String, copies: Int, tint: Color, reduce: Boolean, modifier: Modifier, onCopy: () -> Unit) {
+    Row(
+        modifier
+            .clip(styledCorner(4.dp))
+            .clickable(onClickLabel = "Copy $label", onClick = onCopy)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .padding(horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        AnimatedContent(value, Modifier.weight(1f, fill = false), transitionSpec = { crossFade(reduce) }, label = "copyValue") { v ->
+            Text(
+                v,
+                style = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFeatureSettings = "tnum")),
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        AnimatedContent(
+            copies > 0,
+            transitionSpec = {
+                val millis = if (reduce) REDUCED_FADE_MILLIS else 300
+                (fadeIn(tween(millis, easing = EmphasizedDecelerate)) + scaleIn(tween(millis, easing = EmphasizedDecelerate), initialScale = if (reduce) 1f else 0.3f)) togetherWith
+                    (fadeOut(tween(millis, easing = EmphasizedAccelerate)) + scaleOut(tween(millis, easing = EmphasizedAccelerate), targetScale = if (reduce) 1f else 0.3f))
+            },
+            label = "ipCopyIcon",
+        ) { copied ->
+            Icon(
+                if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(12.dp),
+            )
         }
     }
 }

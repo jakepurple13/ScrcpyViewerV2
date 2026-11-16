@@ -20,15 +20,13 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -43,12 +41,15 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveSegmentedButtons
+import com.programmersbox.scrcpyviewer.ui.common.ControlSize
 import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.SegmentOption
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
-import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 import kotlin.math.roundToInt
 
 /** Options ↔ Info (motion A): the old tab slides [TAB_SLIDE] and fades out, then the new one slides in from the other side. */
@@ -164,6 +165,12 @@ internal fun selectionFade(reduced: Boolean): ContentTransform {
 
 private fun <T> selectInSpec() = tween<T>(SELECT_FADE_MILLIS, SELECT_IN_DELAY_MILLIS, FastOutSlowInEasing)
 
+/** The Options | Info control's size for the width it has: the segments from [DETAIL_TABS_FULL_MIN], else a menu. */
+fun detailTabsSize(paneWidth: Dp): ControlSize = if (paneWidth >= DETAIL_TABS_FULL_MIN) ControlSize.Full else ControlSize.Menu
+
+/** The narrowest width that shows the Options | Info segments; narrower, they fold into one menu button. */
+internal val DETAIL_TABS_FULL_MIN = 344.dp
+
 /** What the segmented control calls each tab. */
 internal fun DetailTab.label(): String = when (this) {
     DetailTab.Options -> "Options"
@@ -173,9 +180,11 @@ internal fun DetailTab.label(): String = when (this) {
 /**
  * The detail pane's top row: the back button (single-pane layout) or a [leading] control (the list switcher chip)
  * and, while a device is [selected], the Options | Info control, which fades and scales in and out. The row keeps
- * [DETAIL_TAB_ROW_HEIGHT] either way, so nothing below it moves. When [leading] and the centred tabs do not fit side
- * by side, [leading] takes a line of its own above them; both glide to their new places and the row's height
- * springs ([layoutSpring]), or change at once with [reduceMotion].
+ * [DETAIL_TAB_ROW_HEIGHT] either way, so nothing below it moves. The tabs are centred in the space after the back
+ * button or [leading], at [detailTabsSize] of that space: the segments, or one menu button in a narrow pane. When
+ * [leading] leaves the tabs less than [DETAIL_TABS_FULL_MIN], it takes a line of its own above them and they get
+ * the full width; both glide to their new places and the row's height springs ([layoutSpring]), or change at once
+ * with [reduceMotion].
  */
 @Composable
 fun DetailTabRow(
@@ -187,43 +196,53 @@ fun DetailTabRow(
     reduceMotion: Boolean = remember { systemReducesMotion() },
     leading: (@Composable () -> Unit)? = null,
 ) {
-    val tabs = @Composable {
-        AnimatedVisibility(
-            visible = selected,
-            // Arrives and leaves with the content below (see selectionFade).
-            enter = if (reduceMotion) fadeIn(tween(REDUCED_FADE_MILLIS)) else
-                fadeIn(selectInSpec()) + scaleIn(selectInSpec(), initialScale = 0.92f),
-            exit = if (reduceMotion) fadeOut(tween(REDUCED_FADE_MILLIS)) else
-                fadeOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate)) +
-                    scaleOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate), targetScale = 0.92f),
-        ) {
-            SingleChoiceSegmentedButtonRow {
-                DetailTab.entries.forEachIndexed { i, entry ->
-                    SegmentedButton(
-                        selected = tab == entry,
-                        onClick = { onTab(entry) },
-                        shape = styledSegmentShape(i, DetailTab.entries.size),
-                        modifier = Modifier.widthIn(min = 120.dp),
-                    ) { Text(entry.label()) }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        // Beside [leading] the tabs only keep its line with Full room, so the row's width alone picks their size.
+        val backSpace = if (leading == null && onBack != null) BACK_SPACE else 0.dp
+        val size = detailTabsSize(maxWidth - backSpace)
+        val tabs = @Composable {
+            AnimatedVisibility(
+                visible = selected,
+                // Arrives and leaves with the content below (see selectionFade).
+                enter = if (reduceMotion) fadeIn(tween(REDUCED_FADE_MILLIS)) else
+                    fadeIn(selectInSpec()) + scaleIn(selectInSpec(), initialScale = 0.92f),
+                exit = if (reduceMotion) fadeOut(tween(REDUCED_FADE_MILLIS)) else
+                    fadeOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate)) +
+                        scaleOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate), targetScale = 0.92f),
+            ) {
+                CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
+                    AdaptiveSegmentedButtons(
+                        options = DetailTab.entries.map { SegmentOption(it, it.label()) },
+                        selected = tab,
+                        onSelect = onTab,
+                        size = size,
+                        segmentMinWidth = 120.dp,
+                    )
                 }
             }
         }
-    }
-    if (leading == null) {
-        Box(modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
-            if (onBack != null) DetailBackButton(onBack, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
-            Box(Modifier.align(Alignment.Center)) { tabs() }
+        if (leading == null) {
+            Box(Modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
+                if (onBack != null) DetailBackButton(onBack, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
+                Box(Modifier.fillMaxSize().padding(start = backSpace), contentAlignment = Alignment.Center) { tabs() }
+            }
+        } else {
+            LeadingTabRow(leading, tabs, reduceMotion, Modifier)
         }
-    } else {
-        LeadingTabRow(leading, tabs, reduceMotion, modifier)
     }
 }
+
+/** The back button (48 dp after a 6 dp inset): the tabs centre in the space after it. */
+private val BACK_SPACE = 54.dp
 
 /** Space before [LeadingTabRow]'s leading control, and between it and the tabs. */
 private val LeadingInset = 12.dp
 private val LeadingGap = 8.dp
 
-/** [leading] at the start and the tabs centred on one line, or [leading] on a line above the tabs when they would meet. */
+/**
+ * [leading] at the start and the tabs centred in the space after it, on one line while that space is at least
+ * [DETAIL_TABS_FULL_MIN]; otherwise [leading] on a line above the tabs, which centre in the full width.
+ */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun LeadingTabRow(leading: @Composable () -> Unit, tabs: @Composable () -> Unit, reduce: Boolean, modifier: Modifier) {
@@ -240,8 +259,9 @@ private fun LeadingTabRow(leading: @Composable () -> Unit, tabs: @Composable () 
                 val width = constraints.maxWidth
                 val rowHeight = DETAIL_TAB_ROW_HEIGHT.roundToPx()
                 val inset = LeadingInset.roundToPx()
-                val tabX = (width - tab.width) / 2
-                val inline = inset + lead.width + LeadingGap.roundToPx() <= tabX
+                val tabsStart = inset + lead.width + LeadingGap.roundToPx()
+                val inline = width - tabsStart >= DETAIL_TABS_FULL_MIN.roundToPx()
+                val tabX = if (inline) tabsStart + (width - tabsStart - tab.width) / 2 else (width - tab.width) / 2
                 val leadLine = if (inline) 0 else lead.height + LeadingGap.roundToPx()
                 layout(width, leadLine + rowHeight) {
                     lead.place(inset, if (inline) (rowHeight - lead.height) / 2 else LeadingGap.roundToPx())

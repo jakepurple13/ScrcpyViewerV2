@@ -348,6 +348,13 @@ class DevicesScreenshotTest {
     private fun renderEmulators(name: String, mode: ThemeMode, emulators: EmulatorsUiState, listWidthPx: Int = 460, width: Int = 1280) =
         render(name, mode, withEmulators, width = width, listWidthPx = listWidthPx, emulators = emulators.copy(hiddenSerials = setOf("emulator-5556")))
 
+    /** Item view's strip: the device, the "AVD" divider, the emulator tile with its count, and the running Pixel 9. */
+    @Test
+    fun `emulators narrow strip`() = render(
+        "emulators-light-narrow-strip.png", ThemeMode.Light, withEmulators.copy(advanced = false, canMirror = true, errors = emptyMap()),
+        width = 640, detailOpen = true, emulators = allStates,
+    )
+
     /** An emulator's right-click menu: Mirror only, no Wi-Fi item. */
     @Test
     fun `devices context menu emulator`() =

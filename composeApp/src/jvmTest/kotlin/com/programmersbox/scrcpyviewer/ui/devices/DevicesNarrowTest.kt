@@ -162,7 +162,8 @@ class DevicesNarrowTest {
     @Test
     fun `the switcher chip shares the tab line when it fits and takes its own line when not`() = scene(640) {
         fun chip() = described("Switch item").first().boundsInRoot
-        fun tabs() = text("Info").first().boundsInRoot
+        // The selected tab: a segment, or the menu button once the pane is narrower than 344 dp.
+        fun tabs() = text("Options").first().boundsInRoot
         assertTrue(chip().bottom > tabs().top && chip().top < tabs().bottom, "one line at 640: chip ${chip()}, tabs ${tabs()}")
         width = 360
         frames(150)

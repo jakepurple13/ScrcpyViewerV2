@@ -17,6 +17,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
@@ -130,6 +134,54 @@ fun CopyButton(text: () -> String, label: String = "Copy", modifier: Modifier = 
             label = "copyLabel",
         ) {
             Text(it, modifier = Modifier.padding(start = 6.dp), maxLines = 1, softWrap = false)
+        }
+    }
+}
+
+/**
+ * [CopyButton] without its label, for tight spaces: a copy icon described and tooltipped by [label]. It confirms the
+ * same way: the icon morphs into a check and tints for [COPY_CONFIRM_MILLIS].
+ */
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
+@Composable
+fun CopyIconButton(text: () -> String, label: String, modifier: Modifier = Modifier) {
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    var copies by remember { mutableIntStateOf(0) }
+    val copied = copies > 0
+    LaunchedEffect(copies) {
+        if (copies == 0) return@LaunchedEffect
+        delay(COPY_CONFIRM_MILLIS)
+        copies = 0
+    }
+    val content by animateColorAsState(
+        if (copied) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.primary,
+        tween(OPEN_MILLIS, easing = EmphasizedDecelerate), label = "copyIconContent",
+    )
+    TooltipArea(tooltip = { LabelTooltip(if (copied) "Copied" else label) }, modifier = modifier) {
+        IconButton(
+            onClick = {
+                val value = text()
+                scope.launch { clipboard.setClipEntry(ClipEntry(StringSelection(value))) }
+                copies++
+            },
+            colors = IconButtonDefaults.iconButtonColors(contentColor = content),
+        ) {
+            AnimatedContent(
+                targetState = copied,
+                transitionSpec = {
+                    val morph = tween<Float>(ICON_MORPH_MILLIS, easing = EmphasizedDecelerate)
+                    (scaleIn(morph, initialScale = 0.3f) + fadeIn(morph)) togetherWith
+                        (scaleOut(morph, targetScale = 0.3f) + fadeOut(morph)) using SizeTransform(clip = false)
+                },
+                label = "copyIconOnly",
+            ) { isCopied ->
+                Icon(
+                    if (isCopied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                    contentDescription = label,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }

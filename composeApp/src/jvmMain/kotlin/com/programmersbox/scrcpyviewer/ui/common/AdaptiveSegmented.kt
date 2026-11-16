@@ -64,7 +64,8 @@ private const val CrossFadeMillis = 150
  * Full); one dropdown button at [ControlSize.Menu]. Full/Icons and Menu cross-fade.
  *
  * [AdaptiveRow] also composes it in hidden probe slots, so it has no effects; the menu's open flag is its only state.
- * [fillWidth] stretches the control (segments stay equal), capped by [maxWidth].
+ * [fillWidth] stretches the control (segments stay equal), capped by [maxWidth]. [segmentMinWidth] keeps each segment
+ * at least that wide in the segmented forms.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -76,6 +77,7 @@ fun <T> AdaptiveSegmentedButtons(
     modifier: Modifier = Modifier,
     fillWidth: Boolean = false,
     maxWidth: Dp = Dp.Unspecified,
+    segmentMinWidth: Dp = Dp.Unspecified,
 ) {
     val reduceMotion = LocalReduceMotion.current
     val effective = if (size == ControlSize.Icons && options.none { it.icon != null }) ControlSize.Full else size
@@ -95,7 +97,7 @@ fun <T> AdaptiveSegmentedButtons(
         if (menu) {
             MenuForm(options, selected, onSelect, fillWidth)
         } else {
-            SegmentedForm(options, selected, onSelect, effective == ControlSize.Icons, reduceMotion, fillWidth)
+            SegmentedForm(options, selected, onSelect, effective == ControlSize.Icons, reduceMotion, fillWidth, segmentMinWidth)
         }
     }
 }
@@ -109,6 +111,7 @@ private fun <T> SegmentedForm(
     labelsHidden: Boolean,
     reduceMotion: Boolean,
     fillWidth: Boolean,
+    segmentMinWidth: Dp,
 ) {
     SingleChoiceSegmentedButtonRow(if (fillWidth) Modifier.fillMaxWidth() else Modifier) {
         options.forEachIndexed { index, option ->
@@ -121,7 +124,7 @@ private fun <T> SegmentedForm(
                     selected = isSelected,
                     onClick = { onSelect(option.value) },
                     shape = styledSegmentShape(index, options.size),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().widthIn(min = segmentMinWidth),
                     icon = {
                         val vector = option.icon
                         if (vector == null) {
