@@ -619,7 +619,7 @@ private fun DeviceStrip(
             label = "Emulators",
             avatar = { Icon(Icons.Filled.Devices, contentDescription = null, Modifier.size(22.dp)) },
             dividerLabel = "AVD",
-            badgeCount = if (avds.sdk is SdkLookup.Found) avds.rows.size else null,
+            badgeCount = if (avds.sdk is SdkLookup.Found) avds.rows.size.takeIf { it > 0 } else null,
         )
     }
     val items = devices.map { deviceItem(it, deviceTitle(it), divider = null) } +
