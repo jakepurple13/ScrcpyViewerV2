@@ -69,13 +69,16 @@ class PresetsScreenshotTest {
     fun `presets dark wide divider`() = shot("presets-dark-divider.png", ThemeMode.Dark, content = screen(state, listWidthPx = 300))
 
     @Test
-    fun `presets narrow list`() = shot("presets-light-narrow-list.png", ThemeMode.Light, width = 760, content = screen(state))
+    fun `presets narrow list`() = shot("presets-light-narrow-list.png", ThemeMode.Light, width = 640, content = screen(state))
 
     @Test
-    fun `presets narrow detail`() = shot("presets-light-narrow-detail.png", ThemeMode.Light, width = 760, content = screen(state, detailOpen = true))
+    fun `presets narrow detail`() = shot("presets-light-narrow-detail.png", ThemeMode.Light, width = 640, content = screen(state, detailOpen = true))
 
     @Test
-    fun `presets dark narrow detail`() = shot("presets-dark-narrow-detail.png", ThemeMode.Dark, width = 760, content = screen(state, detailOpen = true))
+    fun `presets dark narrow detail`() = shot("presets-dark-narrow-detail.png", ThemeMode.Dark, width = 640, content = screen(state, detailOpen = true))
+
+    @Test
+    fun `presets phone width detail`() = shot("presets-light-phone-detail.png", ThemeMode.Light, width = 360, content = screen(state, detailOpen = true))
 
     @Test
     fun `presets light`() = shot("presets-light.png", ThemeMode.Light, screen(state))

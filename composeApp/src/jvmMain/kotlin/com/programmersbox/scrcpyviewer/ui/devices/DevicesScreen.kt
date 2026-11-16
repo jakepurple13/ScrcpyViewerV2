@@ -140,7 +140,12 @@ import com.programmersbox.scrcpyviewer.ui.common.StripItem
 import com.programmersbox.scrcpyviewer.ui.common.closeOverlay
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.rememberSelectionHighlight
-import com.programmersbox.scrcpyviewer.ui.common.selectionHighlight
+import com.programmersbox.scrcpyviewer.ui.common.RowHighlight
+import com.programmersbox.scrcpyviewer.ui.common.highlightContainer
+import com.programmersbox.scrcpyviewer.ui.common.RowOrigin
+import com.programmersbox.scrcpyviewer.ui.common.highlightPart
+import com.programmersbox.scrcpyviewer.ui.common.rowOrigin
+import com.programmersbox.scrcpyviewer.ui.common.rememberRowHighlight
 import com.programmersbox.scrcpyviewer.ui.common.selectionHighlightTarget
 import com.programmersbox.scrcpyviewer.ui.common.rememberComposedViewModelStoreOwner
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
@@ -507,7 +512,8 @@ private fun DeviceColumn(
                             avdName = emulators?.avdNames?.get(device.serial),
                             motion = motion,
                             // Icon unfold's launch: the rows fade up in a stagger as the window appears.
-                            modifier = Modifier.launchEntrance(index).padding(bottom = 6.dp),
+                            modifier = Modifier.padding(bottom = 6.dp),
+                            entrance = Modifier.launchEntrance(index),
                         )
                     }
                 }
@@ -531,41 +537,6 @@ private fun DeviceColumn(
             Spacer(Modifier.width(8.dp))
             Text("Pair over Wi-Fi")
         }
-    }
-}
-
-/**
- * The device list's sliding selection highlight (Material). The list container draws it ([highlightContainer]) and
- * each row paints the part of it over the row's own surface ([highlightOverRow]), so it shows while it slides across
- * rows instead of passing under them.
- */
-@Stable
-internal class RowHighlight(val state: SelectionHighlightState, val color: Color) {
-    var container: LayoutCoordinates? = null
-}
-
-@Composable
-private fun rememberRowHighlight(): RowHighlight {
-    val state = rememberSelectionHighlight()
-    val color = MaterialTheme.colorScheme.secondaryContainer
-    return remember(state, color) { RowHighlight(state, color) }
-}
-
-@Composable
-private fun Modifier.highlightContainer(highlight: RowHighlight): Modifier =
-    selectionHighlight(highlight.state, highlight.color, styledCorner(12.dp)).onPlaced { highlight.container = it }
-
-/** Draws the part of [highlight] that lies over this row, in the row's [shape], on top of the row's surface. */
-@Composable
-private fun Modifier.highlightOverRow(highlight: RowHighlight, shape: Shape): Modifier {
-    var origin by remember { mutableStateOf(Offset.Zero) }
-    return onPlaced { row ->
-        val container = highlight.container?.takeIf { it.isAttached } ?: return@onPlaced
-        if (row.isAttached) origin = container.localPositionOf(row, Offset.Zero)
-    }.drawBehind {
-        val rect = highlight.state.current ?: return@drawBehind
-        val outline = shape.createOutline(rect.size, layoutDirection, this)
-        translate(rect.left - origin.x, rect.top - origin.y) { drawOutline(outline, highlight.color) }
     }
 }
 
@@ -707,6 +678,8 @@ private fun DeviceRow(
     /** The list's sliding selection (Material); the selected row marks itself as its target. */
     highlight: RowHighlight,
     modifier: Modifier = Modifier,
+    /** The row's entrance; it moves the row in a layer, so the highlight's bounds are read outside it. */
+    entrance: Modifier = Modifier,
     /** False while the row plays its exit: it ignores clicks and opens no menu. */
     interactive: Boolean = true,
     /** An emulator's AVD display name once the launcher knows it: its title instead of the system model. */
@@ -719,7 +692,12 @@ private fun DeviceRow(
     val dot = statusDotColor(device.state)
     val material = currentStyle == ThemeStyle.Material
     val hint = deviceHint(device)
-    Box(modifier) {
+    val origin = remember { RowOrigin() }
+    Box(
+        modifier
+            .then(if (material) Modifier.selectionHighlightTarget(highlight.state, selected).rowOrigin(highlight, origin) else Modifier)
+            .then(entrance),
+    ) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -729,11 +707,10 @@ private fun DeviceRow(
                     menuAt = event.changes.first().position
                 }
             }
-            .then(if (material) Modifier.selectionHighlightTarget(highlight.state, selected) else Modifier)
             .clip(shape)
             .arrivalGlow(glow, MaterialTheme.colorScheme.surface)
             // Material: the sliding highlight, over this row's surface. The other styles keep their own selected look.
-            .then(if (material) Modifier.highlightOverRow(highlight, shape) else if (selected) Modifier.selectedRow(shape) else Modifier)
+            .then(if (material) Modifier.highlightPart(highlight, shape, origin) else if (selected) Modifier.selectedRow(shape) else Modifier)
             .combinedClickable(enabled = interactive, onClick = onClick, onDoubleClick = onDoubleClick)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,

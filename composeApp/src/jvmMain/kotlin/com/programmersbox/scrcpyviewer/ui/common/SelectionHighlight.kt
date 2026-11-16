@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.ui.common
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -15,6 +16,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
@@ -24,6 +26,8 @@ import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import kotlinx.coroutines.flow.collectLatest
 
 /**
@@ -106,4 +110,47 @@ fun Modifier.selectionHighlight(state: SelectionHighlightState, color: Color, sh
         val outline: Outline = shape.createOutline(rect.size, layoutDirection, Density(density, fontScale))
         translate(rect.left, rect.top) { drawOutline(outline, color) }
     }
+}
+
+/**
+ * A list's sliding selection highlight (Material). The list container draws it ([highlightContainer]) and
+ * each row paints the part of it over the row's own surface ([rowOrigin], [highlightPart]), so it shows while it slides across
+ * rows instead of passing under them.
+ */
+@Stable
+internal class RowHighlight(val state: SelectionHighlightState, val color: Color) {
+    var container: LayoutCoordinates? = null
+}
+
+@Composable
+internal fun rememberRowHighlight(): RowHighlight {
+    val state = rememberSelectionHighlight()
+    val color = MaterialTheme.colorScheme.secondaryContainer
+    return remember(state, color) { RowHighlight(state, color) }
+}
+
+@Composable
+internal fun Modifier.highlightContainer(highlight: RowHighlight): Modifier =
+    selectionHighlight(highlight.state, highlight.color, styledCorner(12.dp)).onPlaced { highlight.container = it }
+
+/** Where a row sits in its list's highlight container (see [rowOrigin]). */
+@Stable
+internal class RowOrigin {
+    var offset by mutableStateOf(Offset.Zero)
+}
+
+/**
+ * Records where the row sits in [highlight]'s container. Put it (and [selectionHighlightTarget]) before an entrance
+ * modifier that moves the row in a layer: both then read the row's resting place, not where the entrance had it.
+ */
+internal fun Modifier.rowOrigin(highlight: RowHighlight, origin: RowOrigin): Modifier = onPlaced { row ->
+    val container = highlight.container?.takeIf { it.isAttached } ?: return@onPlaced
+    if (row.isAttached) origin.offset = container.localPositionOf(row, Offset.Zero)
+}
+
+/** Draws the part of [highlight] over a row whose place [origin] records, in [shape]; put it after the row's surface. */
+internal fun Modifier.highlightPart(highlight: RowHighlight, shape: Shape, origin: RowOrigin): Modifier = drawBehind {
+    val rect = highlight.state.current ?: return@drawBehind
+    val outline = shape.createOutline(rect.size, layoutDirection, this)
+    translate(rect.left - origin.offset.x, rect.top - origin.offset.y) { drawOutline(outline, highlight.color) }
 }
