@@ -18,7 +18,7 @@ plugins {
 
 // Single source of truth: feeds packageVersion and the generated APP_VERSION constant shown in the window title.
 // Local update tests only: -PappVersion=1.6.1 builds a "newer" package.
-val appVersion = (findProperty("appVersion") as String?) ?: "1.24.1"
+val appVersion = (findProperty("appVersion") as String?) ?: "1.25.0"
 
 // The scrcpy-server release the app bundles (downloadBundledTools); Settings › Help › About shows it.
 val scrcpyServerVersion = "5.0"
