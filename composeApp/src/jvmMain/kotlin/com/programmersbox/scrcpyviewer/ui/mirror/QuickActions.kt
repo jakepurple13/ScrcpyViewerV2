@@ -369,6 +369,13 @@ class QuickActions internal constructor(
 
     val enabled: Boolean get() = device != null && connected
 
+    /**
+     * The sheet's tab and each tab's width: the window's narrow reads ([uiState] reads every sheet state and would
+     * recompose the window on each icon, keystroke or drag step).
+     */
+    val shownTab: SheetTab get() = tab
+    val sheetWidths: SheetWidths get() = widths
+
     init {
         logcat?.onDock = ::showLogcatTab
     }

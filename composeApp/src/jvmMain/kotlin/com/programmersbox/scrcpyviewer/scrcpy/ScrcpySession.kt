@@ -4,6 +4,7 @@ import androidx.compose.ui.unit.IntSize
 import com.programmersbox.scrcpyviewer.media.RecordResult
 import com.programmersbox.scrcpyviewer.media.Recorder
 import com.programmersbox.scrcpyviewer.media.SessionRecording
+import com.programmersbox.scrcpyviewer.media.VideoDecoder
 import com.programmersbox.scrcpyviewer.media.VideoFrame
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import kotlinx.coroutines.CancellationException
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -73,7 +75,9 @@ data class RecordingInfo(val file: Path, val startedNanos: Long)
  * either may return null (no playback sink). The created sinks receive the session so they can publish
  * [frames]/[fps] through [publishFrame]/[publishFps]. More sinks (a recorder) can be attached with
  * [addVideoSink]/[addAudioSink]; a sink added late gets the meta/codec and the last config packet replayed. A sink
- * that throws is logged, closed and removed; the session keeps going.
+ * that throws is logged, closed and removed; the session keeps going, except for the video playback sink (the
+ * decoder): a decoder that cannot be created or throws fails the session ([videoPlaybackFailed]), since no frame can
+ * be shown any more.
  *
  * Any reader hitting EOF or an I/O error (or the control writer failing) sets [SessionStatus.Disconnected] and tears
  * the session down once: the sockets close and the readers stop, sinks are closed, recorders finish their files,
@@ -153,6 +157,15 @@ class ScrcpySession(
     private val videoLock = Any()
     private val audioLock = Any()
     private var videoMeta: VideoCodecMeta? = null
+    /** The sink [decoderFactory] made; its failure fails the session. */
+    @Volatile private var playbackSink: VideoSink? = null
+    /**
+     * The video is shown (as `OptionValues.hasVideoPlayback`). Without it a decoder failure is only logged, as for
+     * any sink: a recording-only session has nothing to show and keeps recording.
+     */
+    private val videoPlayback =
+        "no-video" !in values.entries && "no-video-playback" !in values.entries && "no-playback" !in values.entries
+    @Volatile private var videoCodec: Int? = null
     private var videoConfig: MediaPacket? = null
     private var videoPacketSeen = false
     private var audioCodec: Int? = null
@@ -210,6 +223,25 @@ class ScrcpySession(
         _frames.value = frame
     }
 
+    /**
+     * Releases the last frame's native pixels (up to ~16 MB that the GC does not see) and clears [frames]. The decoder
+     * keeps that frame after the session ends, for the Disconnected scrim; call this once nothing shows the session
+     * any more (its window closed, or a Reconnect replaced it), after [close].
+     */
+    fun releaseLastFrame() {
+        _frames.getAndUpdate { null }?.release()
+    }
+
+    /**
+     * For the video sink: decoding stopped for good (the decoder threw), so the window would stay frozen, or black,
+     * while saying Running. Fails the session with [cause] instead; the window shows it on the Disconnected card.
+     */
+    fun videoPlaybackFailed(cause: Throwable) {
+        if (!videoPlayback) return
+        val codec = videoCodec?.let { " (${VideoDecoder.codecName(it)})" }.orEmpty()
+        fail("Video decoding failed$codec: ${cause.message ?: cause}")
+    }
+
     /** For the video sink: publishes the decoded frame rate. */
     fun publishFps(value: Double) {
         _fps.value = value
@@ -220,7 +252,7 @@ class ScrcpySession(
         if (meta != null) {
             val size = _frameSize.value
             val current = if (size != null) meta.copy(width = size.width, height = size.height) else meta
-            if (!deliver(sink, sink::close) { onMeta(current); videoConfig?.let(::onPacket) }) return@synchronized
+            if (deliver(sink, sink::close) { onMeta(current); videoConfig?.let(::onPacket) } != null) return@synchronized
         }
         videoSinks += sink
     }
@@ -232,7 +264,7 @@ class ScrcpySession(
     fun addAudioSink(sink: AudioSink) = synchronized(audioLock) {
         val codec = audioCodec
         if (codec != null) {
-            if (!deliver(sink, sink::close) { onCodec(codec); audioConfig?.let(::onPacket) }) return@synchronized
+            if (deliver(sink, sink::close) { onCodec(codec); audioConfig?.let(::onPacket) } != null) return@synchronized
         }
         audioSinks += sink
     }
@@ -413,7 +445,22 @@ class ScrcpySession(
         val input = DataInputStream(BufferedInputStream(socket.getInputStream(), STREAM_BUFFER))
         val meta = readVideoCodecMeta(input)
         _frameSize.value = IntSize(meta.width, meta.height)
-        createSink("video") { decoderFactory(meta, this) }?.let { videoSinks += it }
+        videoCodec = meta.codecId
+        val playback = try {
+            decoderFactory(meta, this)
+        } catch (t: Throwable) {
+            // No FFmpeg decoder for the codec, or it would not open: nothing could ever be shown.
+            log.log(System.Logger.Level.ERROR, "Could not create the video decoder of $serial", t)
+            if (videoPlayback) {
+                fail("Cannot decode ${VideoDecoder.codecName(meta.codecId)} video: ${t.message ?: t}")
+                return
+            }
+            null
+        }
+        playback?.let {
+            playbackSink = it
+            videoSinks += it
+        }
         synchronized(videoLock) {
             videoMeta = meta
             dispatchVideo { onMeta(meta) }
@@ -505,30 +552,26 @@ class ScrcpySession(
     }
 
     private fun dispatchVideo(call: VideoSink.() -> Unit) {
-        for (sink in videoSinks) if (!deliver(sink, sink::close, call)) videoSinks -= sink
+        for (sink in videoSinks) {
+            val failure = deliver(sink, sink::close, call) ?: continue
+            videoSinks -= sink
+            if (sink === playbackSink) videoPlaybackFailed(failure)
+        }
     }
 
     private fun dispatchAudio(call: AudioSink.() -> Unit) {
-        for (sink in audioSinks) if (!deliver(sink, sink::close, call)) audioSinks -= sink
+        for (sink in audioSinks) if (deliver(sink, sink::close, call) != null) audioSinks -= sink
     }
 
-    private fun <S> createSink(kind: String, factory: () -> S?): S? =
-        try {
-            factory()
-        } catch (t: Throwable) {
-            log.log(System.Logger.Level.ERROR, "Could not create the $kind sink of $serial", t)
-            null
-        }
-
-    /** Calls [call] on [sink]; on failure logs, closes the sink and returns false. */
-    private fun <S> deliver(sink: S, close: () -> Unit, call: S.() -> Unit): Boolean =
+    /** Calls [call] on [sink]; on failure logs, closes the sink and returns what it threw (null on success). */
+    private fun <S> deliver(sink: S, close: () -> Unit, call: S.() -> Unit): Throwable? =
         try {
             sink.call()
-            true
+            null
         } catch (t: Throwable) {
             log.log(System.Logger.Level.ERROR, "Removing failing sink $sink of $serial", t)
             runCatching(close)
-            false
+            t
         }
 
     private fun fail(message: String) {

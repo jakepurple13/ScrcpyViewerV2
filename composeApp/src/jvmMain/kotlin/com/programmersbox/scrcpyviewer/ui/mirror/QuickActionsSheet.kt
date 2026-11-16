@@ -216,6 +216,24 @@ fun rememberQuickActionsPanel(
     links: LinksState? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
+    return rememberQuickActionsPanel({ currentState }, onEvent, console, rowWidth, filesTab, logcat, links)
+}
+
+/**
+ * The same, with the state read through [state] inside the panel: a sheet change (an icon, a keystroke, a drag step)
+ * then recomposes the panel only, not whoever holds the [QuickActions].
+ */
+@Composable
+fun rememberQuickActionsPanel(
+    state: () -> QuickActionsUiState,
+    onEvent: (QuickActionEvent) -> Unit,
+    console: ShellConsole?,
+    rowWidth: Dp?,
+    filesTab: (@Composable () -> Unit)? = null,
+    logcat: LogcatController? = null,
+    links: LinksState? = null,
+): @Composable (Modifier) -> Unit {
+    val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
     val currentConsole by rememberUpdatedState(console)
     val currentRowWidth by rememberUpdatedState(rowWidth)
@@ -225,7 +243,7 @@ fun rememberQuickActionsPanel(
     return remember {
         movableContentOf { modifier: Modifier ->
             QuickActionsPanel(
-                currentState, currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab, currentLogcat,
+                currentState(), currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab, currentLogcat,
                 links = currentLinks,
             )
         }

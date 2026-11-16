@@ -290,23 +290,112 @@ class ScrcpySessionTest {
     }
 
     @Test
-    fun `a throwing sink is removed and the session keeps running`() = runBlocking {
+    fun `a throwing extra sink is removed and the session keeps running`() = runBlocking {
         val launcher = LocalPairLauncher()
-        val bad = RecordingVideoSink(throwOnPacket = true)
-        val s = session(launcher, sink = bad)
+        val playback = RecordingVideoSink()
+        val s = session(launcher, sink = playback)
         s.await(SessionStatus.Running)
+        val bad = RecordingVideoSink(throwOnPacket = true)
         val good = RecordingVideoSink()
         val out = DataOutputStream(launcher.device.await().video!!.getOutputStream())
         out.writeInt(StreamProtocol.CODEC_H264)
         out.writeSession(100, 200)
         withTimeout(5_000) { s.frameSize.first { it != null } }
-        s.addVideoSink(good) // a late sink gets the current meta replayed
+        // Late sinks (a recorder) get the current meta replayed.
+        s.addVideoSink(bad)
+        s.addVideoSink(good)
         out.writePacket(1, byteArrayOf(9))
         out.writePacket(2, byteArrayOf(8))
         withTimeout(5_000) { while (good.packets.size < 2) delay(10) }
         assertTrue(bad.closed)
         assertEquals(listOf(VideoCodecMeta(StreamProtocol.CODEC_H264, 100, 200)), good.metas)
+        assertEquals(2, playback.packets.size)
         assertEquals(SessionStatus.Running, s.status.value)
+        s.close()
+    }
+
+    @Test
+    fun `a decoder that cannot be created fails the session with the codec`() = runBlocking {
+        val launcher = LocalPairLauncher()
+        val s = ScrcpySession(
+            "SER", OptionValues(emptyMap()), launcher,
+            decoderFactory = { _, _ -> throw java.io.IOException("No FFmpeg decoder for AV1") },
+            audioFactory = { _, _ -> null },
+            scope = parent,
+        )
+        s.await(SessionStatus.Running)
+        val out = DataOutputStream(launcher.device.await().video!!.getOutputStream())
+        out.writeInt(StreamProtocol.CODEC_AV1)
+        out.writeSession(100, 200)
+        withTimeout(5_000) { s.status.first { it == SessionStatus.Failed } }
+        val error = s.error.value.orEmpty()
+        assertTrue("AV1" in error && "No FFmpeg decoder" in error, "error: $error")
+        s.close()
+        assertEquals(SessionStatus.Failed, s.status.value)
+    }
+
+    @Test
+    fun `without video playback a decoder failure leaves the session running`() = runBlocking {
+        // A recording-only session (no-video-playback) has nothing to show: it keeps recording.
+        val launcher = LocalPairLauncher()
+        val s = ScrcpySession(
+            "SER", OptionValues(mapOf("no-video-playback" to null)), launcher,
+            decoderFactory = { _, _ -> throw java.io.IOException("No FFmpeg decoder for AV1") },
+            audioFactory = { _, _ -> null },
+            scope = parent,
+        )
+        s.await(SessionStatus.Running)
+        val out = DataOutputStream(launcher.device.await().video!!.getOutputStream())
+        out.writeInt(StreamProtocol.CODEC_AV1)
+        out.writeSession(100, 200)
+        withTimeout(5_000) { s.frameSize.first { it != null } }
+        out.writePacket(1, byteArrayOf(9))
+        val late = RecordingVideoSink()
+        s.addVideoSink(late)
+        out.writePacket(2, byteArrayOf(8))
+        withTimeout(5_000) { while (late.packets.isEmpty()) delay(10) }
+        assertEquals(SessionStatus.Running, s.status.value)
+        s.close()
+    }
+
+    @Test
+    fun `a decoder failing mid-stream fails the session instead of freezing`() = runBlocking {
+        val launcher = LocalPairLauncher()
+        val decoder = RecordingVideoSink(throwOnPacket = true)
+        val s = session(launcher, sink = decoder)
+        s.await(SessionStatus.Running)
+        val out = DataOutputStream(launcher.device.await().video!!.getOutputStream())
+        out.writeInt(StreamProtocol.CODEC_H265)
+        out.writeSession(100, 200)
+        out.writePacket(1, byteArrayOf(9))
+        withTimeout(5_000) { s.status.first { it == SessionStatus.Failed } }
+        val error = s.error.value.orEmpty()
+        assertTrue("H.265" in error && "sink bug" in error, "error: $error")
+        assertTrue(decoder.closed)
+        s.close()
+    }
+
+    @Test
+    fun `a buffered decoder failing is reported through the session`() = runBlocking {
+        val launcher = LocalPairLauncher()
+        val s = ScrcpySession(
+            "SER", OptionValues(emptyMap()), launcher,
+            // What AppModule builds with video-buffer set: the decoder behind a DelayedVideoSink.
+            decoderFactory = { _, session ->
+                com.programmersbox.scrcpyviewer.media.DelayedVideoSink(
+                    RecordingVideoSink(throwOnPacket = true), delayMs = 10, onFailure = session::videoPlaybackFailed,
+                )
+            },
+            audioFactory = { _, _ -> null },
+            scope = parent,
+        )
+        s.await(SessionStatus.Running)
+        val out = DataOutputStream(launcher.device.await().video!!.getOutputStream())
+        out.writeInt(StreamProtocol.CODEC_H264)
+        out.writeSession(100, 200)
+        out.writePacket(1, byteArrayOf(9))
+        withTimeout(5_000) { s.status.first { it == SessionStatus.Failed } }
+        assertTrue("sink bug" in s.error.value.orEmpty(), "error: ${s.error.value}")
         s.close()
     }
 

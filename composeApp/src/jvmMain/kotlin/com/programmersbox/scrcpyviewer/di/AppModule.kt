@@ -230,7 +230,10 @@ class MirrorModule {
                 serial, values, serverLauncher,
                 decoderFactory = { meta, session ->
                     // video-buffer delays what is shown, not what is recorded (the recorder is another sink).
-                    DelayedVideoSink.forOptions(VideoDecoder(meta.codecId, session::publishFrame, session::publishFps), values)
+                    // A failure on the buffer's thread fails the session too (see ScrcpySession.videoPlaybackFailed).
+                    DelayedVideoSink.forOptions(
+                        VideoDecoder(meta.codecId, session::publishFrame, session::publishFps), values, session::videoPlaybackFailed,
+                    )
                 },
                 audioFactory = { codecId, _ -> AudioPlayer.forOptions(codecId, values) },
                 scope = scope,

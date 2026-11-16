@@ -91,12 +91,15 @@ internal class VideoBufferQueue(private val delayUs: Long) {
 /**
  * A [VideoSink] that delays what it passes to [delegate] by `--video-buffer` (see [VideoBufferQueue]), for display
  * only: the session's other sinks (the recorder) are not affected. A dedicated thread delivers the packets; [close]
- * drops what is still queued, stops it and closes [delegate]. A [delegate] failure is logged and stops the buffer.
+ * drops what is still queued, stops it and closes [delegate]. A [delegate] failure is logged, stops the buffer and is
+ * passed to [onFailure] (the session's [com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession.videoPlaybackFailed]):
+ * this thread's failures never reach the session's own sink error handling.
  */
 class DelayedVideoSink(
     private val delegate: VideoSink,
     delayMs: Long,
     private val nowUs: () -> Long = { System.nanoTime() / 1000 },
+    private val onFailure: (Throwable) -> Unit = {},
 ) : VideoSink {
     private val lock = ReentrantLock()
     private val changed = lock.newCondition()
@@ -146,6 +149,7 @@ class DelayedVideoSink(
                     queue.clear()
                 }
                 closeDelegate()
+                runCatching { onFailure(t) }
                 return
             }
         }
@@ -168,10 +172,13 @@ class DelayedVideoSink(
     companion object {
         private val log = System.getLogger("scrcpyviewer.VideoBuffer")
 
-        /** [sink] behind a [DelayedVideoSink] when `video-buffer` is set above 0, else [sink] itself. */
-        fun forOptions(sink: VideoSink, values: OptionValues): VideoSink {
+        /**
+         * [sink] behind a [DelayedVideoSink] when `video-buffer` is set above 0, else [sink] itself. [onFailure] gets a
+         * failure of [sink] on the buffer's thread.
+         */
+        fun forOptions(sink: VideoSink, values: OptionValues, onFailure: (Throwable) -> Unit = {}): VideoSink {
             val ms = values.entries["video-buffer"]?.toLongOrNull()?.takeIf { it > 0 } ?: return sink
-            return DelayedVideoSink(sink, ms)
+            return DelayedVideoSink(sink, ms, onFailure = onFailure)
         }
     }
 }
