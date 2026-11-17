@@ -2,14 +2,13 @@ package com.programmersbox.scrcpyviewer.ui.devices.info
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.animateBounds
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -34,8 +33,6 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -178,13 +175,11 @@ internal fun DetailTab.label(): String = when (this) {
 }
 
 /**
- * The detail pane's top row: the back button (single-pane layout) or a [leading] control (the list switcher chip)
- * and, while a device is [selected], the Options | Info control, which fades and scales in and out. The row keeps
+ * The detail pane's top row: the back arrow (while the detail is pushed over the list in a narrow window) and, while a
+ * device is [selected], the Options | Info control, which fades and scales in and out. The row keeps
  * [DETAIL_TAB_ROW_HEIGHT] either way, so nothing below it moves. The tabs are centred in the space after the back
- * button or [leading], at [detailTabsSize] of that space: the segments, or one menu button in a narrow pane. When
- * [leading] leaves the tabs less than [DETAIL_TABS_FULL_MIN], it takes a line of its own above them and they get
- * the full width; both glide to their new places and the row's height springs ([layoutSpring]), or change at once
- * with [reduceMotion].
+ * arrow, at [detailTabsSize] of that space: the segments, or one menu button in a narrow pane. When the arrow comes or
+ * goes it fades and the tabs glide to their new centre ([layoutSpring]), or both change at once with [reduceMotion].
  */
 @Composable
 fun DetailTabRow(
@@ -194,12 +189,14 @@ fun DetailTabRow(
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
     reduceMotion: Boolean = remember { systemReducesMotion() },
-    leading: (@Composable () -> Unit)? = null,
 ) {
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        // Beside [leading] the tabs only keep its line with Full room, so the row's width alone picks their size.
-        val backSpace = if (leading == null && onBack != null) BACK_SPACE else 0.dp
+        val backSpace = if (onBack != null) BACK_SPACE else 0.dp
         val size = detailTabsSize(maxWidth - backSpace)
+        val tabsStart by animateDpAsState(backSpace, if (reduceMotion) snap() else layoutSpring(), label = "tabsStart")
+        // The arrow fading out still needs something to call.
+        val lastBack = remember { arrayOf(onBack) }
+        if (onBack != null) lastBack[0] = onBack
         val tabs = @Composable {
             AnimatedVisibility(
                 visible = selected,
@@ -221,56 +218,23 @@ fun DetailTabRow(
                 }
             }
         }
-        if (leading == null) {
-            Box(Modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
-                if (onBack != null) DetailBackButton(onBack, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
-                Box(Modifier.fillMaxSize().padding(start = backSpace), contentAlignment = Alignment.Center) { tabs() }
+        Box(Modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
+            AnimatedVisibility(
+                visible = onBack != null,
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+                enter = fadeIn(tween(if (reduceMotion) REDUCED_FADE_MILLIS else 220)),
+                exit = fadeOut(tween(if (reduceMotion) REDUCED_FADE_MILLIS else 120)),
+            ) {
+                DetailBackButton({ lastBack[0]?.invoke() })
             }
-        } else {
-            LeadingTabRow(leading, tabs, reduceMotion, Modifier)
+            // The spring overshoots a little below 0 on its way back.
+            Box(Modifier.fillMaxSize().padding(start = tabsStart.coerceAtLeast(0.dp)), contentAlignment = Alignment.Center) { tabs() }
         }
     }
 }
 
-/** The back button (48 dp after a 6 dp inset): the tabs centre in the space after it. */
+/** The back arrow (48 dp after a 6 dp inset): the tabs centre in the space after it. */
 private val BACK_SPACE = 54.dp
-
-/** Space before [LeadingTabRow]'s leading control, and between it and the tabs. */
-private val LeadingInset = 12.dp
-private val LeadingGap = 8.dp
-
-/**
- * [leading] at the start and the tabs centred in the space after it, on one line while that space is at least
- * [DETAIL_TABS_FULL_MIN]; otherwise [leading] on a line above the tabs, which centre in the full width.
- */
-@OptIn(ExperimentalSharedTransitionApi::class)
-@Composable
-private fun LeadingTabRow(leading: @Composable () -> Unit, tabs: @Composable () -> Unit, reduce: Boolean, modifier: Modifier) {
-    Box(modifier.fillMaxWidth().then(if (reduce) Modifier else Modifier.animateContentSize(layoutSpring()))) {
-        LookaheadScope {
-            val glide = if (reduce) Modifier else Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
-            Layout(
-                contents = listOf({ Box(glide) { leading() } }, { Box(glide) { tabs() } }),
-                modifier = Modifier.fillMaxWidth(),
-            ) { (leadingMeasurables, tabMeasurables), constraints ->
-                val loose = constraints.copy(minWidth = 0, minHeight = 0)
-                val lead = leadingMeasurables.first().measure(loose)
-                val tab = tabMeasurables.first().measure(loose)
-                val width = constraints.maxWidth
-                val rowHeight = DETAIL_TAB_ROW_HEIGHT.roundToPx()
-                val inset = LeadingInset.roundToPx()
-                val tabsStart = inset + lead.width + LeadingGap.roundToPx()
-                val inline = width - tabsStart >= DETAIL_TABS_FULL_MIN.roundToPx()
-                val tabX = if (inline) tabsStart + (width - tabsStart - tab.width) / 2 else (width - tab.width) / 2
-                val leadLine = if (inline) 0 else lead.height + LeadingGap.roundToPx()
-                layout(width, leadLine + rowHeight) {
-                    lead.place(inset, if (inline) (rowHeight - lead.height) / 2 else LeadingGap.roundToPx())
-                    tab.place(tabX, leadLine + (rowHeight - tab.height) / 2)
-                }
-            }
-        }
-    }
-}
 
 /** What one device's detail shows; a leaving device keeps its last one while it animates out. */
 private data class Shown<T>(val page: T, val info: DeviceInfoUiState)

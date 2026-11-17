@@ -1,9 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateBounds
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
@@ -18,7 +16,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -41,7 +38,6 @@ import com.programmersbox.scrcpyviewer.ui.theme.AssistChip
 import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -92,15 +88,11 @@ import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.actions.ToggleAction
 import com.programmersbox.scrcpyviewer.ui.common.AdaptiveListDetail
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
-import com.programmersbox.scrcpyviewer.ui.common.ListPresentation
-import com.programmersbox.scrcpyviewer.ui.common.ListStrip
-import com.programmersbox.scrcpyviewer.ui.common.ListSwitcherChip
+import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.RowHighlight
 import com.programmersbox.scrcpyviewer.ui.common.RowOrigin
-import com.programmersbox.scrcpyviewer.ui.common.StripItem
-import com.programmersbox.scrcpyviewer.ui.common.closeOverlay
 import com.programmersbox.scrcpyviewer.ui.common.highlightContainer
 import com.programmersbox.scrcpyviewer.ui.common.highlightPart
 import com.programmersbox.scrcpyviewer.ui.common.itemSwitchTransform
@@ -268,7 +260,7 @@ fun ActionsContent(
             is ActionsEvent.NewFromTemplate -> {
                 picker = false
                 onEvent(event)
-                panes.navigation.openDetail()
+                panes.push()
             }
             else -> onEvent(event)
         }
@@ -282,51 +274,27 @@ fun ActionsContent(
             listMinWidth = ACTION_LIST_MIN_WIDTH,
             listPreferredWidth = ActionListPreferredWidth,
             hasSelection = state.draft != null,
-            list = { presentation ->
-                // Rows and avatars cross-fade while the list's width glides between them.
-                Crossfade(presentation, animationSpec = tween(if (reduceMotion) 150 else 220), label = "actionPresentation") { shown ->
-                    when (shown) {
-                        ListPresentation.Full -> ActionList(
-                            state,
-                            onBrowseTemplates = { picker = true },
-                            onSelect = {
-                                onEvent(ActionsEvent.Select(it))
-                                panes.navigation.openDetail()
-                                panes.closeOverlay()
-                            },
-                            onEvent = { event ->
-                                send(event)
-                                if (event == ActionsEvent.New) {
-                                    panes.navigation.openDetail()
-                                    panes.closeOverlay()
-                                }
-                            },
-                        )
-                        ListPresentation.Strip -> ActionStrip(
-                            state,
-                            onSelect = { onEvent(ActionsEvent.Select(it)) },
-                            onShowList = panes.navigation::backToList,
-                            onNew = { onEvent(ActionsEvent.New) },
-                            onBrowseTemplates = { picker = true },
-                        )
-                    }
-                }
+            list = {
+                ActionList(
+                    state,
+                    onBrowseTemplates = { picker = true },
+                    onSelect = {
+                        onEvent(ActionsEvent.Select(it))
+                        panes.push()
+                    },
+                    onEvent = { event ->
+                        send(event)
+                        if (event == ActionsEvent.New) panes.push()
+                    },
+                )
             },
-            detail = { openSwitcher ->
-                // Item view only: the open action leaving the list (deleted) leaves item view too.
-                if (openSwitcher != null) BackToListWhenGone(state, panes.navigation::backToList)
-                val switcher: (@Composable () -> Unit)? = openSwitcher?.let { open ->
-                    {
-                        val label = state.draft?.let { it.name.ifBlank { if (it.id == null) "New action" else "Untitled" } } ?: "Actions"
-                        ListSwitcherChip(label, open, Modifier.padding(bottom = 4.dp))
-                    }
-                }
+            detail = { onBack ->
                 ActionDetail(
-                    state, packages, onEvent, switcher,
+                    state, packages, onEvent, onBack,
                     onBrowseTemplates = { picker = true },
                     onEmptyEvent = { event ->
                         send(event)
-                        if (event == ActionsEvent.New) panes.navigation.openDetail()
+                        if (event == ActionsEvent.New) panes.push()
                     },
                 )
             },
@@ -350,7 +318,8 @@ private fun ActionDetail(
     state: ActionsUiState,
     packages: List<String>?,
     onEvent: (ActionsEvent) -> Unit,
-    switcher: (@Composable () -> Unit)?,
+    /** Back to the list, while the detail is pushed over it. */
+    onBack: (() -> Unit)?,
     onBrowseTemplates: () -> Unit,
     onEmptyEvent: (ActionsEvent) -> Unit,
 ) {
@@ -374,9 +343,9 @@ private fun ActionDetail(
         Box(Modifier.fillMaxSize().then(if (leaving) Modifier.blockInput() else Modifier)) {
             when {
                 // Keyed by the open draft so remembered field text (e.g. a List variable's choices) never carries over.
-                draft != null -> key(shown.editorKey) { ActionEditor(shown, draft, packages, if (leaving) IgnoreEvent else onEvent, switcher) }
+                draft != null -> key(shown.editorKey) { ActionEditor(shown, draft, packages, if (leaving) IgnoreEvent else onEvent, onBack) }
                 else -> {
-                    switcher?.let { Box(Modifier.padding(start = 22.dp, top = 16.dp)) { it() } }
+                    onBack?.let { DetailBackButton(it, Modifier.padding(start = 10.dp, top = 12.dp)) }
                     if (shown.actions.isEmpty()) EmptyState(
                         onBrowseTemplates = onBrowseTemplates,
                         onEvent = onEmptyEvent,
@@ -404,59 +373,6 @@ private fun Modifier.blockInput(): Modifier = focusProperties { canFocus = false
 
 /** The detail's switch key with no draft open. */
 private const val NO_DRAFT_KEY = -1
-
-/**
- * Calls [backToList] when the action that was open leaves the list (deleted): item view would otherwise show the
- * empty editor page.
- */
-@Composable
-private fun BackToListWhenGone(state: ActionsUiState, backToList: () -> Unit) {
-    val open = remember { arrayOf(state.selectedId) }
-    val ids = state.actions.map { it.id }
-    LaunchedEffect(state.selectedId, ids) {
-        val was = open[0]
-        open[0] = state.selectedId
-        if (was != null && was !in ids) backToList()
-    }
-}
-
-/**
- * The action list beside an open action: each action's own icon ("Made by AI" ones after an AI divider), and a New
- * action button under them that opens the same New menu as the full list. Import and Export stay in the full list.
- */
-@Composable
-private fun ActionStrip(
-    state: ActionsUiState,
-    onSelect: (String) -> Unit,
-    onShowList: () -> Unit,
-    onNew: () -> Unit,
-    onBrowseTemplates: () -> Unit,
-) {
-    val groups = ActionGroups.of(state.actions)
-    fun item(action: CustomAction, divider: String?) = StripItem(
-        key = action.id,
-        label = action.name,
-        avatar = { Icon(ActionIcons.forName(action.icon, action.defaultIcon), contentDescription = null, Modifier.size(22.dp)) },
-        dividerLabel = divider,
-    )
-    val items = groups.yours.map { item(it, null) } +
-        if (groups.showAiSection) groups.madeByAi.mapIndexed { i, a -> item(a, if (i == 0) "AI" else null) } else emptyList()
-    ListStrip(
-        items, state.selectedId,
-        onSelect = { onSelect(it as String) },
-        onShowList = onShowList,
-        modifier = Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
-        var menu by remember { mutableStateOf(false) }
-        Box(Modifier.padding(top = 4.dp, bottom = 8.dp)) {
-            FilledTonalIconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) {
-                Icon(Icons.Filled.Add, contentDescription = "New action", Modifier.size(20.dp))
-            }
-            // Anchored to the button just clicked, like the full list's arrow.
-            NewActionMenu(menu, onDismiss = { menu = false }, onNew = onNew, onBrowseTemplates = onBrowseTemplates)
-        }
-    }
-}
 
 /** Narrowest action list that still shows a row and the toolbar under it. */
 val ACTION_LIST_MIN_WIDTH = 260.dp

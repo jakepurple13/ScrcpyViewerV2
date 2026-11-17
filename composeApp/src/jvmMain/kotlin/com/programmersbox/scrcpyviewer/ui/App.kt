@@ -323,8 +323,8 @@ fun App(
         actionsNavigation.requests.collect { request ->
             navigator.select(TopLevelRoute.Actions)
             actionsViewModel.handle(request)
-            // In the single-pane layout, an opened action shows the editor rather than the list.
-            if (request.new || request.actionId != null) actionsPanes.navigation.openDetail()
+            // An opened action is pushed: a narrow window shows its editor over the list.
+            if (request.new || request.actionId != null) actionsPanes.push()
         }
     }
     // The tray menu's Settings… (or a device it can't mirror): show that destination. Main.kt raises the window.

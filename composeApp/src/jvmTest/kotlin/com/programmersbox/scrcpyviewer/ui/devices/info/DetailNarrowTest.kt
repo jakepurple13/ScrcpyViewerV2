@@ -36,7 +36,6 @@ import com.programmersbox.scrcpyviewer.info.StorageBreakdown
 import com.programmersbox.scrcpyviewer.info.StorageInfo
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
 import com.programmersbox.scrcpyviewer.ui.common.ControlSize
-import com.programmersbox.scrcpyviewer.ui.common.ListSwitcherChip
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.onEdt
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
@@ -49,7 +48,7 @@ import kotlin.test.assertTrue
 
 /**
  * The detail pane's tab row and the Info tab in a narrow pane (1 px = 1 dp): the tabs fold to a menu below 344 dp and
- * never overlap the switcher chip, "Copy as text" becomes an icon below 220 dp of content, and a long IP stays inside
+ * never overlap the back arrow, "Copy as text" becomes an icon below 220 dp of content, and a long IP stays inside
  * its card. Motion is on and passed explicitly: CI runners report reduce motion on.
  */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -89,8 +88,8 @@ class DetailNarrowTest {
     private var tab by mutableStateOf(DetailTab.Info)
     private var width by mutableIntStateOf(224)
 
-    /** The tab row (with the switcher chip in its leading slot) over the Info pane, in a pane [startWidth] wide. */
-    private fun scene(startWidth: Int, chip: Boolean = true, block: SceneDriver.() -> Unit) = onEdt {
+    /** The tab row (with the back arrow when [back]) over the Info pane, in a pane [startWidth] wide. */
+    private fun scene(startWidth: Int, back: Boolean = true, block: SceneDriver.() -> Unit) = onEdt {
         width = startWidth
         tab = DetailTab.Info
         val driver = SceneDriver(ImageComposeScene(1000, 900, Density(1f)) {
@@ -100,8 +99,7 @@ class DetailNarrowTest {
                         Box(Modifier.width(width.dp).fillMaxHeight()) {
                             Column {
                                 DetailTabRow(
-                                    selected = true, tab = tab, onTab = { tab = it }, onBack = null, reduceMotion = false,
-                                    leading = if (chip) ({ ListSwitcherChip("Galaxy A15 5G", {}) }) else null,
+                                    selected = true, tab = tab, onTab = { tab = it }, onBack = if (back) ({}) else null, reduceMotion = false,
                                 )
                                 DeviceInfoPane(
                                     info, {}, Modifier.padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 14.dp),
@@ -147,13 +145,13 @@ class DetailNarrowTest {
     }
 
     @Test
-    fun `224 wide - one Info menu, the chip clear of it, and the icon copy inside the pane`() = scene(224) {
+    fun `224 wide - one Info menu, the back arrow clear of it, and the icon copy inside the pane`() = scene(224) {
         assertEquals(1, clickable("Info").size, "one Info control")
         assertTrue(text("Options").isEmpty(), "Options hides in the menu")
-        val chip = described("Switch item").single().boundsInRoot
+        val arrow = described("Back to list").single().boundsInRoot
         val tabs = tabControl()
-        assertFalse(chip.overlaps(tabs), "chip $chip and tabs $tabs overlap")
-        if (chip.bottom > tabs.top) assertTrue(chip.right <= tabs.left, "on one line the chip ends before the tabs: $chip, $tabs")
+        assertFalse(arrow.overlaps(tabs), "arrow $arrow and tabs $tabs overlap")
+        assertTrue(arrow.bottom > tabs.top && arrow.right <= tabs.left, "one line, the arrow ends before the tabs: $arrow, $tabs")
         assertTrue(tabs.right <= 224f && tabs.left >= 0f, "the tabs fit: $tabs")
         val copy = assertNotNull(described("Copy as text").firstOrNull(), "the icon copy").boundsInRoot
         assertTrue(copy.left >= 0f && copy.right <= 224f, "copy inside 224: $copy")
@@ -182,19 +180,19 @@ class DetailNarrowTest {
     }
 
     @Test
-    fun `chip and tabs share a line only when the tabs stay clear of the chip`() = scene(640) {
+    fun `the back arrow and tabs share a line with the tabs clear of the arrow`() = scene(640) {
         for (w in listOf(640, 520, 420, 360, 300, 224)) {
             width = w
             frames(150)
-            val chip = described("Switch item").single().boundsInRoot
+            val arrow = described("Back to list").single().boundsInRoot
             val tabs = tabControl()
-            assertFalse(chip.overlaps(tabs), "$w: chip $chip and tabs $tabs overlap")
-            if (chip.bottom > tabs.top) assertTrue(chip.right <= tabs.left, "$w: chip $chip, tabs $tabs")
+            assertFalse(arrow.overlaps(tabs), "$w: arrow $arrow and tabs $tabs overlap")
+            assertTrue(arrow.bottom > tabs.top && arrow.right <= tabs.left, "$w: arrow $arrow, tabs $tabs")
         }
     }
 
     @Test
-    fun `no chip - Full tabs centred in the full width`() = scene(400, chip = false) {
+    fun `no back arrow - Full tabs centred in the full width`() = scene(400, back = false) {
         val tabs = tabControl()
         assertTrue(text("Options").isNotEmpty())
         assertTrue(kotlin.math.abs((tabs.left + tabs.right) / 2 - 200f) < 2f, "centred: $tabs")

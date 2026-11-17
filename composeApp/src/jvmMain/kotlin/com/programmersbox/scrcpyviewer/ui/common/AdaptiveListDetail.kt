@@ -1,7 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.common
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
@@ -11,7 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -19,43 +22,56 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.VerticalDragHandle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.Os
 import java.awt.Cursor
 import kotlin.math.roundToInt
-import kotlinx.coroutines.launch
 
 /** What the list width motion last saw, so a recomposition can tell a mode or user change from a window resize. */
 private class ListWidthMotion(var mode: PaneMode, var userWidth: Any?, var shown: Dp) {
@@ -118,80 +134,101 @@ enum class PaneMode {
     /** List and detail side by side, split by the draggable divider. */
     TwoPane,
 
-    /** The list alone at full width (nothing open). */
+    /** The list alone at full width (nothing pushed). */
     ListView,
 
-    /** The open item, with the list shrunk to the [StripWidth] icon strip on its left. */
+    /** The pushed item's detail at full width over the list, which waits shifted and dimmed beneath it. */
     ItemView,
 }
 
 /**
  * Two panes when [contentWidth] fits the list's minimum, the divider and [detailMinWidth]; the dragged
- * width does not count, so dragging never flips modes. Below that, [detailOpen] picks the view.
+ * width does not count, so dragging never flips modes. Below that, [pushed] picks the view.
  */
 fun paneMode(
     contentWidth: Dp,
     listMinWidth: Dp,
-    detailOpen: Boolean,
+    pushed: Boolean,
     detailMinWidth: Dp = DetailMinWidth,
     divider: Dp = DividerWidth,
 ): PaneMode = when {
     contentWidth >= listMinWidth + divider + detailMinWidth -> PaneMode.TwoPane
-    detailOpen -> PaneMode.ItemView
+    pushed -> PaneMode.ItemView
     else -> PaneMode.ListView
 }
 
-/** How the list pane draws itself: full rows, or the icon strip beside an open item. */
-enum class ListPresentation { Full, Strip }
-
-/** Width of the list's icon strip in item view. */
-val StripWidth = 76.dp
+/** Esc, or ⌘[ on macOS and Ctrl+[ elsewhere: back from a pushed detail to the list. */
+internal fun isBackShortcut(key: Key, meta: Boolean, ctrl: Boolean, mac: Boolean = Os.isMac): Boolean = when (key) {
+    Key.Escape -> true
+    Key.LeftBracket -> if (mac) meta && !ctrl else ctrl && !meta
+    else -> false
+}
 
 /** The detail never gets less than this in two panes. */
 private val DetailMinWidth = 420.dp
 
-/** Gap (with a hairline) between the strip and the detail in item view. */
-private val StripGap = 8.dp
-
-/** Distance the detail slides in from the right when an item opens from the list view. */
+/** Distance the detail slides in from the right when two panes open beside the list view. */
 private val DetailEnterOffset = 48.dp
+
+/** How far the covered list shifts toward the start, as a share of the width, while a detail is pushed over it. */
+private const val CoveredListShift = 0.22f
+
+/** Scrim colour alpha over the covered list. */
+private const val ScrimAlpha = 0.32f
 
 /** Longest fade allowed under reduced motion. */
 private const val ReducedFadeMillis = 150
 
 /**
- * List-detail layout in three modes (see [PaneMode]). Every change of mode animates the list width with
- * [layoutSpring]: to the dragged (or [listPreferredWidth]) width in two panes, to [StripWidth] in item view,
- * and to the full width in list view. [list] gets [ListPresentation.Strip] only in item view. [detail] is
- * composed in two panes and item view; its `openSwitcher` is non-null only in item view.
- *
- * In two panes, [hasSelection] is the destination: a selected item counts as open, so narrowing the window
- * keeps it on screen in item view.
+ * What the push motion last saw: the mode, the push target, whether the detail is shown pushed (full width), and where
+ * the detail's left edge was laid out last (px).
  */
+private class PushMotion(var mode: PaneMode, var target: Float, var fullWidth: Boolean) {
+    var detailLeftPx = 0
+
+    /** Where a push from two panes starts, until its animation has snapped there. */
+    var pendingPush: Float? = null
+
+    /** The push the covered list starts shifting and dimming from: 0, or where a push from two panes started. */
+    var coverFrom = 0f
+
+    /** How covered the list is (0..1) at push [slid]: it shifts and dims over the rest of the push from [coverFrom]. */
+    fun cover(slid: Float): Float = if (coverFrom >= 1f) 1f else ((slid - coverFrom) / (1f - coverFrom)).coerceIn(0f, 1f)
+}
+
+/**
+ * List-detail layout in three modes (see [PaneMode]). In two panes the list takes the dragged (or
+ * [listPreferredWidth]) width beside the detail, split by the divider. In a narrower window the list comes first, at
+ * full width; once [ListDetailPanes.pushed] (and [hasSelection]) the detail slides in from the end edge over it, full
+ * width, while the list shifts [CoveredListShift] of the width toward the start under a scrim, and Back reverses it.
+ * Every change of mode moves with [layoutSpring]; reduced motion swaps the push for a [ReducedFadeMillis] cross-fade.
+ *
+ * [detail] is composed in two panes and while pushed; its `onBack` is non-null while it is shown pushed: screens put a
+ * [DetailBackButton] for it at the start of their header. Esc (unless a text field in the detail has focus) and ⌘[
+ * (Ctrl+[ elsewhere) go back too, and Back hands keyboard focus to the row the item was opened from. Losing the
+ * selection clears the push. The covered list takes no pointer input or focus and leaves the semantics tree; the
+ * detail leaving after Back takes none either.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun AdaptiveListDetail(
     panes: ListDetailPanes,
     listMinWidth: Dp,
     listPreferredWidth: Dp,
     hasSelection: Boolean,
-    list: @Composable (ListPresentation) -> Unit,
-    detail: @Composable (openSwitcher: (() -> Unit)?) -> Unit,
+    list: @Composable () -> Unit,
+    detail: @Composable (onBack: (() -> Unit)?) -> Unit,
     modifier: Modifier = Modifier,
     resizable: Boolean = true,
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
         val contentWidth = maxWidth
-        val mode = paneMode(contentWidth, listMinWidth, panes.navigation.detailOpen)
+        val mode = paneMode(contentWidth, listMinWidth, panes.pushed && hasSelection)
         val density = LocalDensity.current
         val reduceMotion = LocalReduceMotion.current
         val maxListWidth = maxOf(listMinWidth, contentWidth - DividerWidth - DetailMinWidth)
         SideEffect {
             with(density) { panes.limits.update(minFirst = listMinWidth.toPx(), maxFirst = maxListWidth.toPx()) }
-        }
-        LaunchedEffect(mode, hasSelection) {
-            if (mode == PaneMode.TwoPane) {
-                if (hasSelection) panes.navigation.openDetail() else panes.navigation.backToList()
-            }
         }
 
         // A window resize can leave a dragged width outside the limits; use it clamped, keep it for wider windows.
@@ -199,29 +236,113 @@ fun AdaptiveListDetail(
         var dragging by remember { mutableStateOf(false) }
         // A mode change can remove the divider mid-drag; its drag-stopped callback then never comes.
         LaunchedEffect(mode) { if (mode != PaneMode.TwoPane) dragging = false }
-        val targetListWidth = when (mode) {
-            PaneMode.TwoPane -> twoPaneListWidth
-            PaneMode.ItemView -> StripWidth
-            PaneMode.ListView -> contentWidth
-        }
+        val itemView = mode == PaneMode.ItemView
+        val pushTarget = if (itemView) 1f else 0f
+        val last = remember { PushMotion(mode, pushTarget, fullWidth = itemView) }
+        // Between two panes and a pushed detail the detail's edge moves, not the list's: the list, under the detail
+        // either way, takes its new width at once.
+        val crossing = (last.mode == PaneMode.TwoPane && itemView) || (last.mode == PaneMode.ItemView && mode == PaneMode.TwoPane)
         val listWidth = listWidthMotion(
-            target = targetListWidth,
+            // Pushed or not, a narrow list keeps the full width: the detail slides over it.
+            target = if (mode == PaneMode.TwoPane) twoPaneListWidth else contentWidth,
             mode = mode,
             userWidth = panes.listWidth to listPreferredWidth,
             // A mode change during a pointer drag still glides.
-            followDirectly = (dragging && mode == PaneMode.TwoPane) || reduceMotion,
+            followDirectly = (dragging && mode == PaneMode.TwoPane) || reduceMotion || crossing,
             // The two-pane target is clamped to the detail's min; a widening glide must not overshoot it.
             noOvershootPastTarget = mode == PaneMode.TwoPane,
         )
         val gapWidth by animateDpAsState(
-            targetValue = when (mode) {
-                PaneMode.TwoPane -> DividerWidth
-                PaneMode.ItemView -> StripGap
-                PaneMode.ListView -> 0.dp
-            },
+            targetValue = if (mode == PaneMode.TwoPane) DividerWidth else 0.dp,
             animationSpec = if (reduceMotion) snap() else layoutSpring(),
             label = "gapWidth",
         )
+
+        // The push: 0 with the list in view, 1 with the detail over it. Back (or widening) reverses it from wherever
+        // it is, with its velocity.
+        val push = remember { Animatable(pushTarget) }
+        val pushChanged = pushTarget != last.target
+        // Read now: relaunching the effect cancels the running push, which zeroes its velocity.
+        val pushVelocity = if (pushChanged) push.velocity else 0f
+        // Into or out of two panes the detail is on screen either way: reduced motion changes it at once.
+        val snapPush = reduceMotion && (last.mode == PaneMode.TwoPane || mode == PaneMode.TwoPane)
+        // From two panes the push starts where the detail stood beside the list. Set here, before the effect below can
+        // start: the layout uses it until the effect has snapped the push there.
+        val widthPx = with(density) { contentWidth.roundToPx() }.coerceAtLeast(1)
+        val pushFrom = if (pushChanged && itemView && last.mode == PaneMode.TwoPane && !reduceMotion) {
+            (1f - last.detailLeftPx.toFloat() / widthPx).coerceIn(0f, 1f)
+        } else {
+            null
+        }
+        if (pushFrom != null) {
+            last.pendingPush = pushFrom
+            last.coverFrom = pushFrom
+        } else if (pushChanged && itemView) {
+            last.coverFrom = 0f
+        }
+        LaunchedEffect(pushTarget) {
+            if (pushFrom != null) push.snapTo(pushFrom)
+            last.pendingPush = null
+            when {
+                snapPush -> push.snapTo(pushTarget)
+                reduceMotion -> push.animateTo(pushTarget, tween(ReducedFadeMillis, easing = LinearEasing))
+                else -> push.animateTo(pushTarget, layoutSpring(), initialVelocity = if (pushFrom != null) 0f else pushVelocity)
+            }
+        }
+        // The detail is shown pushed (full width, sliding) from a push until two panes take it back; it keeps that
+        // through the list view while it leaves after Back.
+        val fullWidthDetail = when (mode) {
+            PaneMode.ItemView -> true
+            PaneMode.TwoPane -> false
+            PaneMode.ListView -> last.fullWidth
+        }
+        SideEffect {
+            last.mode = mode
+            last.target = pushTarget
+            last.fullWidth = fullWidthDetail
+        }
+        val pushShowing by remember { derivedStateOf { push.value > 0f || push.isRunning } }
+        // How far the detail has slid in (0..1). Reduced motion does not slide: the detail fades in place.
+        fun slid(): Float = if (reduceMotion) {
+            if (itemView || push.value > 0f) 1f else 0f
+        } else {
+            push.value.coerceIn(0f, 1f)
+        }
+        // The list is under the detail, or still partly under it while a push reverses (Back, or widening into two
+        // panes): no pointer input reaches it and it leaves the semantics tree. Keyboard focus stays out only while
+        // it is pushed over, so Back can hand focus straight back.
+        val listCovered = itemView || pushShowing
+        val detailLeaving = mode == PaneMode.ListView
+        // The detail is opaque while it is or was pushed over the list, until it is back beside it.
+        val detailOpaque = fullWidthDetail || pushShowing
+
+        // Lost the selection (deleted, unplugged, closed): nothing is left to push, so the list shows.
+        LaunchedEffect(hasSelection) { if (!hasSelection) panes.back() }
+
+        // Keyboard focus follows the push: into the detail as it comes in; on Back, to the list row it was opened
+        // from (with nothing focused there before, the focus just leaves the detail).
+        val detailFocus = remember { FocusRequester() }
+        val listFocus = remember { FocusRequester() }
+        var detailHasFocus by remember { mutableStateOf(false) }
+        val listRowSaved = remember { booleanArrayOf(false) }
+        val focusManager = LocalFocusManager.current
+        LaunchedEffect(mode) {
+            when {
+                mode == PaneMode.ItemView && !detailHasFocus -> {
+                    listRowSaved[0] = listFocus.saveFocusedChild()
+                    runCatching { detailFocus.requestFocus() }
+                }
+                mode == PaneMode.ListView && (listRowSaved[0] || detailHasFocus) -> {
+                    val restored = listRowSaved[0] && listFocus.restoreFocusedChild()
+                    if (!restored && detailHasFocus) focusManager.clearFocus(force = true)
+                    listRowSaved[0] = false
+                }
+                // Widened to two panes: the list is beside the detail; nothing to hand back later.
+                mode == PaneMode.TwoPane -> listRowSaved[0] = false
+            }
+        }
+        // Text fields in the detail keep Esc (it can clear or leave the field): count their input sessions.
+        val textInputs = remember { intArrayOf(0) }
 
         // Drags and arrow keys start from the width on screen now, clamped to the limits.
         val currentTwoPaneWidth by rememberUpdatedState(twoPaneListWidth)
@@ -234,27 +355,33 @@ fun AdaptiveListDetail(
             val start = panes.listWidth?.coerceIn(currentMin, currentMax) ?: currentTwoPaneWidth
             panes.listWidth = start + with(currentDensity) { panes.limits.consume(delta).toDp() }
         }
-        val openSwitcher: () -> Unit = remember(panes) { { panes.openSwitcher() } }
-        // Picking an item (a selection change) or leaving item view ends the overlay.
-        LaunchedEffect(mode) { if (mode != PaneMode.ItemView) panes.closeOverlay() }
-        // Only a change closes it, not the first composition.
-        var previousSelection by remember { mutableStateOf(hasSelection) }
-        LaunchedEffect(hasSelection) {
-            if (hasSelection != previousSelection) panes.closeOverlay()
-            previousSelection = hasSelection
-        }
+        val scrim = MaterialTheme.colorScheme.scrim
+        val pushedBackground = MaterialTheme.colorScheme.surface
 
-        Row(Modifier.fillMaxSize()) {
+        val listSlot = @Composable {
             Box(
-                Modifier.width(listWidth).fillMaxHeight().onSizeChanged {
-                    // Mid-drag the limits track the target width, which the snap lags by a frame.
-                    if (mode != PaneMode.TwoPane) panes.limits.reset() else if (!dragging) panes.limits.onFirstPaneMeasured(it.width)
-                },
+                Modifier.fillMaxSize()
+                    .onSizeChanged {
+                        // Mid-drag the limits track the target width, which the snap lags by a frame.
+                        if (mode != PaneMode.TwoPane) panes.limits.reset() else if (!dragging) panes.limits.onFirstPaneMeasured(it.width)
+                    }
+                    .then(if (listCovered) Modifier.blockPointer().clearAndSetSemantics { } else Modifier)
+                    // One focus group for the list: Back restores its row, and nothing in it takes focus while covered.
+                    .focusProperties { if (itemView) onEnter = { cancelFocusChange() } }
+                    .focusRequester(listFocus)
+                    .focusGroup()
+                    .drawWithContent {
+                        drawContent()
+                        val alpha = if (reduceMotion) 0f else ScrimAlpha * last.cover(push.value)
+                        if (alpha > 0f) drawRect(scrim, alpha = alpha)
+                    },
             ) {
-                list(if (mode == PaneMode.ItemView) ListPresentation.Strip else ListPresentation.Full)
+                list()
             }
-            if (mode != PaneMode.ListView || gapWidth > 0.dp) {
-                Box(Modifier.width(gapWidth).fillMaxHeight(), contentAlignment = Alignment.Center) {
+        }
+        val gapSlot = @Composable {
+            if (mode == PaneMode.TwoPane || gapWidth > 0.dp) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     // Hairline so the divider reads in the light theme too.
                     Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
                     if (mode == PaneMode.TwoPane && resizable) {
@@ -296,27 +423,90 @@ fun AdaptiveListDetail(
                     }
                 }
             }
+        }
+        val detailSlot = @Composable {
             AnimatedVisibility(
-                visible = mode != PaneMode.ListView,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                enter = if (reduceMotion) {
-                    fadeIn(tween(ReducedFadeMillis))
-                } else {
-                    slideInHorizontally(layoutSpring()) { with(density) { DetailEnterOffset.roundToPx() } } + fadeIn(tween(220))
+                visible = mode != PaneMode.ListView || pushShowing,
+                modifier = Modifier.fillMaxSize(),
+                enter = when {
+                    // The push itself moves (or fades) the detail in.
+                    itemView -> EnterTransition.None
+                    reduceMotion -> fadeIn(tween(ReducedFadeMillis))
+                    else -> slideInHorizontally(layoutSpring()) { with(density) { DetailEnterOffset.roundToPx() } } + fadeIn(tween(220))
                 },
-                exit = if (reduceMotion) {
-                    fadeOut(tween(ReducedFadeMillis))
-                } else {
-                    slideOutHorizontally(layoutSpring()) { with(density) { DetailEnterOffset.roundToPx() } } + fadeOut(tween(120))
+                exit = when {
+                    // The push has already moved (or faded) it out.
+                    fullWidthDetail -> ExitTransition.None
+                    reduceMotion -> fadeOut(tween(ReducedFadeMillis))
+                    else -> slideOutHorizontally(layoutSpring()) { with(density) { DetailEnterOffset.roundToPx() } } + fadeOut(tween(120))
                 },
             ) {
-                val leaving = mode == PaneMode.ListView
-                Box(Modifier.fillMaxSize().keepWidthWhile(leaving)) {
-                    detail(if (mode == PaneMode.ItemView) openSwitcher else null)
+                Box(
+                    Modifier.fillMaxSize()
+                        .keepWidthWhile(detailLeaving)
+                        // Under reduced motion the pushed detail cross-fades with the list.
+                        .then(if (fullWidthDetail && reduceMotion) Modifier.graphicsLayer { alpha = push.value.coerceIn(0f, 1f) } else Modifier)
+                        // Opaque over the list.
+                        .then(if (detailOpaque) Modifier.background(pushedBackground) else Modifier)
+                        .then(if (detailLeaving) Modifier.blockInput() else Modifier)
+                        .onKeyEvent { event ->
+                            val back = itemView && event.type == KeyEventType.KeyDown &&
+                                isBackShortcut(event.key, meta = event.isMetaPressed, ctrl = event.isCtrlPressed) &&
+                                // A text field keeps Esc; ⌘[ (Ctrl+[) still goes back from it.
+                                !(event.key == Key.Escape && textInputs[0] > 0)
+                            if (back) panes.back()
+                            back
+                        }
+                        .focusRequester(detailFocus)
+                        .onFocusChanged { detailHasFocus = it.hasFocus }
+                        .focusProperties { canFocus = itemView }
+                        .focusTarget(),
+                ) {
+                    InterceptPlatformTextInput(
+                        interceptor = { request, next ->
+                            textInputs[0]++
+                            try {
+                                next.startInputMethod(request)
+                            } finally {
+                                textInputs[0]--
+                            }
+                        },
+                    ) {
+                        detail(if (fullWidthDetail && mode != PaneMode.TwoPane) panes::back else null)
+                    }
                 }
             }
         }
-        ListOverlay(panes, listPreferredWidth, contentWidth, reduceMotion) { list(ListPresentation.Full) }
+
+        Layout(
+            contents = listOf(listSlot, gapSlot, detailSlot),
+            // The pushed detail starts past the end edge; keep it (and the shifted list) inside the panes.
+            modifier = Modifier.fillMaxSize().then(if (mode != PaneMode.TwoPane || pushShowing) Modifier.clipToBounds() else Modifier),
+        ) { (listMeasurables, gapMeasurables, detailMeasurables), constraints ->
+            val width = constraints.maxWidth
+            val height = constraints.maxHeight
+            val listPx = listWidth.roundToPx().coerceIn(0, width)
+            val gapPx = gapWidth.roundToPx().coerceIn(0, width - listPx)
+            // Read the push on every pass, so its first frame relayouts this even while a pending start stands in.
+            val current = slid()
+            val slid = last.pendingPush ?: current
+            val pushedOver = fullWidthDetail && mode != PaneMode.TwoPane
+            // Pushed, the detail slides from the end edge to 0 over the list. Side by side it starts after the list
+            // and divider; back from a push it slides there from 0.
+            val slidLeft = (width * (1f - slid)).roundToInt()
+            val detailLeft = if (pushedOver) slidLeft else minOf(listPx + gapPx, slidLeft)
+            val detailWidth = if (pushedOver) width else (width - detailLeft).coerceAtLeast(0)
+            val listPlaceable = listMeasurables.firstOrNull()?.measure(Constraints.fixed(listPx, height))
+            val gapPlaceable = gapMeasurables.firstOrNull()?.measure(Constraints.fixed(gapPx, height))
+            val detailPlaceable = detailMeasurables.firstOrNull()?.measure(Constraints.fixed(detailWidth, height))
+            val listShift = if (reduceMotion) 0 else (width * CoveredListShift * last.cover(slid)).roundToInt()
+            last.detailLeftPx = detailLeft
+            layout(width, height) {
+                listPlaceable?.place(-listShift, 0)
+                gapPlaceable?.place(listPx, 0)
+                detailPlaceable?.place(detailLeft, 0)
+            }
+        }
     }
 }
 
@@ -335,71 +525,15 @@ private fun Modifier.keepWidthWhile(keep: Boolean): Modifier = composed {
     }
 }
 
-/** Shows the full list over the open item (item view), as the switcher chip does. */
-fun ListDetailPanes.openSwitcher() {
-    overlayOpen = true
-}
+/** Swallows pointer input before the content sees it, and keeps focus out of the content (a group nothing enters). */
+private fun Modifier.blockInput(): Modifier =
+    focusProperties { onEnter = { cancelFocusChange() } }
+        .focusGroup()
+        .blockPointer()
 
-/** Closes the full list shown over the open item; call it after a pick. */
-fun ListDetailPanes.closeOverlay() {
-    overlayOpen = false
-}
-
-/** Scrim colour alpha behind the list overlay. */
-private const val ScrimAlpha = 0.32f
-
-/**
- * The full list over the open item: a scrim that fades in and a [Surface] that widens from the strip to
- * [preferredWidth] with [layoutSpring]. After closing (also when the window leaves item view) the surface
- * keeps its width and fades out with the scrim, then leaves the composition. Reduced motion: the width
- * jumps and fades take at most [ReducedFadeMillis].
- */
-@Composable
-private fun ListOverlay(
-    panes: ListDetailPanes,
-    preferredWidth: Dp,
-    contentWidth: Dp,
-    reduceMotion: Boolean,
-    list: @Composable () -> Unit,
-) {
-    val open = panes.overlayOpen
-    val width = remember { Animatable(0f) }
-    val scrim = remember { Animatable(0f) }
-    LaunchedEffect(open, reduceMotion) {
-        val fade = tween<Float>(if (reduceMotion) ReducedFadeMillis else 220)
-        if (open) {
-            launch {
-                if (reduceMotion) width.snapTo(1f) else width.animateTo(1f, layoutSpring())
-            }
-            scrim.animateTo(1f, fade)
-        } else {
-            // The width stays where it is while the list fades.
-            scrim.animateTo(0f, fade)
-            width.snapTo(0f)
-        }
-    }
-    if (!open && scrim.value == 0f) return
-    val shown = (StripWidth + (minOf(preferredWidth, contentWidth) - StripWidth) * width.value).coerceAtLeast(StripWidth)
-    Box(Modifier.fillMaxSize()) {
-        Box(
-            Modifier.fillMaxSize()
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = ScrimAlpha * scrim.value))
-                .then(
-                    if (open) {
-                        Modifier
-                            .semantics { contentDescription = "Close list" }
-                            .clickable(interactionSource = null, indication = null, onClick = panes::closeOverlay)
-                    } else {
-                        Modifier
-                    },
-                ),
-        )
-        Surface(
-            Modifier.width(shown).fillMaxHeight().graphicsLayer { alpha = scrim.value },
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 6.dp,
-        ) {
-            Box(Modifier.fillMaxSize().clipToBounds()) { list() }
-        }
+/** Swallows pointer input before the content sees it. */
+private fun Modifier.blockPointer(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
     }
 }

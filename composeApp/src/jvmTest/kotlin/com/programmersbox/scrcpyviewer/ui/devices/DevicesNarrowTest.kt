@@ -42,8 +42,8 @@ import kotlin.test.assertTrue
 
 /**
  * The Devices screen at narrow widths, laid out offscreen (1 px = 1 dp) and read off the semantics tree: two panes when
- * wide, the strip beside the open device below the two-pane threshold (240 + 16 + 420 dp of content), the full list
- * from "Show list", and folding bars at phone width. Motion is on and passed explicitly: CI runners report reduce
+ * wide; below the two-pane threshold (240 + 16 + 420 dp of content) the full list first, the pushed device detail after
+ * a click with "Back to list" returning; and folding bars at phone width. Motion is on and passed explicitly: CI runners report reduce
  * motion on.
  */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -71,8 +71,11 @@ class DevicesNarrowTest {
     private var width by mutableIntStateOf(1000)
     private lateinit var panes: ListDetailPanes
 
-    /** Runs [block] on a scene [startWidth] wide whose device is open (as after a click in the list). */
-    private fun scene(startWidth: Int, startState: DevicesUiState = base, block: SceneDriver.() -> Unit) = onEdt {
+    /**
+     * Runs [block] on a scene [startWidth] wide whose device is selected and, when [pushed], open (as after a click in
+     * the list); not pushed, as at launch.
+     */
+    private fun scene(startWidth: Int, startState: DevicesUiState = base, pushed: Boolean = true, block: SceneDriver.() -> Unit) = onEdt {
         state = startState
         width = startWidth
         val driver = SceneDriver(ImageComposeScene(1000, 700, Density(1f)) {
@@ -81,9 +84,9 @@ class DevicesNarrowTest {
                     Surface {
                         Box(Modifier.width(width.dp).fillMaxHeight()) {
                             panes = rememberListDetailPanes()
-                            remember(panes) { panes.navigation.openDetail() }
+                            remember(panes) { if (pushed) panes.push() }
                             DevicesContent(
-                                state, onSelect = {}, onOpen = {}, onQuery = {}, onGroup = {}, onToggle = { _, _ -> }, onValue = { _, _ -> },
+                                state, onSelect = { serial -> state = state.copy(selectedSerial = serial) }, onOpen = {}, onQuery = {}, onGroup = {}, onToggle = { _, _ -> }, onValue = { _, _ -> },
                                 onSave = {}, onSaveAsNew = {}, onMirror = {}, panes = panes, motion = true,
                             )
                         }
@@ -103,7 +106,8 @@ class DevicesNarrowTest {
         val out = mutableListOf<SemanticsNode>()
         fun walk(node: SemanticsNode) {
             out += node
-            node.children.forEach(::walk)
+            // A cleared subtree (the list covered by a pushed detail) is out of the semantics tree.
+            if (!node.config.isClearingSemantics) node.children.forEach(::walk)
         }
         scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
         return out.filter { it.layoutInfo.isPlaced }
@@ -141,8 +145,8 @@ class DevicesNarrowTest {
         assertTrue(text("Pixel 8 Pro").any { it.boundsInRoot.right <= 300f && it.fullyShown() }, "the list row title shows in full")
         assertTrue(text("SM X710").isNotEmpty(), "the second row shows")
         assertTrue(text("Mirror").isNotEmpty(), "the detail shows beside the list")
-        assertTrue(described("Show list").isEmpty(), "no strip in two panes")
-        assertTrue(described("Switch item").isEmpty(), "no switcher chip in two panes")
+        assertTrue(described("Back to list").isEmpty(), "no back arrow in two panes")
+        assertNoStripOrChip()
         // The status chip sits right after the name, as before, not at the row's end.
         val title = text("Pixel 8 Pro").minBy { it.boundsInRoot.left }.boundsInRoot
         val chip = text("USB").minBy { it.boundsInRoot.top }.boundsInRoot
@@ -159,15 +163,51 @@ class DevicesNarrowTest {
         frames(60)
     }
 
+    /** No node of the removed strip, switcher chip or list overlay exists anywhere, on screen or off. */
+    private fun SceneDriver.assertNoStripOrChip() {
+        for (label in listOf("Show list", "Switch item", "Close list")) {
+            assertTrue(nodes().none { it.described(label) }, "no $label node")
+        }
+    }
+
     @Test
-    fun `the switcher chip shares the tab line when it fits and takes its own line when not`() = scene(640) {
-        fun chip() = described("Switch item").first().boundsInRoot
-        // The selected tab: a segment, or the menu button once the pane is narrower than 344 dp.
+    fun `the back arrow shares the tab line, clear of the tabs`() = scene(640) {
+        // The selected tab: a segment, or the menu button once the pane is narrower than 398 dp.
         fun tabs() = text("Options").first().boundsInRoot
-        assertTrue(chip().bottom > tabs().top && chip().top < tabs().bottom, "one line at 640: chip ${chip()}, tabs ${tabs()}")
-        width = 360
-        frames(150)
-        assertTrue(chip().bottom <= tabs().top, "own line at 360: chip ${chip()}, tabs ${tabs()}")
+        for (w in listOf(640, 360, 299)) {
+            width = w
+            frames(150)
+            val back = assertNotNull(described("Back to list").firstOrNull(), "back arrow at $w").boundsInRoot
+            assertTrue(back.bottom > tabs().top && back.top < tabs().bottom, "one line at $w: back $back, tabs ${tabs()}")
+            assertTrue(back.right <= tabs().left, "the arrow ends before the tabs at $w: back $back, tabs ${tabs()}")
+            assertTrue(back.left >= 0f && tabs().right <= w, "inside $w")
+        }
+    }
+
+    @Test
+    fun `launch - a narrow window shows the full list even with a selection`() = scene(640, pushed = false) {
+        for (name in listOf("Pixel 8 Pro", "SM X710", "ZY22H8KLMN")) {
+            assertTrue(text(name).any { it.fullyShown() }, "$name shows in full")
+        }
+        assertTrue(text("Mirror").isEmpty(), "no detail")
+        assertTrue(described("Back to list").isEmpty(), "no back arrow")
+        assertNoStripOrChip()
+    }
+
+    @Test
+    fun `clicking a row pushes its detail, Back returns to the list`() = scene(640, pushed = false) {
+        clickText("SM X710")
+        frames(90)
+        assertTrue(panes.pushed, "the click pushed")
+        assertEquals(tablet.serial, state.selectedSerial)
+        assertTrue(described("Back to list").isNotEmpty(), "the back arrow")
+        assertTrue(text("Mirror").isNotEmpty(), "the detail's Mirror")
+        assertNoStripOrChip()
+        click("Back to list")
+        assertTrue(!panes.pushed)
+        assertTrue(text("Mirror").isEmpty(), "the detail left")
+        assertTrue(text("Pixel 8 Pro").any { it.fullyShown() }, "the full list again")
+        assertEquals(tablet.serial, state.selectedSerial, "the selection stays")
     }
 
     @Test
@@ -182,21 +222,11 @@ class DevicesNarrowTest {
     }
 
     @Test
-    fun `below two panes - strip, switcher chip, Mirror and no back button`() = scene(640) {
-        assertTrue(described("Show list").isNotEmpty(), "the strip's Show list button")
-        assertTrue(described("Switch item").isNotEmpty(), "the switcher chip")
+    fun `below two panes - the pushed device fills the width with Mirror and the back arrow`() = scene(640) {
         assertTrue(text("Mirror").isNotEmpty(), "Mirror")
-        assertTrue(nodes().none { it.described("Back to list") }, "no back button")
-        assertTrue(described("Pair over Wi-Fi").isNotEmpty(), "the strip's Pair over Wi-Fi icon")
-    }
-
-    @Test
-    fun `Show list brings back the full list and closes the device`() = scene(640) {
-        click("Show list")
-        for (name in listOf("Pixel 8 Pro", "SM X710", "ZY22H8KLMN")) {
-            assertTrue(text(name).any { it.fullyShown() }, "$name shows in full")
-        }
-        assertTrue(text("Mirror").isEmpty(), "the detail is gone")
+        assertTrue(described("Back to list").isNotEmpty(), "the back arrow")
+        assertTrue(text("Pair over Wi-Fi").isEmpty(), "the covered list's Pair over Wi-Fi is not on screen")
+        assertNoStripOrChip()
     }
 
     @Test
@@ -217,11 +247,11 @@ class DevicesNarrowTest {
 
     @Test
     fun `the open device leaving the list goes back to the list view`() = scene(640) {
-        assertTrue(described("Switch item").isNotEmpty())
+        assertTrue(described("Back to list").isNotEmpty())
         state = state.copy(devices = listOf(tablet, pending), selectedSerial = tablet.serial)
         frames(150)
-        assertTrue(described("Switch item").isEmpty(), "item view closed")
-        assertTrue(described("Show list").isEmpty(), "no strip in the list view")
+        assertTrue(described("Back to list").isEmpty(), "the pushed detail closed")
+        assertTrue(!panes.pushed)
         assertTrue(text("SM X710").any { it.fullyShown() }, "the full list")
     }
 
@@ -231,7 +261,7 @@ class DevicesNarrowTest {
         val groups = OptionCatalog.all.map { it.group }.distinct()
         val lefts = groups.map { header(it.label).left }.distinct()
         assertEquals(2, lefts.size, "two columns: $lefts")
-        width = 640
+        width = 520 // the pushed detail fills the width: under the 560 dp two-column threshold
         frames(150)
         val narrowLefts = groups.map { header(it.label).left }.distinct()
         assertEquals(1, narrowLefts.size, "one column: $narrowLefts")

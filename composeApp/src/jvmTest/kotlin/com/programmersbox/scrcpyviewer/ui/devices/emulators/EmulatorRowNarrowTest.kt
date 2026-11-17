@@ -45,11 +45,12 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * Emulators in narrow windows (1 px = 1 dp): the item view's strip lists them after an "AVD" divider, and an emulator
- * row's controls glide to their second line. Motion is on and passed explicitly: CI runners report reduce motion on.
+ * Emulators in narrow windows (1 px = 1 dp): the narrow Devices list keeps the Emulators section and the running
+ * emulator, and an emulator row's controls glide to their second line. Motion is on and passed explicitly: CI runners
+ * report reduce motion on.
  */
 @OptIn(ExperimentalComposeUiApi::class)
-class EmulatorStripTest {
+class EmulatorRowNarrowTest {
     private val root = Paths.get("sdk-root")
     private val sdk = SdkLookup.Found(AndroidSdk(root, root.resolve("emulator").resolve("emulator"), "37.3.9"))
     private fun avd(id: String, name: String) = Avd(id, name, 36, "16", AvdKind.Phone, root.resolve("$id.avd"))
@@ -99,8 +100,8 @@ class EmulatorStripTest {
     private fun SceneDriver.stopTop() = nodes().single { it.described("Stop") }.positionInRoot.y
     private fun SceneDriver.text(label: String) = nodes().filter { label in it.texts() && it.shown() }
 
-    /** The Devices screen at 640 with the Pixel open: item view, so the list is the strip. */
-    private fun strip(block: SceneDriver.() -> Unit) = onEdt {
+    /** The Devices screen at 640 with the Pixel selected but not pushed: the full list. */
+    private fun narrowList(block: SceneDriver.() -> Unit) = onEdt {
         emulators = avds
         val driver = SceneDriver(ImageComposeScene(1000, 900, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
@@ -108,7 +109,6 @@ class EmulatorStripTest {
                     Surface {
                         Box(Modifier.width(640.dp).fillMaxHeight()) {
                             val panes = rememberListDetailPanes()
-                            remember(panes) { panes.navigation.openDetail() }
                             DevicesContent(
                                 devices, onSelect = {}, onOpen = {}, onQuery = {}, onGroup = {}, onToggle = { _, _ -> }, onValue = { _, _ -> },
                                 onSave = {}, onSaveAsNew = {}, onMirror = {}, panes = panes, motion = true,
@@ -130,29 +130,18 @@ class EmulatorStripTest {
     }
 
     @Test
-    fun `the strip lists devices, then the AVD divider, the emulator tile and the running emulator`() = strip {
-        val pixelAvatar = described("Pixel 8 Pro").single { it.boundsInRoot.right <= 76f }.boundsInRoot
-        val tabletAvatar = described("SM X710").single { it.boundsInRoot.right <= 76f }.boundsInRoot
-        val divider = assertNotNull(text("AVD").singleOrNull(), "the AVD divider").boundsInRoot
-        assertTrue(divider.top >= pixelAvatar.bottom && divider.top >= tabletAvatar.bottom, "divider $divider below $pixelAvatar, $tabletAvatar")
-        val emulator = assertNotNull(described("Pixel 9").singleOrNull { it.boundsInRoot.right <= 76f }, "the running emulator's avatar").boundsInRoot
-        assertTrue(emulator.top >= divider.bottom, "the emulator $emulator after the divider $divider")
-        val tile = assertNotNull(described("Emulators").singleOrNull { it.boundsInRoot.right <= 76f }, "the emulator tile").boundsInRoot
-        assertTrue(tile.top >= divider.bottom, "the tile $tile after the divider $divider")
-        assertTrue(text("3").isNotEmpty(), "the tile's AVD count")
+    fun `the narrow list keeps the running emulator and the Emulators section`() = narrowList {
+        assertTrue(text("Pixel 8 Pro").isNotEmpty(), "a connected device row")
+        assertTrue(text("Pixel 9").isNotEmpty(), "the running emulator's row")
+        assertTrue(text("Emulators").isNotEmpty(), "the Emulators section header")
+        assertTrue(described("Show list").isEmpty() && described("Switch item").isEmpty(), "no strip, no chip")
+        val header = nodes().first { SemanticsActions.OnClick in it.config && it.texts().isEmpty() && it.hasText("Emulators") }
+        header.config[SemanticsActions.OnClick].action?.invoke()
+        frames(150)
+        assertTrue(emulators.expanded, "the section expands in the narrow list")
     }
 
-    @Test
-    fun `the emulator tile opens the list with the emulators expanded`() = strip {
-        assertTrue(described("Collapse").isEmpty(), "no section before")
-        val tile = nodes().first { SemanticsActions.OnClick in it.config && it.described("Emulators") }
-        tile.config[SemanticsActions.OnClick].action?.invoke()
-        frames(150)
-        assertTrue(emulators.expanded, "the section expanded")
-        assertTrue(described("Close list").isNotEmpty(), "the overlay is open")
-        assertTrue(described("Collapse").isNotEmpty(), "the emulators header shows, expanded")
-        assertTrue(text("Pixel Tablet").isNotEmpty(), "the AVD rows show")
-    }
+    private fun SemanticsNode.hasText(label: String): Boolean = label in texts() || children.any { it.hasText(label) }
 
     @Test
     fun `an emulator row's Stop glides to its second line`() = onEdt {

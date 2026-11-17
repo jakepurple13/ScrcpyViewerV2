@@ -83,7 +83,7 @@ class ActionEditorKeysTest {
             driver = SceneDriver(ImageComposeScene(900, 1000, Density(1f)) {
                 ScrcpyViewerTheme(ThemeMode.Light) {
                     Surface(Modifier.fillMaxSize()) {
-                        ActionsScreen(vm, NoFiles, introSeen = true, onIntroSeen = {}, panes = screenshotPanes(detailOpen = true))
+                        ActionsScreen(vm, NoFiles, introSeen = true, onIntroSeen = {}, panes = screenshotPanes(pushed = true))
                     }
                 }
             })

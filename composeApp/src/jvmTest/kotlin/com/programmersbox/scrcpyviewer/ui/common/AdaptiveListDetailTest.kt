@@ -1,51 +1,67 @@
 package com.programmersbox.scrcpyviewer.ui.common
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.pointer.PointerButton
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.dp
-import com.programmersbox.scrcpyviewer.ui.SceneDriver
-import com.programmersbox.scrcpyviewer.ui.onEdt
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.ui.SceneDriver
+import com.programmersbox.scrcpyviewer.ui.onEdt
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** Drives the real panes in an offscreen scene (1 px = 1 dp). The content width is a state so tests can resize it. */
 @OptIn(ExperimentalComposeUiApi::class)
 class AdaptiveListDetailTest {
     private var listWidth by mutableIntStateOf(-1)
+    private var listLeft by mutableFloatStateOf(Float.NaN)
     private var detailWidth by mutableIntStateOf(-1)
+    private var detailLeft by mutableFloatStateOf(Float.NaN)
     private var detailComposed by mutableStateOf(false)
-    private var presentation by mutableStateOf<ListPresentation?>(null)
-    private var switcher by mutableStateOf<(() -> Unit)?>(null)
     private var contentWidth by mutableIntStateOf(1200)
     private var hasSelection by mutableStateOf(false)
     private var reduceMotion by mutableStateOf(false)
-    private var listsComposed by mutableIntStateOf(0)
+    private var listClicks = 0
+    private var listPresses = 0
+    private var openRowFocused = false
     private lateinit var panes: ListDetailPanes
 
     private fun scene() = SceneDriver(ImageComposeScene(1200, 600, Density(1f)) {
@@ -57,21 +73,46 @@ class AdaptiveListDetailTest {
                     listMinWidth = 240.dp,
                     listPreferredWidth = 300.dp,
                     hasSelection = hasSelection,
-                    list = { p ->
-                        presentation = p
-                        DisposableEffect(Unit) {
-                            listsComposed++
-                            onDispose { listsComposed-- }
+                    list = {
+                        Column(
+                            Modifier.fillMaxSize()
+                                .onSizeChanged { listWidth = it.width }
+                                .onGloballyPositioned { listLeft = it.positionInRoot().x }
+                                // Red, so a pixel shows whether the list shows through.
+                                .background(Color.Red)
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            if (event.type == PointerEventType.Press && event.changes.none { it.isConsumed }) listPresses++
+                                        }
+                                    }
+                                },
+                        ) {
+                            Box(Modifier.size(40.dp).semantics { contentDescription = "List row" }.clickable { listClicks++ })
+                            // The row a keyboard user opens.
+                            Box(
+                                Modifier.size(40.dp)
+                                    .onFocusChanged { openRowFocused = it.isFocused }
+                                    .clickable {
+                                        hasSelection = true
+                                        panes.push()
+                                    },
+                            )
                         }
-                        Box(Modifier.fillMaxSize().onSizeChanged { listWidth = it.width })
                     },
-                    detail = { openSwitcher ->
-                        switcher = openSwitcher
+                    detail = { onBack ->
                         DisposableEffect(Unit) {
                             detailComposed = true
                             onDispose { detailComposed = false }
                         }
-                        Box(Modifier.fillMaxSize().onSizeChanged { detailWidth = it.width })
+                        Box(
+                            Modifier.fillMaxSize()
+                                .onSizeChanged { detailWidth = it.width }
+                                .onGloballyPositioned { detailLeft = it.positionInRoot().x },
+                        ) {
+                            if (onBack != null) DetailBackButton(onBack)
+                        }
                     },
                 )
             }
@@ -100,8 +141,7 @@ class AdaptiveListDetailTest {
         drag(fromX = listWidth + 8f, toX = 1180f)
         assertEquals(1200 - 16 - 420, listWidth, "detail keeps its min width")
         assertEquals(420, detailWidth)
-        assertEquals(ListPresentation.Full, presentation)
-        assertNull(switcher, "no switcher beside the full list")
+        assertFalse(hasNode("Back to list"), "no back arrow in two panes")
     }
 
     @Test
@@ -114,21 +154,6 @@ class AdaptiveListDetailTest {
         assertTrue(listWidth <= 800 - 16 - 420, "list clamped: $listWidth")
         assertTrue(detailComposed, "still two panes")
         assertEquals(800 - 16 - listWidth, detailWidth)
-        assertEquals(ListPresentation.Full, presentation)
-    }
-
-    @Test
-    fun `selection in two panes shrinks to the strip beside the item when narrowed`() = withScene {
-        frames(5)
-        hasSelection = true
-        frames(5)
-        assertTrue(panes.navigation.detailOpen, "selecting in two panes opens the item")
-        contentWidth = 600
-        frames(90)
-        assertEquals(StripWidth.value.toInt(), listWidth)
-        assertEquals(600 - 76 - 8, detailWidth)
-        assertEquals(ListPresentation.Strip, presentation)
-        assertNotNull(switcher, "item view offers the switcher")
     }
 
     @Test
@@ -202,39 +227,11 @@ class AdaptiveListDetailTest {
     }
 
     @Test
-    fun `switching from item view to two panes springs the list width`() = withScene {
-        hasSelection = true
-        frames(5)
-        contentWidth = 600
-        frames(90)
-        assertEquals(76, listWidth)
-        contentWidth = 1200
-        frames(3)
-        assertTrue(listWidth in 77..299, "list mid-spring between the strip and 300: $listWidth")
-        frames(90)
-        assertEquals(300, listWidth)
-    }
-
-    @Test
-    fun `reduced motion jumps straight to the end value`() = withScene {
-        reduceMotion = true
-        hasSelection = true
-        frames(5)
-        contentWidth = 600
-        frame()
-        assertEquals(76, listWidth, "strip width after one frame")
-        contentWidth = 1200
-        frame()
-        assertEquals(300, listWidth, "pane width after one frame")
-    }
-
-    @Test
     fun `narrow with nothing selected shows the list alone`() = withScene {
         contentWidth = 600
         frames(90)
         assertEquals(600, listWidth)
         assertTrue(!detailComposed, "detail not composed in list view")
-        assertEquals(ListPresentation.Full, presentation)
     }
 
     @Test
@@ -270,9 +267,9 @@ class AdaptiveListDetailTest {
     }
 
     @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
-    private fun SceneDriver.key(key: Key) {
+    private fun SceneDriver.key(key: Key, meta: Boolean = false, ctrl: Boolean = false) {
         for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
-            scene.sendKeyEvent(KeyEvent(key = key, type = type))
+            scene.sendKeyEvent(KeyEvent(key = key, type = type, isMetaPressed = meta, isCtrlPressed = ctrl))
             frame()
         }
     }
@@ -281,7 +278,9 @@ class AdaptiveListDetailTest {
     fun `focused divider moves 24 px per arrow key within the limits`() = withScene {
         frames(5)
         assertEquals(300, listWidth)
-        key(Key.Tab) // the handle is the only focusable
+        key(Key.Tab) // the list row
+        key(Key.Tab) // the row that opens an item
+        key(Key.Tab) // the handle
         key(Key.DirectionRight)
         frames(60)
         assertEquals(324, listWidth)
@@ -294,106 +293,256 @@ class AdaptiveListDetailTest {
         assertEquals(240, listWidth, "stops at the list min")
     }
 
-    private fun SceneDriver.hasNode(description: String): Boolean {
-        var found = false
+    private fun SceneDriver.nodes(description: String): List<SemanticsNode> {
+        val out = mutableListOf<SemanticsNode>()
         fun walk(node: SemanticsNode) {
-            if (node.config.getOrNull(SemanticsProperties.ContentDescription)?.contains(description) == true) found = true
-            node.children.forEach(::walk)
+            if (node.config.getOrNull(SemanticsProperties.ContentDescription)?.contains(description) == true) out += node
+            // A cleared subtree (the list covered by a pushed detail) is out of the semantics tree.
+            if (!node.config.isClearingSemantics) node.children.forEach(::walk)
         }
         scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
-        return found
+        return out.filter { it.layoutInfo.isPlaced && it.boundsInRoot.width > 0f }
     }
 
-    private fun SceneDriver.enterItemView() {
+    private fun SceneDriver.hasNode(description: String) = nodes(description).isNotEmpty()
+
+    /** Clicks the "Back to list" arrow. */
+    private fun SceneDriver.clickBack() {
+        val arrow = assertNotNull(nodes("Back to list").firstOrNull(), "no back arrow")
+        // The icon carries the description; its button parent carries the click.
+        val clickable = generateSequence(arrow) { it.parent }.first { SemanticsActions.OnClick in it.config }
+        clickable.config[SemanticsActions.OnClick].action?.invoke()
+    }
+
+    /** A narrow window with an item selected (as after a launch with a remembered selection). */
+    private fun SceneDriver.narrowWithSelection() {
         hasSelection = true
-        frames(5)
         contentWidth = 600
         frames(90)
-        assertEquals(76, listWidth)
     }
 
     @Test
-    fun `the switcher opens the full list over the item at its preferred width`() = withScene {
-        enterItemView()
-        assertTrue(!hasNode("Close list"), "no scrim before opening")
-        switcher!!.invoke()
+    fun `launch narrow with a selection shows the full list`() = withScene {
+        narrowWithSelection()
+        assertFalse(panes.pushed, "pushed starts clear")
+        assertEquals(600, listWidth, "the list fills the width")
+        assertEquals(0f, listLeft)
+        assertFalse(detailComposed, "no detail")
+        assertFalse(hasNode("Back to list"))
+    }
+
+    @Test
+    fun `push slides the detail over the list and Back returns with the selection kept`() = withScene {
+        narrowWithSelection()
+        panes.push()
         frames(90)
-        assertEquals(300, listWidth, "overlay list measures the preferred width")
-        assertEquals(ListPresentation.Full, presentation)
-        assertTrue(hasNode("Close list"))
-        assertEquals(600 - 76 - 8, detailWidth, "detail keeps its place under the overlay")
+        assertTrue(panes.pushed)
+        assertEquals(600, detailWidth, "the detail fills the width")
+        assertEquals(0f, detailLeft)
+        assertTrue(hasNode("Back to list"))
+        assertEquals(-132f, listLeft, "the covered list sits 22% toward the start")
+        clickBack()
+        frames(90)
+        assertFalse(panes.pushed)
+        assertFalse(detailComposed, "the detail left")
+        assertEquals(0f, listLeft, "the list is back in place")
+        assertTrue(hasSelection, "the selection stays")
     }
 
     @Test
-    fun `the overlay width springs from the strip`() = withScene {
-        enterItemView()
-        switcher!!.invoke()
+    fun `the push is animated - mid frame the detail is between the edge and 0`() = withScene {
+        narrowWithSelection()
+        panes.push()
+        frames(4)
+        assertTrue(detailLeft > 0f && detailLeft < 600f, "detail mid-slide: $detailLeft")
+        assertTrue(listLeft < 0f && listLeft > -132f, "list mid-shift: $listLeft")
+        frames(90)
+        assertEquals(0f, detailLeft)
+    }
+
+    @Test
+    fun `Back mid-push reverses from where the detail is`() = withScene {
+        narrowWithSelection()
+        panes.push()
+        frames(6)
+        val mid = detailLeft
+        assertTrue(mid > 0f && mid < 600f, "mid push: $mid")
+        panes.back()
+        frame()
+        // It carries on a little with its velocity, then turns back: no jump to either end.
+        assertTrue(kotlin.math.abs(detailLeft - mid) < 100f, "reverses from $mid, not from an end: $detailLeft")
+        frames(8)
+        assertTrue(detailLeft > mid, "heading back out: $detailLeft")
+        frames(90)
+        assertFalse(detailComposed)
+    }
+
+    @Test
+    fun `Esc and the bracket shortcut go back while pushed`() = withScene {
+        narrowWithSelection()
+        panes.push()
+        frames(90)
+        key(Key.Escape)
+        frames(90)
+        assertFalse(panes.pushed, "Esc went back")
+        panes.push()
+        frames(90)
+        key(Key.LeftBracket, meta = Os.isMac, ctrl = !Os.isMac)
+        frames(90)
+        assertFalse(panes.pushed, "the bracket shortcut went back")
+    }
+
+    @Test
+    fun `the back shortcut is cmd-bracket on macOS and ctrl-bracket elsewhere`() {
+        assertTrue(isBackShortcut(Key.Escape, meta = false, ctrl = false, mac = true))
+        assertTrue(isBackShortcut(Key.LeftBracket, meta = true, ctrl = false, mac = true))
+        assertFalse(isBackShortcut(Key.LeftBracket, meta = false, ctrl = true, mac = true))
+        assertTrue(isBackShortcut(Key.LeftBracket, meta = false, ctrl = true, mac = false))
+        assertFalse(isBackShortcut(Key.LeftBracket, meta = true, ctrl = false, mac = false))
+        assertFalse(isBackShortcut(Key.LeftBracket, meta = false, ctrl = false, mac = false))
+    }
+
+    @Test
+    fun `resizing - widening shows both panes, narrowing again shows the pushed detail`() = withScene {
+        narrowWithSelection()
+        panes.push()
+        frames(90)
+        contentWidth = 1200
+        frames(90)
+        assertEquals(300, listWidth, "both panes")
+        assertEquals(1200 - 300 - 16, detailWidth)
+        assertFalse(hasNode("Back to list"), "two panes ignore pushed")
+        contentWidth = 600
+        frames(90)
+        assertEquals(0f, detailLeft, "the pushed detail again")
+        assertEquals(600, detailWidth)
+        assertTrue(hasNode("Back to list"))
+    }
+
+    @Test
+    fun `resizing without a push - narrowing from two panes shows the list`() = withScene {
+        hasSelection = true
+        frames(5)
+        assertTrue(detailComposed, "two panes")
+        contentWidth = 600
+        frames(90)
+        assertFalse(detailComposed, "the list")
+        assertEquals(600, listWidth)
+    }
+
+    @Test
+    fun `narrowing two panes with a push glides the detail over the list`() = withScene {
+        hasSelection = true
+        panes.push()
+        frames(5)
+        assertEquals(316f, detailLeft, "two panes")
+        contentWidth = 600
         frames(3)
-        assertTrue(listWidth in 77..299, "mid-spring: $listWidth")
+        assertTrue(detailLeft > 0f && detailLeft < 316f, "glides from its two-pane place: $detailLeft")
+        frames(90)
+        assertEquals(0f, detailLeft)
     }
 
     @Test
-    fun `clicking the scrim closes the overlay`() = withScene {
-        enterItemView()
-        switcher!!.invoke()
+    fun `widening a push glides the detail back beside the list`() = withScene {
+        narrowWithSelection()
+        panes.push()
         frames(90)
-        val at = Offset(500f, 300f)
+        contentWidth = 1200
+        frames(3)
+        assertTrue(detailLeft > 0f && detailLeft < 316f, "mid glide: $detailLeft")
+        frames(90)
+        assertEquals(316f, detailLeft)
+    }
+
+    @Test
+    fun `reduced motion - the push cross-fades without sliding`() = withScene {
+        reduceMotion = true
+        narrowWithSelection()
+        panes.push()
+        frame()
+        assertEquals(0f, detailLeft, "no slide in")
+        assertEquals(0f, listLeft, "the list does not shift")
+        frames(20)
+        panes.back()
+        frame()
+        assertTrue(detailComposed, "still fading out")
+        assertEquals(0f, detailLeft, "no slide out")
+        frames(20)
+        assertFalse(detailComposed, "faded out within 150 ms")
+    }
+
+    @Test
+    fun `losing the selection while pushed shows the list`() = withScene {
+        narrowWithSelection()
+        panes.push()
+        frames(90)
+        hasSelection = false
+        frames(90)
+        assertFalse(detailComposed)
+        assertEquals(0f, listLeft)
+        assertFalse(panes.pushed, "losing the selection clears the push")
+        // A new selection later shows the list, not a stale push.
+        hasSelection = true
+        frames(90)
+        assertFalse(detailComposed)
+    }
+
+    @Test
+    fun `widening from a push - the detail stays opaque and blocks the list until it is beside it`() = withScene {
+        narrowWithSelection()
+        panes.push()
+        frames(90)
+        contentWidth = 1200
+        frames(4)
+        val left = detailLeft
+        assertTrue(left > 0f && left < 200f, "mid glide: $left")
+        // Over the list (300 wide), inside the detail.
+        val x = left + 30f
+        val pixel = snapshot()[x.toInt(), 300]
+        assertTrue(pixel.red - pixel.green < 0.1f, "the detail's own background, not the red list: $pixel at $x")
+        val at = Offset(x, 300f)
         scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
         scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, button = PointerButton.Primary)
+        scene.sendPointerEvent(PointerEventType.Release, at, type = PointerType.Mouse, button = PointerButton.Primary)
+        assertEquals(0, listPresses, "the press did not reach the list")
+        frames(90)
+        assertEquals(316f, detailLeft, "beside the list")
+    }
+
+    @Test
+    fun `Back returns keyboard focus to the row the item was opened from`() = withScene {
+        contentWidth = 600
+        frames(90)
+        key(Key.Tab) // the list row
+        key(Key.Tab) // the row that opens an item
+        assertTrue(openRowFocused, "the row has focus")
+        key(Key.Enter)
+        frames(90)
+        assertTrue(panes.pushed, "Enter opened it")
+        assertFalse(openRowFocused, "focus moved into the detail")
+        key(Key.Escape)
+        frames(90)
+        assertFalse(panes.pushed)
+        assertTrue(openRowFocused, "the row has focus again")
+    }
+
+    @Test
+    fun `the covered list takes no clicks and leaves the semantics tree`() = withScene {
+        narrowWithSelection()
+        assertTrue(hasNode("List row"))
+        panes.push()
         frame()
+        assertFalse(hasNode("List row"), "covered as soon as the push starts")
+        // A click on the row while the detail is still sliding in over it reaches nothing.
+        val at = Offset(20f, 20f)
+        scene.sendPointerEvent(PointerEventType.Move, at, type = PointerType.Mouse)
+        scene.sendPointerEvent(PointerEventType.Press, at, type = PointerType.Mouse, button = PointerButton.Primary)
         scene.sendPointerEvent(PointerEventType.Release, at, type = PointerType.Mouse, button = PointerButton.Primary)
         frames(90)
-        assertTrue(!hasNode("Close list"), "scrim gone")
-    }
-
-    @Test
-    fun `closeOverlay closes it`() = withScene {
-        enterItemView()
-        switcher!!.invoke()
+        assertEquals(0, listClicks)
+        panes.back()
         frames(90)
-        panes.closeOverlay()
-        frames(90)
-        assertTrue(!hasNode("Close list"))
-    }
-
-    @Test
-    fun `widening to two panes closes the overlay`() = withScene {
-        enterItemView()
-        switcher!!.invoke()
-        frames(90)
-        assertTrue(hasNode("Close list"))
-        contentWidth = 1200
-        frames(90)
-        assertTrue(!hasNode("Close list"), "scrim gone")
-        assertTrue(detailComposed, "both panes show")
-        assertEquals(300, listWidth, "list width")
-        assertEquals(ListPresentation.Full, presentation)
-    }
-
-    @Test
-    fun `widening with the overlay open fades the overlay out instead of cutting it`() = withScene {
-        enterItemView()
-        switcher!!.invoke()
-        frames(90)
-        assertEquals(2, listsComposed, "strip and overlay")
-        contentWidth = 1200
-        frames(2)
-        assertEquals(2, listsComposed, "overlay list still there, fading")
-        frames(90)
-        assertEquals(1, listsComposed, "overlay gone once faded")
-        assertTrue(!hasNode("Close list"))
-    }
-
-    @Test
-    fun `shrinking to list view with the overlay open fades the overlay out`() = withScene {
-        enterItemView()
-        switcher!!.invoke()
-        frames(90)
-        contentWidth = 400
-        panes.navigation.backToList() // ItemView -> ListView
-        frames(2)
-        assertEquals(2, listsComposed, "overlay list still there, fading")
-        frames(90)
-        assertEquals(1, listsComposed)
+        assertTrue(hasNode("List row"), "back in the tree")
     }
 }

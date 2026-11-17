@@ -123,7 +123,7 @@ fun WifiPairingDialog(
         origin = ContainerOrigin(
             color = MaterialTheme.colorScheme.secondaryContainer,
             cornerRadius = null,
-            face = { if (anchor?.iconOnly == true) PairIconFace() else PairButtonFace() },
+            face = { PairButtonFace() },
         ),
         containerColor = AlertDialogDefaults.containerColor,
         cornerRadius = 28.dp,
@@ -145,11 +145,6 @@ fun WifiPairingDialog(
 }
 
 /** The "Pair over Wi-Fi" button's label, shown on the morphing container while it is still button-sized. */
-@Composable
-private fun PairIconFace() {
-    Icon(Icons.Filled.Wifi, contentDescription = null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
-}
-
 @Composable
 private fun PairButtonFace() {
     Box(contentAlignment = Alignment.Center) {

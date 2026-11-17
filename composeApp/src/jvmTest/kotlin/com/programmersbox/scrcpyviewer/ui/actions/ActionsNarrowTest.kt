@@ -44,15 +44,15 @@ import kotlin.test.assertTrue
 
 /**
  * The Actions screen at narrow widths, laid out offscreen (1 px = 1 dp) and read off the semantics tree. The widths are
- * the screen's content width: two panes from 260 + 16 + 420 dp, else the strip beside the open action. Motion is on and
- * passed explicitly: CI runners report reduce motion on.
+ * the screen's content width: two panes from 260 + 16 + 420 dp, else the full list first and the pushed action after a
+ * click. Motion is on and passed explicitly: CI runners report reduce motion on.
  */
 private const val SCENE_WIDTH = 1100
 
 /** A 360 dp window less the 60 dp narrow nav rail and its 1 dp divider. */
 private const val PHONE = 360 - 60 - 1
 
-/** Just under two panes (260 + 16 + 420 = 696 dp): the strip beside the open action. 700 dp still has two panes. */
+/** Just under two panes (260 + 16 + 420 = 696 dp): one pane at a time. 700 dp still has two panes. */
 private const val ITEM_VIEW = 680
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -83,8 +83,11 @@ class ActionsNarrowTest {
     private var width = 0
     private lateinit var panes: ListDetailPanes
 
-    /** Runs [block] on a screen [screenWidth] wide showing [start], with the open action (or empty page) in view. */
-    private fun scene(screenWidth: Int, start: ActionsUiState = editing, block: SceneDriver.() -> Unit) = onEdt {
+    /**
+     * Runs [block] on a screen [screenWidth] wide showing [start]; when [pushed] (as after a click in the list) a narrow
+     * screen shows the open action, else (as at launch) the list.
+     */
+    private fun scene(screenWidth: Int, start: ActionsUiState = editing, pushed: Boolean = true, block: SceneDriver.() -> Unit) = onEdt {
         state = start
         width = screenWidth
         val driver = SceneDriver(ImageComposeScene(SCENE_WIDTH, 900, Density(1f)) {
@@ -95,10 +98,18 @@ class ActionsNarrowTest {
                     Surface {
                         Box(Modifier.width(screenWidth.dp).fillMaxHeight()) {
                             panes = rememberListDetailPanes()
-                            remember(panes) { panes.navigation.openDetail() }
+                            remember(panes) { if (pushed) panes.push() }
                             ActionsContent(
                                 state,
                                 onEvent = { event ->
+                                    if (event is ActionsEvent.Select) {
+                                        val action = state.actions.first { it.id == event.id }
+                                        state = state.copy(
+                                            selectedId = action.id,
+                                            draft = ActionDraft(id = action.id, type = ActionType.RunOnce, name = action.name, icon = "terminal"),
+                                            editorKey = state.editorKey + 1,
+                                        )
+                                    }
                                     if (event is ActionsEvent.Delete) {
                                         // As the view model does: the editor closes and the action leaves the list.
                                         state = state.copy(
@@ -131,7 +142,8 @@ class ActionsNarrowTest {
         val out = mutableListOf<SemanticsNode>()
         fun walk(node: SemanticsNode) {
             out += node
-            node.children.forEach(::walk)
+            // A cleared subtree (the list covered by a pushed detail) is out of the semantics tree.
+            if (!node.config.isClearingSemantics) node.children.forEach(::walk)
         }
         scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
         return out.filter { it.layoutInfo.isPlaced }
@@ -159,24 +171,56 @@ class ActionsNarrowTest {
     fun `wide - both panes`() = scene(1000) {
         assertTrue(text("Logcat errors").isNotEmpty(), "the list shows its rows")
         assertTrue(text("Save").isNotEmpty(), "the editor shows beside the list")
-        assertTrue(described("Show list").isEmpty(), "no strip in two panes")
-        assertTrue(described("Switch item").isEmpty(), "no switcher chip in two panes")
+        assertTrue(described("Back to list").isEmpty(), "no back arrow in two panes")
+        assertNoStripOrChip()
+    }
+
+    /** No node of the removed strip, switcher chip or list overlay exists anywhere, on screen or off. */
+    private fun SceneDriver.assertNoStripOrChip() {
+        for (label in listOf("Show list", "Switch item", "Close list")) {
+            assertTrue(nodes().none { it.described(label) }, "no $label node")
+        }
     }
 
     @Test
-    fun `below two panes - strip, switcher chip, and Save and Test run show`() = scene(ITEM_VIEW) {
-        assertTrue(described("Show list").isNotEmpty(), "the strip")
-        assertTrue(described("New action").isNotEmpty(), "the strip's New action button")
-        assertTrue(described("Switch item").isNotEmpty(), "the switcher chip")
-        assertTrue(nodes().none { it.described("Back to list") }, "no back button")
+    fun `below two panes - the pushed action shows the back arrow, Save and Test run`() = scene(ITEM_VIEW) {
+        assertTrue(described("Back to list").isNotEmpty(), "the back arrow")
+        assertNoStripOrChip()
         val run = assertNotNull(text("Test run").firstOrNull(), "Test run").boundsInRoot
         val save = assertNotNull(text("Save").firstOrNull(), "Save").boundsInRoot
         assertTrue(run.right <= save.left, "Test run $run before Save $save")
+        // The arrow starts the header row, before the title.
+        val back = described("Back to list").first().boundsInRoot
+        val title = assertNotNull(text("Edit action").firstOrNull(), "the title").boundsInRoot
+        assertTrue(back.right <= title.left && back.bottom > title.top && back.top < title.bottom, "arrow $back before the title $title")
     }
 
     @Test
-    fun `the strip's New action button opens the New menu`() = scene(ITEM_VIEW) {
-        click("New action")
+    fun `launch - a narrow window shows the full list even with an open action`() = scene(ITEM_VIEW, pushed = false) {
+        for (name in listOf("Stay awake", "Logcat errors")) assertTrue(text(name).isNotEmpty(), "$name shows")
+        assertTrue(text("Save").isEmpty(), "no editor")
+        assertTrue(described("Back to list").isEmpty())
+        assertNoStripOrChip()
+    }
+
+    @Test
+    fun `clicking an action pushes its editor, Back returns to the list`() = scene(ITEM_VIEW, pushed = false) {
+        click("Logcat errors")
+        assertTrue(panes.pushed)
+        assertEquals("logcat", state.selectedId)
+        assertTrue(described("Back to list").isNotEmpty(), "the back arrow")
+        assertTrue(text("Save").isNotEmpty(), "the editor")
+        assertNoStripOrChip()
+        click("Back to list")
+        assertTrue(!panes.pushed)
+        assertTrue(text("Save").isEmpty(), "the editor left")
+        assertTrue(text("Stay awake").isNotEmpty(), "the full list again")
+        assertEquals("logcat", state.selectedId, "the selection stays")
+    }
+
+    @Test
+    fun `the list's New menu opens from its own button in a narrow window`() = scene(ITEM_VIEW, pushed = false) {
+        click("More ways to create an action")
         assertTrue(nodes().any { "New blank action" in it.texts() && it.shown(popup = true) }, "New blank action")
         assertTrue(nodes().any { "From template…" in it.texts() && it.shown(popup = true) }, "From template")
     }
@@ -217,8 +261,8 @@ class ActionsNarrowTest {
             test = TestResult(running = false, output = "line\n".repeat(5), exitCode = 137, note = "Stopped after 30 s", shownLines = 200),
         ),
     ) {
-        // The header sits in the editor's 22 dp side padding, right of the 76 dp strip and its 8 dp gap.
-        val left = 76f + 8f + 22f
+        // The header sits in the full-width editor's 22 dp side padding.
+        val left = 22f
         val right = PHONE - 22f
         val parts = listOf("TEST OUTPUT", "exit 137", "Showing last 200 lines").map { label ->
             val node = assertNotNull(nodes().firstOrNull { label in it.texts() }, label)
@@ -244,11 +288,20 @@ class ActionsNarrowTest {
         }
     }
 
+    // The empty page is the detail with nothing open: narrow windows show the list instead, so check it at the
+    // narrowest two-pane width, where the detail is at its 420 dp minimum.
     @Test
-    fun `empty page - all three buttons show`() = scene(400, start = ActionsUiState()) { emptyPageButtonsShow() }
+    fun `empty page - all three buttons show beside the list`() = scene(700, start = ActionsUiState()) { emptyPageButtonsShow() }
 
     @Test
-    fun `phone window - the empty page's buttons wrap and all show`() = scene(PHONE, start = ActionsUiState()) { emptyPageButtonsShow() }
+    fun `phone window with no actions - the list shows its empty text, + New and Import`() = scene(PHONE, start = ActionsUiState()) {
+        assertTrue(text("No actions yet. Create one with + New, or import a file.").isNotEmpty(), "the list's empty text")
+        for (label in listOf("+ New", "Import")) {
+            val node = assertNotNull(text(label).firstOrNull(), "$label shows").boundsInRoot
+            assertTrue(node.width > 0f && node.right <= width, "$label $node inside $width")
+        }
+        assertTrue(described("Back to list").isEmpty(), "nothing pushed")
+    }
 
     /** The colour at ([x], [y]) of the next frame. */
     private fun SceneDriver.pixel(x: Float, y: Float): Color = snapshot()[x.toInt(), y.toInt()]
@@ -295,13 +348,13 @@ class ActionsNarrowTest {
 
     @Test
     fun `deleting the open action goes back to the list view`() = scene(ITEM_VIEW) {
-        assertTrue(described("Switch item").isNotEmpty())
+        assertTrue(described("Back to list").isNotEmpty())
         if (text("Delete").isEmpty()) click("More")
         click("Delete")
         // The confirmation's Delete (the dialog is the topmost layer).
         click("Delete")
-        assertTrue(described("Switch item").isEmpty(), "item view closed")
-        assertTrue(described("Show list").isEmpty(), "no strip in the list view")
+        assertTrue(described("Back to list").isEmpty(), "the pushed editor closed")
+        assertTrue(!panes.pushed)
         assertTrue(text("Logcat errors").isNotEmpty(), "the full list")
         assertTrue(text("Save").isEmpty(), "no editor")
     }

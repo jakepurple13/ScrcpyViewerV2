@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
@@ -43,12 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.LinkOff
-import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.Devices
-import com.programmersbox.scrcpyviewer.emulator.SdkLookup
-import com.programmersbox.scrcpyviewer.ui.common.openSwitcher
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.TabletAndroid
 import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.Search
@@ -56,7 +50,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.TooltipArea
 import com.programmersbox.scrcpyviewer.ui.theme.AlertDialog
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.runtime.snapshotFlow
@@ -129,15 +122,10 @@ import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
 import com.programmersbox.scrcpyviewer.ui.common.BarItem
 import com.programmersbox.scrcpyviewer.ui.common.BarSpacer
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
-import com.programmersbox.scrcpyviewer.ui.common.ListPresentation
-import com.programmersbox.scrcpyviewer.ui.common.ListStrip
-import com.programmersbox.scrcpyviewer.ui.common.ListSwitcherChip
 import com.programmersbox.scrcpyviewer.ui.common.LocalBarProbe
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.PriorityBar
 import com.programmersbox.scrcpyviewer.ui.common.SelectionHighlightState
-import com.programmersbox.scrcpyviewer.ui.common.StripItem
-import com.programmersbox.scrcpyviewer.ui.common.closeOverlay
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.rememberSelectionHighlight
 import com.programmersbox.scrcpyviewer.ui.common.RowHighlight
@@ -306,7 +294,6 @@ internal fun DevicesContent(
     emulatorNow: () -> Long = System::currentTimeMillis,
 ) {
     val rowActions = RowActions(onOpen = onOpen, onConnectWifi = onConnectWifi, onDisconnect = onDisconnect, canMirror = canMirror)
-    val reduceMotion = LocalReduceMotion.current
     // The detail pane's view switch has a motion of its own; an emulator's title change follows this one.
     val titleMotion = motion
     Column(modifier.fillMaxSize()) {
@@ -323,46 +310,23 @@ internal fun DevicesContent(
             listMinWidth = DEVICE_LIST_MIN_WIDTH,
             listPreferredWidth = DeviceListPreferredWidth,
             hasSelection = state.selectedSerial != null,
-            list = { presentation ->
-                // Rows and avatars cross-fade while the list's width glides between them.
-                Crossfade(presentation, animationSpec = tween(if (reduceMotion) 150 else 220), label = "devicePresentation") { shown ->
-                    when (shown) {
-                        ListPresentation.Full -> DeviceColumn(
-                            state,
-                            onSelect = {
-                                onSelect(it)
-                                panes.navigation.openDetail()
-                                panes.closeOverlay()
-                            },
-                            onSelect, rowActions, onPairWifi,
-                            contextMenuSerial, onRestartAdb, restartSucceeded, pairAnchor,
-                            emulators, onEmulator, onChooseSdk, motion, emulatorNow,
-                        )
-                        ListPresentation.Strip -> DeviceStrip(
-                            state, emulators, onSelect, onShowList = panes.navigation::backToList,
-                            onShowEmulators = {
-                                onEmulator(EmulatorEvent.SetExpanded(true))
-                                panes.openSwitcher()
-                            },
-                            onRestartAdb, restartSucceeded, onPairWifi, pairAnchor,
-                        )
-                    }
-                }
+            list = {
+                DeviceColumn(
+                    state,
+                    onSelect = {
+                        onSelect(it)
+                        panes.push()
+                    },
+                    onSelect, rowActions, onPairWifi,
+                    contextMenuSerial, onRestartAdb, restartSucceeded, pairAnchor,
+                    emulators, onEmulator, onChooseSdk, motion, emulatorNow,
+                )
             },
-            detail = { openSwitcher ->
-                // Item view only: the open device leaving adb's list leaves item view too.
-                if (openSwitcher != null) BackToListWhenGone(state, panes.navigation::backToList)
+            detail = { onBack ->
+                // The open device leaving adb's list moves the selection to another device: return to the list.
+                BackToListWhenGone(state, panes::back)
                 Column(Modifier.fillMaxSize()) {
-                    val shownDevice = state.devices.firstOrNull { it.serial == state.selectedSerial }
-                    DetailTabRow(
-                        state.selectedSerial != null, detailTab, onDetailTab, onBack = null,
-                        leading = openSwitcher?.let { open ->
-                            {
-                                val title = shownDevice?.let { connectedTitle(it, emulators?.avdNames?.get(it.serial)) } ?: "Devices"
-                                ListSwitcherChip(title, open)
-                            }
-                        },
-                    )
+                    DetailTabRow(state.selectedSerial != null, detailTab, onDetailTab, onBack = onBack, reduceMotion = LocalReduceMotion.current)
                     // Each device's content (and none) animates in and out as a whole; `shown` is that device's state.
                     DetailPane(
                         state, { it.selectedSerial }, state.devices.map { it.serial }, detailTab, info, onInfoActive, onInfoRetry,
@@ -407,8 +371,8 @@ internal fun DevicesContent(
 }
 
 /**
- * Calls [backToList] when the device that was open leaves adb's list (unplugged, or adb restarted): item view would
- * otherwise jump to whichever device is selected next.
+ * Calls [backToList] when the device that was open leaves adb's list (unplugged, or adb restarted): the pushed detail
+ * would otherwise jump to whichever device is selected next.
  */
 @Composable
 private fun BackToListWhenGone(state: DevicesUiState, backToList: () -> Unit) {
@@ -525,7 +489,7 @@ private fun DeviceColumn(
                 )
             }
         }
-        val pairOrigin = rememberPairOrigin(pairAnchor, iconOnly = false)
+        val pairOrigin = rememberPairOrigin(pairAnchor)
         FilledTonalButton(
             onClick = {
                 pairOrigin?.claim()
@@ -540,82 +504,12 @@ private fun DeviceColumn(
     }
 }
 
-/** A device row's status dot (and its strip avatar's badge): ready, waiting for approval, or a problem. */
+/** A device row's status dot: ready, waiting for approval, or a problem. */
 @Composable
 private fun statusDotColor(state: DeviceState): Color = when (state) {
     DeviceState.Device -> MaterialTheme.colorScheme.primary
     DeviceState.Unauthorized -> warnColor()
     DeviceState.Offline, DeviceState.Other -> MaterialTheme.colorScheme.error
-}
-
-/** The strip's emulator tile: opens the full list at the Emulators section. */
-private object EmulatorTileKey
-
-/**
- * The device list beside an open device: an avatar per connected device, then, after an "AVD" divider, the emulator
- * tile (the AVD count on it; it opens the full list over the device with the Emulators section expanded) and an
- * avatar per running emulator, selectable like a device. The restart button and an icon-only Pair over Wi-Fi sit
- * under them.
- */
-@Composable
-private fun DeviceStrip(
-    state: DevicesUiState,
-    emulators: EmulatorsUiState?,
-    onSelect: (String) -> Unit,
-    onShowList: () -> Unit,
-    onShowEmulators: () -> Unit,
-    onRestartAdb: () -> Unit,
-    restartSucceeded: Boolean?,
-    onPairWifi: () -> Unit,
-    pairAnchor: PairDialogAnchor?,
-) {
-    val (running, devices) = connectedRows(state.devices, emulators?.hiddenSerials.orEmpty()).partition { isEmulatorSerial(it.serial) }
-    @Composable
-    fun deviceItem(device: Device, title: String, divider: String?) = StripItem(
-        key = device.serial,
-        label = title,
-        avatar = {
-            Icon(
-                if (title.contains("Tablet", ignoreCase = true)) Icons.Filled.TabletAndroid else Icons.Filled.PhoneAndroid,
-                contentDescription = null,
-                Modifier.size(22.dp),
-            )
-        },
-        badgeColor = statusDotColor(device.state),
-        dividerLabel = divider,
-    )
-    val tile = emulators?.let { avds ->
-        StripItem(
-            key = EmulatorTileKey,
-            label = "Emulators",
-            avatar = { Icon(Icons.Filled.Devices, contentDescription = null, Modifier.size(22.dp)) },
-            dividerLabel = "AVD",
-            badgeCount = if (avds.sdk is SdkLookup.Found) avds.rows.size.takeIf { it > 0 } else null,
-        )
-    }
-    val items = devices.map { deviceItem(it, deviceTitle(it), divider = null) } +
-        listOfNotNull(tile) +
-        running.mapIndexed { i, device ->
-            deviceItem(device, connectedTitle(device, emulators?.avdNames?.get(device.serial)), divider = if (tile == null && i == 0) "AVD" else null)
-        }
-    ListStrip(
-        items, state.selectedSerial,
-        onSelect = { key -> if (key == EmulatorTileKey) onShowEmulators() else onSelect(key as String) },
-        onShowList = onShowList,
-        modifier = Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
-        RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb, succeeded = restartSucceeded)
-        val pairOrigin = rememberPairOrigin(pairAnchor, iconOnly = true)
-        FilledTonalIconButton(
-            onClick = {
-                pairOrigin?.claim()
-                onPairWifi()
-            },
-            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp).size(44.dp).pairDialogOrigin(pairOrigin),
-        ) {
-            Icon(Icons.Filled.Wifi, contentDescription = "Pair over Wi-Fi", Modifier.size(20.dp))
-        }
-    }
 }
 
 /** The devices the connected rows show: all but the emulators still booting ([hidden]). */
