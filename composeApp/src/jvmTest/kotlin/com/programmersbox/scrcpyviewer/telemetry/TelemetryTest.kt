@@ -10,7 +10,10 @@ import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import io.ktor.client.engine.mock.toByteArray
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonPrimitive
 import java.nio.file.Files
@@ -144,6 +147,38 @@ class TelemetryTest {
             t.start()
         }
         assertFalse(Files.exists(dir.resolve("telemetry")))
+    }
+
+    @Test fun flushRunsSenderWorkOffTheCallingThread() {
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "fake-ui") }
+        try {
+            var senderThread: String? = null
+            val t = PostHogTelemetry(config, dataDir, settings, scope) {
+                senderThread = Thread.currentThread().name
+                TelemetrySender(config, it, MockEngine { respond("", HttpStatusCode.OK) })
+            }
+            runBlocking(executor.asCoroutineDispatcher()) { t.flush() }
+            // Coroutine debug mode appends " @coroutine#n" to the thread name.
+            assertTrue(senderThread?.startsWith("fake-ui") == false, "sender built on $senderThread")
+        } finally {
+            executor.shutdown()
+        }
+    }
+
+    @Test fun flushSendsAnEventTrackedJustBefore() = runBlocking {
+        settings.update { it.copy(usageStats = true) }
+        val bodies = java.util.Collections.synchronizedList(ArrayList<String>())
+        val t = PostHogTelemetry(config, dataDir, settings, scope) {
+            TelemetrySender(config, it, MockEngine { req ->
+                bodies += String(req.body.toByteArray())
+                respond("", HttpStatusCode.OK)
+            })
+        }
+        t.flush() // builds the client now, so the flush below is fast enough to beat an unawaited write
+        t.track(TelemetryEvent.AppClosed(sessionMinutes = 3, mirrorWindowsOpen = 0))
+        t.flush()
+        assertTrue(bodies.any { "app_closed" in it }, "sent: $bodies")
+        assertEquals(0, queue.size())
     }
 
     @Test fun recentKeepsLast50() {

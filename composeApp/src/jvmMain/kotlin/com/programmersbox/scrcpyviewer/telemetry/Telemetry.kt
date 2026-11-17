@@ -7,6 +7,7 @@ import com.programmersbox.scrcpyviewer.state.Settings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,9 +16,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -26,6 +29,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** One event the app tried to record. [sent] is false when consent blocked it, true when it was queued to send. */
@@ -130,7 +134,7 @@ class PostHogTelemetry(
     override fun track(event: TelemetryEvent) = guard("track ${event.name}") {
         if (!record(event.name, TelemetryKind.Usage)) return@guard
         val now = Instant.now()
-        scope.launch(Dispatchers.IO) {
+        launchWrite {
             guard("queue ${event.name}") {
                 write(event.name, TelemetryKind.Usage, now, JsonObject(event.props().mapValues { toJson(it.value) }))
             }
@@ -140,7 +144,7 @@ class PostHogTelemetry(
     override fun captureException(t: Throwable, handled: Boolean) = guard("capture exception") {
         if (!record(EXCEPTION, TelemetryKind.Crash)) return@guard
         val now = Instant.now()
-        scope.launch(Dispatchers.IO) {
+        launchWrite {
             guard("queue exception") { write(EXCEPTION, TelemetryKind.Crash, now, exceptionProperties(t, handled, scrubber)) }
         }
     }
@@ -168,12 +172,27 @@ class PostHogTelemetry(
 
     override suspend fun flush() {
         try {
-            flushLock.withLock { batchSender.flush() }
+            // Off the caller's thread: the quit flush is called on the UI thread, and the queue reads and rewrites its file.
+            withContext(Dispatchers.IO) {
+                // An event tracked just before (app_closed at quit) goes out in this flush, not the next launch's.
+                pendingWrites.toList().joinAll()
+                flushLock.withLock { batchSender.flush() }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
             report("flush", t)
         }
+    }
+
+    /** Queue writes still running; [flush] waits for them. */
+    private val pendingWrites: MutableSet<Job> = ConcurrentHashMap.newKeySet()
+
+    private fun launchWrite(block: suspend CoroutineScope.() -> Unit) {
+        val job = scope.launch(Dispatchers.IO, block = block)
+        pendingWrites += job
+        // Runs at once when the job already finished, so the set never keeps a done job.
+        job.invokeOnCompletion { pendingWrites -= job }
     }
 
     /** Adds [name] to [recent]; true when consent allows [kind]. */
