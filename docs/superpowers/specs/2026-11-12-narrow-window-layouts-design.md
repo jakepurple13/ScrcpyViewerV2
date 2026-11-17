@@ -291,6 +291,28 @@ styled chips, the tray menu. They still take the motion rules below.
   scale pulses and content enter/exit keep their short tweens. Every window provides `LocalReduceMotion`,
   and each screen's `motion` / `reduceMotion` default reads it instead of asking the OS itself.
 
+### 6c. List first: push instead of the strip (user decision 2026-11-17)
+
+After hand testing, the user did not want the narrow item view (76 dp icon strip + detail, "Switch item" chip,
+list overlay). They chose proposal A from mockup https://claude.ai/artifact/RbZb8avUQNUhMKe2hLi3So, for
+Devices, Presets and Actions alike:
+
+- **The list comes first.** A narrow window (too narrow for list + detail side by side) shows the full list.
+  On launch it always shows the list, even when an item is selected from last time.
+- **Opening pushes.** Clicking an item in the narrow list slides its detail in from the end edge over the
+  list, full width; the list shifts about 22% toward the start and dims while it is covered. Both move with
+  `layoutSpring`. Reduced motion: a cross-fade, no slide.
+- **Back.** The detail's leading slot holds a back arrow ("Back to list"); Esc and ⌘[ (Ctrl+[ elsewhere) do the
+  same. Back reverses the slide. The selection stays, so widening afterwards shows both panes with it.
+- **Resizing.** Whether the detail is pushed is its own state: a click on an item sets it, Back clears it,
+  launch starts it cleared. Narrowing with it set shows the pushed detail; narrowing with it clear shows the
+  list. Widening always shows both panes.
+- **Removed.** The icon strip (`ListStrip`, `StripItem`), the "Switch item" chip, the list overlay and its
+  scrim, "Show list", and the per-screen strips (Devices with its AVD divider, emulators tile and running
+  emulator items; Presets initials; Actions icons). Emulators stay in the full Devices list as today.
+- **Kept.** Everything else from earlier tasks: detail tabs → menu, footer and header folding, option rows,
+  flag grids, deleting the open item returns to the list, wide layouts unchanged.
+
 ### Window minimums
 
 A floor, not the fix:

@@ -22,7 +22,7 @@
 **Mockup addendum (mirror sheet tabs, Tasks 13, 16, 17):** https://claude.ai/artifact/6wsGe9iFtdpu4JJPkzcTi7.
 **Mockup addendum 2 (main v1.18–v1.22 screens, Tasks 18–21, spec 6b):** https://claude.ai/artifact/SnenwvS9QBF519Wmg8geoL (version 2).
 
-**Run order (updated 2026-11-16):** 1, 7, 12, 2, 5, 4, 14 (done) → 3 → 6 → 8 → 20 → 9 → 10 → 13 → 16 → 17 → 18 → 19 → 11 → 21 → 15.
+**Run order (updated 2026-11-17):** 1, 7, 12, 2, 5, 4, 14, 3, 6, 8, 20, 9, 10, 13, 16, 17, 18 (done) → 22 → 19 → 11 → 21 → 15.
 
 All paths below are relative to `composeApp/src/jvmMain/kotlin/com/programmersbox/scrcpyviewer/` (main) or `composeApp/src/jvmTest/kotlin/com/programmersbox/scrcpyviewer/` (test).
 
@@ -880,12 +880,48 @@ Runs last, after Tasks 16–21.
   - The Logcat and Links tabs at sheet widths **280, 340, 420 and 600**: Pause (Logcat) and Open on device (Links) are displayed and inside the sheet; same short-text check. The GIF export window at 600 × 500 with a landscape clip: Export is inside the window.
 - [ ] **Step 2: Run it.** Expected: PASS. If it fails, fix the owning task's code, not the test.
 - [ ] **Step 3: Write the hand-check list.** For each screen, the transitions to watch on macOS:
-  - two panes ↔ strip, strip ↔ list, the overlay, item switch
+  - two panes ↔ list, push in and Back out, launch on the list
   - rows stacking, ⋮ folding, segments → icons → menu
   - mirror docked ↔ floating, dialog stacking
   - the window minimum
-  - logcat rows stacking, links stacking, the GIF preview cap, the emulator strip divider, detail tabs → menu
+  - logcat rows stacking, links stacking, the GIF preview cap, detail tabs → menu
   - main's screens now moving with the shared spring (info cards, follow strip, sheet tabs, markup toolbar)
   - reduced motion on (System Settings › Accessibility › Display › Reduce motion): fades only
 - [ ] **Step 4: Run the full suite.** Run `./gradlew :composeApp:jvmTest`. Expected: all pass.
 - [ ] **Step 5: Commit.** `test: width matrix for every screen; narrow-layout hand-check list`
+
+---
+
+### Task 22: List first — push replaces the strip (spec 6c, added 2026-11-17)
+
+Runs next, before Task 19.
+
+**Files:**
+- Modify: `ui/common/AdaptiveListDetail.kt`, `ui/common/ListDetailPanes.kt` (push state, slide, back), `ui/devices/info/DetailTabMotion.kt` (`leading` slot gets the back arrow), `ui/devices/DevicesScreen.kt`, `ui/presets/PresetsScreen.kt`, `ui/actions/ActionsScreen.kt`.
+- Delete: `ui/common/ListStrip.kt` and its test; the list overlay, scrim, `openSwitcher` / `closeOverlay` / `overlayOpen`; `DeviceStrip`, `PresetStrip`, `ActionStrip`; `StripItem.dividerLabel` / `badgeCount`; `EmulatorStripTest`.
+- Test: `ui/common/AdaptiveListDetailTest.kt`, `DevicesNarrowTest`, `PresetsNarrowTest`, `ActionsNarrowTest`.
+
+**Interfaces:**
+- `ListDetailPanes` gains `var pushed: Boolean` (initial false), `fun ListDetailPanes.push()` and `fun ListDetailPanes.back()`.
+- Narrow mode (content too narrow for list + detail) shows the full list when `!pushed || !hasSelection`, else the detail full width. Two-pane mode ignores `pushed`.
+- Screens call `panes.push()` when the user clicks an item (any width); `BackToListWhenGone` calls `back()`.
+
+Changes:
+- **Push motion:** detail enters from the end edge (translation from 100% of the width to 0) over the list; the list translates to −22% and dims (scrim 0.32 alpha) while covered; both with `layoutSpring`; Back reverses. Reduced motion: 150 ms cross-fade.
+- **Back:** a 40 dp back-arrow `IconButton` ("Back to list") in the detail's leading slot (DetailTabRow `leading` for Devices; the same slot Presets/Actions used for the chip); Esc and ⌘[ / Ctrl+[ while the pushed detail has focus.
+- **Launch:** `pushed` starts false, so a narrow window opens on the list even with a remembered selection.
+- **Removal:** delete the strip, chip, overlay and per-screen strips listed above, and their tests; drop now-unused parameters (`listMinWidth` stays for the two-pane threshold).
+- Wide layouts stay pixel-identical.
+
+- [ ] **Step 1: Write the failing tests.**
+  - AdaptiveListDetail at 600 with a selection and `pushed = false`: the list is displayed full width; no detail node.
+  - Click an item → `pushed`; after frames the detail fills the width and "Back to list" is displayed; on a paused clock with motion on, one frame in the detail's left is strictly between the width and 0.
+  - "Back to list" (and Esc) → the list is displayed again; the selection is unchanged.
+  - Resize 600 → 1200 with `pushed`: both panes; back to 600: the pushed detail again. Resize with `pushed = false`: the list.
+  - Reduced motion: no in-between translation.
+  - Devices, Presets, Actions at their narrow widths: launch shows the list (all item names displayed in full); clicking an item shows its detail with "Back to list"; no "Show list" or "Switch item" node exists anywhere.
+  - Deleting the open item while pushed shows the list.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them, the screenshot tests with `-Pscreenshots` (wide renders identical) and the full suite.** Expected: PASS.
+- [ ] **Step 5: Commit.** `feat(panes): list first in narrow windows; detail pushes over the list`
