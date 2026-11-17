@@ -75,10 +75,10 @@ class DevicesNarrowTest {
      * Runs [block] on a scene [startWidth] wide whose device is selected and, when [pushed], open (as after a click in
      * the list); not pushed, as at launch.
      */
-    private fun scene(startWidth: Int, startState: DevicesUiState = base, pushed: Boolean = true, block: SceneDriver.() -> Unit) = onEdt {
+    private fun scene(startWidth: Int, startState: DevicesUiState = base, pushed: Boolean = true, windowWidth: Int = 1000, block: SceneDriver.() -> Unit) = onEdt {
         state = startState
         width = startWidth
-        val driver = SceneDriver(ImageComposeScene(1000, 700, Density(1f)) {
+        val driver = SceneDriver(ImageComposeScene(windowWidth, 700, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 CompositionLocalProvider(LocalReduceMotion provides false) {
                     Surface {
@@ -138,6 +138,19 @@ class DevicesNarrowTest {
         val node = assertNotNull(nodes().firstOrNull { SemanticsActions.OnClick in it.config && it.has() }, "no $description button")
         node.config[SemanticsActions.OnClick].action?.invoke()
         frames(150)
+    }
+
+    @Test
+    fun `the default 800 dp window shows the list alone even with a remembered selection`() = scene(800, pushed = false, windowWidth = 800) {
+        assertTrue(text("Pixel 8 Pro").any { it.fullyShown() }, "the list shows")
+        assertTrue(text("Mirror").isEmpty(), "no detail pane")
+        assertTrue(described("Back to list").isEmpty(), "no back arrow")
+    }
+
+    @Test
+    fun `a 1000 dp window shows two panes`() = scene(1000, pushed = false, windowWidth = 1000) {
+        assertTrue(text("Pixel 8 Pro").isNotEmpty(), "the list shows")
+        assertTrue(text("Mirror").isNotEmpty(), "the detail shows beside it")
     }
 
     @Test

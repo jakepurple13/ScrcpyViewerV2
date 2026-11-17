@@ -87,10 +87,10 @@ class ActionsNarrowTest {
      * Runs [block] on a screen [screenWidth] wide showing [start]; when [pushed] (as after a click in the list) a narrow
      * screen shows the open action, else (as at launch) the list.
      */
-    private fun scene(screenWidth: Int, start: ActionsUiState = editing, pushed: Boolean = true, block: SceneDriver.() -> Unit) = onEdt {
+    private fun scene(screenWidth: Int, start: ActionsUiState = editing, pushed: Boolean = true, windowWidth: Int = SCENE_WIDTH, block: SceneDriver.() -> Unit) = onEdt {
         state = start
         width = screenWidth
-        val driver = SceneDriver(ImageComposeScene(SCENE_WIDTH, 900, Density(1f)) {
+        val driver = SceneDriver(ImageComposeScene(windowWidth, 900, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 CompositionLocalProvider(LocalReduceMotion provides false) {
                     highlightColor = MaterialTheme.colorScheme.secondaryContainer
@@ -165,6 +165,19 @@ class ActionsNarrowTest {
         val node = assertNotNull(nodes().lastOrNull { SemanticsActions.OnClick in it.config && it.shown(popup = true) && it.has() }, "no $label to click")
         node.config[SemanticsActions.OnClick].action?.invoke()
         frames(150)
+    }
+
+    @Test
+    fun `the default 800 dp window shows the list alone even with an open action`() = scene(800, pushed = false, windowWidth = 800) {
+        assertTrue(text("Logcat errors").isNotEmpty(), "the list shows")
+        assertTrue(text("Save").isEmpty(), "no editor pane")
+        assertTrue(described("Back to list").isEmpty())
+    }
+
+    @Test
+    fun `a 1000 dp window shows two panes`() = scene(1000, pushed = false, windowWidth = 1000) {
+        assertTrue(text("Logcat errors").isNotEmpty(), "the list shows")
+        assertTrue(text("Save").isNotEmpty(), "the editor shows beside it")
     }
 
     @Test
