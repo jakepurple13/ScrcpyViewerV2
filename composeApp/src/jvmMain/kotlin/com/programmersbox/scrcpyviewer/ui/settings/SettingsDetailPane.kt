@@ -4,7 +4,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.stylePane
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,14 +16,19 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
+import com.programmersbox.scrcpyviewer.ui.common.BackArrowRow
+import com.programmersbox.scrcpyviewer.ui.common.ControlSize
 import com.programmersbox.scrcpyviewer.ui.common.staggerDelayMillis
 import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
 
-/** One category's settings as rows in a card; [entries] is the (possibly search-filtered) subset to show. */
+/**
+ * One category's settings as rows in a card; [entries] is the (possibly search-filtered) subset to show. [onBack] is set
+ * while the category is pushed over the list in a narrow window: a back arrow starts the title row.
+ */
 @Composable
 fun SettingsDetailPane(
     category: SettingsCategory?,
@@ -31,12 +36,16 @@ fun SettingsDetailPane(
     query: String,
     bindings: SettingsBindings,
     modifier: Modifier = Modifier,
+    onBack: (() -> Unit)? = null,
 ) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             bindings.state.persistenceError?.let { PersistenceError(it) }
-            if (category == null) return@Column
-            Text(category.title, style = MaterialTheme.typography.headlineSmall)
+            if (category == null) {
+                onBack?.let { BackArrowRow(it) { m -> Spacer(m) } }
+                return@Column
+            }
+            BackArrowRow(onBack) { m -> Text(category.title, m, style = MaterialTheme.typography.headlineSmall) }
             Surface(Modifier.stylePane(MaterialTheme.shapes.large), color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large) {
                 // The rows fill in one after another when they appear and whenever search changes which are shown.
                 val shownIds = remember(entries) { entries.map { it.id } }
@@ -80,13 +89,16 @@ private fun SettingRow(entry: SettingEntry, query: String, bindings: SettingsBin
     }
     val padding = Modifier.fillMaxWidth().then(entry.rowModifier(bindings)).padding(horizontal = 16.dp, vertical = 12.dp)
     when (entry.layout) {
-        EntryLayout.Inline -> Row(padding, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) { text() }
-            entry.content(bindings)
-        }
+        // The text keeps 160 dp beside the control, else the control goes under it, at the size that fits.
+        EntryLayout.Inline -> AdaptiveRow(
+            text = { Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { text() } },
+            control = { size -> entry.content(bindings, size) },
+            modifier = padding,
+            textMin = 160.dp,
+        )
         EntryLayout.Block -> Column(padding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) { text() }
-            entry.content(bindings)
+            entry.content(bindings, ControlSize.Full)
         }
     }
 }

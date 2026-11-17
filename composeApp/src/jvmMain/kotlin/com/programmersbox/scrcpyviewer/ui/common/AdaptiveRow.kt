@@ -1,22 +1,23 @@
 package com.programmersbox.scrcpyviewer.ui.common
 
-import androidx.compose.animation.animateBounds
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /** How much room a row's trailing control gets: its full form, icons only, or a single menu button. */
@@ -44,8 +45,9 @@ private val StackedGap = 8.dp
  * Text with a trailing control. The text keeps at least [textMin]: when the control's widest form would leave
  * it less, the control moves under the text (start-aligned, or full width with [fillControlWhenStacked]) and
  * steps down through [ControlSize] until it fits. Inline, the control sits at the row's end, or right after the
- * text's own width with [packInline]. Both slots glide to their new bounds and the row height
- * springs, all with [layoutSpring]; under reduced motion they change instantly.
+ * text's own width with [packInline]; inline, both slots sit at [verticalAlignment]. When the control moves under
+ * the text or back, both slots and the row height glide there with [layoutSpring]; under reduced motion they move at
+ * once. Any other resize (a window drag) lays them out at once, so they follow the drag directly.
  *
  * Do not put it under a parent that asks for intrinsic sizes (`height(IntrinsicSize.Min)` and the like):
  * it is a `SubcomposeLayout`, which throws on intrinsic queries.
@@ -62,17 +64,16 @@ fun AdaptiveRow(
     gap: Dp = 16.dp,
     fillControlWhenStacked: Boolean = false,
     packInline: Boolean = false,
+    verticalAlignment: Alignment.Vertical = Alignment.CenterVertically,
 ) {
     val currentText by rememberUpdatedState(text)
     val currentControl by rememberUpdatedState(control)
     val reduceMotion = LocalReduceMotion.current
-    // One stable lambda per fit, so remeasuring (every frame of a bounds animation) does not recompose slots.
+    // One stable lambda per fit, so remeasuring (every frame of a glide) does not recompose slots.
     val probes = remember { ControlSize.entries.associateWith { size -> @Composable { currentControl(size) } } }
-    val contents = remember(reduceMotion, gap, fillControlWhenStacked, packInline) {
+    val contents = remember(reduceMotion, gap, fillControlWhenStacked, packInline, verticalAlignment) {
         HashMap<RowFit, @Composable () -> Unit>()
     }
-    val scope = rememberCoroutineScope()
-    val rowHeight = remember { SpringyHeight() }
 
     SubcomposeLayout(modifier) { constraints ->
         val gapPx = gap.roundToPx()
@@ -101,14 +102,14 @@ fun AdaptiveRow(
                     gap = gap,
                     fillControlWhenStacked = fillControlWhenStacked,
                     packInline = packInline,
+                    verticalAlignment = verticalAlignment,
                     animate = !reduceMotion,
                 )
             }
         }
         val placeables = subcompose(SlotContent, content).map { it.measure(constraints) }
         val width = placeables.maxOfOrNull { it.width } ?: constraints.minWidth
-        val target = placeables.maxOfOrNull { it.height } ?: constraints.minHeight
-        val height = rowHeight.toward(target, animate = !reduceMotion, scope)
+        val height = placeables.maxOfOrNull { it.height } ?: constraints.minHeight
         layout(width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
             placeables.forEach { it.place(0, 0) }
         }
@@ -118,27 +119,9 @@ fun AdaptiveRow(
 private object SlotContent
 
 /**
- * The row's reported height: springs toward each new target so siblings below move with the slots instead of
- * jumping. The first target, and every target under reduced motion, is taken at once.
+ * Lays out the text and control for one [fit]. The slots keep their identity across fits; the stacked share (0 inline,
+ * 1 stacked) springs when the fit flips, and every frame interpolates between the two layouts at the current width.
  */
-private class SpringyHeight {
-    private var animatable: Animatable<Float, *>? = null
-
-    /** Returns the height to report now; reading it from measure remeasures on every animation frame. */
-    fun toward(target: Int, animate: Boolean, scope: CoroutineScope): Int {
-        val current = animatable
-        if (current == null || !animate) {
-            if (current?.targetValue != target.toFloat() || current.isRunning) {
-                animatable = Animatable(target.toFloat())
-            }
-        } else if (current.targetValue != target.toFloat()) {
-            scope.launch { current.animateTo(target.toFloat(), layoutSpring()) }
-        }
-        return animatable!!.value.roundToInt().coerceAtLeast(0)
-    }
-}
-
-/** Lays out the text and control for one [fit]; the slots keep their identity across fits so they can glide. */
 @Composable
 private fun AdaptiveRowContent(
     fit: RowFit,
@@ -147,55 +130,77 @@ private fun AdaptiveRowContent(
     gap: Dp,
     fillControlWhenStacked: Boolean,
     packInline: Boolean,
+    verticalAlignment: Alignment.Vertical,
     animate: Boolean,
 ) {
-    LookaheadScope {
-        val slot = if (animate) {
-            Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
-        } else {
-            Modifier
-        }
-        Layout(
-            // propagateMinConstraints: the text's fixed width and a full-width stacked control reach the content.
-            contents = listOf(
-                { Box(slot, propagateMinConstraints = true) { text() } },
-                { Box(slot, propagateMinConstraints = true) { control() } },
-            ),
-        ) { (textMeasurables, controlMeasurables), constraints ->
-            val loose = constraints.copy(minWidth = 0, minHeight = 0)
-            val bounded = constraints.hasBoundedWidth
-            if (fit.stacked) {
-                val width = constraints.maxWidth
-                val textPlaceable = textMeasurables.firstOrNull()?.measure(loose.copy(minWidth = width))
-                val controlMin = if (fillControlWhenStacked) width else 0
-                val controlPlaceable = controlMeasurables.firstOrNull()?.measure(loose.copy(minWidth = controlMin))
-                val textHeight = textPlaceable?.height ?: 0
-                val controlY = if (textPlaceable != null && controlPlaceable != null) textHeight + StackedGap.roundToPx() else textHeight
-                val height = controlY + (controlPlaceable?.height ?: 0)
-                layout(width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
-                    textPlaceable?.place(0, 0)
-                    controlPlaceable?.place(0, controlY)
-                }
-            } else {
-                val gapPx = gap.roundToPx()
-                val controlPlaceable = controlMeasurables.firstOrNull()?.measure(loose)
-                val controlWidth = controlPlaceable?.width ?: 0
-                val textConstraints = if (bounded) {
-                    val textWidth = (constraints.maxWidth - controlWidth - gapPx).coerceAtLeast(0)
-                    loose.copy(minWidth = if (packInline) 0 else textWidth, maxWidth = textWidth)
-                } else {
-                    loose
-                }
-                val textPlaceable = textMeasurables.firstOrNull()?.measure(textConstraints)
-                val textWidth = textPlaceable?.width ?: 0
-                val width = if (bounded) constraints.maxWidth else textWidth + gapPx + controlWidth
-                val height = maxOf(textPlaceable?.height ?: 0, controlPlaceable?.height ?: 0)
-                layout(width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
-                    textPlaceable?.place(0, (height - textPlaceable.height) / 2)
-                    val controlX = if (packInline && bounded) textWidth + gapPx else width - controlWidth
-                    controlPlaceable?.place(controlX, (height - controlPlaceable.height) / 2)
-                }
+    val stack = animateFloatAsState(
+        targetValue = if (fit.stacked) 1f else 0f,
+        animationSpec = if (animate) layoutSpring() else snap(),
+        label = "adaptiveRowStack",
+    )
+    val shown = if (animate) stack else rememberUpdatedState(if (fit.stacked) 1f else 0f)
+    Layout(
+        // propagateMinConstraints: the text's width and a full-width stacked control reach the content.
+        contents = listOf(
+            { Box(propagateMinConstraints = true) { text() } },
+            { Box(propagateMinConstraints = true) { control() } },
+        ),
+    ) { (textMeasurables, controlMeasurables), constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val gapPx = gap.roundToPx()
+        if (!constraints.hasBoundedWidth) {
+            // No width to share: the text's own width, then the control.
+            val controlPlaceable = controlMeasurables.firstOrNull()?.measure(loose)
+            val textPlaceable = textMeasurables.firstOrNull()?.measure(loose)
+            val textWidth = textPlaceable?.width ?: 0
+            val height = maxOf(textPlaceable?.height ?: 0, controlPlaceable?.height ?: 0)
+            layout(textWidth + gapPx + (controlPlaceable?.width ?: 0), height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+                textPlaceable?.place(0, verticalAlignment.offset(textPlaceable.height, height))
+                controlPlaceable?.place(textWidth + gapPx, verticalAlignment.offset(controlPlaceable.height, height))
             }
+        } else {
+            layoutBetween(
+                shown, textMeasurables.firstOrNull(), controlMeasurables.firstOrNull(), loose, constraints, gapPx,
+                fillControlWhenStacked, packInline, verticalAlignment,
+            )
         }
     }
 }
+
+/** The inline layout at [stack] 0, the stacked one at 1, and every slot's size and place in between. */
+private fun MeasureScope.layoutBetween(
+    stack: State<Float>,
+    textMeasurable: Measurable?,
+    controlMeasurable: Measurable?,
+    loose: Constraints,
+    constraints: Constraints,
+    gapPx: Int,
+    fillControlWhenStacked: Boolean,
+    packInline: Boolean,
+    verticalAlignment: Alignment.Vertical,
+): MeasureResult {
+    val f = stack.value.coerceIn(0f, 1f)
+    fun lerp(a: Int, b: Int) = if (f == 0f) a else if (f == 1f) b else (a + (b - a) * f).roundToInt()
+    val width = constraints.maxWidth
+    val controlPlaceable = controlMeasurable?.measure(loose.copy(minWidth = lerp(0, if (fillControlWhenStacked) width else 0)))
+    val controlWidth = controlPlaceable?.width ?: 0
+    val inlineTextWidth = (width - controlWidth - gapPx).coerceAtLeast(0)
+    val textMax = lerp(inlineTextWidth, width)
+    val textMin = lerp(if (packInline) 0 else inlineTextWidth, width)
+    val textPlaceable = textMeasurable?.measure(loose.copy(minWidth = textMin, maxWidth = textMax))
+    val textWidth = textPlaceable?.width ?: 0
+    val textHeight = textPlaceable?.height ?: 0
+    val controlHeight = controlPlaceable?.height ?: 0
+    val inlineHeight = maxOf(textHeight, controlHeight)
+    val stackedControlY = if (textPlaceable != null && controlPlaceable != null) textHeight + StackedGap.roundToPx() else textHeight
+    val height = lerp(inlineHeight, stackedControlY + controlHeight)
+    val inlineControlX = if (packInline) textWidth + gapPx else width - controlWidth
+    return layout(width, height.coerceIn(constraints.minHeight, constraints.maxHeight)) {
+        textPlaceable?.place(0, lerp(verticalAlignment.offset(textHeight, inlineHeight), 0))
+        controlPlaceable?.place(lerp(inlineControlX, 0), lerp(verticalAlignment.offset(controlHeight, inlineHeight), stackedControlY))
+    }
+}
+
+/** Where a slot [size] tall sits in [space]; centred rounds down. */
+private fun Alignment.Vertical.offset(size: Int, space: Int): Int =
+    if (this == Alignment.CenterVertically) (space - size) / 2 else align(size, space)

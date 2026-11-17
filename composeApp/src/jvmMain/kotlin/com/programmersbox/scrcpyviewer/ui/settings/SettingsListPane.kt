@@ -5,7 +5,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -16,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,11 +32,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
-/** The search field and the category list. Plain text items, so it doesn't read as a second rail. */
+/**
+ * The search field and the category list: an icon and a title per category, with an available update badging the
+ * Updates icon. It fills its pane: 200 dp beside the detail, the whole width as the narrow list.
+ */
 @Composable
 fun SettingsListPane(
     matches: List<CategoryMatch>,
@@ -46,7 +52,7 @@ fun SettingsListPane(
     onSelect: (SettingsCategoryId) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.width(200.dp).fillMaxHeight().padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         OutlinedTextField(
             value = query, onValueChange = onQuery, singleLine = true,
             textStyle = MaterialTheme.typography.bodyMedium,
@@ -70,6 +76,7 @@ fun SettingsListPane(
             key(id) {
                 CategoryItem(
                     title = match.category.title,
+                    icon = match.category.icon,
                     selected = id == selected,
                     count = if (searching) match.entries.size else null,
                     badge = id == SettingsCategoryId.Updates && updateAvailable,
@@ -84,6 +91,7 @@ fun SettingsListPane(
 @Composable
 private fun CategoryItem(
     title: String,
+    icon: ImageVector,
     selected: Boolean,
     count: Int?,
     badge: Boolean,
@@ -102,12 +110,17 @@ private fun CategoryItem(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(3.dp).height(20.dp).clip(styledCorner(2.dp)).drawBehind { drawRect(bar) })
+        val content = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+        // An available update badges the Updates icon.
+        BadgedBox(badge = { if (badge) Badge() }, modifier = Modifier.padding(start = 9.dp)) {
+            Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(20.dp))
+        }
         Text(
             title, style = MaterialTheme.typography.bodyLarge,
             color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f).padding(start = 9.dp, top = 8.dp, bottom = 8.dp),
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
         )
-        if (badge) Badge(Modifier.padding(end = 8.dp))
         count?.let {
             Text(
                 "$it", style = MaterialTheme.typography.labelMedium,

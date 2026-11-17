@@ -267,6 +267,7 @@ fun App(
     devicesPanes: ListDetailPanes = rememberListDetailPanes(),
     presetsPanes: ListDetailPanes = rememberListDetailPanes(),
     actionsPanes: ListDetailPanes = rememberListDetailPanes(),
+    settingsPanes: ListDetailPanes = rememberListDetailPanes(),
     devicesViewModel: DevicesViewModel = koinViewModel(),
     deviceInfoViewModel: DeviceInfoViewModel = koinViewModel(),
     presetsViewModel: PresetsViewModel = koinViewModel(),
@@ -380,6 +381,7 @@ fun App(
                                     settingsViewModel,
                                     updateViewModel,
                                     settingsDialogs,
+                                    panes = settingsPanes,
                                 )
                             }
                         }
