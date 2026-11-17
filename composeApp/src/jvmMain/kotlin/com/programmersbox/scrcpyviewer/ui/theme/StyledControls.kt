@@ -64,9 +64,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import androidx.compose.ui.graphics.luminance
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -103,6 +100,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /*
  * Drop-in replacements for Material 3 controls that follow the current [ThemeStyle] (and glow in neon themes).
@@ -544,7 +543,7 @@ fun FilterChip(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     trailing: (@Composable () -> Unit)? = null,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
 ) {
     val badge: @Composable () -> Unit = { ChipTrailingBadge(trailing, motion) }
     if (currentStyle == ThemeStyle.Material) {
@@ -597,7 +596,7 @@ fun AssistChip(
     enabled: Boolean = true,
     leadingIcon: (@Composable () -> Unit)? = null,
     trailingIcon: (@Composable () -> Unit)? = null,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
 ) {
     if (currentStyle == ThemeStyle.Material) {
         androidx.compose.material3.AssistChip(
@@ -773,13 +772,13 @@ private fun ChipTrailingBadge(trailing: (@Composable () -> Unit)?, motion: Boole
     AnimatedVisibility(
         visible = trailing != null,
         enter = if (motion) {
-            expandHorizontally(tween(ChipMillis, easing = EmphasizedDecelerate), expandFrom = Alignment.Start) +
+            expandHorizontally(layoutSpring(), expandFrom = Alignment.Start) +
                 fadeIn(tween(200, delayMillis = 50))
         } else {
             EnterTransition.None
         },
         exit = if (motion) {
-            shrinkHorizontally(tween(200, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Start) + fadeOut(tween(120))
+            shrinkHorizontally(layoutSpring(), shrinkTowards = Alignment.Start) + fadeOut(tween(120))
         } else {
             ExitTransition.None
         },
@@ -798,13 +797,13 @@ private fun ChipCheck(selected: Boolean, motion: Boolean, gap: Dp) {
         visible = selected,
         modifier = Modifier.testTag(FilterChipCheckTag),
         enter = if (motion) {
-            expandHorizontally(tween(ChipMillis, easing = EmphasizedDecelerate)) +
+            expandHorizontally(layoutSpring()) +
                 scaleIn(tween(ChipMillis), initialScale = 0.4f) + fadeIn(tween(160))
         } else {
             EnterTransition.None
         },
         exit = if (motion) {
-            shrinkHorizontally(tween(200, easing = EmphasizedAccelerate)) +
+            shrinkHorizontally(layoutSpring()) +
                 scaleOut(tween(200), targetScale = 0.4f) + fadeOut(tween(120))
         } else {
             ExitTransition.None

@@ -190,7 +190,7 @@ private fun CountsText(controller: LogcatController, shown: Int, compact: Boolea
             if (motion) {
                 (slideInVertically(tween(260, easing = EmphasizedDecelerate)) { shift } + fadeIn(tween(200)))
                     .togetherWith(slideOutVertically(tween(260, easing = EmphasizedDecelerate)) { -shift } + fadeOut(tween(200)))
-                    .using(SizeTransform(clip = false))
+                    .using(SizeTransform(clip = false) { _, _ -> layoutSpring() })
             } else {
                 EnterTransition.None.togetherWith(ExitTransition.None)
             }

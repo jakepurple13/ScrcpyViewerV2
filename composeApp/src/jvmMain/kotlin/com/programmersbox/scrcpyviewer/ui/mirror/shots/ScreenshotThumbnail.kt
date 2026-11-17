@@ -88,6 +88,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.files.OutboundDragStarter
 import com.programmersbox.scrcpyviewer.ui.mirror.files.dragOutSource
 import kotlinx.coroutines.launch
 import java.nio.file.Path
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** Screenshot taken: a white flash over the video, .9 to 0 opacity. */
 const val FLASH_MILLIS = 450
@@ -295,7 +296,7 @@ private fun ThumbnailCard(
                     shot,
                     // Under reduced motion only fades are allowed: the size changes at once.
                     Modifier.fillMaxWidth().animateContentSize(
-                        if (motion) tween(THUMBNAIL_SWAP_MILLIS, easing = EmphasizedDecelerate) else snap(),
+                        if (motion) layoutSpring() else snap(),
                     ),
                     animationSpec = tween(THUMBNAIL_SWAP_MILLIS),
                     label = "thumbnailImage",

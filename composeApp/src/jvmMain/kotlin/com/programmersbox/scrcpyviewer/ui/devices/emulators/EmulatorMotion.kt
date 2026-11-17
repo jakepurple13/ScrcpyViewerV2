@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import kotlin.math.pow
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 // The Emulators section's motion (spec "Motion" table). Every change takes [motion]; without it (reduced motion) each
 // one is instant or a [EMULATOR_REDUCED_MILLIS] fade, and the spinners still turn.
@@ -32,7 +33,7 @@ import kotlin.math.pow
 /** The chevron turns -90 degrees as the section folds. */
 internal const val FOLD_CHEVRON_MILLIS = 350
 
-/** The section body expands or shrinks vertically while it fades. */
+/** The section body fades over this long while its height follows the layout spring. */
 internal const val FOLD_BODY_MILLIS = 400
 
 /** New row controls fade up [CONTROLS_RISE] over this long; the old ones fade out over [CONTROLS_OUT_MILLIS]. */
@@ -106,7 +107,7 @@ private fun <T> reduced(): FiniteAnimationSpec<T> = tween(EMULATOR_REDUCED_MILLI
 
 internal fun foldEnter(motion: Boolean): EnterTransition =
     if (motion) {
-        expandVertically(tween(FOLD_BODY_MILLIS, easing = EmphasizedDecelerate), expandFrom = Alignment.Top) +
+        expandVertically(layoutSpring(), expandFrom = Alignment.Top) +
             fadeIn(tween(FOLD_BODY_MILLIS, easing = EmphasizedDecelerate))
     } else {
         fadeIn(reduced())
@@ -114,7 +115,7 @@ internal fun foldEnter(motion: Boolean): EnterTransition =
 
 internal fun foldExit(motion: Boolean): ExitTransition =
     if (motion) {
-        shrinkVertically(tween(FOLD_BODY_MILLIS, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Top) +
+        shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top) +
             fadeOut(tween(FOLD_BODY_MILLIS, easing = EmphasizedAccelerate))
     } else {
         fadeOut(reduced())
@@ -126,16 +127,16 @@ internal fun chevronAngle(expanded: Boolean): Float = if (expanded) 0f else -90f
 internal fun chevronSpec(motion: Boolean): FiniteAnimationSpec<Float> =
     if (motion) tween(FOLD_CHEVRON_MILLIS, easing = EmphasizedDecelerate) else snap()
 
-private fun sizeSpec(motion: Boolean, millis: Int): FiniteAnimationSpec<IntSize> =
-    if (motion) tween(millis, easing = EmphasizedDecelerate) else snap()
+/** A size change rides the shared [layoutSpring]; it snaps without [motion]. */
+private fun sizeSpec(motion: Boolean): FiniteAnimationSpec<IntSize> = if (motion) layoutSpring() else snap()
 
-/** Row controls: new ones fade up [risePx] over 320 ms while the old fade out in 150 ms; the width eases along. */
+/** Row controls: new ones fade up [risePx] over 320 ms while the old fade out in 150 ms; the width follows on the layout spring. */
 internal fun <S> AnimatedContentTransitionScope<S>.controlsTransform(motion: Boolean, risePx: Int): ContentTransform =
     if (motion) {
         (fadeIn(tween(CONTROLS_IN_MILLIS, easing = EmphasizedDecelerate)) +
             slideInVertically(tween(CONTROLS_IN_MILLIS, easing = EmphasizedDecelerate)) { risePx }) togetherWith
             fadeOut(tween(CONTROLS_OUT_MILLIS, easing = EmphasizedAccelerate)) using
-            SizeTransform(clip = false) { _, _ -> sizeSpec(motion, CONTROLS_IN_MILLIS) }
+            SizeTransform(clip = false) { _, _ -> sizeSpec(motion) }
     } else {
         fadeIn(reduced()) togetherWith fadeOut(reduced()) using SizeTransform(clip = false) { _, _ -> snap() }
     }
@@ -145,7 +146,7 @@ internal fun chipEnter(motion: Boolean, risePx: Int): EnterTransition =
     if (motion) {
         fadeIn(tween(CONTROLS_IN_MILLIS, easing = EmphasizedDecelerate)) +
             slideInVertically(tween(CONTROLS_IN_MILLIS, easing = EmphasizedDecelerate)) { risePx } +
-            expandHorizontally(tween(CONTROLS_IN_MILLIS, easing = EmphasizedDecelerate), expandFrom = Alignment.End)
+            expandHorizontally(layoutSpring(), expandFrom = Alignment.End)
     } else {
         fadeIn(reduced())
     }
@@ -153,7 +154,7 @@ internal fun chipEnter(motion: Boolean, risePx: Int): EnterTransition =
 internal fun chipExit(motion: Boolean): ExitTransition =
     if (motion) {
         fadeOut(tween(CONTROLS_OUT_MILLIS, easing = EmphasizedAccelerate)) +
-            shrinkHorizontally(tween(CONTROLS_IN_MILLIS, easing = EmphasizedDecelerate), shrinkTowards = Alignment.End)
+            shrinkHorizontally(layoutSpring(), shrinkTowards = Alignment.End)
     } else {
         fadeOut(reduced())
     }
@@ -165,7 +166,7 @@ internal fun <S> AnimatedContentTransitionScope<S>.subtitleTransform(motion: Boo
             slideInVertically(tween(SUBTITLE_MILLIS, easing = EmphasizedDecelerate)) { risePx }) togetherWith
             (fadeOut(tween(SUBTITLE_MILLIS, easing = EmphasizedAccelerate)) +
                 slideOutVertically(tween(SUBTITLE_MILLIS, easing = EmphasizedAccelerate)) { -risePx }) using
-            SizeTransform(clip = false) { _, _ -> sizeSpec(motion, SUBTITLE_MILLIS) }
+            SizeTransform(clip = false) { _, _ -> sizeSpec(motion) }
     } else {
         fadeIn(reduced()) togetherWith fadeOut(reduced()) using SizeTransform(clip = false) { _, _ -> snap() }
     }
@@ -177,7 +178,7 @@ internal fun <S> AnimatedContentTransitionScope<S>.countTransform(motion: Boolea
             fadeIn(tween(COUNT_MILLIS, easing = EmphasizedDecelerate))) togetherWith
             (slideOutVertically(tween(COUNT_MILLIS, easing = EmphasizedAccelerate)) { -it } +
                 fadeOut(tween(COUNT_MILLIS, easing = EmphasizedAccelerate))) using
-            SizeTransform(clip = true) { _, _ -> sizeSpec(motion, COUNT_MILLIS) }
+            SizeTransform(clip = true) { _, _ -> sizeSpec(motion) }
     } else {
         fadeIn(reduced()) togetherWith fadeOut(reduced()) using SizeTransform(clip = true) { _, _ -> snap() }
     }
@@ -187,7 +188,7 @@ internal fun <S> AnimatedContentTransitionScope<S>.bodyTransform(motion: Boolean
     if (motion) {
         fadeIn(tween(BODY_SWAP_MILLIS, easing = EmphasizedDecelerate)) togetherWith
             fadeOut(tween(BODY_SWAP_MILLIS, easing = EmphasizedAccelerate)) using
-            SizeTransform(clip = true) { _, _ -> sizeSpec(motion, BODY_SWAP_MILLIS) }
+            SizeTransform(clip = true) { _, _ -> sizeSpec(motion) }
     } else {
         fadeIn(reduced()) togetherWith fadeOut(reduced()) using SizeTransform(clip = true) { _, _ -> snap() }
     }
@@ -197,7 +198,7 @@ internal fun chipColorSpec(motion: Boolean): FiniteAnimationSpec<Color> =
 
 internal fun trackEnter(motion: Boolean): EnterTransition =
     if (motion) {
-        expandVertically(tween(TRACK_IN_MILLIS, easing = EmphasizedDecelerate), expandFrom = Alignment.Top) +
+        expandVertically(layoutSpring(), expandFrom = Alignment.Top) +
             fadeIn(tween(TRACK_IN_MILLIS, easing = EmphasizedDecelerate))
     } else {
         fadeIn(reduced())
@@ -205,7 +206,7 @@ internal fun trackEnter(motion: Boolean): EnterTransition =
 
 internal fun trackExit(motion: Boolean): ExitTransition =
     if (motion) {
-        shrinkVertically(tween(TRACK_OUT_MILLIS, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Top) +
+        shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top) +
             fadeOut(tween(TRACK_OUT_MILLIS, easing = EmphasizedAccelerate))
     } else {
         fadeOut(reduced())
@@ -215,7 +216,7 @@ internal fun trackExit(motion: Boolean): ExitTransition =
 internal fun menuItemEnter(motion: Boolean): EnterTransition =
     if (motion) {
         fadeIn(tween(MENU_ITEM_MILLIS, easing = EmphasizedDecelerate)) +
-            expandVertically(tween(MENU_ITEM_MILLIS, easing = EmphasizedDecelerate), expandFrom = Alignment.Top)
+            expandVertically(layoutSpring(), expandFrom = Alignment.Top)
     } else {
         fadeIn(reduced())
     }
@@ -223,7 +224,7 @@ internal fun menuItemEnter(motion: Boolean): EnterTransition =
 internal fun menuItemExit(motion: Boolean): ExitTransition =
     if (motion) {
         fadeOut(tween(MENU_ITEM_MILLIS, easing = EmphasizedAccelerate)) +
-            shrinkVertically(tween(MENU_ITEM_MILLIS, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Top)
+            shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top)
     } else {
         fadeOut(reduced())
     }

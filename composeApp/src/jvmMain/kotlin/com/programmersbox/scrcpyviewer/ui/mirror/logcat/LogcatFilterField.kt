@@ -92,6 +92,7 @@ import com.programmersbox.scrcpyviewer.logcat.applyTo
 import com.programmersbox.scrcpyviewer.logcat.suggest
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 private val FieldShape = RoundedCornerShape(8.dp)
 private val PopupShape = RoundedCornerShape(10.dp)
@@ -315,8 +316,8 @@ internal fun LogcatFilterField(
         controller.parsed.error?.let { heldError[0] = it }
         AnimatedVisibility(
             visible = bad,
-            enter = if (motion) expandVertically(tween(220, easing = EmphasizedDecelerate)) + fadeIn(tween(220)) else EnterTransition.None,
-            exit = if (motion) shrinkVertically(tween(220, easing = EmphasizedAccelerate)) + fadeOut(tween(180)) else ExitTransition.None,
+            enter = if (motion) expandVertically(layoutSpring()) + fadeIn(tween(220)) else EnterTransition.None,
+            exit = if (motion) shrinkVertically(layoutSpring()) + fadeOut(tween(180)) else ExitTransition.None,
         ) {
             Text(
                 heldError[0],

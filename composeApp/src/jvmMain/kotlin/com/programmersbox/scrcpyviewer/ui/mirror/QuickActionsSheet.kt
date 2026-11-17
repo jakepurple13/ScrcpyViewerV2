@@ -195,10 +195,10 @@ internal fun toggleIcon(toggle: QuickToggle, value: Boolean?): ImageVector =
 fun QuickActionsSheet(open: Boolean, panel: @Composable () -> Unit) {
     AnimatedVisibility(
         visible = open,
-        enter = expandHorizontally(tween(OPEN_MILLIS, easing = EmphasizedDecelerate), expandFrom = Alignment.Start) +
+        enter = expandHorizontally(layoutSpring(), expandFrom = Alignment.Start) +
             slideInHorizontally(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) { -it / 12 } +
             fadeIn(tween(OPEN_MILLIS - 40, delayMillis = 40)),
-        exit = shrinkHorizontally(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Start) +
+        exit = shrinkHorizontally(layoutSpring(), shrinkTowards = Alignment.Start) +
             slideOutHorizontally(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { -it / 12 } +
             fadeOut(tween(CLOSE_MILLIS)),
     ) {
@@ -780,15 +780,16 @@ private fun LiveDot(motion: Boolean, modifier: Modifier = Modifier) {
 private fun LogcatSegmentMarks(popped: Boolean, live: Boolean, gap: Dp, motion: Boolean) {
     AnimatedVisibility(
         visible = live,
-        enter = scaleIn(segmentSpec(true, motion)) + expandHorizontally(segmentSpec(true, motion)),
-        exit = scaleOut(segmentSpec(false, motion)) + shrinkHorizontally(segmentSpec(false, motion)),
+        // The widths spring like the segment's own; the scales and fades keep the segment's timing.
+        enter = scaleIn(segmentSpec(true, motion)) + expandHorizontally(if (motion) layoutSpring() else snap()),
+        exit = scaleOut(segmentSpec(false, motion)) + shrinkHorizontally(if (motion) layoutSpring() else snap()),
     ) {
         LiveDot(motion, Modifier.padding(start = gap))
     }
     AnimatedVisibility(
         visible = popped,
-        enter = expandHorizontally(segmentSpec(true, motion)) + fadeIn(segmentSpec(true, motion)),
-        exit = shrinkHorizontally(segmentSpec(false, motion)) + fadeOut(segmentSpec(false, motion)),
+        enter = expandHorizontally(if (motion) layoutSpring() else snap()) + fadeIn(segmentSpec(true, motion)),
+        exit = shrinkHorizontally(if (motion) layoutSpring() else snap()) + fadeOut(segmentSpec(false, motion)),
     ) {
         Icon(
             Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "In its own window",

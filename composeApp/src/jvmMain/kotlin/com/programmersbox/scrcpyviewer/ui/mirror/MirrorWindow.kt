@@ -254,6 +254,8 @@ import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishRecording
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportWindows
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportWindowsState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishScreenshot
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import androidx.compose.animation.core.snap
 
 /** Side toolbar buttons; [keycode] buttons send that Android key down and up. */
 enum class MirrorAction(val label: String, val keycode: Int? = null) {
@@ -623,7 +625,9 @@ fun MirrorWindow(
     val requestedHeight = e["window-height"]?.toIntOrNull()?.takeIf { it > 0 } ?: 900
     // Read once as the window opens: the setting, the OS's reduce motion, and the Mirror button that was pressed.
     // The window starts at the button's bounds and grows to its own (centered unless the options place it).
-    val motionOn = remember { animate && !systemReducesMotion() }
+    // Read once for the whole window: its AppWindow provides it to every screen inside (LocalReduceMotion).
+    val reduceMotion = remember { systemReducesMotion() }
+    val motionOn = remember { animate && !reduceMotion }
     val zoomFrom = remember { if (motionOn && "fullscreen" !in e) MirrorOrigins.take() else null }
     val zoomTo = remember {
         zoomFrom?.let {
@@ -707,7 +711,6 @@ fun MirrorWindow(
     // Send input to other windows: the leader tees its pointer (not with the UHID mouse), toolbar and key messages to
     // its followers; a follower shows the chip, the glowing border and a click ring where each followed tap lands.
     val follow = rememberWindowFollow(serial, following, controller.open)
-    val reduceMotion = remember { systemReducesMotion() }
     val followStrip = rememberFollowStrip(
         serial, following, controller.open, follow,
         devices = devices,
@@ -846,6 +849,7 @@ fun MirrorWindow(
         theme = theme,
         state = windowState,
         minSize = MirrorWindowMinSize,
+        reduceMotion = reduceMotion,
         alwaysOnTop = "always-on-top" in e,
         icon = AppIcon.painter,
         titleBarHeight = 40.dp,
@@ -1797,6 +1801,7 @@ private fun AppTitleBarScope.ZoomControls(state: MirrorUiState, onZoom: (ZoomCom
  */
 @Composable
 private fun ZoomReadout(reading: ZoomReading) {
+    val reduceMotion = LocalReduceMotion.current
     AnimatedContent(
         targetState = reading,
         transitionSpec = {
@@ -1807,7 +1812,7 @@ private fun ZoomReadout(reading: ZoomReading) {
                 0 -> EnterTransition.None togetherWith ExitTransition.None
                 else -> (slideInVertically(spec) { it * roll } + fadeIn(fade)) togetherWith
                     (slideOutVertically(spec) { -it * roll } + fadeOut(fade))
-            }.using(SizeTransform(clip = true))
+            }.using(SizeTransform(clip = true) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
         },
         contentAlignment = Alignment.Center,
         contentKey = { Zoom.label(it.scale) },

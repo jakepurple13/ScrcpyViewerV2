@@ -59,6 +59,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.styleBackdrop
 import com.programmersbox.scrcpyviewer.ui.theme.stylePane
 import com.programmersbox.scrcpyviewer.ui.theme.styleRaised
 import com.programmersbox.scrcpyviewer.ui.theme.styleSunken
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /**
  * One tile per [ThemeStyle], each a small pane drawn in that style with the current palette, then the chosen
@@ -92,7 +93,7 @@ internal fun StyleControl(b: SettingsBindings) {
                 }
             }
         }
-        AnimatedVisibility(theme.style == ThemeStyle.Retro, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+        AnimatedVisibility(theme.style == ThemeStyle.Retro, enter = expandVertically(layoutSpring()) + fadeIn(), exit = shrinkVertically(layoutSpring()) + fadeOut()) {
             // The segments go under the label when the label would get less than 160 dp.
             AdaptiveRow(
                 text = { Text("Retro colors", style = MaterialTheme.typography.bodyMedium) },
@@ -115,7 +116,7 @@ internal fun StyleControl(b: SettingsBindings) {
                 },
             )
         }
-        AnimatedVisibility(theme.style == ThemeStyle.Glass, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+        AnimatedVisibility(theme.style == ThemeStyle.Glass, enter = expandVertically(layoutSpring()) + fadeIn(), exit = shrinkVertically(layoutSpring()) + fadeOut()) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 GlassOpacitySlider(theme.glassOpacity, b.actions.onGlassOpacity)
                 if (Os.isMac) {

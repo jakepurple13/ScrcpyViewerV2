@@ -90,6 +90,10 @@ private object CustomTitleBarScope : AppTitleBarScope {
  * Glass with desktop blur needs a see-through window, which Tao only makes when the window is created: a window opened
  * in another style keeps an opaque background until it is opened again (and one opened in Glass stays see-through,
  * painted opaque by its content in the other styles).
+ *
+ * The window root is where the OS's reduce motion is read: [reduceMotion] is provided to [content] as
+ * [LocalReduceMotion], so every screen in the window moves the same way. A window that reads it earlier (for its own
+ * open motion) passes the value it read.
  */
 @Composable
 fun NucleusApplicationScope.AppWindow(
@@ -105,6 +109,8 @@ fun NucleusApplicationScope.AppWindow(
     minSize: DpSize? = null,
     /** Sees each key event of this window before its focused content; true consumes it. */
     onPreviewKeyEvent: (KeyEvent) -> Boolean = { false },
+    /** Whether the OS asks for less motion, read once as the window opens. */
+    reduceMotion: Boolean = remember { systemReducesMotion() },
     titleBar: @Composable AppTitleBarScope.() -> Unit,
     content: @Composable NucleusDecoratedWindowScope.() -> Unit,
 ) {
@@ -135,7 +141,7 @@ fun NucleusApplicationScope.AppWindow(
             // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).
             CompositionLocalProvider(
                 LocalThemeRevealOrigin provides reveal.origin,
-                LocalReduceMotion provides remember { systemReducesMotion() },
+                LocalReduceMotion provides reduceMotion,
             ) {
                 ProvideAppClipboard {
                     ScrcpyViewerTheme(shown) {

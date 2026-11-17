@@ -43,7 +43,7 @@ import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
 import com.programmersbox.scrcpyviewer.state.launchQuit
 import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchQuitPreview
 import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchPreview
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 
 /**
  * One tile per [LaunchQuitAnimation], laid out like the Style picker: a small desktop that loops the animation while
@@ -102,7 +102,7 @@ private fun LaunchQuitTile(anim: LaunchQuitAnimation, selected: Boolean, onClick
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        val reduceMotion = remember { systemReducesMotion() }
+        val reduceMotion = LocalReduceMotion.current
         LaunchQuitPreview(
             anim, looping = LaunchPreview.loops(hovered, reduceMotion), playOnce = picks,
             modifier = Modifier.fillMaxWidth().height(116.dp).clip(RoundedCornerShape(8.dp)),

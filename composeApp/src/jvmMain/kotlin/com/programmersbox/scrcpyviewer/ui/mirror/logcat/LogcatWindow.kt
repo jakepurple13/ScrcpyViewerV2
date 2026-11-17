@@ -92,6 +92,7 @@ fun LogcatWindow(controller: LogcatController, deviceName: String, theme: AppThe
         visible = shown,
         alwaysOnTop = controller.alwaysOnTop,
         minSize = LogcatWindowMinSize,
+        reduceMotion = !motion,
         titleBar = { LogcatTitleBar("Logcat · $deviceName", controller, motion) },
     ) {
         val window = nucleusWindow

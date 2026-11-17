@@ -129,7 +129,7 @@ fun CopyButton(text: () -> String, label: String = "Copy", modifier: Modifier = 
             transitionSpec = {
                 fadeIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) togetherWith
                     fadeOut(tween(CLOSE_MILLIS / 2, easing = EmphasizedAccelerate)) using
-                    SizeTransform(clip = false) { _, _ -> tween(OPEN_MILLIS, easing = EmphasizedDecelerate) }
+                    SizeTransform(clip = false) { _, _ -> layoutSpring() }
             },
             label = "copyLabel",
         ) {

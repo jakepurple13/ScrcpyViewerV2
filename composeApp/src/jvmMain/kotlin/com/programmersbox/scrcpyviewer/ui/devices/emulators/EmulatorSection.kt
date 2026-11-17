@@ -109,7 +109,6 @@ import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.animateBounds
 import androidx.compose.ui.layout.LookaheadScope
 import com.programmersbox.scrcpyviewer.ui.common.revealLabel
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
@@ -122,6 +121,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import java.io.File
 import java.nio.file.Path
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 
 /** Narrower rows than this (inside their padding) put the row's controls on a second line, under the name. */
 internal val EMULATOR_ROW_ONE_LINE_MIN_WIDTH = 300.dp
@@ -136,7 +136,7 @@ internal fun EmulatorSection(
     onEvent: (EmulatorEvent) -> Unit,
     onChooseSdk: () -> Unit,
     modifier: Modifier = Modifier,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     now: () -> Long = System::currentTimeMillis,
 ) {
     val found = state.sdk is SdkLookup.Found
@@ -378,7 +378,7 @@ internal fun EmulatorRowItem(
     row: EmulatorRow,
     onEvent: (EmulatorEvent) -> Unit,
     modifier: Modifier = Modifier,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     now: () -> Long = System::currentTimeMillis,
     menuInitiallyOpen: Boolean = false,
 ) {
@@ -673,7 +673,7 @@ internal fun EmulatorMenu(
     onEvent: (EmulatorEvent) -> Unit,
     onDismiss: () -> Unit,
     onWipe: () -> Unit = {},
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     platform: OpenPlatform = OpenPlatform.current(),
 ) {
     val id = row.avd.id
@@ -740,7 +740,7 @@ internal fun WipeDialog(
     name: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
 ) {
     val shown = remember { MutableTransitionState(false) }
     shown.targetState = visible

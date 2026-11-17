@@ -352,6 +352,27 @@ class LogcatNarrowTest {
     }
 
     @Test
+    fun `a drag that re-wraps rows moves the rows below with it in the same frame`() = onEdt {
+        val long = "Sync request failed for the third time, will retry with backoff after the network is back up again"
+        withScene(590, motion = true) { width ->
+            controller.wrap = true
+            started(narrowLine(long), narrowLine("second"))
+            fun message() = nodes().first { n -> n.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == long } }.boundsInRoot
+            fun secondTag() = nodes().filter { n -> n.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == "OkHttp" } }[1].boundsInRoot
+            val gap = secondTag().top - message().bottom
+            val heights = mutableSetOf<Float>()
+            // Within one row shape (420..599 dp): the message re-wraps, so the first row changes height as it goes.
+            for (w in 589 downTo 430 step 7) {
+                width.value = w
+                frame()
+                heights += message().height
+                assertEquals(gap, secondTag().top - message().bottom, 0.5f, "the second row keeps its place under the first at $w")
+            }
+            assertTrue(heights.size >= 2, "the message re-wrapped during the drag: $heights")
+        }
+    }
+
+    @Test
     fun `stacked rows with wrap off select and copy messages only`() = onEdt {
         withScene(300) {
             started(

@@ -71,11 +71,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
-import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutFraction
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import kotlin.math.roundToInt
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** The log rows' font: monospace 12 sp, tabular digits. */
 internal val LogRowStyle = LogcatMono.copy(fontSize = 12.sp, lineHeight = 18.sp, fontFeatureSettings = "tnum")
@@ -296,8 +296,8 @@ internal fun LogcatLineRow(
         if (entry.hasTrace) {
             AnimatedVisibility(
                 expanded,
-                enter = if (motion) expandVertically(tween(260, easing = EmphasizedDecelerate)) + fadeIn(tween(200)) else EnterTransition.None,
-                exit = if (motion) shrinkVertically(tween(260, easing = EmphasizedAccelerate)) + fadeOut(tween(160)) else ExitTransition.None,
+                enter = if (motion) expandVertically(layoutSpring()) + fadeIn(tween(200)) else EnterTransition.None,
+                exit = if (motion) shrinkVertically(layoutSpring()) + fadeOut(tween(160)) else ExitTransition.None,
             ) {
                 TraceText(entry.trace, mine, actions.copyFrame, Modifier.startBy(columns::traceIndent).padding(end = PAD.dp, bottom = 2.dp))
             }

@@ -7,8 +7,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.animateContentSize
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -152,9 +150,9 @@ import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorSection
 import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsUiState
 import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsViewModel
 import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import androidx.compose.runtime.rememberCoroutineScope
 import java.nio.file.Path
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
 
 @Composable
 internal fun DevicesScreen(
@@ -289,7 +287,7 @@ internal fun DevicesContent(
     emulators: EmulatorsUiState? = null,
     onEmulator: (EmulatorEvent) -> Unit = {},
     onChooseSdk: () -> Unit = {},
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     /** The wall clock the emulators' boot timers read (screenshots pass a fixed one). */
     emulatorNow: () -> Long = System::currentTimeMillis,
 ) {
@@ -613,8 +611,9 @@ private fun DeviceRow(
         Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
         Column(
             Modifier.weight(1f).then(
-                // An emulator's title can change while it shows (its AVD is matched): the row's height follows.
-                if (emulator && motion) Modifier.animateContentSize(tween(EMULATOR_TITLE_MILLIS, easing = EmphasizedDecelerate)) else Modifier,
+                // An emulator's title can change while it shows (its AVD is matched): the row's height follows on the layout
+                // spring; the width is the row's, so a window drag moves it at once.
+                Modifier.animateHeight(enabled = emulator && motion),
             ),
         ) {
             val title = connectedTitle(device, avdName)

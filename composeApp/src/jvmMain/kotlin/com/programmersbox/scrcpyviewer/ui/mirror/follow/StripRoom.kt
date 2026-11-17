@@ -17,8 +17,8 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** Strip widths at which the mirror title bar's parts collapse into the overflow menu, without following. */
 data class StripMins(val details: Dp, val copy: Dp, val fit: Dp, val zoom: Dp)
@@ -159,11 +159,11 @@ fun rememberChipWidths(model: String, modelStyle: TextStyle, follow: FollowStrip
 /** A title bar part appearing or leaving: expand / shrink horizontally + fade, 200 ms (a 150 ms fade when reduced). */
 fun stripEnter(reduceMotion: Boolean): EnterTransition =
     if (reduceMotion) fadeIn(tween(FollowMotion.REDUCED_FADE_MILLIS, easing = LinearEasing))
-    else expandHorizontally(tween<IntSize>(STRIP_MILLIS, easing = FastOutSlowInEasing)) + fadeIn(tween(STRIP_MILLIS, easing = FastOutSlowInEasing))
+    else expandHorizontally(layoutSpring()) + fadeIn(tween(STRIP_MILLIS, easing = FastOutSlowInEasing))
 
 fun stripExit(reduceMotion: Boolean): ExitTransition =
     if (reduceMotion) fadeOut(tween(FollowMotion.REDUCED_FADE_MILLIS, easing = LinearEasing))
-    else shrinkHorizontally(tween<IntSize>(STRIP_MILLIS, easing = FastOutSlowInEasing)) + fadeOut(tween(STRIP_MILLIS, easing = FastOutSlowInEasing))
+    else shrinkHorizontally(layoutSpring()) + fadeOut(tween(STRIP_MILLIS, easing = FastOutSlowInEasing))
 
 const val STRIP_MILLIS = 200
 

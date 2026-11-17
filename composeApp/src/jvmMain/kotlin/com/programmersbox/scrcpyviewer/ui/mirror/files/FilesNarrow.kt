@@ -1,13 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.rememberUpdatedState
-import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -45,26 +38,6 @@ fun filesLayout(width: Dp): FilesLayout = FilesLayout(
     trayStacked = width < 400.dp,
     dialogButtonsStacked = width < 340.dp,
 )
-
-/**
- * 1 when [on], else 0: gliding there with [layoutSpring] when [glide], else the target itself in the same frame (an
- * animation's snap lands a frame later, so parts of the tab would arrive one after another).
- */
-@Composable
-internal fun layoutFraction(on: Boolean, glide: Boolean): State<Float> {
-    val target = if (on) 1f else 0f
-    val animated = animateFloatAsState(target, if (glide) layoutSpring() else snap())
-    val now = rememberUpdatedState(target)
-    return if (glide) animated else now
-}
-
-/** [target], gliding with [layoutSpring] when [glide], else at once (see [layoutFraction]). */
-@Composable
-internal fun layoutDp(target: Dp, glide: Boolean): State<Dp> {
-    val animated = animateDpAsState(target, if (glide) layoutSpring() else snap())
-    val now = rememberUpdatedState(target)
-    return if (glide) animated else now
-}
 
 /** The layout for the tab's current width; wide (nothing folded) outside a Files tab. */
 internal val LocalFilesLayout = compositionLocalOf { filesLayout(Dp.Infinity) }

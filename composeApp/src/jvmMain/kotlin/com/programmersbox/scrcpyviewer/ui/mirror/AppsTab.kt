@@ -141,6 +141,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
 import kotlin.math.min
+import com.programmersbox.scrcpyviewer.ui.common.resizing
+import com.programmersbox.scrcpyviewer.ui.common.flipGliding
+import androidx.compose.ui.platform.LocalDensity
 
 private val CardShape = RoundedCornerShape(16.dp)
 private val FieldShape = RoundedCornerShape(22.dp)
@@ -149,6 +152,15 @@ private val ActionShape = RoundedCornerShape(16.dp)
 
 /** Cards at least this wide: three a row at the Apps tab's default width. */
 private val CARD_MIN_WIDTH = 128.dp
+private val APP_GRID_SIDE_PADDING = 12.dp
+private val APP_GRID_GAP = 8.dp
+
+/**
+ * The app grid's column count at [width] px: `StaggeredGridCells.Adaptive`'s rule, as many [minCard] columns [gap]
+ * apart as fit inside the [padding], at least one.
+ */
+internal fun appGridColumns(width: Int, padding: Int, minCard: Int, gap: Int): Int =
+    maxOf((width - padding + gap) / (minCard + gap), 1)
 
 /** Cards composed this soon after the grid appears pop in one after another; later ones (scrolled to) just show. */
 private const val STAGGER_WINDOW_MILLIS = 400L
@@ -424,13 +436,14 @@ private fun CompactFilter(state: AppsUiState, onEvent: (AppsEvent) -> Unit) {
 /** A count that rolls up when it grows and down when it shrinks. */
 @Composable
 private fun Counter(count: Int) {
+    val reduceMotion = LocalReduceMotion.current
     AnimatedContent(
         targetState = count,
         transitionSpec = {
             val up = targetState > initialState
             (slideInVertically(tween(220, easing = EmphasizedDecelerate)) { if (up) it else -it } + fadeIn(tween(160)))
                 .togetherWith(slideOutVertically(tween(160, easing = EmphasizedAccelerate)) { if (up) -it else it } + fadeOut(tween(120)))
-                .using(SizeTransform(clip = true))
+                .using(SizeTransform(clip = true) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
         },
     ) { n ->
         Text("$n", fontSize = 11.sp)
@@ -463,32 +476,41 @@ private fun AppGrid(
     onEvent: (AppsEvent) -> Unit,
 ) {
     val shownAt = remember { System.currentTimeMillis() }
-    LazyVerticalStaggeredGrid(
-        columns = StaggeredGridCells.Adaptive(CARD_MIN_WIDTH),
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 16.dp),
-        verticalItemSpacing = 8.dp,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(state.visible, key = { it.packageName }) { app ->
-            val icon = state.icons[app.packageName]
-            LaunchedEffect(app.packageName, icon == null) { if (icon == null) onEvent(AppsEvent.NeedIcon(app)) }
-            AppCard(
-                app = app,
-                icon = icon,
-                selected = app.packageName == selected,
-                busy = app.packageName in state.busy,
-                logcat = app.packageName == state.logcatPackage,
-                appearDelay = remember {
-                    val elapsed = System.currentTimeMillis() - shownAt
-                    if (elapsed > STAGGER_WINDOW_MILLIS) null
-                    else min(state.visible.indexOf(app) * STAGGER_STEP_MILLIS, STAGGER_MAX_MILLIS)
-                },
-                actions = actions,
-                onOpen = { onOpen(app) },
-                onAskUninstall = { onAskUninstall(app) },
-                modifier = Modifier.animateItem(),
-            )
+    // Cards move to their new places on the layout spring (a filter, a sort, a change of column count, even mid-drag),
+    // but a drag within one column count moves them with the window at once. BoxWithConstraints: the width must be
+    // known while composing, in the frame it changes (the placement spec is set in composition).
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val columns = with(LocalDensity.current) { appGridColumns(maxWidth.roundToPx(), APP_GRID_SIDE_PADDING.roundToPx() * 2, CARD_MIN_WIDTH.roundToPx(), APP_GRID_GAP.roundToPx()) }
+        val resizing = resizing(maxWidth)
+        val flipping = flipGliding(columns)
+        val glide = (!resizing || flipping) && !LocalReduceMotion.current
+        LazyVerticalStaggeredGrid(
+            columns = StaggeredGridCells.Adaptive(CARD_MIN_WIDTH),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = APP_GRID_SIDE_PADDING, end = APP_GRID_SIDE_PADDING, top = 8.dp, bottom = 16.dp),
+            verticalItemSpacing = 8.dp,
+            horizontalArrangement = Arrangement.spacedBy(APP_GRID_GAP),
+        ) {
+            items(state.visible, key = { it.packageName }) { app ->
+                val icon = state.icons[app.packageName]
+                LaunchedEffect(app.packageName, icon == null) { if (icon == null) onEvent(AppsEvent.NeedIcon(app)) }
+                AppCard(
+                    app = app,
+                    icon = icon,
+                    selected = app.packageName == selected,
+                    busy = app.packageName in state.busy,
+                    logcat = app.packageName == state.logcatPackage,
+                    appearDelay = remember {
+                        val elapsed = System.currentTimeMillis() - shownAt
+                        if (elapsed > STAGGER_WINDOW_MILLIS) null
+                        else min(state.visible.indexOf(app) * STAGGER_STEP_MILLIS, STAGGER_MAX_MILLIS)
+                    },
+                    actions = actions,
+                    onOpen = { onOpen(app) },
+                    onAskUninstall = { onAskUninstall(app) },
+                    modifier = Modifier.animateItem(placementSpec = if (glide) layoutSpring() else null),
+                )
+            }
         }
     }
 }
@@ -872,7 +894,7 @@ private fun AnimatedVisibilityScope.OptionsSheet(
                 val toConfirm = targetState
                 (slideInHorizontally(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) { if (toConfirm) it / 8 else -it / 8 } + fadeIn(tween(180, delayMillis = 40)))
                     .togetherWith(slideOutHorizontally(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) { if (toConfirm) -it / 8 else it / 8 } + fadeOut(tween(120)))
-                    .using(SizeTransform(clip = false))
+                    .using(SizeTransform(clip = false) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
             },
         ) { confirming ->
             if (confirming) {

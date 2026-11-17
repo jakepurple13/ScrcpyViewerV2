@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.unit.Constraints
 import com.programmersbox.scrcpyviewer.APP_VERSION
 import com.programmersbox.scrcpyviewer.BuildInfo
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
@@ -139,6 +140,32 @@ class AboutDialogTest {
     fun `reduced motion fades in and out in 150 ms`() = onEdt {
         assertLandsQuickly(openCloseSteps(motion = false, opening = true), "open")
         assertLandsQuickly(openCloseSteps(motion = false, opening = false), "close")
+    }
+
+    @Test
+    fun `the buttons glide when the dialog narrows enough to re-break their rows, and follow a smaller drag at once`() = onEdt {
+        withAbout { _ ->
+            fun close() = assertNotNull(node("Close"), "no Close").boundsInRoot
+            // Under 488 dp of window the card narrows with it: a drag of a few dp only re-centres the rows.
+            scene.constraints = Constraints.fixed(480, 760)
+            frames(60)
+            for (w in listOf(476, 472, 468)) {
+                val before = close()
+                scene.constraints = Constraints.fixed(w, 760)
+                frame()
+                val now = close()
+                frames(60)
+                assertEquals(close(), now, "Close follows the drag at once at $w (from $before)")
+            }
+            // Much narrower: the rows break differently and Close glides to its new place.
+            val from = close()
+            scene.constraints = Constraints.fixed(300, 760)
+            val path = List(60) { frame(); close().topLeft }
+            val to = path.last()
+            assertTrue((to - from.topLeft).getDistance() > 20f, "Close moves: $from -> $to")
+            assertTrue(path.count { (it - from.topLeft).getDistance() > 1f && (it - to).getDistance() > 1f } >= 4, "over several frames: $path")
+            assertTrue(path.takeLast(10).all { (it - to).getDistance() < 0.5f }, "settled: $path")
+        }
     }
 
     @Test

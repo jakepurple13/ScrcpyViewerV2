@@ -95,8 +95,8 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
-import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutDp
-import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutFraction
+import com.programmersbox.scrcpyviewer.ui.common.layoutDp
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import kotlin.math.roundToInt
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,7 +105,6 @@ import com.programmersbox.scrcpyviewer.logcat.LogLevel
 import com.programmersbox.scrcpyviewer.logcat.queryTerms
 import com.programmersbox.scrcpyviewer.logcat.withTerm
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import com.programmersbox.scrcpyviewer.ui.theme.RetroButton
@@ -134,7 +133,7 @@ private const val PULSE_MILLIS = 900
 fun LogcatTab(
     controller: LogcatController,
     sheetWidth: Dp,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     isMac: Boolean = Os.isMac,
     /** In Logcat's own window: the pop-out button moves it back to the sheet instead. */
     inWindow: Boolean = false,

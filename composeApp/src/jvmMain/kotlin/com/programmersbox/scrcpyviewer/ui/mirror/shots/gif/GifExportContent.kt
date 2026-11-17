@@ -620,7 +620,7 @@ fun GifExportContent(
                             }
                         },
                         enabled = state.exporting || state.canExport,
-                        modifier = if (motion) Modifier.animateContentSize(tween(GIF_LABEL_MILLIS, easing = EmphasizedDecelerate)) else Modifier,
+                        modifier = if (motion) Modifier.animateContentSize(layoutSpring()) else Modifier,
                     ) {
                         Icon(Icons.Filled.Gif, contentDescription = null, Modifier.size(20.dp))
                         Spacer(Modifier.width(6.dp))
@@ -901,12 +901,12 @@ private fun ProgressRow(state: GifExportState, motion: Boolean) {
         progress != null,
         modifier = Modifier.testTag("gif progress row"),
         enter = if (motion) {
-            expandVertically(tween(GIF_ROW_MILLIS, easing = EmphasizedDecelerate)) + fadeIn(tween(GIF_ROW_MILLIS))
+            expandVertically(layoutSpring()) + fadeIn(tween(GIF_ROW_MILLIS))
         } else {
             fadeIn(tween(GIF_FADE_MILLIS))
         },
         exit = if (motion) {
-            shrinkVertically(tween(GIF_ROW_MILLIS, easing = EmphasizedDecelerate)) + fadeOut(tween(GIF_ROW_MILLIS))
+            shrinkVertically(layoutSpring()) + fadeOut(tween(GIF_ROW_MILLIS))
         } else {
             fadeOut(tween(GIF_FADE_MILLIS))
         },
@@ -936,12 +936,12 @@ private fun DoneRow(done: GifDone?, motion: Boolean, ok: Color, okBackground: Co
     AnimatedVisibility(
         done != null,
         enter = if (motion) {
-            expandVertically(tween(GIF_ROW_MILLIS, easing = EmphasizedDecelerate)) + fadeIn(tween(GIF_ROW_MILLIS))
+            expandVertically(layoutSpring()) + fadeIn(tween(GIF_ROW_MILLIS))
         } else {
             fadeIn(tween(GIF_FADE_MILLIS))
         },
         exit = if (motion) {
-            shrinkVertically(tween(GIF_ROW_MILLIS, easing = EmphasizedDecelerate)) + fadeOut(tween(GIF_ROW_MILLIS))
+            shrinkVertically(layoutSpring()) + fadeOut(tween(GIF_ROW_MILLIS))
         } else {
             fadeOut(tween(GIF_FADE_MILLIS))
         },

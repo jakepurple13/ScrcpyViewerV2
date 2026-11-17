@@ -10,7 +10,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.APP_VERSION
 import com.programmersbox.scrcpyviewer.AppIcon
@@ -43,12 +44,21 @@ import com.programmersbox.scrcpyviewer.ui.common.COPY_CONFIRM_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.openWebUrl
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.withFrameMillis
 import kotlinx.coroutines.launch
 import java.awt.datatransfer.StringSelection
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.layout.Layout
+import com.programmersbox.scrcpyviewer.ui.common.glideOnFlip
+import com.programmersbox.scrcpyviewer.ui.common.FlipNotingPolicy
+import com.programmersbox.scrcpyviewer.ui.common.LayoutFlips
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.unit.Constraints
 
 /** The app's repository, opened by About's GitHub button. */
 const val SCRCPY_VWR_GITHUB_URL = "https://github.com/jakepurple13/ScrcpyViewerV2"
@@ -133,7 +143,7 @@ fun AboutDialog(
     info: AboutInfo,
     onOpenLicenses: () -> Unit,
     onDismiss: () -> Unit,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     onCopy: ((String) -> Unit)? = null,
     onOpenUrl: (String) -> Unit = { openWebUrl(it) },
 ) {
@@ -167,16 +177,69 @@ fun AboutDialog(
                     }
                 }
             }
-            FlowRow(
+            ButtonFlow(
                 Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                itemVerticalAlignment = Alignment.CenterVertically,
-            ) {
-                CopyDetailsButton { copy(aboutDetails(info)) }
-                OutlinedButton(onClick = { onOpenUrl(SCRCPY_VWR_GITHUB_URL) }) { Text("GitHub") }
-                OutlinedButton(onClick = onOpenLicenses) { Text("Open-source licenses") }
-                TextButton(onClick = onDismiss) { Text("Close") }
+                motion,
+                { CopyDetailsButton { copy(aboutDetails(info)) } },
+                { OutlinedButton(onClick = { onOpenUrl(SCRCPY_VWR_GITHUB_URL) }) { Text("GitHub") } },
+                { OutlinedButton(onClick = onOpenLicenses) { Text("Open-source licenses") } },
+                { TextButton(onClick = onDismiss) { Text("Close") } },
+            )
+        }
+    }
+}
+
+/**
+ * [buttons] in centred rows 8 dp apart, wrapping like a `FlowRow`. With [motion], when the dialog narrows or widens
+ * enough that the rows break differently, each button glides to its new place on the layout spring; a resize that
+ * keeps the rows only re-centres them, at once.
+ */
+@Composable
+private fun ButtonFlow(modifier: Modifier, motion: Boolean, vararg buttons: @Composable () -> Unit) {
+    val flips = remember { LayoutFlips() }
+    LookaheadScope {
+        Layout(
+            content = { buttons.forEach { button -> Box(Modifier.glideOnFlip(this@LookaheadScope, flips, enabled = motion)) { button() } } },
+            modifier = modifier,
+            measurePolicy = remember(flips) { ButtonFlowPolicy(flips) },
+        )
+    }
+}
+
+/** [ButtonFlow]'s rows: greedy like `FlowRow`, each row centred; notes the row breaks for the glide. */
+private class ButtonFlowPolicy(flips: LayoutFlips) : FlipNotingPolicy(flips) {
+    override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val gap = 8.dp.roundToPx()
+        val placeables = measurables.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+        val maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth else Int.MAX_VALUE
+        // Each row's first index, greedy like FlowRow.
+        val starts = mutableListOf(0)
+        var used = 0
+        placeables.forEachIndexed { i, p ->
+            if (i > starts.last() && used + gap + p.width > maxWidth) {
+                starts += i
+                used = p.width
+            } else {
+                used += if (i == starts.last()) p.width else gap + p.width
+            }
+        }
+        noteShape(starts.toList())
+        val rows = starts.mapIndexed { r, from -> from until (starts.getOrNull(r + 1) ?: placeables.size) }
+        val heights = rows.map { row -> row.maxOf { placeables[it].height } }
+        val width = if (constraints.hasBoundedWidth) maxWidth else rows.maxOf { row -> row.sumOf { placeables[it].width } + gap * (row.count() - 1) }
+        val height = heights.sum() + gap * (rows.size - 1)
+        return layout(width, constraints.constrainHeight(height)) {
+            var y = 0
+            rows.forEachIndexed { r, row ->
+                val rowWidth = row.sumOf { placeables[it].width } + gap * (row.count() - 1)
+                // Rounded as FlowRow's centring rounds.
+                var x = Alignment.CenterHorizontally.align(rowWidth, width, layoutDirection)
+                row.forEach { i ->
+                    val p = placeables[i]
+                    p.placeRelative(x, y + Alignment.CenterVertically.align(p.height, heights[r]))
+                    x += p.width + gap
+                }
+                y += heights[r] + gap
             }
         }
     }

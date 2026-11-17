@@ -118,10 +118,9 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.mirror.AppsUiState
-import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutDp
-import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutFraction
+import com.programmersbox.scrcpyviewer.ui.common.layoutDp
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import com.programmersbox.scrcpyviewer.ui.mirror.reportsSheetFocus
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
@@ -152,10 +151,10 @@ private fun beforeLabel(before: Before): String = when (before) {
     Before.ClearTask -> "Clear the task (--activity-clear-task)"
 }
 
-/** Opens downward from its top edge over [millis] (size FastOutSlowIn, with a fade), or fades in [REDUCED_FADE_MILLIS]. */
+/** Opens downward from its top edge on the layout spring while it fades in over [millis], or fades in [REDUCED_FADE_MILLIS]. */
 internal fun expandIn(millis: Int, motion: Boolean): EnterTransition =
     if (motion) {
-        expandVertically(tween(millis, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) + fadeIn(tween(millis))
+        expandVertically(layoutSpring(), expandFrom = Alignment.Top) + fadeIn(tween(millis))
     } else {
         fadeIn(tween(REDUCED_FADE_MILLIS))
     }
@@ -163,7 +162,7 @@ internal fun expandIn(millis: Int, motion: Boolean): EnterTransition =
 /** The reverse of [expandIn]. */
 internal fun foldOut(millis: Int, motion: Boolean): ExitTransition =
     if (motion) {
-        shrinkVertically(tween(millis, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top) + fadeOut(tween(millis))
+        shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top) + fadeOut(tween(millis))
     } else {
         fadeOut(tween(REDUCED_FADE_MILLIS))
     }
@@ -224,7 +223,7 @@ fun LinksTabContent(
     enabled: Boolean,
     onEvent: (LinksEvent) -> Unit,
     modifier: Modifier = Modifier,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     now: () -> Long = System::currentTimeMillis,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -544,7 +543,7 @@ private fun KindChip(kind: LinkKind, label: String, motion: Boolean, modifier: M
                 scaleY = scale
                 alpha = 0.3f + 0.7f * p
             }
-            .then(if (motion) Modifier.animateContentSize(tween(KIND_POP_MILLIS, easing = EmphasizedDecelerate)) else Modifier)
+            .then(if (motion) Modifier.animateContentSize(layoutSpring()) else Modifier)
             .clip(ChipShape).background(container)
             .padding(horizontal = 9.dp, vertical = 3.dp)
             .semantics { contentDescription = "Kind: $label" },
@@ -688,7 +687,7 @@ private fun CommandPreview(command: String, motion: Boolean, modifier: Modifier 
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier
-                        .then(if (motion) Modifier.animateContentSize(tween(OPEN_MILLIS, easing = FastOutSlowInEasing)) else Modifier)
+                        .then(if (motion) Modifier.animateContentSize(layoutSpring()) else Modifier)
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                         .semantics { contentDescription = "Command" },
                 )
@@ -707,7 +706,7 @@ private fun OpenButton(links: LinksState, enabled: Boolean, motion: Boolean, mod
             transitionSpec = {
                 if (motion) {
                     fadeIn(tween(OPEN_MILLIS, delayMillis = 60)) togetherWith fadeOut(tween(CLOSE_MILLIS / 2)) using
-                        SizeTransform(clip = false) { _, _ -> tween(OPEN_MILLIS, easing = FastOutSlowInEasing) }
+                        SizeTransform(clip = false) { _, _ -> layoutSpring() }
                 } else {
                     fadeIn(tween(REDUCED_FADE_MILLIS)) togetherWith fadeOut(tween(REDUCED_FADE_MILLIS)) using
                         SizeTransform(clip = false) { _, _ -> snap() }
@@ -766,7 +765,7 @@ private fun ResultStrip(links: LinksState, motion: Boolean) {
                     transitionSpec = {
                         if (motion) {
                             fadeIn(tween(RESULT_MILLIS)) togetherWith fadeOut(tween(RESULT_MILLIS / 2)) using
-                                SizeTransform(clip = false) { _, _ -> tween(RESULT_MILLIS, easing = FastOutSlowInEasing) }
+                                SizeTransform(clip = false) { _, _ -> layoutSpring() }
                         } else {
                             fadeIn(tween(REDUCED_FADE_MILLIS)) togetherWith fadeOut(tween(REDUCED_FADE_MILLIS)) using
                                 SizeTransform(clip = false) { _, _ -> snap() }
