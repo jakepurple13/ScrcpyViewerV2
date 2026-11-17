@@ -7,6 +7,7 @@ import com.programmersbox.scrcpyviewer.media.SessionRecording
 import com.programmersbox.scrcpyviewer.media.VideoDecoder
 import com.programmersbox.scrcpyviewer.media.VideoFrame
 import com.programmersbox.scrcpyviewer.options.OptionValues
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -98,6 +99,8 @@ class ScrcpySession(
     scope: CoroutineScope,
     /** Where a relative `record` path goes (`Settings.captureDir`); null keeps it relative to the working dir. */
     private val captureDir: () -> Path? = { null },
+    /** Gets server start and video decoding failures, as handled exceptions. */
+    private val telemetry: Telemetry = Telemetry.Noop,
 ) {
     private val _status = MutableStateFlow(SessionStatus.Connecting)
     val status: StateFlow<SessionStatus> = _status.asStateFlow()
@@ -238,6 +241,7 @@ class ScrcpySession(
      */
     fun videoPlaybackFailed(cause: Throwable) {
         if (!videoPlayback) return
+        telemetry.captureException(cause, handled = true)
         val codec = videoCodec?.let { " (${VideoDecoder.codecName(it)})" }.orEmpty()
         fail("Video decoding failed$codec: ${cause.message ?: cause}")
     }
@@ -381,6 +385,7 @@ class ScrcpySession(
             throw e
         } catch (t: Throwable) {
             log.log(System.Logger.Level.WARNING, "Could not start session $serial", t)
+            telemetry.captureException(t, handled = true)
             fail(t.message ?: t.toString())
             return
         }

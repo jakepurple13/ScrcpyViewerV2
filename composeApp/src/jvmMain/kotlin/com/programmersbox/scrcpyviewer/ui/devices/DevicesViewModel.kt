@@ -16,6 +16,7 @@ import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -116,6 +117,8 @@ class DevicesViewModel(
     private val wireless: WirelessAdb,
     private val openMirrors: OpenMirrors,
     private val settings: AppSettings,
+    /** Gets adb restart failures, as handled exceptions. */
+    private val telemetry: Telemetry,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val switching = MutableStateFlow<Set<String>>(emptySet())
@@ -365,6 +368,7 @@ class DevicesViewModel(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    telemetry.captureException(e, handled = true)
                     "Couldn't restart adb: ${e.message}"
                 }
                 _notices.emit(WifiNotice(text))

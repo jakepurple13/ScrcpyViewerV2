@@ -2,6 +2,8 @@ package com.programmersbox.scrcpyviewer.scrcpy
 
 import androidx.compose.ui.unit.IntSize
 import com.programmersbox.scrcpyviewer.options.OptionValues
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -101,6 +103,7 @@ class ScrcpySessionTest {
         values: Map<String, String?> = emptyMap(),
         sink: VideoSink = RecordingVideoSink(),
         audioFactory: (Int, ScrcpySession) -> AudioSink? = { _, _ -> null },
+        telemetry: Telemetry = Telemetry.Noop,
     ) = ScrcpySession(
         serial = "SER",
         values = OptionValues(values),
@@ -108,6 +111,7 @@ class ScrcpySessionTest {
         decoderFactory = { _, _ -> sink },
         audioFactory = audioFactory,
         scope = parent,
+        telemetry = telemetry,
     )
 
     private suspend fun ScrcpySession.await(status: SessionStatus) =
@@ -376,6 +380,23 @@ class ScrcpySessionTest {
     }
 
     @Test
+    fun `a decoder failure is reported as a handled exception`() = runBlocking {
+        val launcher = LocalPairLauncher()
+        val telemetry = FakeTelemetry()
+        val s = session(launcher, sink = RecordingVideoSink(throwOnPacket = true), telemetry = telemetry)
+        s.await(SessionStatus.Running)
+        val out = DataOutputStream(launcher.device.await().video!!.getOutputStream())
+        out.writeInt(StreamProtocol.CODEC_H264)
+        out.writeSession(100, 200)
+        out.writePacket(1, byteArrayOf(9))
+        withTimeout(5_000) { s.status.first { it == SessionStatus.Failed } }
+        val (t, handled) = telemetry.exceptions.single()
+        assertEquals("sink bug", t.message)
+        assertTrue(handled)
+        s.close()
+    }
+
+    @Test
     fun `a buffered decoder failing is reported through the session`() = runBlocking {
         val launcher = LocalPairLauncher()
         val s = ScrcpySession(
@@ -406,6 +427,16 @@ class ScrcpySessionTest {
         assertEquals("adb push failed", s.error.value)
         s.close()
         assertEquals(SessionStatus.Failed, s.status.value)
+    }
+
+    @Test
+    fun `a launch failure is reported as a handled exception`() = runBlocking {
+        val e = java.io.IOException("adb push failed")
+        val telemetry = FakeTelemetry()
+        val s = session(ConnectionStarter { _, _ -> throw e }, telemetry = telemetry)
+        s.await(SessionStatus.Failed)
+        assertEquals(listOf<Pair<Throwable, Boolean>>(e to true), telemetry.exceptions.toList())
+        s.close()
     }
 
     @Test

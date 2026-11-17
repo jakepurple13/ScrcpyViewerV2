@@ -17,6 +17,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.io.File
@@ -46,6 +48,7 @@ class UpdateManagerTest {
         macNotInApplications: Boolean = false,
         currentVersion: String = "1.5.0",
         autoDownload: MutableStateFlow<Boolean> = MutableStateFlow(false),
+        telemetry: Telemetry = Telemetry.Noop,
     ) = UpdateManager(
         backend = backend,
         scope = scope,
@@ -56,6 +59,7 @@ class UpdateManagerTest {
         now = { checkedAt },
         notesTimeoutMs = 200,
         autoDownload = autoDownload,
+        telemetry = telemetry,
     )
 
     private fun <T> await(block: suspend () -> T): T = runBlocking { withTimeout(5_000) { block() } }
@@ -305,6 +309,31 @@ class UpdateManagerTest {
         val m = manager(FakeUpdateBackend(event = UpdateEvent("1.5.0", "1.6.0", UpdateLevel.MINOR)), currentVersion = "1.5.0")
         assertEquals("Updating to 1.6.0 did not complete.", m.previousFailure)
         assertNull(m.updatedFrom)
+    }
+
+    @Test
+    fun `a failed update is reported once as our own exception with no version or path`() {
+        val telemetry = FakeTelemetry()
+        manager(
+            FakeUpdateBackend(event = UpdateEvent("1.5.0", "1.6.0", UpdateLevel.MINOR)),
+            currentVersion = "1.5.0",
+            telemetry = telemetry,
+        )
+        val (t, handled) = telemetry.exceptions.single()
+        assertIs<UpdateInstallFailed>(t)
+        assertTrue(handled)
+        assertEquals("The update did not install.", t.message)
+    }
+
+    @Test
+    fun `a completed update reports nothing`() {
+        val telemetry = FakeTelemetry()
+        manager(
+            FakeUpdateBackend(event = UpdateEvent("1.5.0", "1.6.0", UpdateLevel.MINOR)),
+            currentVersion = "1.6.0",
+            telemetry = telemetry,
+        )
+        assertTrue(telemetry.exceptions.isEmpty())
     }
 
     @Test

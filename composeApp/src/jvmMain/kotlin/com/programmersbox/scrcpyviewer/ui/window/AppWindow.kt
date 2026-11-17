@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import com.programmersbox.scrcpyviewer.telemetry.ReportWindowCrashes
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -108,46 +109,49 @@ fun NucleusApplicationScope.AppWindow(
     val desktopBlur = wantsBlur && transparent
     ScrcpyViewerTheme(shown) {
         val bar = animatedBarColors(barColors(MaterialTheme.colorScheme, LocalStyleTokens.current, desktopBlur))
-        MaterialDecoratedWindow(
-            onCloseRequest = onCloseRequest,
-            state = state,
-            visible = visible,
-            title = title,
-            icon = icon,
-            alwaysOnTop = alwaysOnTop,
-            onPreviewKeyEvent = onPreviewKeyEvent,
-            titleBarStyle = nucleusTitleBarStyle(bar, titleBarHeight),
-            transparent = transparent,
-        ) {
-            // Tao windows run their own Compose scene: the theme, the reveal origin and the clipboard are provided
-            // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).
-            CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
-                ProvideAppClipboard {
-                    ScrcpyViewerTheme(shown) {
-                        // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).
-                        MaterialTitleBar(
-                            if (desktopBlur) ClearWindowRoot else Modifier,
-                            style = titleBarStyle(bar, titleBarHeight),
-                        ) {
-                            BoundedSlot {
-                                CompositionLocalProvider(LocalContentColor provides bar.content) {
-                                    CustomTitleBarScope.titleBar()
+        // Its Compose exceptions are reported (CrashCapture).
+        ReportWindowCrashes {
+            MaterialDecoratedWindow(
+                onCloseRequest = onCloseRequest,
+                state = state,
+                visible = visible,
+                title = title,
+                icon = icon,
+                alwaysOnTop = alwaysOnTop,
+                onPreviewKeyEvent = onPreviewKeyEvent,
+                titleBarStyle = nucleusTitleBarStyle(bar, titleBarHeight),
+                transparent = transparent,
+            ) {
+                // Tao windows run their own Compose scene: the theme, the reveal origin and the clipboard are provided
+                // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).
+                CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
+                    ProvideAppClipboard {
+                        ScrcpyViewerTheme(shown) {
+                            // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).
+                            MaterialTitleBar(
+                                if (desktopBlur) ClearWindowRoot else Modifier,
+                                style = titleBarStyle(bar, titleBarHeight),
+                            ) {
+                                BoundedSlot {
+                                    CompositionLocalProvider(LocalContentColor provides bar.content) {
+                                        CustomTitleBarScope.titleBar()
+                                    }
                                 }
                             }
+                            nucleusWindow.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L && Os.isMac }?.let { ns ->
+                                MacVibrancyEffect(Pointer(ns), desktopBlur, dark)
+                                // What a live resize uncovers before Compose draws: the theme's surface, not the system's.
+                                MacWindowBackgroundEffect(Pointer(ns), MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
+                            }
+                            Box(
+                                Modifier
+                                    // First, so it draws on the window's own canvas, not in a layer of the reveal's.
+                                    .then(if (desktopBlur) ClearWindowRoot else Modifier)
+                                    .fillMaxSize()
+                                    .themeReveal(reveal)
+                                    .styleBackdrop(transparent = desktopBlur),
+                            ) { content() }
                         }
-                        nucleusWindow.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L && Os.isMac }?.let { ns ->
-                            MacVibrancyEffect(Pointer(ns), desktopBlur, dark)
-                            // What a live resize uncovers before Compose draws: the theme's surface, not the system's.
-                            MacWindowBackgroundEffect(Pointer(ns), MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
-                        }
-                        Box(
-                            Modifier
-                                // First, so it draws on the window's own canvas, not in a layer of the reveal's.
-                                .then(if (desktopBlur) ClearWindowRoot else Modifier)
-                                .fillMaxSize()
-                                .themeReveal(reveal)
-                                .styleBackdrop(transparent = desktopBlur),
-                        ) { content() }
                     }
                 }
             }

@@ -22,6 +22,7 @@ import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.ServerLauncher
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
+import com.programmersbox.scrcpyviewer.telemetry.CrashCapture
 import com.programmersbox.scrcpyviewer.telemetry.PostHogTelemetry
 import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.telemetry.TelemetryConfig
@@ -77,8 +78,11 @@ fun interface AdbClientFactory {
     fun create(adbPath: () -> Path): AdbClient
 }
 
-/** The scope stores, the device tracker and mirror sessions run on; it lives as long as the app. */
-class AppScope : CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Default)
+/**
+ * The scope stores, the device tracker and mirror sessions run on; it lives as long as the app. A coroutine that
+ * fails in it is reported as a crash ([CrashCapture.coroutineExceptionHandler]).
+ */
+class AppScope : CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Default + CrashCapture.coroutineExceptionHandler)
 
 /** Discovery root: the modules below, plus the `@KoinViewModel`s and `@Singleton`s under `ui`. */
 @Module(includes = [StorageModule::class, AdbModule::class, MirrorModule::class, UpdateModule::class])
@@ -226,6 +230,7 @@ class MirrorModule {
         settings: AppSettings,
         clipboard: PcClipboard,
         following: Lazy<InputFollowing>,
+        telemetry: Telemetry,
     ): MirrorController = MirrorController(
         scope = scope,
         devices = tracker.devices,
@@ -246,6 +251,7 @@ class MirrorModule {
                 audioFactory = { codecId, _ -> AudioPlayer.forOptions(codecId, values) },
                 scope = scope,
                 captureDir = { Paths.get(settings.settings.value.captureDir) },
+                telemetry = telemetry,
             )
         },
         setClipboard = clipboard::setText,
@@ -284,6 +290,7 @@ class UpdateModule {
         scope: AppScope,
         settings: AppSettings,
         tools: BundledTools,
+        telemetry: Telemetry,
     ): UpdateManager {
         // 1.5.0's own updater downloaded installers and helper scripts here; Nucleus caches in "update-cache".
         runCatching { dataDir.path.resolve(LEGACY_UPDATES_DIR).toFile().deleteRecursively() }
@@ -294,6 +301,7 @@ class UpdateModule {
             bundledAdbInUse = { if (settings.settings.value.adbPathOverride == null) tools.adbExecutable() else null },
             autoDownload = settings.settings.map { it.autoDownloadUpdates }
                 .stateIn(scope, SharingStarted.Eagerly, settings.settings.value.autoDownloadUpdates),
+            telemetry = telemetry,
         )
     }
 

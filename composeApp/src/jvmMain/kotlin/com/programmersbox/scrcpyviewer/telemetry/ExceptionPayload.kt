@@ -58,3 +58,37 @@ private fun entry(t: Throwable, handled: Boolean, scrubber: Scrubber): JsonObjec
         }
     }
 }
+
+/**
+ * The `$exception` properties for a native crash found by [NativeCrashScanner]: the signal name as the message and
+ * the frames' function names (scrubbed), oldest call first. Nothing else from the crash log is sent.
+ */
+fun nativeCrashProperties(c: NativeCrash, scrubber: Scrubber): JsonObject {
+    val signal = scrubber.scrub(c.signal)
+    val entry = buildJsonObject {
+        put("type", NATIVE_CRASH)
+        put("value", signal)
+        putJsonObject("mechanism") {
+            put("handled", false)
+            put("type", "native")
+        }
+        putJsonObject("stacktrace") {
+            put("type", "raw")
+            putJsonArray("frames") {
+                c.frames.reversed().forEach { f ->
+                    add(buildJsonObject {
+                        put("function", scrubber.scrub(f))
+                        put("in_app", OWN_TYPE_PREFIX in f)
+                    })
+                }
+            }
+        }
+    }
+    return buildJsonObject {
+        put("\$exception_list", JsonArray(listOf(entry)))
+        put("\$exception_type", NATIVE_CRASH)
+        put("\$exception_message", signal)
+    }
+}
+
+private const val NATIVE_CRASH = "native_crash"

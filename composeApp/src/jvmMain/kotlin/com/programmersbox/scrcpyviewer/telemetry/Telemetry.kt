@@ -54,6 +54,9 @@ interface Telemetry {
     /** An unhandled exception, written to the queue before returning, so it survives the process ending. */
     fun captureExceptionBlocking(t: Throwable)
 
+    /** A native crash of an earlier run, sent as `$exception` with type `native_crash`. Its log is not touched. */
+    fun captureNativeCrash(c: NativeCrash)
+
     /** The anonymous install ID sent as `distinct_id`. */
     fun installId(): String
 
@@ -75,6 +78,7 @@ interface Telemetry {
         override fun track(event: TelemetryEvent) = Unit
         override fun captureException(t: Throwable, handled: Boolean) = Unit
         override fun captureExceptionBlocking(t: Throwable) = Unit
+        override fun captureNativeCrash(c: NativeCrash) = Unit
         override fun installId(): String = ""
         override fun resetInstallId() = Unit
         override fun rememberSerial(serial: String) = Unit
@@ -152,6 +156,13 @@ class PostHogTelemetry(
     override fun captureExceptionBlocking(t: Throwable) = guard("capture exception") {
         if (!record(EXCEPTION, TelemetryKind.Crash)) return@guard
         write(EXCEPTION, TelemetryKind.Crash, Instant.now(), exceptionProperties(t, handled = false, scrubber))
+    }
+
+    override fun captureNativeCrash(c: NativeCrash) = guard("capture native crash") {
+        if (!record(EXCEPTION, TelemetryKind.Crash)) return@guard
+        val now = Instant.now()
+        val props = nativeCrashProperties(c, scrubber)
+        launchWrite { guard("queue native crash") { write(EXCEPTION, TelemetryKind.Crash, now, props) } }
     }
 
     override fun installId(): String = runCatching { ids.get() }.getOrElse { report("read install ID", it); "" }
