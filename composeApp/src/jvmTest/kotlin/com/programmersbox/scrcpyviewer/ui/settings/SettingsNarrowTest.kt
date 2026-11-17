@@ -72,6 +72,7 @@ class SettingsNarrowTest {
         windowWidth: Int = startWidth,
         selected: SettingsCategoryId = SettingsCategoryId.Appearance,
         settings: Settings = Settings(),
+        state: SettingsUiState = SettingsUiState(settings = settings),
         reduceMotion: Boolean = false,
         block: SceneDriver.() -> Unit,
     ) = onEdt {
@@ -85,7 +86,7 @@ class SettingsNarrowTest {
                 CompositionLocalProvider(LocalReduceMotion provides reduceMotion, LocalWindowInfo provides windowInfo) {
                     Surface {
                         Box(Modifier.width(width.dp).height(height.dp)) {
-                            SettingsContent(SettingsUiState(settings = settings), UpdateUiState(), nav, actions)
+                            SettingsContent(state, UpdateUiState(), nav, actions)
                         }
                     }
                 }
@@ -426,6 +427,29 @@ class SettingsNarrowTest {
             val slider = sliders()[1]
             assertTrue(slider.top >= label.bottom, "stacked: $label above $slider")
             assertTrue(slider.width >= 120f)
+        }
+    }
+
+    @Test
+    fun `Privacy fits at 360, 520, 700 and 1000 in a keyless build`() {
+        val recent = listOf(
+            com.programmersbox.scrcpyviewer.telemetry.RecentEvent("mirror_started", java.time.Instant.now(), sent = true),
+            com.programmersbox.scrcpyviewer.telemetry.RecentEvent("screenshot_taken", java.time.Instant.now(), sent = false),
+        )
+        val state = SettingsUiState(telemetryEnabled = false, recent = recent, installId = "01234567-89ab-cdef-0123-456789abcdef")
+        for (w in listOf(360, 520, 700, 1000)) scene(w, selected = SettingsCategoryId.Privacy, state = state) {
+            if (w < 480) assertTrue(described("Privacy").any { it.rect().right <= 64f }, "the Privacy icon at $w")
+            assertTrue(text(KEYLESS_BANNER).isNotEmpty(), "the banner inside $w")
+            val switches = nodes().filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Switch && it.shown() }
+            assertEquals(2, switches.size, "both switch rows inside $w")
+            assertTrue(switches.all { SemanticsProperties.Disabled in it.config }, "disabled at $w")
+            assertTrue(text("01234567…cdef").isNotEmpty(), "the short ID inside $w")
+            assertTrue(text("Reset ID").isNotEmpty(), "Reset ID inside $w")
+            click("Show")
+            assertTrue(text("mirror_started").isNotEmpty() && text("not sent").isNotEmpty(), "the open list inside $w")
+            // The 160 dp text room: at 360 the switch goes under its title.
+            val title = assertNotNull(text("Share usage statistics").firstOrNull()).rect()
+            assertTrue(title.width >= 40f, "title not squeezed at $w: $title")
         }
     }
 

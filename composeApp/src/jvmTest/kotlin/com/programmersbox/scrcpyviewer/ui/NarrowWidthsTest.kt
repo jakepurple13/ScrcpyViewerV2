@@ -458,6 +458,43 @@ class NarrowWidthsTest {
         }
     }
 
+    // Settings › Privacy: the switches, the recent events (open) and the ID with its Reset ID button.
+
+    @Test
+    fun `Settings - Privacy's Reset ID at every window width`() {
+        val recent = listOf(
+            com.programmersbox.scrcpyviewer.telemetry.RecentEvent("mirror_started", java.time.Instant.now(), sent = true),
+            com.programmersbox.scrcpyviewer.telemetry.RecentEvent("screenshot_taken", java.time.Instant.now(), sent = false),
+        )
+        val state = SettingsUiState(settings = Settings(), recent = recent, installId = "01234567-89ab-cdef-0123-456789abcdef")
+        for (window in windows) onEdt {
+            val content = window - RAIL
+            val info = object : WindowInfo {
+                override val isWindowFocused = true
+                override val containerSize get() = IntSize(window, 800)
+            }
+            val d = SceneDriver(ImageComposeScene(1280, 800, Density(1f)) {
+                ScrcpyViewerTheme(ThemeMode.Light) {
+                    CompositionLocalProvider(LocalReduceMotion provides true, LocalWindowInfo provides info) {
+                        Surface {
+                            Box(Modifier.width(content.dp).height(800.dp)) {
+                                SettingsContent(state, UpdateUiState(), SettingsNav(selected = SettingsCategoryId.Privacy), SettingsActions())
+                            }
+                        }
+                    }
+                }
+            })
+            try {
+                d.frames(150)
+                d.clickText("Show", content)
+                check(d, "Reset ID", content, "Privacy at $window")
+                d.assertPrimary("not sent", content, "Privacy at $window")
+            } finally {
+                d.scene.close()
+            }
+        }
+    }
+
     // The nav rail.
 
     private fun railTexts(window: Int): List<String> {

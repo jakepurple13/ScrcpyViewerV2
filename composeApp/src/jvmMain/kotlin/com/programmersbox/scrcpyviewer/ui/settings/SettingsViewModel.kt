@@ -11,6 +11,8 @@ import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.Settings
+import com.programmersbox.scrcpyviewer.telemetry.RecentEvent
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
@@ -53,6 +55,12 @@ data class SettingsUiState(
     val aiSkill: List<AiSkillRow> = emptyList(),
     /** Label to error (null = installed) per target of the last install; non-null shows the Done dialog. */
     val aiInstallResult: List<Pair<String, String?>>? = null,
+    /** False in a build without an analytics key: the Privacy switches are disabled under a banner. */
+    val telemetryEnabled: Boolean = true,
+    /** What telemetry recorded or blocked lately, newest first. */
+    val recent: List<RecentEvent> = emptyList(),
+    /** The anonymous install ID; empty while it is being read, and in a build without a key. */
+    val installId: String = "",
 )
 
 /** Error text when [path] cannot be used as the adb executable, else null. */
@@ -105,6 +113,8 @@ class SettingsViewModel(
     private val presets: PresetStore,
     private val adb: SettingsAdb,
     private val aiSkill: AiSkillInstaller,
+    // Required (no default): the Koin compiler plugin does not inject a parameter that has one.
+    private val telemetry: Telemetry,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val bundledVersion = MutableStateFlow<String?>(null)
@@ -112,6 +122,7 @@ class SettingsViewModel(
     private val adbError = MutableStateFlow<String?>(null)
     private val aiRows = MutableStateFlow<List<AiSkillRow>>(emptyList())
     private val aiResult = MutableStateFlow<List<Pair<String, String?>>?>(null)
+    private val installId = MutableStateFlow("")
 
     val state: StateFlow<SettingsUiState> = combine(
         appSettings.settings, presets.presets, presets.defaultPresetId, bundledVersion, customVersion,
@@ -121,12 +132,16 @@ class SettingsViewModel(
         .combine(appSettings.persistenceError) { s, e -> s.copy(persistenceError = e) }
         .combine(aiRows) { s, rows -> s.copy(aiSkill = rows) }
         .combine(aiResult) { s, r -> s.copy(aiInstallResult = r) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState())
+        .combine(telemetry.recent) { s, r -> s.copy(telemetryEnabled = telemetry.enabled, recent = r) }
+        .combine(installId) { s, id -> s.copy(installId = id) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState(telemetryEnabled = telemetry.enabled))
 
     init {
         viewModelScope.launch { bundledVersion.value = versionOf { adb.bundledAdb() } }
         appSettings.settings.value.adbPathOverride?.let(::loadCustomVersion)
         viewModelScope.launch { refreshAiSkill() }
+        // The ID is read from (or, the first time, written to) a file: not on the UI thread.
+        viewModelScope.launch { installId.value = withContext(Dispatchers.IO) { telemetry.installId() } }
     }
 
     private suspend fun refreshAiSkill() {
@@ -208,6 +223,22 @@ class SettingsViewModel(
 
     fun setAfterScreenshot(value: com.programmersbox.scrcpyviewer.state.AfterScreenshot) =
         appSettings.update { it.copy(afterScreenshot = value.name) }
+
+    /** Consent for usage events; read when each event is recorded. */
+    fun setUsageStats(value: Boolean) = appSettings.update { it.copy(usageStats = value) }
+
+    /** Consent for crash reports; read when each exception is recorded. */
+    fun setCrashReports(value: Boolean) = appSettings.update { it.copy(crashReports = value) }
+
+    /** Replaces the anonymous install ID with a new random one, then shows it. */
+    fun resetInstallId() {
+        viewModelScope.launch {
+            installId.value = withContext(Dispatchers.IO) {
+                telemetry.resetInstallId()
+                telemetry.installId()
+            }
+        }
+    }
 
     /** Reopens the first-run guide; it marks itself seen again when closed. */
     fun showOnboarding() = appSettings.update { it.copy(onboardingSeen = false) }

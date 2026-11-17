@@ -6,6 +6,7 @@ import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -44,7 +45,7 @@ class SettingsViewModelTest {
      * the combined state at the same time as a test's action, and a test reading state.value could miss its change.
      */
     private fun vm(version: (Path) -> String? = { "1.0.41 (35.0.2)" }) =
-        SettingsViewModel(settings, presets, adb(version = version), installer(), scope).also { vm ->
+        SettingsViewModel(settings, presets, adb(version = version), installer(), Telemetry.Noop, scope).also { vm ->
             runBlocking { withTimeout(10_000) { vm.state.first { it.aiSkill.isNotEmpty() } } }
         }
 
@@ -144,7 +145,7 @@ class SettingsViewModelTest {
     fun `version is Unknown when adb fails`() {
         val vm = vm { null }
         assertEquals(UNKNOWN_VERSION, vm.settled { it.bundledAdbVersion == UNKNOWN_VERSION }.bundledAdbVersion)
-        val broken = SettingsViewModel(settings, presets, adb(bundledAdb = { error("missing") }, version = { null }), installer(), scope)
+        val broken = SettingsViewModel(settings, presets, adb(bundledAdb = { error("missing") }, version = { null }), installer(), Telemetry.Noop, scope)
         assertEquals(UNKNOWN_VERSION, broken.settled { it.bundledAdbVersion == UNKNOWN_VERSION }.bundledAdbVersion)
     }
 
@@ -155,7 +156,7 @@ class SettingsViewModelTest {
         val lookedUpOn = java.util.concurrent.atomic.AtomicReference<Thread>()
         val vm = SettingsViewModel(
             settings, presets, adb(bundledAdb = { lookedUpOn.set(Thread.currentThread()); bundled }, version = { "1.0.41 (35.0.2)" }),
-            installer(), scope,
+            installer(), Telemetry.Noop, scope,
         )
         assertEquals("1.0.41 (35.0.2)", vm.settled { it.bundledAdbVersion != null }.bundledAdbVersion)
         assertNotNull(lookedUpOn.get())

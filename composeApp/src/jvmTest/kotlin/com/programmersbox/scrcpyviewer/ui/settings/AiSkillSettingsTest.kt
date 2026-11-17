@@ -6,6 +6,7 @@ import com.programmersbox.scrcpyviewer.actions.SkillStatus
 import com.programmersbox.scrcpyviewer.actions.SkillTarget
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,7 +37,7 @@ class AiSkillSettingsTest {
             override suspend fun version(path: Path): String? = null
             override fun restartTracker() = Unit
         },
-        installer, scope,
+        installer, Telemetry.Noop, scope,
     )
 
     private fun SettingsViewModel.awaitResult(): List<Pair<String, String?>> = runBlocking {
