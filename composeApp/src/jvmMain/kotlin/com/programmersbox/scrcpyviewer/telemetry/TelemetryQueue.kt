@@ -74,7 +74,7 @@ class TelemetryQueue(
 
     private fun readAll(): List<QueuedEvent> {
         if (!Files.exists(file)) return emptyList()
-        return Files.readAllLines(file, Charsets.UTF_8).mapNotNull { line ->
+        return readLines().mapNotNull { line ->
             if (line.isBlank()) null
             else runCatching { json.decodeFromString(QueuedEvent.serializer(), line) }.getOrNull()
         }
@@ -90,7 +90,10 @@ class TelemetryQueue(
         rewrite(all)
     }
 
-    private fun lineCount(): Int = Files.newBufferedReader(file).use { r -> r.lineSequence().count() }
+    private fun lineCount(): Int = readLines().size
+
+    /** Lenient decode: bytes cut mid-character by a crash become U+FFFD instead of throwing. */
+    private fun readLines(): List<String> = Files.readAllBytes(file).toString(Charsets.UTF_8).lines()
 
     private fun encode(e: QueuedEvent) = json.encodeToString(QueuedEvent.serializer(), e) + "\n"
 

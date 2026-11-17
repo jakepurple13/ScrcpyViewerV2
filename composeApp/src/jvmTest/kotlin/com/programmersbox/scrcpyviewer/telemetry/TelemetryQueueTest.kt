@@ -43,6 +43,16 @@ class TelemetryQueueTest {
         assertEquals(listOf("ok", "next"), q.peek(10).map { it.event })
     }
 
+    @Test fun lineTruncatedMidCharacterIsSkipped() {
+        val f = tmp(); TelemetryQueue(f).append(ev("ok"))
+        Files.write(f, byteArrayOf(0xC3.toByte()), java.nio.file.StandardOpenOption.APPEND)
+        val q = TelemetryQueue(f)
+        assertEquals(listOf("ok"), q.peek(10).map { it.event })
+        q.append(ev("next"))
+        assertEquals(listOf("ok", "next"), q.peek(10).map { it.event })
+        assertEquals(2, q.size())
+    }
+
     @Test fun removeKindDeletesOnlyThatKind() {
         val q = TelemetryQueue(tmp()); q.append(ev("u", TelemetryKind.Usage)); q.append(ev("c", TelemetryKind.Crash))
         q.removeKind(TelemetryKind.Usage)
