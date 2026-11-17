@@ -70,15 +70,15 @@ class LaunchPolicyTest {
 
     @Test
     fun `platforms not yet confirmed fade`() {
-        for (p in listOf(Windows, LinuxX11, LinuxWayland)) {
+        for (p in listOf(LinuxX11, LinuxWayland)) {
             assertEquals(LaunchEffect.Fade, on(p))
             assertEquals(LaunchEffect.Overlay(IconUnfold), on(p, enabled = OverlayPlatform.entries.toSet()))
         }
     }
 
     @Test
-    fun `macOS is the only platform on until the spike is confirmed elsewhere`() =
-        assertEquals(setOf(MacOS), OverlayEnabled)
+    fun `macOS and Windows are on until the spike is confirmed on Linux`() =
+        assertEquals(setOf(MacOS, Windows), OverlayEnabled)
 
     @Test
     fun `linux session type`() {

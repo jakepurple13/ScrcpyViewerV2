@@ -68,6 +68,13 @@ What to look for, per platform:
 | Platform | 1 | 2 | 3 | 4 | 5 |
 |---|---|---|---|---|---|
 | macOS | yes | yes | by hand | by hand | yes |
-| Windows | | | | | |
+| Windows (CI recording, 2026-11-17) | yes | yes | not checked | not checked | yes |
+
+Windows was checked from screen recordings (ffmpeg `gdigrab`) of a GitHub Actions `windows-latest` runner, of the
+spike and of the real app with Icon unfold and Screen on. The runner reports reduce motion (client area animation off),
+so the recording turned it on first with `SystemParametersInfo(SPI_SETCLIENTAREAANIMATION)`. Click-through and the
+taskbar / Alt-Tab entry could not be checked there: one Java taskbar icon shows up as the hidden main window and the
+overlay are created, 60 ms apart. The quit picture covers only the content, so the title bar buttons vanish on the
+quit overlay's first frame.
 | Linux X11 | | | | | |
 | Linux Wayland (`forceX11`) | | | | | |
