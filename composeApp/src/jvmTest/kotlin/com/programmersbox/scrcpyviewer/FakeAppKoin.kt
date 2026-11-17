@@ -7,6 +7,7 @@ import com.programmersbox.scrcpyviewer.di.AppScope
 import com.programmersbox.scrcpyviewer.di.startAppKoin
 import com.programmersbox.scrcpyviewer.emulator.EmulatorEnvironment
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryConfig
 import com.programmersbox.scrcpyviewer.update.FakeUpdateBackend
 import com.programmersbox.scrcpyviewer.update.UpdateBackend
 import kotlinx.coroutines.cancel
@@ -62,7 +63,10 @@ fun withFakeAppKoin(
     updateBackend: UpdateBackend = FakeUpdateBackend(),
     block: (Koin) -> Unit,
 ) {
-    val koin = startAppKoin(dataDir, adbClientFactory = { FakeAdbClient() }, updateBackend = updateBackend, emulatorEnvironment = fakeEmulatorEnvironment(dataDir))
+    val koin = startAppKoin(
+        dataDir, adbClientFactory = { FakeAdbClient() }, updateBackend = updateBackend,
+        emulatorEnvironment = fakeEmulatorEnvironment(dataDir), telemetryConfig = TelemetryConfig.Disabled,
+    )
     try {
         koin.get<AppSettings>().update { it.copy(onboardingSeen = true, actionsIntroSeen = true) }
         runBlocking { withTimeout(5_000) { koin.get<DeviceTracker>().devices.first { it.size == 3 } } }

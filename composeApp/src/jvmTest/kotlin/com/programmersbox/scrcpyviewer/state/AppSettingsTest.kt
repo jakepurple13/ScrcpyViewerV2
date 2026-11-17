@@ -35,6 +35,18 @@ class AppSettingsTest {
     }
 
     @Test
+    fun `firstLaunch is true only when the file is missing, and privacy defaults apply`() {
+        val first = AppSettings(file)
+        assertTrue(first.firstLaunch)
+        val s = first.settings.value
+        assertFalse(s.usageStats)
+        assertTrue(s.crashReports)
+        assertFalse(s.privacyPromptSeen)
+        first.update { it.copy(themeMode = ThemeMode.Dark) }
+        assertFalse(AppSettings(file).firstLaunch)
+    }
+
+    @Test
     fun `captureDir resolved when absent from file`() {
         Files.writeString(file, """{"themeMode":"Light"}""")
         val s = AppSettings(file).settings.value

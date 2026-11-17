@@ -22,6 +22,9 @@ import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.ServerLauncher
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
+import com.programmersbox.scrcpyviewer.telemetry.PostHogTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryConfig
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
@@ -119,6 +122,11 @@ class StorageModule {
 
     @Singleton
     fun bundledTools(dataDir: DataDir): BundledTools = BundledTools(dataDir = dataDir.path)
+
+    /** [Telemetry.Noop] in a build without a key: no files under `telemetry/` and no HTTP client. `main()` starts it. */
+    @Singleton
+    fun telemetry(config: TelemetryConfig, dataDir: DataDir, settings: AppSettings, scope: AppScope): Telemetry =
+        if (config.enabled) PostHogTelemetry(config, dataDir.path, settings, scope) else Telemetry.Noop
 }
 
 /** The adb client, the device list and Wi-Fi debugging. */
@@ -299,20 +307,22 @@ private const val UPDATE_CACHE_DIR = "update-cache"
 
 /**
  * Starts the app's Koin graph and opens a mirror window for each [MirrorRequests] serial. Tests pass their own
- * [dataDir], an [adbClientFactory] and an [updateBackend] so no adb server, device or network is touched; they call
- * `stopKoin()` when done.
+ * [dataDir], an [adbClientFactory], an [updateBackend] and [TelemetryConfig.Disabled] so no adb server, device or
+ * network is touched; they call `stopKoin()` when done.
  */
 fun startAppKoin(
     dataDir: Path = AppDataDir.root(),
     adbClientFactory: AdbClientFactory = AdbClientFactory { AdbClient(adbPath = it) },
     updateBackend: UpdateBackend = NucleusUpdateBackend(cacheDir = dataDir.resolve(UPDATE_CACHE_DIR)),
     emulatorEnvironment: EmulatorEnvironment = EmulatorEnvironment.system(),
+    telemetryConfig: TelemetryConfig = TelemetryConfig.fromBuildInfo(),
 ): Koin {
     val koin = startKoin<ScrcpyKoinApp> {
         koin.declare(DataDir(dataDir))
         koin.declare(adbClientFactory)
         koin.declare(updateBackend)
         koin.declare(emulatorEnvironment)
+        koin.declare(telemetryConfig)
     }.koin
     val mirrors = koin.get<MirrorController>()
     koin.get<AppScope>().launch { koin.get<MirrorRequests>().collect { mirrors.open(it) } }

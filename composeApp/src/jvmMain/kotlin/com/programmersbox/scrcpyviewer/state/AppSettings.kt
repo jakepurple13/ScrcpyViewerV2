@@ -88,6 +88,12 @@ data class Settings(
     val emulatorsExpanded: Boolean = true,
     /** Per-AVD launcher options, keyed by AVD id. */
     val emulatorPrefs: Map<String, EmulatorPrefs> = emptyMap(),
+    /** Share anonymous usage statistics. Off until the user turns it on. */
+    val usageStats: Boolean = false,
+    /** Send anonymous crash reports. On by default. */
+    val crashReports: Boolean = true,
+    /** False until the privacy page (onboarding or the standalone dialog) has been shown. */
+    val privacyPromptSeen: Boolean = false,
 )
 
 /** One AVD's launcher options. [lastBootMillis] is how long its last successful boot took (the progress estimate). */
@@ -114,9 +120,13 @@ internal fun defaultCaptureDir(): String {
 class AppSettings(file: Path) {
     private val store = JsonFile(file, Settings.serializer()) { Settings() }
     private val lock = Any()
+
+    /** True when `settings.json` did not exist when this was created: the app's first launch on this machine. */
+    val firstLaunch: Boolean = !Files.exists(file)
+
     // No file yet means a first launch: show the guide. Not persisted until the guide closes.
     private val _settings = MutableStateFlow(
-        if (Files.exists(file)) store.load() else store.load().copy(onboardingSeen = false),
+        if (!firstLaunch) store.load() else store.load().copy(onboardingSeen = false),
     )
 
     val settings: StateFlow<Settings> get() = _settings

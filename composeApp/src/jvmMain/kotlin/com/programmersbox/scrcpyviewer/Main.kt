@@ -89,6 +89,7 @@ import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.canMirror
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.ui.tray.ScrcpyTray
 import com.programmersbox.scrcpyviewer.ui.tray.TrayCommands
 import com.programmersbox.scrcpyviewer.ui.tray.trayIconFiles
@@ -109,6 +110,7 @@ fun main() {
     val deviceSelection = koin.get<DeviceSelection>()
     val mirrorWindows = koin.get<MirrorWindows>()
     val arranger = koin.get<WindowArranger>()
+    val telemetry = koin.get<Telemetry>().also { it.start() }
     // Fixed files the native tray reads (see trayIconFiles); without them the app runs with no tray icon.
     val trayIcons = runCatching { trayIconFiles(koin.get<DataDir>().path.resolve("tray")) }
         .onFailure { System.getLogger("scrcpyviewer.Tray").log(System.Logger.Level.WARNING, "No tray icon files", it) }
@@ -133,7 +135,7 @@ fun main() {
         val shutdown = remember {
             AppShutdown(
                 mirrorController, exit = ::exitApplication, install = updateManager::installPending,
-                animateOut = quit::play,
+                animateOut = quit::play, telemetry = telemetry,
             )
         }
         val shutdownState by shutdown.state.collectAsState()

@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer
 
 import com.programmersbox.scrcpyviewer.media.FfmpegRuns
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -20,8 +21,9 @@ import com.sun.jna.Pointer
  * call [request]. [run] then closes every mirror session, which waits for their recorders to write the trailer
  * (bounded by [timeoutMs]), waits for running FFmpeg exports to stop and delete their temp files (bounded by
  * [ffmpegTimeoutMs], then forced: [FfmpegRuns.forceCleanup]), plays the main window's quit animation ([animateOut],
- * bounded by [animateTimeoutMs]), then runs [install] on [installDispatcher] and only then calls [exit]. While it waits,
- * [state] says whether a recording is being finished, so the UI can say so instead of freezing silently.
+ * bounded by [animateTimeoutMs]), sends queued [telemetry] (bounded by [telemetryTimeoutMs]), then runs [install] on
+ * [installDispatcher] and only then calls [exit]. While it waits, [state] says whether a recording is being finished,
+ * so the UI can say so instead of freezing silently.
  *
  * [install] starts a downloaded update's installer, which blocks on `adb kill-server` and ends the process with
  * `System.exit`. [run] is called on the UI thread (the Tao main thread), so [install] must not run there: blocking the
@@ -42,6 +44,10 @@ class AppShutdown(
     private val ffmpegRuns: FfmpegRuns = FfmpegRuns.shared,
     /** How long [run] waits for [ffmpegRuns] to clean up by themselves before killing them and deleting their files. */
     private val ffmpegTimeoutMs: Long = DEFAULT_FFMPEG_TIMEOUT_MS,
+    /** Queued analytics and crash reports, sent once more before the app exits. */
+    private val telemetry: Telemetry = Telemetry.Noop,
+    /** The quit flush is cut off after this long: the exit never waits on the network. */
+    private val telemetryTimeoutMs: Long = DEFAULT_TELEMETRY_TIMEOUT_MS,
 ) {
     sealed interface State {
         data object Running : State
@@ -79,6 +85,10 @@ class AppShutdown(
             log.log(System.Logger.Level.WARNING, "Quit animation failed, exiting anyway", t)
         }
         quitHook.release()
+        // Telemetry.flush never throws; whatever is not sent in time stays queued for the next launch.
+        if (withTimeoutOrNull(telemetryTimeoutMs) { telemetry.flush() } == null) {
+            log.log(System.Logger.Level.WARNING, "Telemetry still sending after $telemetryTimeoutMs ms, exiting anyway")
+        }
         // Ends the process when an update is pending; otherwise returns and the app exits normally.
         withContext(installDispatcher) { install() }
         exit()
@@ -99,6 +109,9 @@ class AppShutdown(
 
         /** An export's cancel kills FFmpeg and deletes two files: normally well under this. */
         const val DEFAULT_FFMPEG_TIMEOUT_MS = 2_000L
+
+        /** The quit flush is one batch POST with a 10 s client timeout; this caps it. */
+        const val DEFAULT_TELEMETRY_TIMEOUT_MS = 2_000L
         private val log = System.getLogger("scrcpyviewer.AppShutdown")
     }
 }

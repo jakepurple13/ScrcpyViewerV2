@@ -1,11 +1,14 @@
 package com.programmersbox.scrcpyviewer.telemetry
 
 import com.programmersbox.scrcpyviewer.BuildInfo
+import org.koin.core.annotation.Provided
 
 /**
  * Where telemetry goes. [key] is the PostHog project key, [host] the PostHog host, [channel] is "dev" or "release".
  * A blank [key] means this build cannot send anything: [enabled] is false and callers create no client and write no files.
+ * Given to Koin at start; tests pass [Disabled].
  */
+@Provided
 data class TelemetryConfig(val key: String, val host: String, val channel: String) {
     val enabled: Boolean get() = key.isNotBlank()
 
