@@ -61,6 +61,9 @@ import kotlinx.coroutines.launch
 /** The own window's size, every time it opens. */
 val LOGCAT_WINDOW_SIZE = DpSize(720.dp, 640.dp)
 
+/** The smallest the own window can be dragged to; the tab reflows down to it (see [logcatRowShape]). */
+val LogcatWindowMinSize = DpSize(360.dp, 360.dp)
+
 /**
  * Logcat's own window, "Logcat · [deviceName]", while [LogcatController.popped]: the same panel as the sheet's tab
  * ([LogcatTab]) at [LOGCAT_WINDOW_SIZE] each time it opens, with a pin in the title bar for always on top. Closing it
@@ -88,6 +91,7 @@ fun LogcatWindow(controller: LogcatController, deviceName: String, theme: AppThe
         state = state,
         visible = shown,
         alwaysOnTop = controller.alwaysOnTop,
+        minSize = LogcatWindowMinSize,
         titleBar = { LogcatTitleBar("Logcat · $deviceName", controller, motion) },
     ) {
         val window = nucleusWindow
