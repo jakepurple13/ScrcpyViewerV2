@@ -168,6 +168,18 @@ internal class LogcatFollow(val state: LazyListState) {
                 if (!more) {
                     pinned = true
                     unseen = 0
+                } else if (pinned && held == null) {
+                    // The rows grew under a pinned list (a resize stacked them, a fold opened) with no new line to
+                    // follow: keep the newest in view. A user scroll up unpins first, so this never fights it. Rows
+                    // that glide keep growing after a stick, so it re-sticks each frame until the end stays put (or
+                    // the last row is at the top: one taller than the list can't be stuck any further). Each stick
+                    // waits for a frame first: this can resume mid-measure, where scrolling throws.
+                    while (true) {
+                        withFrameMillis { }
+                        if (!pinned || held != null || !state.canScrollForward) break
+                        stick()
+                        if (state.firstVisibleItemIndex >= state.layoutInfo.totalItemsCount - 1) break
+                    }
                 }
             }
         }
@@ -230,7 +242,8 @@ internal class LogcatFollow(val state: LazyListState) {
  * The log: a column header, then the rows of [LogcatController.visible] newest at the bottom, the paused banner,
  * the "N new lines" pill, the empty-filter message and, before the first play, the start card. While an export runs
  * its bar ([LogcatExportBar]) crosses the top edge and the rows dim to 0.55 (300 ms). Rows are monospace with
- * selectable messages and traces; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
+ * selectable messages and traces; columns follow compact view and [sheetWidth] ([logcatRowShape]: PID-TID and Package
+ * hide under 600 dp, rows take two lines under 420 dp).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -243,7 +256,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val listState = rememberLazyListState()
     val follow = remember(listState) { LogcatFollow(listState) }
     val visible = follow.held ?: controller.visible
-    val columns = rememberLogcatColumns(controller.compact, sheetWidth < 600.dp, motion)
+    val columns = rememberLogcatColumns(controller.compact, logcatRowShape(sheetWidth), motion)
     val words = controller.parsed.highlightWords
     // `age:` is judged against the clock, which isn't state: re-check it on showing and every second after.
     val ageing = controller.parsed.ageLimits.isNotEmpty()

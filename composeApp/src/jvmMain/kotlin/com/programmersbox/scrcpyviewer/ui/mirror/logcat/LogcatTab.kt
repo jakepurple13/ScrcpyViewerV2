@@ -73,7 +73,31 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.animation.animateBounds
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.material3.ButtonColors
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutDp
+import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutFraction
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.Os
@@ -123,6 +147,10 @@ fun LogcatTab(
     pick: (suspend (String, String) -> Path?)? = null,
 ) {
     val exportPick = pick ?: remember(controller) { defaultExportPick(controller::toast) }
+    // Under 420 dp: Play is an icon, the picked app's label takes its own line, the status bar folds (see
+    // [logcatToolbarCompact]). Width changes glide with the layout spring unless motion is off.
+    val compact = logcatToolbarCompact(sheetWidth)
+    val glide = motion && !LocalReduceMotion.current
     val filterFocus = remember { LogcatFilterFocus() }
     // True from a Space press that toggled until its release: the key's auto-repeat presses don't toggle again.
     val spaceHeld = remember { BooleanArray(1) }
@@ -159,15 +187,15 @@ fun LogcatTab(
                 Row(verticalAlignment = Alignment.Top) {
                     LogcatFilterField(controller, motion, Modifier.weight(1f), filterFocus)
                     Spacer(Modifier.width(6.dp))
-                    PlayPauseButton(controller, motion)
+                    PlayPauseButton(controller, motion, compact, glide)
                     Spacer(Modifier.width(2.dp))
                     LogcatExportButton(controller, motion, exportPick)
                     PopOutButton(controller, inWindow, motion)
                 }
-                ChipsRow(controller, motion)
+                ChipsRow(controller, motion, compact, glide)
             }
             LogcatList(controller, sheetWidth, motion, Modifier.weight(1f).fillMaxWidth())
-            LogcatStatusBar(controller, motion)
+            LogcatStatusBar(controller, motion, compact, glide)
         }
         LogcatExportToast(controller, motion, Modifier.align(Alignment.BottomCenter).padding(bottom = 44.dp))
     }
@@ -176,10 +204,12 @@ fun LogcatTab(
 /**
  * Play / Pause / Resume, 104 dp wide: filled primary while stopped, tonal while running (color fades 250 ms), the
  * icon morphing play ⇄ pause (rotate, scale, fade, 280 ms). Each [LogcatController.nudge] bump pulses two rings.
- * Retro 95 draws stopped as the default button (dark frame) with accent ink, running as a plain button.
+ * Retro 95 draws stopped as the default button (dark frame) with accent ink, running as a plain button. When
+ * [compact] it narrows to a 40 dp icon (the label folding away, on the layout spring with [glide]) and its label shows
+ * as a tooltip.
  */
 @Composable
-private fun PlayPauseButton(controller: LogcatController, motion: Boolean) {
+private fun PlayPauseButton(controller: LogcatController, motion: Boolean, compact: Boolean, glide: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val run = controller.run
     val running = run == LogcatRun.Running
@@ -206,19 +236,85 @@ private fun PlayPauseButton(controller: LogcatController, motion: Boolean) {
     // Retro's own colors fade too: the accent while stopped, the usual ink while running.
     val retroInk by animateColorAsState(if (running) scheme.onSurface else scheme.primary, colorSpec)
     val enabled = running || controller.canPlay
-    val modifier = Modifier.width(104.dp).height(36.dp).playPulse(controller, motion)
+    val width = layoutDp(if (compact) PLAY_ICON_WIDTH else PLAY_WIDTH, glide)
+    val folded = layoutFraction(compact, glide)
+    val modifier = Modifier.widthOf { width.value }.height(36.dp).playPulse(controller, motion)
         .semantics { contentDescription = description }
     val body: @Composable RowScope.() -> Unit = {
         PlayPauseIcon(running, motion)
-        Spacer(Modifier.width(6.dp))
-        AnimatedContent(
-            label,
-            transitionSpec = {
-                if (motion) fadeIn(tween(200, delayMillis = 60)).togetherWith(fadeOut(tween(120)))
-                else EnterTransition.None.togetherWith(ExitTransition.None)
-            },
-        ) { Text(it, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1) }
+        // The label and its gap fold away (read in layout) as the button narrows to its icon.
+        Row(Modifier.foldWidth { folded.value }) {
+            Spacer(Modifier.width(6.dp))
+            AnimatedContent(
+                label,
+                transitionSpec = {
+                    if (motion) fadeIn(tween(200, delayMillis = 60)).togetherWith(fadeOut(tween(120)))
+                    else EnterTransition.None.togetherWith(ExitTransition.None)
+                },
+            ) { Text(it, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 1) }
+        }
     }
+    // Only the icon-sized button needs its label said; wide, no popup opens at all. One call site either way, so the
+    // button keeps its focus across the change.
+    HoverTooltip(label, shown = compact) { PlayPauseBody(controller, running, enabled, modifier, colors, retroInk, body) }
+}
+
+/**
+ * [content] with [label] in a tooltip under it after a 500 ms hover, while [shown]; otherwise no popup is composed.
+ */
+@Composable
+private fun HoverTooltip(label: String, shown: Boolean, content: @Composable () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val hover = remember { MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
+    var open by remember { mutableStateOf(false) }
+    LaunchedEffect(hovered, shown) {
+        open = false
+        if (hovered && shown) {
+            delay(TOOLTIP_DELAY_MILLIS)
+            open = true
+        }
+    }
+    Box(Modifier.hoverable(hover)) {
+        content()
+        if (open && shown) {
+            val gap = with(LocalDensity.current) { 4.dp.roundToPx() }
+            Popup(
+                popupPositionProvider = remember(gap) { BelowAnchor(gap) },
+                properties = PopupProperties(focusable = false),
+            ) {
+                Surface(shape = RoundedCornerShape(4.dp), color = scheme.inverseSurface) {
+                    Text(
+                        label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall, color = scheme.inverseOnSurface,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private const val TOOLTIP_DELAY_MILLIS = 500L
+
+/** Centred under the anchor, [gap] px below it, kept inside the window. */
+private class BelowAnchor(private val gap: Int) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        val x = (anchorBounds.center.x - popupContentSize.width / 2).coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+        return IntOffset(x, anchorBounds.bottom + gap)
+    }
+}
+
+/** The styled button itself; Retro 95 is drawn here (see [PlayPauseButton]). */
+@Composable
+private fun PlayPauseBody(
+    controller: LogcatController,
+    running: Boolean,
+    enabled: Boolean,
+    modifier: Modifier,
+    colors: ButtonColors,
+    retroInk: Color,
+    body: @Composable RowScope.() -> Unit,
+) {
     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
         if (currentStyle == ThemeStyle.Retro) {
             // The styled Button ignores colors in Retro, so stopped (the default button, accent ink) and running (a
@@ -241,6 +337,30 @@ private fun PlayPauseButton(controller: LogcatController, motion: Boolean) {
             )
         }
     }
+}
+
+private val PLAY_WIDTH = 104.dp
+private val PLAY_ICON_WIDTH = 40.dp
+
+/** Sizes the element to [width] (read during layout) within its constraints, as `width` would; nothing is clipped. */
+private fun Modifier.widthOf(width: () -> Dp): Modifier = layout { measurable, constraints ->
+    val w = width().roundToPx().coerceIn(constraints.minWidth, constraints.maxWidth)
+    val p = measurable.measure(constraints.copy(minWidth = w, maxWidth = w))
+    layout(p.width, p.height) { p.place(0, 0) }
+}
+
+/**
+ * Shows (1 - [folded]) of the element's own width (read during layout), clipped and faded with it; at 0 it is laid
+ * out and drawn as it is.
+ */
+private fun Modifier.foldWidth(folded: () -> Float): Modifier = layout { measurable, constraints ->
+    val p = measurable.measure(constraints.copy(minWidth = 0, maxWidth = Constraints.Infinity))
+    val w = (p.width * (1f - folded().coerceIn(0f, 1f))).roundToInt()
+    layout(w, p.height) { p.place(0, 0) }
+}.graphicsLayer {
+    val f = folded().coerceIn(0f, 1f)
+    alpha = 1f - f
+    clip = f > 0f
 }
 
 /** Play and pause stacked: the leaving one turns 90° and shrinks to 0.4 as it fades, the arriving one turns in. */
@@ -365,21 +485,39 @@ private fun Modifier.playPulse(controller: LogcatController, motion: Boolean): M
     }
 }
 
-/** Picked app, Warnings and up, Crashes: each shows checked while its term is in the query, and toggles it. */
+/**
+ * Picked app, Warnings and up, Crashes: each shows checked while its term is in the query, and toggles it. The chips
+ * wrap onto more lines when they don't fit, the picked app's label at the end of the last; when [compact] the label
+ * takes a line of its own. Chips and label glide to new places with [glide], and the lines' height follows.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChipsRow(controller: LogcatController, motion: Boolean) {
+private fun ChipsRow(controller: LogcatController, motion: Boolean, compact: Boolean, glide: Boolean) {
     val terms = queryTerms(controller.query)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        for ((label, term) in listOf("Picked app" to "package:mine", "Warnings and up" to "level:warn", "Crashes" to "is:crash")) {
-            val on = term in terms
-            FilterChip(
-                selected = on,
-                onClick = { controller.query = withTerm(controller.query, term, !on) },
-                label = { Text(label, maxLines = 1) },
-                motion = motion,
-            )
+    LookaheadScope {
+        val moves = if (glide) Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() }) else Modifier
+        FlowRow(
+            moves,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
+        ) {
+            for ((label, term) in listOf("Picked app" to "package:mine", "Warnings and up" to "level:warn", "Crashes" to "is:crash")) {
+                val on = term in terms
+                FilterChip(
+                    selected = on,
+                    onClick = { controller.query = withTerm(controller.query, term, !on) },
+                    label = { Text(label, maxLines = 1) },
+                    modifier = moves,
+                    motion = motion,
+                )
+            }
+            Box(if (compact) Modifier.fillMaxWidth() else Modifier.weight(1f)) {
+                Box(Modifier.align(if (compact) Alignment.CenterStart else Alignment.CenterEnd).then(moves)) {
+                    MineLabel(controller.mine, motion)
+                }
+            }
         }
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { MineLabel(controller.mine, motion) }
     }
 }
 
