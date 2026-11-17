@@ -1,5 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.arrange
 
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.ui.mirror.animateWindowBounds
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
@@ -111,6 +113,8 @@ class WindowArranger(
     },
     /** Milliseconds on a monotonic clock. */
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    /** Gets `windows_arranged` for each layout the user applies (not Keep tiled's re-applies). */
+    private val telemetry: Telemetry = Telemetry.Noop,
 ) {
     private val _state = MutableStateFlow(ArrangeState())
     val state: StateFlow<ArrangeState> = _state.asStateFlow()
@@ -156,7 +160,7 @@ class WindowArranger(
                 tiles.keys.retainAll(keys)
                 settled.keys.retainAll(keys)
                 val s = _state.value
-                if (s.keepTiled && s.layout != ArrangeLayout.AsPlaced && s.movable) apply(s.layout, focus)
+                if (s.keepTiled && s.layout != ArrangeLayout.AsPlaced && s.movable) applyLayout(s.layout, focus)
             }
         }
         // One watcher per registered window, kept while that same entry stays registered: another window opening or
@@ -183,6 +187,14 @@ class WindowArranger(
 
     /** Moves the windows into [layout]; [focus] is the serial Focus puts in the large area. No-op when not movable. */
     fun apply(layout: ArrangeLayout, focus: String?) {
+        val s = _state.value
+        if (!s.movable) return
+        telemetry.track(TelemetryEvent.WindowsArranged(layout.name, windows.entries.value.size, s.keepTiled))
+        applyLayout(layout, focus)
+    }
+
+    /** [apply], for the user or for Keep tiled. */
+    private fun applyLayout(layout: ArrangeLayout, focus: String?) {
         synchronized(lock) {
             if (!_state.value.movable) return
             this.focus = focus
@@ -202,7 +214,7 @@ class WindowArranger(
     fun setKeepTiled(on: Boolean) {
         _state.update { it.copy(keepTiled = on) }
         val s = _state.value
-        if (on && s.layout != ArrangeLayout.AsPlaced && s.movable) apply(s.layout, focus)
+        if (on && s.layout != ArrangeLayout.AsPlaced && s.movable) applyLayout(s.layout, focus)
     }
 
     /** [serial]'s window moved or resized. Unless the arranger or the app did it, Keep tiled turns off. */
@@ -241,7 +253,7 @@ class WindowArranger(
                     (abs(bounds.width - tile.width) > TILE_SLACK || abs(bounds.height - tile.height) > TILE_SLACK) &&
                     takeReapply(serial)
                 ) {
-                    apply(s.layout, focus)
+                    applyLayout(s.layout, focus)
                 }
             } finally {
                 appSettling -= serial

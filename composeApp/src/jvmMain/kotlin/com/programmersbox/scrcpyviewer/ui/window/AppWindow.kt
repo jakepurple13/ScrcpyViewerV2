@@ -34,6 +34,7 @@ import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.AppIcon
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.telemetry.ReportWindowCrashes
 import com.programmersbox.scrcpyviewer.ui.common.ProvideAppClipboard
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
@@ -124,51 +125,54 @@ fun NucleusApplicationScope.AppWindow(
     val desktopBlur = wantsBlur && transparent
     ScrcpyViewerTheme(shown) {
         val bar = animatedBarColors(barColors(MaterialTheme.colorScheme, LocalStyleTokens.current, desktopBlur))
-        MaterialDecoratedWindow(
-            onCloseRequest = onCloseRequest,
-            state = state,
-            visible = visible,
-            title = title,
-            icon = icon,
-            alwaysOnTop = alwaysOnTop,
-            onPreviewKeyEvent = onPreviewKeyEvent,
-            titleBarStyle = nucleusTitleBarStyle(bar, titleBarHeight),
-            transparent = transparent,
-            // Nucleus applies it through NucleusWindow.setMinimumSize (Tao: taoWindow.setMinimumSize).
-            minimumSize = minSize,
-        ) {
-            // Tao windows run their own Compose scene: the theme, the reveal origin and the clipboard are provided
-            // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).
-            CompositionLocalProvider(
-                LocalThemeRevealOrigin provides reveal.origin,
-                LocalReduceMotion provides reduceMotion,
+        // Its Compose exceptions are reported (CrashCapture).
+        ReportWindowCrashes {
+            MaterialDecoratedWindow(
+                onCloseRequest = onCloseRequest,
+                state = state,
+                visible = visible,
+                title = title,
+                icon = icon,
+                alwaysOnTop = alwaysOnTop,
+                onPreviewKeyEvent = onPreviewKeyEvent,
+                titleBarStyle = nucleusTitleBarStyle(bar, titleBarHeight),
+                transparent = transparent,
+                // Nucleus applies it through NucleusWindow.setMinimumSize (Tao: taoWindow.setMinimumSize).
+                minimumSize = minSize,
             ) {
-                ProvideAppClipboard {
-                    ScrcpyViewerTheme(shown) {
-                        // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).
-                        MaterialTitleBar(
-                            if (desktopBlur) ClearWindowRoot else Modifier,
-                            style = titleBarStyle(bar, titleBarHeight),
-                        ) {
-                            BoundedSlot {
-                                CompositionLocalProvider(LocalContentColor provides bar.content) {
-                                    CustomTitleBarScope.titleBar()
+                // Tao windows run their own Compose scene: the theme, the reveal origin and the clipboard are provided
+                // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).
+                CompositionLocalProvider(
+                    LocalThemeRevealOrigin provides reveal.origin,
+                    LocalReduceMotion provides reduceMotion,
+                ) {
+                    ProvideAppClipboard {
+                        ScrcpyViewerTheme(shown) {
+                            // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).
+                            MaterialTitleBar(
+                                if (desktopBlur) ClearWindowRoot else Modifier,
+                                style = titleBarStyle(bar, titleBarHeight),
+                            ) {
+                                BoundedSlot {
+                                    CompositionLocalProvider(LocalContentColor provides bar.content) {
+                                        CustomTitleBarScope.titleBar()
+                                    }
                                 }
                             }
+                            nucleusWindow.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L && Os.isMac }?.let { ns ->
+                                MacVibrancyEffect(Pointer(ns), desktopBlur, dark)
+                                // What a live resize uncovers before Compose draws: the theme's surface, not the system's.
+                                MacWindowBackgroundEffect(Pointer(ns), MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
+                            }
+                            Box(
+                                Modifier
+                                    // First, so it draws on the window's own canvas, not in a layer of the reveal's.
+                                    .then(if (desktopBlur) ClearWindowRoot else Modifier)
+                                    .fillMaxSize()
+                                    .themeReveal(reveal)
+                                    .styleBackdrop(transparent = desktopBlur),
+                            ) { content() }
                         }
-                        nucleusWindow.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L && Os.isMac }?.let { ns ->
-                            MacVibrancyEffect(Pointer(ns), desktopBlur, dark)
-                            // What a live resize uncovers before Compose draws: the theme's surface, not the system's.
-                            MacWindowBackgroundEffect(Pointer(ns), MaterialTheme.colorScheme.surface, enabled = !desktopBlur)
-                        }
-                        Box(
-                            Modifier
-                                // First, so it draws on the window's own canvas, not in a layer of the reveal's.
-                                .then(if (desktopBlur) ClearWindowRoot else Modifier)
-                                .fillMaxSize()
-                                .themeReveal(reveal)
-                                .styleBackdrop(transparent = desktopBlur),
-                        ) { content() }
                     }
                 }
             }

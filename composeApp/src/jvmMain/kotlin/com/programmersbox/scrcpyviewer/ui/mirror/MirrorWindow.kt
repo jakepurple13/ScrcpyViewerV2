@@ -240,6 +240,7 @@ import com.programmersbox.scrcpyviewer.ui.common.ImageClipboard
 import com.programmersbox.scrcpyviewer.ui.common.openExternally
 import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorWindow
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.MarkupEditorWindowState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.markup.copyMarked
@@ -429,6 +430,7 @@ fun MirrorWindow(
     mirrorWindows: MirrorWindows = koinInject(),
     /** Arrange mirror windows: the title bar's Arrange button applies layouts through it. */
     arranger: WindowArranger = koinInject(),
+    telemetry: Telemetry = koinInject(),
 ) {
     val values = session.values
     val e = values.entries
@@ -532,6 +534,7 @@ fun MirrorWindow(
                 ticket = ticket,
                 canOpenEditor = { !markupEditor.isOpen },
                 openEditor = { markupEditor.open(it, cameraButton.current()) },
+                telemetry = telemetry,
             )
         }
     }
@@ -558,7 +561,7 @@ fun MirrorWindow(
         }
     }
 
-    val transfers = rememberFileTransfers(serial, session, adb, ::notify)
+    val transfers = rememberFileTransfers(serial, session, adb, ::notify, telemetry)
     // Files dragged out of the Files tab wait in the drag cache; the window takes them with it when it closes, but
     // not the dropped ones: the drop target may still read them, so the start-up sweep removes those.
     DisposableEffect(serial) {

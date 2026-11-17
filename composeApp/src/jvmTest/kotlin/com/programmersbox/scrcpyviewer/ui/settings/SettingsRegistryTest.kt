@@ -5,6 +5,7 @@ import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Ai
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Appearance
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Help
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Mirroring
+import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Privacy
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsCategoryId.Updates
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,7 +13,7 @@ import kotlin.test.assertEquals
 class SettingsRegistryTest {
     @Test
     fun `categories in spec order`() =
-        assertEquals(listOf(Appearance, Mirroring, Adb, Ai, Updates, Help), settingsCategories.map { it.id })
+        assertEquals(listOf(Appearance, Mirroring, Adb, Ai, Updates, Privacy, Help), settingsCategories.map { it.id })
 
     @Test
     fun `entry ids are unique`() {

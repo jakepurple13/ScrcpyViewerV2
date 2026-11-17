@@ -6,6 +6,8 @@ import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceState
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.EmulatorPrefs
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorOrigins
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import kotlinx.coroutines.CancellationException
@@ -114,6 +116,8 @@ class EmulatorLauncher(
     private val uiContext: CoroutineContext = Dispatchers.Main,
     /** Deletes an AVD folder's data for [wipe]: [wipeAvdData] off the main thread. Tests can hold a wipe midway. */
     private val wipeData: suspend (Path) -> Unit = { withContext(Dispatchers.IO) { wipeAvdData(it) } },
+    /** Gets an `emulator_started` event for each start that ends Running or Failed; a Stopped one sends nothing. */
+    private val telemetry: Telemetry = Telemetry.Noop,
 ) {
     private class Session(
         val avdId: String,
@@ -185,6 +189,7 @@ class EmulatorLauncher(
         val taken = devices.value.map { it.serial }.toSet() + sessions.values.map { it.serial } + live.keys
         val port = pickPort(taken, isPortFree) ?: run {
             set(avd.id, AvdState.Failed("Couldn't start the emulator: no free port from $FIRST_PORT to $LAST_PORT", cold))
+            telemetry.track(TelemetryEvent.EmulatorStarted(coldBoot = cold, success = false, bootSeconds = 0))
             return
         }
         val prefs = settings.settings.value.emulatorPrefs[avd.id] ?: EmulatorPrefs()
@@ -194,6 +199,7 @@ class EmulatorLauncher(
             starter.start(emulatorCommand(sdk, avd, port, prefs.showWindow, cold), emulatorEnv(sdk), log)
         } catch (e: Exception) {
             set(avd.id, AvdState.Failed("Couldn't start the emulator: ${e.message ?: e::class.simpleName}", cold))
+            telemetry.track(TelemetryEvent.EmulatorStarted(coldBoot = cold, success = false, bootSeconds = 0))
             return
         }
         val session = Session(avd.id, avd.name, "emulator-$port", cold, clock(), log, process)
@@ -375,9 +381,10 @@ class EmulatorLauncher(
             if (sessions[session.avdId] !== session || stateOf(session.avdId) !is AvdState.Booting) return
             set(session.avdId, AvdState.Running(session.serial))
         }
+        val took = clock() - session.startedAt
+        telemetry.track(TelemetryEvent.EmulatorStarted(coldBoot = session.cold, success = true, bootSeconds = took / 1000))
         // Only warm boots feed the progress estimate; a cold boot's time would overstate the next warm one.
         if (!session.cold) {
-            val took = clock() - session.startedAt
             settings.update { s ->
                 val prefs = s.emulatorPrefs[session.avdId] ?: EmulatorPrefs()
                 s.copy(emulatorPrefs = s.emulatorPrefs + (session.avdId to prefs.copy(lastBootMillis = took)))
@@ -409,6 +416,8 @@ class EmulatorLauncher(
             set(session.avdId, AvdState.Failed(reason, session.cold))
             rematch()
         }
+        val took = clock() - session.startedAt
+        telemetry.track(TelemetryEvent.EmulatorStarted(coldBoot = session.cold, success = false, bootSeconds = took / 1000))
         _notices.tryEmit(EmulatorNotice("${session.name} didn't start.", logFile = session.log))
     }
 

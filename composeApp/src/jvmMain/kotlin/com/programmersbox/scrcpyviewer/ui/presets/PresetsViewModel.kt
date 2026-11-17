@@ -10,6 +10,8 @@ import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetCodec
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
 import kotlinx.coroutines.CoroutineScope
@@ -56,6 +58,8 @@ class PresetsViewModel(
     private val options: DeviceOptionsStore,
     /** The device selected on the Devices screen, which Apply targets. */
     private val device: SelectedDevice,
+    // Required (no default): the Koin compiler plugin does not inject a parameter that has one.
+    private val telemetry: Telemetry,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val selectedId = MutableStateFlow<String?>(null)
@@ -147,9 +151,10 @@ class PresetsViewModel(
         _importState.value = null
         if (import.error != null) return
         val before = store.presets.value
-        ImportPlan.apply(before, import.items)
-            .filter { after -> before.firstOrNull { it.id == after.id } != after }
-            .forEach(store::upsert)
+        store.upsertAll(ImportPlan.apply(before, import.items).filter { after -> before.firstOrNull { it.id == after.id } != after })
+        val choices = import.items.filter { it.include && it.conflictsWith != null }.groupingBy { it.choice }.eachCount()
+        val choice = choices.maxByOrNull { it.value }?.key?.name ?: "none"
+        telemetry.track(TelemetryEvent.PresetsImported(import.importCount, choice))
     }
 
     fun cancelImport() {

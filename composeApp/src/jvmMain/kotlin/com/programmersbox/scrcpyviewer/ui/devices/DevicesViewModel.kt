@@ -16,6 +16,8 @@ import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -116,6 +118,8 @@ class DevicesViewModel(
     private val wireless: WirelessAdb,
     private val openMirrors: OpenMirrors,
     private val settings: AppSettings,
+    /** Gets adb restarts as `adb_restarted` events, and their failures as handled exceptions. */
+    private val telemetry: Telemetry,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val switching = MutableStateFlow<Set<String>>(emptySet())
@@ -355,16 +359,20 @@ class DevicesViewModel(
         var started = false
         restart.update { if (it.running) it else { started = true; it.copy(running = true, succeeded = null) } }
         if (!started) return
+        // Before the restart, which can close them.
+        val mirrorsOpen = openMirrors.serials().size
         viewModelScope.launch {
             var worked = false
             try {
                 val text = try {
                     wireless.restartServer()
                     worked = true
+                    telemetry.track(TelemetryEvent.AdbRestarted(mirrorsOpen))
                     success
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    telemetry.captureException(e, handled = true)
                     "Couldn't restart adb: ${e.message}"
                 }
                 _notices.emit(WifiNotice(text))

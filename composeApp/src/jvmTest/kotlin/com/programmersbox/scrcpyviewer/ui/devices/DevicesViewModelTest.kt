@@ -21,6 +21,8 @@ import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,10 +58,12 @@ class DevicesViewModelTest {
     /** Serials with an open mirror window. */
     private var openMirrors: Set<String> = emptySet()
 
+    private val telemetry = FakeTelemetry()
+
     private fun vm(options: DeviceOptionsStore = this.options, wireless: WirelessAdb = this.wireless) =
         DevicesViewModel(
             DeviceSelection(devices, connected, scope), options, presets, MirrorRequests(mirrorRequests), wireless,
-            OpenMirrors { openMirrors }, settings, scope,
+            OpenMirrors { openMirrors }, settings, telemetry, scope,
         )
 
     private val pixel = device("R1", info = DeviceInfo("Pixel 8 Pro", "15", 35, "R1"))
@@ -201,6 +205,7 @@ class DevicesViewModelTest {
         assertEquals(true, vm.state.value.restartSucceeded)
         assertEquals("Restarted adb.", seen.single().text)
         assertFalse(vm.state.value.restartingAdb)
+        assertEquals(listOf<TelemetryEvent>(TelemetryEvent.AdbRestarted(mirrorsOpen = 0)), telemetry.events)
     }
 
     @Test
@@ -243,6 +248,7 @@ class DevicesViewModelTest {
         assertNull(vm.state.value.restartConfirm)
         assertEquals(listOf("restart"), wireless.calls)
         assertEquals("Restarted adb.", seen.single().text)
+        assertEquals(listOf<TelemetryEvent>(TelemetryEvent.AdbRestarted(mirrorsOpen = 1)), telemetry.events)
     }
 
     @Test
@@ -255,6 +261,8 @@ class DevicesViewModelTest {
         assertEquals("Couldn't restart adb: adb start-server failed (1): cannot bind", seen.single().text)
         assertFalse(vm.state.value.restartingAdb)
         assertEquals(false, vm.state.value.restartSucceeded)
+        assertTrue(telemetry.events.isEmpty(), "a failed restart is not adb_restarted")
+        assertEquals(listOf<Pair<Throwable, Boolean>>(wireless.restartError!! to true), telemetry.exceptions.toList())
     }
 
     @Test

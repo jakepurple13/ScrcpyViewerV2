@@ -100,6 +100,9 @@ fun SettingsScreen(
         },
         onChooseAiSkillFolder = { picker.launch(pickerScope) { files.chooseFolder("Choose a skills folder")?.let(viewModel::addAiSkillFolder) } },
         onDismissAiInstall = viewModel::dismissAiInstallResult,
+        onUsageStats = viewModel::setUsageStats,
+        onCrashReports = viewModel::setCrashReports,
+        onResetInstallId = viewModel::resetInstallId,
         onSelectCategory = viewModel::selectCategory,
         onQuery = viewModel::setQuery,
     )

@@ -1,0 +1,80 @@
+#
+# A fatal error has been detected by the Java Runtime Environment:
+#
+#  SIGSEGV (0xb) at pc=0x000000012a1b2c3c, pid=4242, tid=31235
+#
+# JRE version: OpenJDK Runtime Environment JBR-21.0.5+8-1-b631.16 (21.0.5+8) (build 21.0.5+8-b631.16)
+# Java VM: OpenJDK 64-Bit Server VM JBR-21.0.5+8-1-b631.16 (21.0.5+8-b631.16, mixed mode, tiered, compressed oops, compressed class ptrs, g1 gc, bsd-aarch64)
+# Problematic frame:
+# C  [libavcodec.61.dylib+0x1a2b3c]  ff_h264_decode_mb_cabac+0x44
+#
+# No core dump will be written. Core dumps have been disabled. To enable core dumping, try "ulimit -c unlimited" before starting Java again
+#
+# If you would like to submit a bug report, please visit:
+#   https://github.com/JetBrains/JetBrainsRuntime/issues
+# The crash happened outside the Java Virtual Machine in native code.
+# See problematic frame for where to report the bug.
+#
+
+---------------  S U M M A R Y ------------
+
+Command Line: -Dcompose.application.resources.dir=/Users/x/Applications/Scrcpy Vwr.app/Contents/app/resources com.programmersbox.scrcpyviewer.MainKt
+
+Host: "Mac15,6" arm64, 12 cores, 36G, Darwin 24.1.0
+Time: Mon Nov 16 10:12:13 2026 PST elapsed time: 1234.567890 seconds (0d 0h 20m 34s)
+
+---------------  T H R E A D  ---------------
+
+Current thread (0x0000000123456000):  JavaThread "video-decoder-R5CX12GDWPZ" daemon [_thread_in_native, id=31235, stack(0x000000016f000000,0x000000016f203000) (2060K)]
+
+Stack: [0x000000016f000000,0x000000016f203000],  sp=0x000000016f201a50,  free space=2054k
+Native frames: (J=compiled Java code, j=interpreted, Vv=VM code, C=native code)
+C  [libavcodec.61.dylib+0x1a2b3c]  ff_h264_decode_mb_cabac+0x44
+C  [/Users/x/Library/Caches/Scrcpy Vwr/ffmpeg/libavcodec.61.dylib+0x1a0010]
+C  [libavcodec.61.dylib+0x19f000]  ff_h264_decode_slice+0x120
+C  [libavcodec.61.dylib+0x19e000]  decode_nal_units+0x88
+C  [libavcodec.61.dylib+0x19d000]  h264_decode_frame+0x3c
+C  [libavcodec.61.dylib+0x19c000]  decode_simple_internal+0x1d4
+C  [libavcodec.61.dylib+0x19b000]  ff_decode_receive_frame_internal+0x2c
+C  [libavcodec.61.dylib+0x19a000]  decode_receive_frame_internal+0x40
+C  [libavcodec.61.dylib+0x199000]  avcodec_send_packet+0x10c
+C  [libjniavcodec.dylib+0x8000]  Java_org_bytedeco_ffmpeg_global_avcodec_avcodec_1send_1packet+0x30
+j  org.bytedeco.ffmpeg.global.avcodec.avcodec_send_packet(Lorg/bytedeco/ffmpeg/avcodec/AVCodecContext;Lorg/bytedeco/ffmpeg/avcodec/AVPacket;)I+0
+j  com.programmersbox.scrcpyviewer.media.VideoDecoder.decode([BJ)V+57
+J 4521 c2 com.programmersbox.scrcpyviewer.media.VideoDecoder.onPacket(Lcom/programmersbox/scrcpyviewer/scrcpy/MediaPacket;)V (312 bytes) @ 0x0000000113a4b2c8 [0x0000000113a4a100+0x00000000000011c8]
+J 4522 c2 com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession.readVideo(Ljava/io/DataInputStream;)V (412 bytes) @ 0x0000000113a5b2c8 [0x0000000113a5a100+0x00000000000011c8]
+j  com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession$launchStream$1.invokeSuspend(Ljava/lang/Object;)Ljava/lang/Object;+33
+j  kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(Ljava/lang/Object;)V+34
+j  kotlinx.coroutines.DispatchedTask.run()V+202
+j  kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runSafely(Lkotlinx/coroutines/scheduling/Task;)V+1
+j  kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(Lkotlinx/coroutines/scheduling/Task;)V+18
+j  kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker()V+56
+j  kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run()V+1
+v  ~StubRoutines::call_stub 0x000000011354c18c
+V  [libjvm.dylib+0x4a1b2c]  JavaCalls::call_helper(JavaValue*, methodHandle const&, JavaCallArguments*, JavaThread*)+0x3b0
+V  [libjvm.dylib+0x4a0b2c]  JavaCalls::call_virtual(JavaValue*, Klass*, Symbol*, Symbol*, JavaCallArguments*, JavaThread*)+0x14c
+V  [libjvm.dylib+0x4a0a2c]  thread_entry(JavaThread*, JavaThread*)+0x9c
+V  [libjvm.dylib+0x7b1c2c]  JavaThread::thread_main_inner()+0x9c
+V  [libjvm.dylib+0x7b0c2c]  Thread::call_run()+0xc8
+V  [libjvm.dylib+0x6a1c2c]  thread_native_entry(Thread*)+0x158
+C  [libsystem_pthread.dylib+0x6f94]  _pthread_start+0x88
+C  [libsystem_pthread.dylib+0x1d34]  thread_start+0x8
+
+Java frames: (J=compiled Java code, j=interpreted, Vv=VM code)
+j  org.bytedeco.ffmpeg.global.avcodec.avcodec_send_packet(Lorg/bytedeco/ffmpeg/avcodec/AVCodecContext;Lorg/bytedeco/ffmpeg/avcodec/AVPacket;)I+0
+j  com.programmersbox.scrcpyviewer.media.VideoDecoder.decode([BJ)V+57
+v  ~StubRoutines::call_stub 0x000000011354c18c
+
+siginfo: si_signo: 11 (SIGSEGV), si_code: 2 (SEGV_ACCERR), si_addr: 0x0000000000000010
+
+Registers:
+ x0=0x0000000000000000 x1=0x000000016f201b00
+
+---------------  P R O C E S S  ---------------
+
+Dynamic libraries:
+0x000000012a000000 	/Users/x/Library/Caches/Scrcpy Vwr/ffmpeg/libavcodec.61.dylib
+
+Environment Variables:
+HOME=/Users/x
+USER=x

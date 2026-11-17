@@ -8,6 +8,7 @@ import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CastConnected
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.PrivacyTip
 import androidx.compose.material.icons.outlined.SystemUpdateAlt
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.ui.Modifier
@@ -26,7 +27,7 @@ import com.programmersbox.scrcpyviewer.ui.update.AutoDownloadSwitch
 import com.programmersbox.scrcpyviewer.ui.update.UpdatesContent
 import com.programmersbox.scrcpyviewer.ui.update.autoDownloadToggle
 
-enum class SettingsCategoryId { Appearance, Mirroring, Adb, Ai, Updates, Help }
+enum class SettingsCategoryId { Appearance, Mirroring, Adb, Ai, Updates, Privacy, Help }
 
 /** [Inline] puts the control right of the text; [Block] puts it full-width below. */
 enum class EntryLayout { Inline, Block }
@@ -71,6 +72,9 @@ class SettingsActions(
     val onInstallAiSkill: (List<SkillTarget>) -> Unit = {},
     val onChooseAiSkillFolder: () -> Unit = {},
     val onDismissAiInstall: () -> Unit = {},
+    val onUsageStats: (Boolean) -> Unit = {},
+    val onCrashReports: (Boolean) -> Unit = {},
+    val onResetInstallId: () -> Unit = {},
     val onSelectCategory: (SettingsCategoryId) -> Unit = {},
     val onQuery: (String) -> Unit = {},
 )
@@ -92,8 +96,14 @@ class SettingEntry(
     val content: @Composable (SettingsBindings, ControlSize) -> Unit = { _, _ -> },
 )
 
-/** A category of the list: its [icon] leads its row. */
-class SettingsCategory(val id: SettingsCategoryId, val title: String, val icon: ImageVector, val entries: List<SettingEntry>)
+/** A category of the list: its [icon] leads its row. [header] shows between the page title and the rows. */
+class SettingsCategory(
+    val id: SettingsCategoryId,
+    val title: String,
+    val icon: ImageVector,
+    val entries: List<SettingEntry>,
+    val header: @Composable (SettingsBindings) -> Unit = {},
+)
 
 /** macOS calls it the menu bar; Windows and Linux the system tray. */
 internal fun trayIconSettingTitle(isMac: Boolean = Os.isMac): String =
@@ -225,6 +235,36 @@ val settingsCategories: List<SettingsCategory> = listOf(
                 },
             ),
         ),
+    ),
+    SettingsCategory(
+        SettingsCategoryId.Privacy, "Privacy", Icons.Outlined.PrivacyTip,
+        listOf(
+            SettingEntry(
+                "privacy-usage", "Share usage statistics", "Which features you use, with no device, file or app names.",
+                keywords = listOf("analytics", "telemetry", "statistics", "usage", "privacy", "posthog", "tracking"),
+                rowModifier = { privacyToggle(it, it.state.settings.usageStats, it.actions.onUsageStats) },
+                content = { b, _ -> PrivacySwitch(b, b.state.settings.usageStats) },
+            ),
+            SettingEntry(
+                "privacy-crash", "Send crash reports", "Error details when the app crashes, with paths and serials removed.",
+                keywords = listOf("crash", "error", "exception", "bug", "report", "telemetry", "privacy", "posthog"),
+                rowModifier = { privacyToggle(it, it.state.settings.crashReports, it.actions.onCrashReports) },
+                content = { b, _ -> PrivacySwitch(b, b.state.settings.crashReports) },
+            ),
+            SettingEntry(
+                "privacy-recent", "See what was sent recently",
+                keywords = listOf("events", "history", "log", "analytics", "telemetry", "privacy"),
+                layout = EntryLayout.Block,
+                content = { b, _ -> RecentEventsControl(b) },
+            ),
+            SettingEntry(
+                "privacy-id", "Anonymous ID",
+                keywords = listOf("install id", "identifier", "reset", "anonymous", "analytics", "privacy"),
+                notes = { InstallIdText(it) },
+                content = { b, _ -> ResetIdButton(b) },
+            ),
+        ),
+        header = { PrivacyBanner(it) },
     ),
     SettingsCategory(
         SettingsCategoryId.Help, "Help", Icons.AutoMirrored.Outlined.HelpOutline,

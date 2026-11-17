@@ -1,5 +1,8 @@
 package com.programmersbox.scrcpyviewer.adb
 
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
+import com.programmersbox.scrcpyviewer.telemetry.connectionOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -16,7 +19,10 @@ private const val INFO_COMMAND = "getprop ro.product.model; getprop ro.build.ver
 /** Caps the doubling shift so the delay cannot overflow before [DeviceTracker]'s maxInfoRetryMs caps it. */
 private const val MAX_RETRY_SHIFT = 16
 
-/** Keeps [devices] in sync with the adb server's `host:track-devices-l` stream and reconnects with backoff. */
+/**
+ * Keeps [devices] in sync with the adb server's `host:track-devices-l` stream and reconnects with backoff. Every listed
+ * serial is given to [telemetry] to scrub, and each device's first successful info read is a `device_connected` event.
+ */
 class DeviceTracker(
     private val client: AdbClient,
     private val scope: CoroutineScope,
@@ -26,6 +32,7 @@ class DeviceTracker(
     private val infoRetryMs: Long = 500,
     /** Longest delay between info attempts; a device that never answers is asked this often while it is listed. */
     private val maxInfoRetryMs: Long = 30_000,
+    private val telemetry: Telemetry = Telemetry.Noop,
 ) {
     private val _devices = MutableStateFlow<List<Device>>(emptyList())
     val devices: StateFlow<List<Device>> = _devices.asStateFlow()
@@ -98,6 +105,8 @@ class DeviceTracker(
     }
 
     private fun onPayload(list: List<Device>) {
+        // First: an adb error naming one of these devices may be reported while its info is still being read.
+        for (d in list) telemetry.rememberSerial(d.serial)
         val toFetch = synchronized(lock) {
             raw = list
             _devices.value = merged()
@@ -133,14 +142,22 @@ class DeviceTracker(
             }
             if (info != null) break
         }
-        synchronized(lock) {
+        val connected = synchronized(lock) {
             // Ignore the result if a reconnect cleared the in-flight marker meanwhile.
             if (!inFlight.remove(key)) return
-            if (info != null) {
-                infoCache[key] = info
-                _devices.value = merged()
-            }
+            if (info == null) return
+            infoCache[key] = info
+            _devices.value = merged()
+            val device = raw.firstOrNull { Key(it.serial, it.transportId) == key } ?: return
+            // A version without a leading number (a preview's codename) is rare: no event rather than a made-up one.
+            val major = info.androidVersion.substringBefore('.').toIntOrNull() ?: return
+            TelemetryEvent.DeviceConnected(
+                connection = connectionOf(device.serial, device.isTcp),
+                androidMajor = major,
+                devicesConnected = raw.count { it.state == DeviceState.Device },
+            )
         }
+        telemetry.track(connected)
     }
 
     private fun merged(): List<Device> = raw.map { d -> infoCache[Key(d.serial, d.transportId)]?.let { d.copy(info = it) } ?: d }

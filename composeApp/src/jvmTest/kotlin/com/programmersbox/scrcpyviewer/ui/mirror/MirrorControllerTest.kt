@@ -7,6 +7,8 @@ import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.scrcpy.LocalPairLauncher
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -199,5 +201,41 @@ class MirrorControllerTest {
         assertEquals("A", e.serial)
         assertIs<RecordResult.Failed>(e.result)
         Files.deleteIfExists(file)
+    }
+
+    @Test
+    fun `opening a mirror sends mirror_started, then first_frame_time once`() = runBlocking<Unit> {
+        val telemetry = FakeTelemetry()
+        devices.value = listOf(device("A"), Device("192.168.1.31:5555", DeviceState.Device, "device", null, null, 2, true))
+        options = OptionValues(mapOf("max-size" to "1024", "no-audio" to null))
+        val tracked = MirrorController(
+            scope, devices,
+            optionsFor = { options },
+            newSession = { serial, values -> ScrcpySession(serial, values, LocalPairLauncher(), { _, _ -> null }, { _, _ -> null }, scope) },
+            telemetry = telemetry,
+            usesPreset = { it == "A" },
+            advancedOptions = { true },
+        )
+        try {
+            tracked.open("A")
+            tracked.open("192.168.1.31:5555")
+            assertEquals(
+                listOf<TelemetryEvent>(
+                    TelemetryEvent.MirrorStarted("usb", usedPreset = true, advancedOptions = true, optionCount = 2, audio = false),
+                    TelemetryEvent.MirrorStarted("wifi", usedPreset = false, advancedOptions = true, optionCount = 2, audio = false),
+                ),
+                telemetry.events.toList(),
+            )
+            val a = tracked.open.value.getValue("A")
+            a.publishTestFrame()
+            a.publishTestFrame()
+            withTimeout(5_000) { while (telemetry.events.none { it is TelemetryEvent.FirstFrameTime }) delay(10) }
+            delay(100)
+            val first = telemetry.events.filterIsInstance<TelemetryEvent.FirstFrameTime>().single()
+            assertEquals("usb", first.connection)
+            assertTrue(first.ms >= 0)
+        } finally {
+            tracked.closeAll()
+        }
     }
 }

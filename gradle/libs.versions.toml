@@ -20,6 +20,8 @@ composenativetray = "2.1.7"
 apk-parser = "2.6.10"
 # Settings › Help › Open-source licenses: the Gradle plugin generates the list at build time.
 aboutlibraries = "15.3.0"
+# PostHog telemetry sender (telemetry/TelemetrySender.kt).
+ktor = "3.6.1"
 
 [libraries]
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "coroutines" }
@@ -42,6 +44,11 @@ jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 composenativetray = { module = "dev.nucleusframework:composenativetray", version.ref = "composenativetray" }
 aboutlibraries-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "aboutlibraries" }
 aboutlibraries-compose-core = { module = "com.mikepenz:aboutlibraries-compose-core", version.ref = "aboutlibraries" }
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 
 [plugins]

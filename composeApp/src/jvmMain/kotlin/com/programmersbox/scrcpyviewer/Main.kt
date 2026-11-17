@@ -48,6 +48,9 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindow
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.state.Settings
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.App
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
@@ -90,11 +93,21 @@ import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.canMirror
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
+import com.programmersbox.scrcpyviewer.telemetry.CrashCapture
+import com.programmersbox.scrcpyviewer.telemetry.ReportWindowCrashes
+import com.programmersbox.scrcpyviewer.telemetry.NativeCrashScanner
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicReference
 import com.programmersbox.scrcpyviewer.ui.tray.ScrcpyTray
 import com.programmersbox.scrcpyviewer.ui.tray.TrayCommands
 import com.programmersbox.scrcpyviewer.ui.tray.trayIconFiles
 
 fun main() {
+    // First, so a crash anywhere is reported: Telemetry is set below, once Koin has built it.
+    val crashTelemetry = AtomicReference<Telemetry?>(null)
+    CrashCapture.install(crashTelemetry::get)
     // Files a crashed or killed run left in the Files tab's cache (drags, opened files, APKs being installed).
     thread(name = "drag-cache-sweep", isDaemon = true) { DragCache().sweep() }
     val koin = startAppKoin()
@@ -110,12 +123,24 @@ fun main() {
     val deviceSelection = koin.get<DeviceSelection>()
     val mirrorWindows = koin.get<MirrorWindows>()
     val arranger = koin.get<WindowArranger>()
+    val telemetry = koin.get<Telemetry>().also {
+        crashTelemetry.set(it)
+        it.start()
+    }
+    trackLaunch(telemetry, appSettings.firstLaunch, appSettings.settings.value, updateManager.updatedFrom)
+    // Native crashes of earlier runs: reported when crash reports are on, their logs deleted either way. Not in a
+    // build without a key, so a dev run leaves its crash logs for the developer.
+    if (telemetry.enabled) {
+        koin.get<AppScope>().launch(Dispatchers.IO) { NativeCrashScanner.forThisProcess().reportAndDelete(telemetry) }
+    }
     // Fixed files the native tray reads (see trayIconFiles); without them the app runs with no tray icon.
     val trayIcons = runCatching { trayIconFiles(koin.get<DataDir>().path.resolve("tray")) }
         .onFailure { System.getLogger("scrcpyviewer.Tray").log(System.Logger.Level.WARNING, "No tray icon files", it) }
         .getOrNull()
     // Single instance off: a dev run next to the installed app must not hand off to it and exit.
     nucleusApplication(enableSingleInstance = false) {
+        // Composition runs on the UI thread: from now on a crash there is queued without blocking it.
+        remember { CrashCapture.markUiThread() }
         val settings by appSettings.settings.collectAsState()
         val mirrors by mirrorController.open.collectAsState()
         // Launch: the settings saved by the last run pick the effect, once.
@@ -134,7 +159,7 @@ fun main() {
         val shutdown = remember {
             AppShutdown(
                 mirrorController, exit = ::exitApplication, install = updateManager::installPending,
-                animateOut = quit::play,
+                animateOut = quit::play, telemetry = telemetry,
             )
         }
         val shutdownState by shutdown.state.collectAsState()
@@ -326,26 +351,35 @@ private fun MainTitle() {
 /** Shown while quitting waits for recorders to write their trailers. It cannot be closed. */
 @Composable
 private fun NucleusApplicationScope.FinishingRecordingWindow(theme: AppTheme) = ScrcpyViewerTheme(theme) {
-    MaterialDecoratedWindow(
-        onCloseRequest = {},
-        title = "Scrcpy Vwr",
-        icon = AppIcon.painter,
-        state = rememberWindowState(size = DpSize(340.dp, 120.dp), position = WindowPosition(Alignment.Center)),
-        resizable = false,
-    ) {
-        MaterialTitleBar()
-        // Tao windows don't inherit composition locals: the theme is provided again.
-        ScrcpyViewerTheme(theme) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-                Row(
-                    Modifier.fillMaxSize().padding(24.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp)
-                    Text("Finishing recording…", style = MaterialTheme.typography.bodyLarge)
+    // Its Compose exceptions are reported (CrashCapture).
+    ReportWindowCrashes {
+        MaterialDecoratedWindow(
+            onCloseRequest = {},
+            title = "Scrcpy Vwr",
+            icon = AppIcon.painter,
+            state = rememberWindowState(size = DpSize(340.dp, 120.dp), position = WindowPosition(Alignment.Center)),
+            resizable = false,
+        ) {
+            MaterialTitleBar()
+            // Tao windows don't inherit composition locals: the theme is provided again.
+            ScrcpyViewerTheme(theme) {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                    Row(
+                        Modifier.fillMaxSize().padding(24.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp)
+                        Text("Finishing recording…", style = MaterialTheme.typography.bodyLarge)
+                    }
                 }
             }
         }
     }
+}
+
+/** The launch events: `app_opened`, and `update_installed` on the first launch after an update ([updatedFrom]). */
+internal fun trackLaunch(telemetry: Telemetry, firstLaunch: Boolean, settings: Settings, updatedFrom: String?) {
+    telemetry.track(TelemetryEvent.AppOpened(firstLaunch, ThemeStyle.fromName(settings.themeStyle).name))
+    if (updatedFrom != null) telemetry.track(TelemetryEvent.UpdateInstalled(fromVersion = updatedFrom, toVersion = APP_VERSION))
 }

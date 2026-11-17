@@ -7,6 +7,9 @@ import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.scrcpy.DeviceMessage
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
+import com.programmersbox.scrcpyviewer.telemetry.connectionOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -19,9 +22,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.joinAll
@@ -58,6 +65,12 @@ class MirrorController(
     private val newSession: (serial: String, values: OptionValues) -> ScrcpySession,
     private val setClipboard: (String) -> Unit = {},
     private val clipboardMuted: (serial: String) -> Boolean = { false },
+    /** Gets `mirror_started` as each session starts, and `first_frame_time` once it shows a frame. */
+    private val telemetry: Telemetry = Telemetry.Noop,
+    /** [serial]'s options start from a preset. */
+    private val usesPreset: (serial: String) -> Boolean = { false },
+    /** `Settings.advancedDeviceOptions`. */
+    private val advancedOptions: () -> Boolean = { false },
 ) {
     private val lock = Any()
     private val _open = MutableStateFlow<Map<String, ScrcpySession>>(emptyMap())
@@ -136,9 +149,30 @@ class MirrorController(
 
     /** Caller holds [lock]. */
     private fun start(serial: String) {
+        val startedNanos = System.nanoTime()
         val values = optionsFor(serial)
         val session = newSession(serial, values)
         _open.update { it + (serial to session) }
+        val connection = connectionOf(serial, isTcp = devices.value.firstOrNull { it.serial == serial }?.isTcp == true)
+        telemetry.track(
+            TelemetryEvent.MirrorStarted(
+                connection = connection,
+                usedPreset = usesPreset(serial),
+                advancedOptions = advancedOptions(),
+                optionCount = values.entries.size,
+                audio = "no-audio" !in values.entries,
+            ),
+        )
+        // Ends at the first frame, or when the session ends without one.
+        scope.launch {
+            val shown = merge(
+                session.frames.filterNotNull().map { true },
+                session.status.filter { it == SessionStatus.Disconnected || it == SessionStatus.Failed }.map { false },
+            ).first()
+            if (shown) {
+                telemetry.track(TelemetryEvent.FirstFrameTime((System.nanoTime() - startedNanos) / 1_000_000, connection))
+            }
+        }
         // Ends when the session's teardown completes its result channel.
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             session.recordingResults.collect { _recordingResults.tryEmit(RecordingEvent(serial, it)) }

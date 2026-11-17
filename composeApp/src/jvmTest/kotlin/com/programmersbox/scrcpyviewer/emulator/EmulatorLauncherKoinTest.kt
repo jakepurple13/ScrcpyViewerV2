@@ -35,7 +35,7 @@ class EmulatorLauncherKoinTest {
             override fun startProcess(vararg args: String): Process = error("no real adb in tests")
         }
         val koin = Files.createTempDirectory("launcher-koin").let { dir ->
-            startAppKoin(dir, adbClientFactory = { adb }, updateBackend = FakeUpdateBackend(), emulatorEnvironment = com.programmersbox.scrcpyviewer.fakeEmulatorEnvironment(dir))
+            startAppKoin(dir, adbClientFactory = { adb }, updateBackend = FakeUpdateBackend(), emulatorEnvironment = com.programmersbox.scrcpyviewer.fakeEmulatorEnvironment(dir), telemetryConfig = com.programmersbox.scrcpyviewer.telemetry.TelemetryConfig.Disabled)
         }
         try {
             // Nothing asks Koin for the launcher: only an eager singleton sends `emu avd name`.

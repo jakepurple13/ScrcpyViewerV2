@@ -4,6 +4,7 @@ import dev.nucleusframework.desktop.application.dsl.TargetFormat
 import dev.nucleusframework.desktop.application.tasks.AbstractElectronBuilderPackageTask
 import java.net.URI
 import java.security.MessageDigest
+import java.util.Properties
 import java.util.zip.ZipFile
 
 plugins {
@@ -31,9 +32,24 @@ val buildInfo = mapOf(
     "COMPOSE_VERSION" to libs.versions.compose.multiplatform.get(),
 )
 
+// PostHog telemetry config: Gradle properties first (CI passes -Pposthog.*), then the VCS-ignored local.properties.
+// A build without a key has telemetry off. The key is a write-only project key, still never logged.
+val localProps = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
+}
+fun telemetryProp(name: String): String =
+    (providers.gradleProperty(name).orNull ?: localProps.getProperty(name))?.trim().orEmpty()
+val posthogKey = telemetryProp("posthog.key")
+val posthogHost = telemetryProp("posthog.host").ifEmpty { if (posthogKey.isNotEmpty()) "https://us.i.posthog.com" else "" }
+val telemetryChannel = if (telemetryProp("posthog.channel") == "release") "release" else "dev"
+
 val generateAppVersion = tasks.register("generateAppVersion") {
     val version = appVersion
-    val info = buildInfo
+    val info = buildInfo + mapOf(
+        "POSTHOG_KEY" to posthogKey,
+        "POSTHOG_HOST" to posthogHost,
+        "TELEMETRY_CHANNEL" to telemetryChannel,
+    )
     val outDir = layout.buildDirectory.dir("generated/appVersion/kotlin")
     inputs.property("version", version)
     inputs.property("buildInfo", info)
@@ -118,6 +134,10 @@ kotlin {
             implementation(compose.material3)
             implementation(compose.materialIconsExtended)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.cio)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.serialization.kotlinx.json)
             implementation(libs.androidx.navigation3.ui)
             implementation(libs.lifecycle.runtime.compose)
             implementation(libs.qrose)
@@ -149,6 +169,7 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+            implementation(libs.ktor.client.mock)
             // Tests run scenes on the Swing thread; see TestMainDispatcherFactory. The app itself has no Swing.
             implementation(libs.kotlinx.coroutines.swing)
         }

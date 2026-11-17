@@ -1,6 +1,8 @@
 package com.programmersbox.scrcpyviewer.presets
 
 import com.programmersbox.scrcpyviewer.state.JsonFile
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,9 +16,10 @@ private data class StoreFile(val presets: List<Preset> = emptyList(), val defaul
 /**
  * Presets and the default preset id, persisted to [file]. Writes are synchronous (small file) so a
  * new instance always sees the latest state; [scope] is reserved for the owner's lifecycle.
+ * [telemetry] gets `preset_saved` (the number of presets, never a name) from [upsert].
  */
 @Suppress("unused")
-class PresetStore(file: Path, scope: CoroutineScope) {
+class PresetStore(file: Path, scope: CoroutineScope, private val telemetry: Telemetry = Telemetry.Noop) {
     private val file = JsonFile(file, StoreFile.serializer()) { StoreFile() }
     private val lock = Any()
 
@@ -35,10 +38,22 @@ class PresetStore(file: Path, scope: CoroutineScope) {
         _default = MutableStateFlow(loaded.defaultPresetId?.takeIf { id -> loaded.presets.any { it.id == id } })
     }
 
-    fun upsert(p: Preset) = mutate {
-        val list = _presets.value
-        _presets.value = if (list.any { it.id == p.id }) list.map { if (it.id == p.id) p else it } else list + p
+    fun upsert(p: Preset) {
+        val total = synchronized(lock) {
+            _presets.value = _presets.value.with(p)
+            save()
+            _presets.value.size
+        }
+        telemetry.track(TelemetryEvent.PresetSaved(total))
     }
+
+    /** [upsert] for each of [presets], in one write and without `preset_saved` (an import sends its own event). */
+    fun upsertAll(presets: List<Preset>) = mutate {
+        _presets.value = presets.fold(_presets.value) { list, p -> list.with(p) }
+    }
+
+    private fun List<Preset>.with(p: Preset): List<Preset> =
+        if (any { it.id == p.id }) map { if (it.id == p.id) p else it } else this + p
 
     fun delete(id: String) = mutate {
         _presets.value = _presets.value.filterNot { it.id == id }

@@ -37,6 +37,7 @@ fun SettingsDetailPane(
             bindings.state.persistenceError?.let { PersistenceError(it) }
             if (category == null) return@Column
             Text(category.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineSmall)
+            category.header(bindings)
             Surface(Modifier.stylePane(MaterialTheme.shapes.large), color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large) {
                 // The rows fill in one after another when they appear and whenever search changes which are shown.
                 val shownIds = remember(entries) { entries.map { it.id } }

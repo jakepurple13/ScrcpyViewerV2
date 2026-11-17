@@ -22,6 +22,10 @@ import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.ServerLauncher
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
+import com.programmersbox.scrcpyviewer.telemetry.CrashCapture
+import com.programmersbox.scrcpyviewer.telemetry.PostHogTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryConfig
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.devices.DeviceSelection
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
@@ -74,8 +78,11 @@ fun interface AdbClientFactory {
     fun create(adbPath: () -> Path): AdbClient
 }
 
-/** The scope stores, the device tracker and mirror sessions run on; it lives as long as the app. */
-class AppScope : CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Default)
+/**
+ * The scope stores, the device tracker and mirror sessions run on; it lives as long as the app. A coroutine that
+ * fails in it is reported as a crash ([CrashCapture.coroutineExceptionHandler]).
+ */
+class AppScope : CoroutineScope by CoroutineScope(SupervisorJob() + Dispatchers.Default + CrashCapture.coroutineExceptionHandler)
 
 /** Discovery root: the modules below, plus the `@KoinViewModel`s and `@Singleton`s under `ui`. */
 @Module(includes = [StorageModule::class, AdbModule::class, MirrorModule::class, UpdateModule::class])
@@ -93,7 +100,8 @@ class StorageModule {
     fun appSettings(dataDir: DataDir): AppSettings = AppSettings(dataDir.path.resolve("settings.json"))
 
     @Singleton
-    fun presetStore(dataDir: DataDir, scope: AppScope): PresetStore = PresetStore(dataDir.path.resolve("presets.json"), scope)
+    fun presetStore(dataDir: DataDir, scope: AppScope, telemetry: Telemetry): PresetStore =
+        PresetStore(dataDir.path.resolve("presets.json"), scope, telemetry)
 
     @Singleton
     fun actionStore(dataDir: DataDir): ActionStore = ActionStore(dataDir.path.resolve("actions.json"))
@@ -119,6 +127,11 @@ class StorageModule {
 
     @Singleton
     fun bundledTools(dataDir: DataDir): BundledTools = BundledTools(dataDir = dataDir.path)
+
+    /** [Telemetry.Noop] in a build without a key: no files under `telemetry/` and no HTTP client. `main()` starts it. */
+    @Singleton
+    fun telemetry(config: TelemetryConfig, dataDir: DataDir, settings: AppSettings, scope: AppScope): Telemetry =
+        if (config.enabled) PostHogTelemetry(config, dataDir.path, settings, scope) else Telemetry.Noop
 }
 
 /** The adb client, the device list and Wi-Fi debugging. */
@@ -130,7 +143,8 @@ class AdbModule {
     }
 
     @Singleton
-    fun deviceTracker(client: AdbClient, scope: AppScope): DeviceTracker = DeviceTracker(client, scope)
+    fun deviceTracker(client: AdbClient, scope: AppScope, telemetry: Telemetry): DeviceTracker =
+        DeviceTracker(client, scope, telemetry = telemetry)
 
     /** The device selected on the Devices screen; Presets applies to it. Never an emulator still booting. */
     @Singleton(binds = [SelectedDevice::class])
@@ -154,6 +168,7 @@ class AdbModule {
         mirrors: MirrorRequests,
         dataDir: DataDir,
         scope: AppScope,
+        telemetry: Telemetry,
     ): EmulatorLauncher = EmulatorLauncher(
         adb = client,
         devices = tracker.devices,
@@ -161,6 +176,7 @@ class AdbModule {
         mirrors = mirrors,
         logDir = dataDir.path.resolve("emulator-logs"),
         scope = scope,
+        telemetry = telemetry,
     )
 
     @Singleton
@@ -218,32 +234,37 @@ class MirrorModule {
         settings: AppSettings,
         clipboard: PcClipboard,
         following: Lazy<InputFollowing>,
-    ): MirrorController = MirrorController(
-        scope = scope,
-        devices = tracker.devices,
-        optionsFor = { serial ->
-            val key = tracker.devices.value.firstOrNull { it.serial == serial }?.optionsKey() ?: serial
-            deviceOptions.workingSet(key).value.values
-        },
-        newSession = { serial, values ->
-            ScrcpySession(
-                serial, values, serverLauncher,
-                decoderFactory = { meta, session ->
-                    // video-buffer delays what is shown, not what is recorded (the recorder is another sink).
-                    // A failure on the buffer's thread fails the session too (see ScrcpySession.videoPlaybackFailed).
-                    DelayedVideoSink.forOptions(
-                        VideoDecoder(meta.codecId, session::publishFrame, session::publishFps), values, session::videoPlaybackFailed,
-                    )
-                },
-                audioFactory = { codecId, _ -> AudioPlayer.forOptions(codecId, values) },
-                scope = scope,
-                captureDir = { Paths.get(settings.settings.value.captureDir) },
-            )
-        },
-        setClipboard = clipboard::setText,
-        // Lazy: InputFollowing is built on this controller's open sessions.
-        clipboardMuted = { following.value.roleOf(it) is FollowRole.Follower },
-    )
+        telemetry: Telemetry,
+    ): MirrorController {
+        fun optionsKey(serial: String) = tracker.devices.value.firstOrNull { it.serial == serial }?.optionsKey() ?: serial
+        return MirrorController(
+            scope = scope,
+            devices = tracker.devices,
+            optionsFor = { serial -> deviceOptions.workingSet(optionsKey(serial)).value.values },
+            newSession = { serial, values ->
+                ScrcpySession(
+                    serial, values, serverLauncher,
+                    decoderFactory = { meta, session ->
+                        // video-buffer delays what is shown, not what is recorded (the recorder is another sink).
+                        // A failure on the buffer's thread fails the session too (see ScrcpySession.videoPlaybackFailed).
+                        DelayedVideoSink.forOptions(
+                            VideoDecoder(meta.codecId, session::publishFrame, session::publishFps), values, session::videoPlaybackFailed,
+                        )
+                    },
+                    audioFactory = { codecId, _ -> AudioPlayer.forOptions(codecId, values) },
+                    scope = scope,
+                    captureDir = { Paths.get(settings.settings.value.captureDir) },
+                    telemetry = telemetry,
+                )
+            },
+            setClipboard = clipboard::setText,
+            // Lazy: InputFollowing is built on this controller's open sessions.
+            clipboardMuted = { following.value.roleOf(it) is FollowRole.Follower },
+            telemetry = telemetry,
+            usesPreset = { serial -> deviceOptions.effectiveBasePresetId(optionsKey(serial)) != null },
+            advancedOptions = { settings.settings.value.advancedDeviceOptions },
+        )
+    }
 
     /** The open mirror windows (handles and layout info) for Arrange mirror windows; each window registers itself. */
     @Singleton
@@ -251,18 +272,24 @@ class MirrorModule {
 
     /** Arrange mirror windows: moves the registered windows into a layout, and keeps them tiled. */
     @Singleton
-    fun windowArranger(windows: MirrorWindows, screens: ScreenGeometry, settings: AppSettings, scope: AppScope): WindowArranger =
-        WindowArranger(
-            windows = windows,
-            screens = screens,
-            animateWindows = { settings.settings.value.animateMirrorWindows },
-            scope = scope,
-        )
+    fun windowArranger(
+        windows: MirrorWindows,
+        screens: ScreenGeometry,
+        settings: AppSettings,
+        scope: AppScope,
+        telemetry: Telemetry,
+    ): WindowArranger = WindowArranger(
+        windows = windows,
+        screens = screens,
+        animateWindows = { settings.settings.value.animateMirrorWindows },
+        scope = scope,
+        telemetry = telemetry,
+    )
 
     /** The app-wide follow link between mirror windows; pruned as mirrors close. */
     @Singleton
-    fun inputFollowing(mirrors: MirrorController, scope: AppScope): InputFollowing =
-        InputFollowing(mirrors.open, scope)
+    fun inputFollowing(mirrors: MirrorController, scope: AppScope, telemetry: Telemetry): InputFollowing =
+        InputFollowing(mirrors.open, scope, telemetry)
 }
 
 /** App updates, through Nucleus' updater ([UpdateBackend]). */
@@ -276,6 +303,7 @@ class UpdateModule {
         scope: AppScope,
         settings: AppSettings,
         tools: BundledTools,
+        telemetry: Telemetry,
     ): UpdateManager {
         // 1.5.0's own updater downloaded installers and helper scripts here; Nucleus caches in "update-cache".
         runCatching { dataDir.path.resolve(LEGACY_UPDATES_DIR).toFile().deleteRecursively() }
@@ -286,6 +314,7 @@ class UpdateModule {
             bundledAdbInUse = { if (settings.settings.value.adbPathOverride == null) tools.adbExecutable() else null },
             autoDownload = settings.settings.map { it.autoDownloadUpdates }
                 .stateIn(scope, SharingStarted.Eagerly, settings.settings.value.autoDownloadUpdates),
+            telemetry = telemetry,
         )
     }
 
@@ -299,20 +328,22 @@ private const val UPDATE_CACHE_DIR = "update-cache"
 
 /**
  * Starts the app's Koin graph and opens a mirror window for each [MirrorRequests] serial. Tests pass their own
- * [dataDir], an [adbClientFactory] and an [updateBackend] so no adb server, device or network is touched; they call
- * `stopKoin()` when done.
+ * [dataDir], an [adbClientFactory], an [updateBackend] and [TelemetryConfig.Disabled] so no adb server, device or
+ * network is touched; they call `stopKoin()` when done.
  */
 fun startAppKoin(
     dataDir: Path = AppDataDir.root(),
     adbClientFactory: AdbClientFactory = AdbClientFactory { AdbClient(adbPath = it) },
     updateBackend: UpdateBackend = NucleusUpdateBackend(cacheDir = dataDir.resolve(UPDATE_CACHE_DIR)),
     emulatorEnvironment: EmulatorEnvironment = EmulatorEnvironment.system(),
+    telemetryConfig: TelemetryConfig = TelemetryConfig.fromBuildInfo(),
 ): Koin {
     val koin = startKoin<ScrcpyKoinApp> {
         koin.declare(DataDir(dataDir))
         koin.declare(adbClientFactory)
         koin.declare(updateBackend)
         koin.declare(emulatorEnvironment)
+        koin.declare(telemetryConfig)
     }.koin
     val mirrors = koin.get<MirrorController>()
     koin.get<AppScope>().launch { koin.get<MirrorRequests>().collect { mirrors.open(it) } }

@@ -2,6 +2,8 @@ package com.programmersbox.scrcpyviewer.update
 
 import com.programmersbox.scrcpyviewer.APP_VERSION
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.telemetry.SafeMessage
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import dev.nucleusframework.updater.UpdateEvent
 import dev.nucleusframework.updater.UpdateInfo
 import dev.nucleusframework.updater.UpdateResult
@@ -25,6 +27,9 @@ import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+
+/** An update the last run started did not install. Its message is fixed: no version, no path. */
+class UpdateInstallFailed : Exception("The update did not install."), SafeMessage
 
 /** How often the running app checks for a new release in the background. */
 val UPDATE_CHECK_INTERVAL: Duration = 6.hours
@@ -69,6 +74,8 @@ class UpdateManager(
     private val notesTimeoutMs: Long = 10_000,
     /** The "Download updates automatically" setting. Turning it on while a release is offered downloads it. */
     private val autoDownload: StateFlow<Boolean> = MutableStateFlow(false),
+    /** Gets a failed install from the last run, once, as [UpdateInstallFailed]. */
+    telemetry: Telemetry = Telemetry.Noop,
 ) {
     // Guards every state change, so a check or update started while another is running is ignored.
     private val lock = Any()
@@ -121,6 +128,11 @@ class UpdateManager(
      */
     val previousFailure: String? =
         lastUpdate?.takeIf { it.newVersion != currentVersion }?.let { "Updating to ${it.newVersion} did not complete." }
+
+    init {
+        // The marker is consumed above, so this runs on one launch only.
+        if (previousFailure != null) telemetry.captureException(UpdateInstallFailed(), handled = true)
+    }
 
     /** The version this copy was updated from, on the first launch after a successful update. */
     val updatedFrom: String? = lastUpdate?.takeIf { it.newVersion == currentVersion }?.previousVersion

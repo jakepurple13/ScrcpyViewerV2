@@ -11,6 +11,9 @@ import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.Settings
+import com.programmersbox.scrcpyviewer.telemetry.RecentEvent
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
@@ -53,6 +56,12 @@ data class SettingsUiState(
     val aiSkill: List<AiSkillRow> = emptyList(),
     /** Label to error (null = installed) per target of the last install; non-null shows the Done dialog. */
     val aiInstallResult: List<Pair<String, String?>>? = null,
+    /** False in a build without an analytics key: the Privacy switches are disabled under a banner. */
+    val telemetryEnabled: Boolean = true,
+    /** What telemetry recorded or blocked lately, newest first. */
+    val recent: List<RecentEvent> = emptyList(),
+    /** The anonymous install ID; empty while it is being read, and in a build without a key. */
+    val installId: String = "",
 )
 
 /** Error text when [path] cannot be used as the adb executable, else null. */
@@ -105,6 +114,8 @@ class SettingsViewModel(
     private val presets: PresetStore,
     private val adb: SettingsAdb,
     private val aiSkill: AiSkillInstaller,
+    // Required (no default): the Koin compiler plugin does not inject a parameter that has one.
+    private val telemetry: Telemetry,
     scope: CoroutineScope = defaultViewModelScope(),
 ) : ViewModel(scope) {
     private val bundledVersion = MutableStateFlow<String?>(null)
@@ -112,6 +123,7 @@ class SettingsViewModel(
     private val adbError = MutableStateFlow<String?>(null)
     private val aiRows = MutableStateFlow<List<AiSkillRow>>(emptyList())
     private val aiResult = MutableStateFlow<List<Pair<String, String?>>?>(null)
+    private val installId = MutableStateFlow("")
 
     val state: StateFlow<SettingsUiState> = combine(
         appSettings.settings, presets.presets, presets.defaultPresetId, bundledVersion, customVersion,
@@ -121,12 +133,16 @@ class SettingsViewModel(
         .combine(appSettings.persistenceError) { s, e -> s.copy(persistenceError = e) }
         .combine(aiRows) { s, rows -> s.copy(aiSkill = rows) }
         .combine(aiResult) { s, r -> s.copy(aiInstallResult = r) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState())
+        .combine(telemetry.recent) { s, r -> s.copy(telemetryEnabled = telemetry.enabled, recent = r) }
+        .combine(installId) { s, id -> s.copy(installId = id) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState(telemetryEnabled = telemetry.enabled))
 
     init {
         viewModelScope.launch { bundledVersion.value = versionOf { adb.bundledAdb() } }
         appSettings.settings.value.adbPathOverride?.let(::loadCustomVersion)
         viewModelScope.launch { refreshAiSkill() }
+        // The ID is read from (or, the first time, written to) a file: not on the UI thread.
+        viewModelScope.launch { installId.value = withContext(Dispatchers.IO) { telemetry.installId() } }
     }
 
     private suspend fun refreshAiSkill() {
@@ -164,27 +180,45 @@ class SettingsViewModel(
     /** Held here, not in the screen, so the selected category survives rail tab switches. Not persisted. */
     val nav: StateFlow<SettingsNav> = navState
 
-    fun selectCategory(id: SettingsCategoryId) = navState.update { it.select(id) }
+    /** Sends `settings_opened` when [id] is not the category already shown. */
+    fun selectCategory(id: SettingsCategoryId) {
+        if (navState.value.selected != id) telemetry.track(TelemetryEvent.SettingsOpened(id.name))
+        navState.update { it.select(id) }
+    }
 
     fun setQuery(query: String) = navState.update { it.withQuery(query) }
 
-    fun setTheme(mode: ThemeMode) = appSettings.update { it.copy(themeMode = mode) }
+    fun setTheme(mode: ThemeMode) = themeChange { it.copy(themeMode = mode) }
 
     /** A neon palette also turns the Neon switch on, which the user can turn off again. */
     fun setPalette(palette: ThemePalette) =
-        appSettings.update { it.copy(themePalette = palette.name, neon = it.neon || palette.neon) }
+        themeChange { it.copy(themePalette = palette.name, neon = it.neon || palette.neon) }
+
+    /** Applies [change], then sends `theme_changed` with the theme it left. */
+    private fun themeChange(change: (Settings) -> Settings) {
+        appSettings.update(change)
+        val s = appSettings.settings.value
+        telemetry.track(
+            TelemetryEvent.ThemeChanged(
+                style = ThemeStyle.fromName(s.themeStyle).name,
+                palette = ThemePalette.fromName(s.themePalette).name,
+                mode = s.themeMode.name,
+                neon = s.neon,
+            ),
+        )
+    }
 
     fun setPureBlack(value: Boolean) = appSettings.update { it.copy(pureBlack = value) }
 
     /** Called when a Custom slider is released, not on every drag step (each call writes the settings file). */
     fun setCustomPalette(custom: CustomPalette) = appSettings.update { it.copy(customPalette = custom) }
 
-    fun setNeon(value: Boolean) = appSettings.update { it.copy(neon = value) }
+    fun setNeon(value: Boolean) = themeChange { it.copy(neon = value) }
 
     /** Like [setCustomPalette], called on slider release. */
     fun setCustomNeon(custom: CustomNeon) = appSettings.update { it.copy(customNeon = custom) }
 
-    fun setStyle(style: ThemeStyle) = appSettings.update { it.copy(themeStyle = style.name) }
+    fun setStyle(style: ThemeStyle) = themeChange { it.copy(themeStyle = style.name) }
 
     fun setRetroPalette(value: Boolean) = appSettings.update { it.copy(retroPalette = value) }
 
@@ -209,11 +243,45 @@ class SettingsViewModel(
     fun setAfterScreenshot(value: com.programmersbox.scrcpyviewer.state.AfterScreenshot) =
         appSettings.update { it.copy(afterScreenshot = value.name) }
 
+    /** Consent for usage events; read when each event is recorded. */
+    fun setUsageStats(value: Boolean) = appSettings.update { it.copy(usageStats = value) }
+
+    /** Consent for crash reports; read when each exception is recorded. */
+    fun setCrashReports(value: Boolean) = appSettings.update { it.copy(crashReports = value) }
+
+    /** Replaces the anonymous install ID with a new random one, then shows it. */
+    fun resetInstallId() {
+        viewModelScope.launch {
+            installId.value = withContext(Dispatchers.IO) {
+                telemetry.resetInstallId()
+                telemetry.installId()
+            }
+        }
+    }
+
     /** Reopens the first-run guide; it marks itself seen again when closed. */
     fun showOnboarding() = appSettings.update { it.copy(onboardingSeen = false) }
 
-    /** The first-run guide was closed. */
-    fun finishOnboarding() = appSettings.update { it.copy(onboardingSeen = true) }
+    /** False in a build without an analytics key: no consent page, no privacy prompt. */
+    val telemetryEnabled: Boolean get() = telemetry.enabled
+
+    /**
+     * The first-run guide was closed. With an analytics key its last page is the consent page, so closing it (Done,
+     * Skip or Esc) also marks the privacy prompt seen; a skip leaves the switches as they are. [lastStep] is the page
+     * it was closed on, of [pageCount]: closed on the last page it was finished, earlier it was skipped.
+     */
+    fun finishOnboarding(lastStep: Int, pageCount: Int) {
+        appSettings.update {
+            it.copy(onboardingSeen = true, privacyPromptSeen = it.privacyPromptSeen || telemetry.enabled)
+        }
+        val outcome = if (lastStep == pageCount - 1) "finished" else "skipped"
+        telemetry.track(TelemetryEvent.OnboardingFinished(outcome, lastStep))
+    }
+
+    /** The standalone privacy prompt was closed (Done or Esc); a build without an analytics key never marks it. */
+    fun finishPrivacyPrompt() {
+        if (telemetry.enabled) appSettings.update { it.copy(privacyPromptSeen = true) }
+    }
 
     /** The Actions intro was finished or closed. */
     fun finishActionsIntro() = appSettings.update { it.copy(actionsIntroSeen = true) }

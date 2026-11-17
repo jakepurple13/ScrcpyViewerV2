@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.window.launch
 
 import androidx.compose.runtime.Composable
+import com.programmersbox.scrcpyviewer.telemetry.ReportWindowCrashes
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -81,37 +82,40 @@ fun NucleusApplicationScope.LaunchOverlayWindow(
     val state = rememberWindowState(position = position, size = size)
     val firstFrame by rememberUpdatedState(onFirstFrame)
     val end by rememberUpdatedState(onEnd)
-    DecoratedWindow(
-        onCloseRequest = {},
-        state = state,
-        title = "",
-        resizable = false,
-        focusable = false,
-        alwaysOnTop = true,
-        undecorated = true,
-        transparent = true,
-        clickThrough = true,
-        forceX11 = forceX11,
-    ) {
-        val duration = LaunchMotion.durationMs(anim, phase)
-        var t by remember { mutableStateOf(0) }
-        LaunchedEffect(anim, phase) {
-            val start = withFrameNanos { it }
-            firstFrame()
-            while (t < duration) {
-                val now = withFrameNanos { it }
-                t = ((now - start) / 1_000_000).toInt().coerceAtMost(duration)
+    // Its Compose exceptions are reported (CrashCapture).
+    ReportWindowCrashes {
+        DecoratedWindow(
+            onCloseRequest = {},
+            state = state,
+            title = "",
+            resizable = false,
+            focusable = false,
+            alwaysOnTop = true,
+            undecorated = true,
+            transparent = true,
+            clickThrough = true,
+            forceX11 = forceX11,
+        ) {
+            val duration = LaunchMotion.durationMs(anim, phase)
+            var t by remember { mutableStateOf(0) }
+            LaunchedEffect(anim, phase) {
+                val start = withFrameNanos { it }
+                firstFrame()
+                while (t < duration) {
+                    val now = withFrameNanos { it }
+                    t = ((now - start) / 1_000_000).toInt().coerceAtMost(duration)
+                }
+                // One more frame so the last one is on screen before the hand-off.
+                withFrameNanos { }
+                end()
             }
-            // One more frame so the last one is on screen before the hand-off.
-            withFrameNanos { }
-            end()
-        }
-        ScrcpyViewerTheme(theme) {
-            val colors = MaterialTheme.colorScheme
-            OverlayScene(
-                LaunchMotion.frame(anim, phase, t), picture(),
-                surface = colors.surface, titleBar = colors.surfaceContainer, accent = colors.primary,
-            )
+            ScrcpyViewerTheme(theme) {
+                val colors = MaterialTheme.colorScheme
+                OverlayScene(
+                    LaunchMotion.frame(anim, phase, t), picture(),
+                    surface = colors.surface, titleBar = colors.surfaceContainer, accent = colors.primary,
+                )
+            }
         }
     }
 }

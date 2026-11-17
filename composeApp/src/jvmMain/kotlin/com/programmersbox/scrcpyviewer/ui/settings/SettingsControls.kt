@@ -42,6 +42,38 @@ import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import com.programmersbox.scrcpyviewer.ui.theme.Switch
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.SideEffect
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.key
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextDecoration
+import com.programmersbox.scrcpyviewer.telemetry.RecentEvent
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
+import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /** System, Light and Dark as segments, or one menu button when the row is too narrow ([size]). */
 @Composable
@@ -180,4 +212,185 @@ internal fun trayIconToggle(b: SettingsBindings) = Modifier.toggleable(
 @Composable
 internal fun TrayIconSwitch(b: SettingsBindings) {
     Switch(checked = b.state.settings.showTrayIcon, onCheckedChange = null)
+}
+
+/** Shown above the Privacy rows in a build without an analytics key. */
+internal const val KEYLESS_BANNER = "This build has no analytics key, so nothing is sent. Release builds from GitHub include it."
+
+/** Fades on the Privacy page: the dimmed rows, the ID swap, the Show / Hide label, and every change under reduce motion. */
+private const val PRIVACY_FADE_MILLIS = 200
+private const val PRIVACY_CHEVRON_MILLIS = 300
+
+/** How far a Privacy row fades when its switch can't be used. */
+private const val PRIVACY_DISABLED_ALPHA = 0.5f
+
+/** The first 8 and last 4 characters of [id] around an ellipsis; a short [id] as it is. */
+internal fun shortInstallId(id: String): String = if (id.length <= 13) id else id.take(8) + "…" + id.takeLast(4)
+
+private fun privacyEnter(reduceMotion: Boolean) =
+    if (reduceMotion) fadeIn(tween(PRIVACY_FADE_MILLIS)) else expandVertically(layoutSpring()) + fadeIn(tween(PRIVACY_FADE_MILLIS, easing = EmphasizedDecelerate))
+
+private fun privacyExit(reduceMotion: Boolean) =
+    if (reduceMotion) fadeOut(tween(PRIVACY_FADE_MILLIS)) else shrinkVertically(layoutSpring()) + fadeOut(tween(PRIVACY_FADE_MILLIS, easing = EmphasizedAccelerate))
+
+/** The keyless-build banner above the Privacy rows. */
+@Composable
+internal fun PrivacyBanner(b: SettingsBindings) {
+    val reduceMotion = LocalReduceMotion.current
+    AnimatedVisibility(visible = !b.state.telemetryEnabled, enter = privacyEnter(reduceMotion), exit = privacyExit(reduceMotion)) {
+        Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = MaterialTheme.shapes.medium) {
+            Row(
+                Modifier.fillMaxWidth().padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Outlined.Info, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer)
+                Text(
+                    KEYLESS_BANNER, Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
+        }
+    }
+}
+
+/** The whole row toggles; in a keyless build it is disabled, shows off whatever is saved, and fades back. */
+@Composable
+internal fun privacyToggle(b: SettingsBindings, value: Boolean, onChange: (Boolean) -> Unit): Modifier {
+    val enabled = b.state.telemetryEnabled
+    val alpha by animateFloatAsState(if (enabled) 1f else PRIVACY_DISABLED_ALPHA, tween(PRIVACY_FADE_MILLIS), label = "privacyRowAlpha")
+    return Modifier.graphicsLayer { this.alpha = alpha }
+        .toggleable(value = value && enabled, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+}
+
+@Composable
+internal fun PrivacySwitch(b: SettingsBindings, checked: Boolean) {
+    // A keyless build sends nothing, so both switches show off even though crash reports default on.
+    Switch(checked = checked && b.state.telemetryEnabled, onCheckedChange = null, enabled = b.state.telemetryEnabled)
+}
+
+/** A Show / Hide button over the recent events, which unfold below it. */
+@Composable
+internal fun RecentEventsControl(b: SettingsBindings) {
+    var open by remember { mutableStateOf(false) }
+    val reduceMotion = LocalReduceMotion.current
+    val turn by animateFloatAsState(
+        if (open) 180f else 0f,
+        if (reduceMotion) snap() else tween(PRIVACY_CHEVRON_MILLIS, easing = EmphasizedDecelerate),
+        label = "recentChevron",
+    )
+    Column {
+        TextButton(onClick = { open = !open }) {
+            Crossfade(open, animationSpec = tween(PRIVACY_FADE_MILLIS), label = "recentLabel") { Text(if (it) "Hide" else "Show", maxLines = 1) }
+            Icon(Icons.Filled.ExpandMore, contentDescription = null, modifier = Modifier.padding(start = 4.dp).size(18.dp).rotate(turn))
+        }
+        AnimatedVisibility(visible = open, enter = privacyEnter(reduceMotion), exit = privacyExit(reduceMotion)) {
+            RecentEventList(b.state.recent, reduceMotion)
+        }
+    }
+}
+
+/**
+ * Newest first: the name, then the local time it was sent, or "not sent" (and the name struck through) when blocked.
+ * The empty note and the list fade into each other while the space between them springs to the new height.
+ */
+@Composable
+private fun RecentEventList(events: List<RecentEvent>, reduceMotion: Boolean) {
+    AnimatedContent(
+        targetState = events.isEmpty(),
+        transitionSpec = {
+            (fadeIn(tween(PRIVACY_FADE_MILLIS)) togetherWith fadeOut(tween(PRIVACY_FADE_MILLIS)))
+                .using(SizeTransform(clip = true) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
+        },
+        label = "recentEmpty",
+    ) { empty ->
+        if (empty) {
+            Text(
+                "Nothing recorded yet.", Modifier.padding(vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            RecentEventRows(events, reduceMotion)
+        }
+    }
+}
+
+/** [new] with each row of [old] that left it put back after the row it followed, so it can shrink out in place. */
+internal fun <T> withLeaving(old: List<T>, new: List<T>): List<T> {
+    val out = new.toMutableList()
+    val kept = new.toSet()
+    old.forEachIndexed { i, e ->
+        if (e in kept || e in out) return@forEachIndexed
+        val before = old.subList(0, i).lastOrNull { it in out }
+        out.add(if (before == null) 0 else out.indexOf(before) + 1, e)
+    }
+    return out
+}
+
+/**
+ * The rows. Those shown when the list opens rise in one after another; an event recorded later opens its row from
+ * height 0 at the top, pushing the others down, and one dropped past the limit shrinks away at the bottom. Under
+ * reduce motion rows only fade.
+ */
+@Composable
+private fun RecentEventRows(events: List<RecentEvent>, reduceMotion: Boolean) {
+    val time = remember { DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()) }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val initial = remember { events.toSet() }
+    val states = remember { HashMap<RecentEvent, MutableTransitionState<Boolean>>() }
+    // The rows composed last time, leaving ones included; not state: it only feeds the next composition.
+    val last = remember { arrayOf(emptyList<RecentEvent>()) }
+    val current = events.toSet()
+    val shown = withLeaving(last[0], events).filter { e ->
+        val s = states.getOrPut(e) { MutableTransitionState(e in initial) }
+        // A leaving row stays until its exit has finished.
+        e in current || !(s.isIdle && !s.currentState)
+    }
+    SideEffect {
+        last[0] = shown
+        states.keys.retainAll(shown.toSet())
+        for (e in shown) states[e]?.targetState = e in current
+    }
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        shown.forEachIndexed { i, e ->
+            key(e) {
+                AnimatedVisibility(
+                    visibleState = states.getValue(e),
+                    enter = privacyEnter(reduceMotion),
+                    exit = privacyExit(reduceMotion),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .then(if (reduceMotion || e !in initial) Modifier else Modifier.staggeredEntrance(i, trigger = Unit))
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            e.name, Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                            color = if (e.sent) MaterialTheme.colorScheme.onSurface else muted,
+                            textDecoration = if (e.sent) null else TextDecoration.LineThrough,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(if (e.sent) time.format(e.at) else "not sent", style = MaterialTheme.typography.labelMedium, color = muted, maxLines = 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The shortened ID under the row's title, crossfading to the new one after a reset. */
+@Composable
+internal fun InstallIdText(b: SettingsBindings) {
+    Crossfade(b.state.installId, animationSpec = tween(PRIVACY_FADE_MILLIS), label = "installId") { id ->
+        Text(
+            shortInstallId(id), style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+        )
+    }
+}
+
+@Composable
+internal fun ResetIdButton(b: SettingsBindings) {
+    OutlinedButton(onClick = b.actions.onResetInstallId, enabled = b.state.telemetryEnabled) { Text("Reset ID", maxLines = 1) }
 }

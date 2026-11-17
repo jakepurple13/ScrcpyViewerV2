@@ -5,6 +5,8 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.adb.ShellReadTimeout
 import com.programmersbox.scrcpyviewer.options.OptionValues
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -265,6 +267,8 @@ class FileTransferQueue(
     private val securePrivateRoot: (Path) -> Unit = { ensurePrivateDir(it) },
     /** Socket read timeout of a Replace's swap: its `rm -rf` of a big folder prints nothing for a long while. */
     private val swapReadTimeoutMs: Int = SWAP_READ_TIMEOUT_MS,
+    /** Gets `file_transfer` as each job that ran adb ends: its direction, size and outcome, never a name or path. */
+    private val telemetry: Telemetry = Telemetry.Noop,
 ) {
     private val queue = Channel<Long>(Channel.UNLIMITED)
 
@@ -470,14 +474,18 @@ class FileTransferQueue(
         val outcome = try {
             execute(id, request)
         } catch (e: CancellationException) {
-            synchronized(lock) { finish(id) { it.copy(state = JobState.Cancelled) } }
+            val ended = synchronized(lock) {
+                finish(id) { it.copy(state = JobState.Cancelled) }
+                _jobs.value.find { it.id == id }
+            }
+            ended?.let(::report)
             throw e
         } catch (e: UserCancelled) {
             Outcome(null, state = JobState.Cancelled)
         } catch (e: Exception) {
             TransferResult.Failed(request, e.message ?: e.toString()).let { Outcome(it, JobState.Failed(it.reason)) }
         }
-        synchronized(lock) {
+        val ended = synchronized(lock) {
             finish(id) { job ->
                 job.copy(
                     state = outcome.state,
@@ -486,7 +494,9 @@ class FileTransferQueue(
                     bytesPerSecond = if (outcome.state == JobState.Done) null else job.bytesPerSecond,
                 )
             }
+            _jobs.value.find { it.id == id }
         }
+        ended?.let(::report)
         outcome.result?.let { _results.tryEmit(it) }
         synchronized(lock) {
             if (pending == 0) {
@@ -494,6 +504,21 @@ class FileTransferQueue(
                 _progress.value = null
             }
         }
+    }
+
+    /** `file_transfer` for the ended [job]. Installs put an APK on the device: they count as pushes. */
+    private fun report(job: TransferJob) {
+        val request = job.request
+        val direction = if (request.kind == TransferKind.Pull) "pull" else "push"
+        val size = job.bytes.takeIf { it > 0 } ?: job.total ?: request.size
+            ?: request.path.takeIf { request.kind == TransferKind.Install }?.let { runCatching { Files.size(it) }.getOrNull() }
+            ?: 0
+        val outcome = when (job.state) {
+            JobState.Done -> "done"
+            JobState.Cancelled -> "cancelled"
+            else -> "failed"
+        }
+        telemetry.track(TelemetryEvent.FileTransfer(direction, size, outcome))
     }
 
     /** Ends the running job [id] with [change]. Callers hold [lock]. */

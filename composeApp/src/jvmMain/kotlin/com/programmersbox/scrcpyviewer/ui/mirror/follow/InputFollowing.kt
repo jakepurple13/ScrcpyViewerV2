@@ -2,6 +2,8 @@ package com.programmersbox.scrcpyviewer.ui.mirror.follow
 
 import com.programmersbox.scrcpyviewer.scrcpy.Position
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +41,8 @@ sealed interface FollowRole {
 class InputFollowing(
     private val open: StateFlow<Map<String, ScrcpySession>>,
     scope: CoroutineScope,
+    /** Gets `input_broadcast_started` when a window starts leading others. */
+    private val telemetry: Telemetry = Telemetry.Noop,
 ) {
     private val _state = MutableStateFlow(FollowState())
     val state: StateFlow<FollowState> = _state.asStateFlow()
@@ -52,8 +56,11 @@ class InputFollowing(
      * after the write, so it never stays behind as a ghost follower.
      */
     fun setFollowers(leader: String, followers: Set<String>) {
+        val wasFollowing = _state.value.followers.isNotEmpty()
         _state.update { FollowState(leader, followers - leader).pruned(open.value.keys) }
         _state.update { it.pruned(open.value.keys) }
+        val now = _state.value.followers
+        if (!wasFollowing && now.isNotEmpty()) telemetry.track(TelemetryEvent.InputBroadcastStarted(now.size))
     }
 
     fun stop() {

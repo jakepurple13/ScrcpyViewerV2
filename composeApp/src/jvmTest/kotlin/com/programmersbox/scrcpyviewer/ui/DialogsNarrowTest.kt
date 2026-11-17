@@ -113,7 +113,7 @@ class DialogsNarrowTest {
             onDismiss = {},
         )
     }
-    private val onboarding: @Composable () -> Unit = { OnboardingDialog(page = 0, onPage = {}, onFinish = {}) }
+    private val onboarding: @Composable () -> Unit = { OnboardingDialog(page = 0, onPage = {}, onFinish = {}, privacy = null) }
 
     private val release = Release(version = "1.6.0", body = "- Fix", htmlUrl = "https://example.test/r")
     private val update: @Composable () -> Unit = {

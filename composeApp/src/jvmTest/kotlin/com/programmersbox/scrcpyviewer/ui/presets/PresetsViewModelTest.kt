@@ -6,6 +6,7 @@ import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.presets.PresetCodec
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.DeviceOptionsStore
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.ui.devices.SelectedDevice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -36,7 +37,7 @@ class PresetsViewModelTest {
         override fun label(key: String) = "Pixel 8"
     }
 
-    private fun vm() = PresetsViewModel(store, options, device, scope).also {
+    private fun vm() = PresetsViewModel(store, options, device, Telemetry.Noop, scope).also {
         store.upsert(qa)
         store.upsert(low)
     }

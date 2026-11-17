@@ -7,6 +7,8 @@ import com.programmersbox.scrcpyviewer.media.SessionRecording
 import com.programmersbox.scrcpyviewer.media.VideoDecoder
 import com.programmersbox.scrcpyviewer.media.VideoFrame
 import com.programmersbox.scrcpyviewer.options.OptionValues
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -98,7 +100,15 @@ class ScrcpySession(
     scope: CoroutineScope,
     /** Where a relative `record` path goes (`Settings.captureDir`); null keeps it relative to the working dir. */
     private val captureDir: () -> Path? = { null },
+    /**
+     * Gets server start and video decoding failures, as handled exceptions, and the session's usage events
+     * (`mirror_ended`, `mirror_failed`, `recording_stopped`).
+     */
+    private val telemetry: Telemetry = Telemetry.Noop,
 ) {
+    /** When the session started ([System.nanoTime]), for `mirror_ended`'s minutes. */
+    private val startedNanos = System.nanoTime()
+
     private val _status = MutableStateFlow(SessionStatus.Connecting)
     val status: StateFlow<SessionStatus> = _status.asStateFlow()
 
@@ -204,6 +214,7 @@ class ScrcpySession(
             awaitCancellation()
         } finally {
             if (tornDown.compareAndSet(false, true)) {
+                ended("closed") // the app's scope ended: it is quitting
                 _status.update { if (it == SessionStatus.Failed) it else SessionStatus.Disconnected }
                 teardown()
             }
@@ -239,7 +250,10 @@ class ScrcpySession(
     fun videoPlaybackFailed(cause: Throwable) {
         if (!videoPlayback) return
         val codec = videoCodec?.let { " (${VideoDecoder.codecName(it)})" }.orEmpty()
-        fail("Video decoding failed$codec: ${cause.message ?: cause}")
+        fail("Video decoding failed$codec: ${cause.message ?: cause}") {
+            telemetry.captureException(cause, handled = true)
+            telemetry.track(TelemetryEvent.MirrorFailed("decode", cause.javaClass.simpleName))
+        }
     }
 
     /** For the video sink: publishes the decoded frame rate. */
@@ -321,11 +335,12 @@ class ScrcpySession(
     }
 
     private fun stopRecording(rec: SessionRecording) {
-        synchronized(recordLock) {
+        val started = synchronized(recordLock) {
             if (activeRecording !== rec) return
             activeRecording = null
-            _recording.value = null
+            _recording.getAndUpdate { null }?.startedNanos
         }
+        started?.let { telemetry.track(TelemetryEvent.RecordingStopped(minutesSince(it))) }
         removeVideoSink(rec.videoSink)
         removeAudioSink(rec.audioSink)
         rec.stop()
@@ -366,6 +381,7 @@ class ScrcpySession(
     /** Stops the session and waits until teardown has finished. Safe to call more than once and from any state. */
     suspend fun close() {
         if (tornDown.compareAndSet(false, true)) {
+            ended("closed")
             _status.update { if (it == SessionStatus.Failed) it else SessionStatus.Disconnected }
             teardown()
         } else {
@@ -381,7 +397,17 @@ class ScrcpySession(
             throw e
         } catch (t: Throwable) {
             log.log(System.Logger.Level.WARNING, "Could not start session $serial", t)
-            fail(t.message ?: t.toString())
+            // An adb failure's message can name the device: scrubbed even if the device list has not listed it yet.
+            telemetry.rememberSerial(serial)
+            fail((t as? MirrorStageException)?.displayMessage ?: t.message ?: t.toString()) {
+                telemetry.captureException(t, handled = true)
+                // Not a stage of its own (an adb error, a bad option): starting the server failed.
+                val stage = (t as? MirrorStageException)?.stage ?: MirrorStage.Server
+                // The stage already says what MirrorStageException would; its cause, if any, says why.
+                val errorClass =
+                    if (t is MirrorStageException) t.cause?.javaClass?.simpleName ?: "none" else t.javaClass.simpleName
+                telemetry.track(TelemetryEvent.MirrorFailed(stage.name.lowercase(), errorClass))
+            }
             return
         }
         connection = conn
@@ -452,7 +478,9 @@ class ScrcpySession(
             // No FFmpeg decoder for the codec, or it would not open: nothing could ever be shown.
             log.log(System.Logger.Level.ERROR, "Could not create the video decoder of $serial", t)
             if (videoPlayback) {
-                fail("Cannot decode ${VideoDecoder.codecName(meta.codecId)} video: ${t.message ?: t}")
+                fail("Cannot decode ${VideoDecoder.codecName(meta.codecId)} video: ${t.message ?: t}") {
+                    telemetry.track(TelemetryEvent.MirrorFailed("decode", t.javaClass.simpleName))
+                }
                 return
             }
             null
@@ -574,8 +602,14 @@ class ScrcpySession(
             t
         }
 
-    private fun fail(message: String) {
+    /**
+     * Fails the session with [message] unless it already ended. [report] (the failure's telemetry) runs only when this
+     * call ends it, before `mirror_ended`, so a late or second failure is never reported.
+     */
+    private fun fail(message: String, report: () -> Unit = {}) {
         if (!tornDown.compareAndSet(false, true)) return // already closed
+        report()
+        ended("error")
         _error.value = message
         _status.value = SessionStatus.Failed
         launchTeardown()
@@ -583,10 +617,18 @@ class ScrcpySession(
 
     private fun disconnected(reason: String?) {
         if (!tornDown.compareAndSet(false, true)) return
+        ended("disconnected")
         if (reason != null) _error.value = reason
         _status.update { if (it == SessionStatus.Failed) it else SessionStatus.Disconnected }
         launchTeardown()
     }
+
+    /** `mirror_ended`, sent once: by whoever set [tornDown]. [reason]: closed, disconnected or error. */
+    private fun ended(reason: String) {
+        telemetry.track(TelemetryEvent.MirrorEnded(minutesSince(startedNanos), reason))
+    }
+
+    private fun minutesSince(nanos: Long): Long = (System.nanoTime() - nanos) / NANOS_PER_MINUTE
 
     /** ATOMIC: once [tornDown] is set, teardown must run even if [scope] was cancelled meanwhile. */
     @OptIn(DelicateCoroutinesApi::class)
@@ -648,6 +690,7 @@ class ScrcpySession(
         const val CONTROL_QUEUE_CAPACITY = 1024
         const val STREAM_BUFFER = 1 shl 16
         const val RECORDER_JOIN_MS = 10_000L
+        const val NANOS_PER_MINUTE = 60_000_000_000L
         val log: System.Logger = System.getLogger("scrcpyviewer.ScrcpySession")
     }
 }
