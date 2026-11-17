@@ -145,7 +145,9 @@ credentials must never be committed.
 
 ### Events (23)
 
-Durations and sizes are bucketed. "Never" values from the anti-goals are never properties.
+Durations and sizes are bucketed. Label values (stages, tabs, layouts, theme names, enum names) are sent lowercase
+snake_case (`side_by_side`, `keep_both`, `dark_mode`); versions and `error_class` (a Java class name) are sent as they are.
+"Never" values from the anti-goals are never properties.
 
 | Event | Properties |
 |---|---|

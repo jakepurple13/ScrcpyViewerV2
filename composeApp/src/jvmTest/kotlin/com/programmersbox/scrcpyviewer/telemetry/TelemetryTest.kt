@@ -92,7 +92,7 @@ class TelemetryTest {
         assertEquals("scrcpy-vwr", str("\$lib"))
         assertFalse(p.getValue("\$process_person_profile").jsonPrimitive.boolean)
         assertTrue(p.getValue("first_launch").jsonPrimitive.boolean)
-        assertEquals("Material", str("theme_style"))
+        assertEquals("material", str("theme_style"))
         assertTrue(t.recent.value.single().sent)
     }
 

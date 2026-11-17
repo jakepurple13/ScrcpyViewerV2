@@ -104,7 +104,8 @@ class FeatureEventsTest {
         vm.setChoice(2, ConflictChoice.Skip)
         vm.confirmImport()
         // One, Two (kept both), Four and Five are added; the import is one event, not a preset_saved per preset.
-        assertEquals(listOf<TelemetryEvent>(PresetsImported(4, "keepboth")), telemetry.events.toList())
+        assertEquals(listOf<TelemetryEvent>(PresetsImported(4, "KeepBoth")), telemetry.events.toList())
+        assertEquals("keep_both", telemetry.events.single().props()["conflict_choice"])
     }
 
     @Test

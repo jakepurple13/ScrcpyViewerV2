@@ -153,7 +153,7 @@ class PresetsViewModel(
         val before = store.presets.value
         store.upsertAll(ImportPlan.apply(before, import.items).filter { after -> before.firstOrNull { it.id == after.id } != after })
         val choices = import.items.filter { it.include && it.conflictsWith != null }.groupingBy { it.choice }.eachCount()
-        val choice = choices.maxByOrNull { it.value }?.key?.name?.lowercase() ?: "none"
+        val choice = choices.maxByOrNull { it.value }?.key?.name ?: "none"
         telemetry.track(TelemetryEvent.PresetsImported(import.importCount, choice))
     }
 
