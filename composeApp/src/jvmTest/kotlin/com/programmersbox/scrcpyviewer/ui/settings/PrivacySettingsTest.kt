@@ -265,6 +265,71 @@ class PrivacySettingsTest {
         assertEquals(after, mid, "full height at once")
     }
 
+    private val older = RecentEvent("app_opened", Instant.parse("2026-11-17T10:00:00Z"), sent = true)
+    private val oldest = RecentEvent("mirror_started", Instant.parse("2026-11-17T09:00:00Z"), sent = false)
+    private val newer = RecentEvent("screenshot_taken", Instant.parse("2026-11-17T10:30:00Z"), sent = true)
+
+    /** The open list showing [older] and [oldest]; [change] then sets the events while [block] reads frames. */
+    private fun openList(reduceMotion: Boolean, block: SceneDriver.((List<RecentEvent>) -> Unit) -> Unit) = onEdt {
+        var recent by mutableStateOf(listOf(older, oldest))
+        val driver = SceneDriver(ImageComposeScene(1280, 800, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
+                    Surface { SettingsContent(SettingsUiState(recent = recent), UpdateUiState(), SettingsNav(selected = Privacy), SettingsActions()) }
+                }
+            }
+        })
+        try {
+            driver.frames(20)
+            driver.click("Show")
+            driver.frames(60)
+            driver.block { recent = it }
+        } finally {
+            driver.scene.close()
+        }
+    }
+
+    private fun SceneDriver.y(label: String) = text(label).single().positionInRoot.y
+
+    @Test
+    fun aNewEventOpensItsRowAndPushesTheOthersDown() = openList(reduceMotion = false) { set ->
+        val before = y("app_opened")
+        set(listOf(newer, older, oldest))
+        frames(4)
+        val mid = y("app_opened")
+        frames(100)
+        val after = y("app_opened")
+        assertTrue(after > before, "pushed down: $before -> $after")
+        assertTrue(mid > before && mid < after, "mid-push $mid strictly between $before and $after")
+        assertTrue(text("screenshot_taken").isNotEmpty())
+    }
+
+    @Test
+    fun underReduceMotionTheOthersJumpDown() = openList(reduceMotion = true) { set ->
+        set(listOf(newer, older, oldest))
+        frames(2)
+        val mid = y("app_opened")
+        frames(100)
+        assertEquals(y("app_opened"), mid)
+    }
+
+    @Test
+    fun aDroppedEventShrinksAway() = openList(reduceMotion = false) { set ->
+        set(listOf(older))
+        frames(4)
+        assertTrue(text("mirror_started").isNotEmpty(), "still leaving")
+        frames(100)
+        assertTrue(text("mirror_started").isEmpty(), "gone")
+        assertTrue(text("app_opened").isNotEmpty())
+    }
+
+    @Test
+    fun leavingRowsKeepTheirPlace() {
+        assertEquals(listOf("n", "a", "b", "c"), withLeaving(listOf("a", "b", "c"), listOf("n", "a", "b")))
+        assertEquals(listOf("a", "b", "c"), withLeaving(listOf("a", "b", "c"), listOf("a", "c")))
+        assertEquals(listOf("x", "a"), withLeaving(listOf("x"), listOf("a")))
+    }
+
     @Test
     fun idRowShowsShortIdAndResets() {
         var resets = 0

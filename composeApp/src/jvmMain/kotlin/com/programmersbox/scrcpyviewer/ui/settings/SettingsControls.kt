@@ -42,7 +42,12 @@ import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import com.programmersbox.scrcpyviewer.ui.theme.Switch
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.SideEffect
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -283,32 +288,90 @@ internal fun RecentEventsControl(b: SettingsBindings) {
     }
 }
 
-/** Newest first: the name, then the local time it was sent, or "not sent" (and the name struck through) when blocked. */
+/**
+ * Newest first: the name, then the local time it was sent, or "not sent" (and the name struck through) when blocked.
+ * The empty note and the list fade into each other while the space between them springs to the new height.
+ */
 @Composable
 private fun RecentEventList(events: List<RecentEvent>, reduceMotion: Boolean) {
+    AnimatedContent(
+        targetState = events.isEmpty(),
+        transitionSpec = {
+            (fadeIn(tween(PRIVACY_FADE_MILLIS)) togetherWith fadeOut(tween(PRIVACY_FADE_MILLIS)))
+                .using(SizeTransform(clip = true) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
+        },
+        label = "recentEmpty",
+    ) { empty ->
+        if (empty) {
+            Text(
+                "Nothing recorded yet.", Modifier.padding(vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            RecentEventRows(events, reduceMotion)
+        }
+    }
+}
+
+/** [new] with each row of [old] that left it put back after the row it followed, so it can shrink out in place. */
+internal fun <T> withLeaving(old: List<T>, new: List<T>): List<T> {
+    val out = new.toMutableList()
+    val kept = new.toSet()
+    old.forEachIndexed { i, e ->
+        if (e in kept || e in out) return@forEachIndexed
+        val before = old.subList(0, i).lastOrNull { it in out }
+        out.add(if (before == null) 0 else out.indexOf(before) + 1, e)
+    }
+    return out
+}
+
+/**
+ * The rows. Those shown when the list opens rise in one after another; an event recorded later opens its row from
+ * height 0 at the top, pushing the others down, and one dropped past the limit shrinks away at the bottom. Under
+ * reduce motion rows only fade.
+ */
+@Composable
+private fun RecentEventRows(events: List<RecentEvent>, reduceMotion: Boolean) {
     val time = remember { DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault()) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    if (events.isEmpty()) {
-        Text("Nothing recorded yet.", Modifier.padding(vertical = 4.dp), style = MaterialTheme.typography.bodySmall, color = muted)
-        return
+    val initial = remember { events.toSet() }
+    val states = remember { HashMap<RecentEvent, MutableTransitionState<Boolean>>() }
+    // The rows composed last time, leaving ones included; not state: it only feeds the next composition.
+    val last = remember { arrayOf(emptyList<RecentEvent>()) }
+    val current = events.toSet()
+    val shown = withLeaving(last[0], events).filter { e ->
+        val s = states.getOrPut(e) { MutableTransitionState(e in initial) }
+        // A leaving row stays until its exit has finished.
+        e in current || !(s.isIdle && !s.currentState)
+    }
+    SideEffect {
+        last[0] = shown
+        states.keys.retainAll(shown.toSet())
+        for (e in shown) states[e]?.targetState = e in current
     }
     Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-        events.forEachIndexed { i, e ->
-            key(e.name, e.at, e.sent) {
-                // The rows rise in one after another as the list unfolds; a newer event rises in at the top.
-                Row(
-                    Modifier.fillMaxWidth().then(if (reduceMotion) Modifier else Modifier.staggeredEntrance(i, trigger = Unit))
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+        shown.forEachIndexed { i, e ->
+            key(e) {
+                AnimatedVisibility(
+                    visibleState = states.getValue(e),
+                    enter = privacyEnter(reduceMotion),
+                    exit = privacyExit(reduceMotion),
                 ) {
-                    Text(
-                        e.name, Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-                        color = if (e.sent) MaterialTheme.colorScheme.onSurface else muted,
-                        textDecoration = if (e.sent) null else TextDecoration.LineThrough,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(if (e.sent) time.format(e.at) else "not sent", style = MaterialTheme.typography.labelMedium, color = muted, maxLines = 1)
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .then(if (reduceMotion || e !in initial) Modifier else Modifier.staggeredEntrance(i, trigger = Unit))
+                            .padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            e.name, Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                            color = if (e.sent) MaterialTheme.colorScheme.onSurface else muted,
+                            textDecoration = if (e.sent) null else TextDecoration.LineThrough,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(if (e.sent) time.format(e.at) else "not sent", style = MaterialTheme.typography.labelMedium, color = muted, maxLines = 1)
+                    }
                 }
             }
         }
