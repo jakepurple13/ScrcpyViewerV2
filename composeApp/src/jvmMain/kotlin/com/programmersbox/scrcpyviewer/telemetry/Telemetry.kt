@@ -60,6 +60,7 @@ interface Telemetry {
     /** The anonymous install ID sent as `distinct_id`. */
     fun installId(): String
 
+    /** A new install ID, and a new session ID, so nothing sent after it links to what was sent before. */
     fun resetInstallId()
 
     /** [serial] is replaced by `<device>` in everything sent from now on. */
@@ -107,7 +108,9 @@ class PostHogTelemetry(
     private val queue = TelemetryQueue(dir.resolve("queue.jsonl"))
     private val ids = InstallId(dir)
     private val scrubber = Scrubber()
-    private val sessionId = UUID.randomUUID().toString()
+
+    /** New on each launch, and on [resetInstallId]: a session spanning the reset would link the old ID to the new. */
+    @Volatile private var sessionId = UUID.randomUUID().toString()
     private val batchSender by lazy { sender(queue) }
 
     /** The sender is not reentrant: the flush loop and the quit flush take turns. */
@@ -167,7 +170,10 @@ class PostHogTelemetry(
 
     override fun installId(): String = runCatching { ids.get() }.getOrElse { report("read install ID", it); "" }
 
-    override fun resetInstallId() = guard("reset install ID") { ids.reset() }
+    override fun resetInstallId() = guard("reset install ID") {
+        ids.reset()
+        sessionId = UUID.randomUUID().toString()
+    }
 
     override fun rememberSerial(serial: String) = guard("remember serial") { scrubber.rememberSerial(serial) }
 

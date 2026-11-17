@@ -96,6 +96,24 @@ class TelemetryTest {
         assertTrue(t.recent.value.single().sent)
     }
 
+    @Test fun resettingTheIdAlsoStartsANewSession() {
+        val t = telemetry()
+        fun ids(i: Int) = queue.peek(2)[i].properties.let {
+            it.getValue("distinct_id").jsonPrimitive.content to it.getValue("session_id").jsonPrimitive.content
+        }
+        t.captureException(TestOwnException("before"), handled = true)
+        eventually("first crash queued") { queue.size() == 1 }
+        t.resetInstallId()
+        t.captureException(TestOwnException("after"), handled = true)
+        eventually("second crash queued") { queue.size() == 2 }
+        val (idBefore, sessionBefore) = ids(0)
+        val (idAfter, sessionAfter) = ids(1)
+        assertTrue(idBefore != idAfter, "install ID rotated")
+        // A session spanning the reset would link the old ID to the new one.
+        assertTrue(sessionBefore != sessionAfter, "session ID rotated")
+        UUID.fromString(sessionAfter)
+    }
+
     @Test fun switchingUsageOffDeletesQueuedUsage() {
         settings.update { it.copy(usageStats = true) }
         val t = telemetry()
