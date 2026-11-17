@@ -15,14 +15,10 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
-import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
-import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import com.programmersbox.scrcpyviewer.ui.theme.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,58 +28,67 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
 import com.programmersbox.scrcpyviewer.state.afterShot
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveSegmentedButtons
+import com.programmersbox.scrcpyviewer.ui.common.ControlSize
+import com.programmersbox.scrcpyviewer.ui.common.SegmentOption
 import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.Switch
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
+import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
 
+/** System, Light and Dark as segments, or one menu button when the row is too narrow ([size]). */
 @Composable
-internal fun ThemeControl(b: SettingsBindings) {
+internal fun ThemeControl(b: SettingsBindings, size: ControlSize = ControlSize.Full) {
     val origin = LocalThemeRevealOrigin.current
-    SingleChoiceSegmentedButtonRow {
-        ThemeMode.entries.forEachIndexed { i, mode ->
-            val source = rememberRevealSource()
-            SegmentedButton(
-                selected = b.state.settings.themeMode == mode,
-                onClick = {
-                    source.mark(origin)
-                    b.actions.onTheme(mode)
-                },
-                shape = styledSegmentShape(i, ThemeMode.entries.size),
-                modifier = source.modifier,
-            ) { Text(mode.name) }
-        }
-    }
+    // The reveal starts at the clicked segment, or at the menu button.
+    val sources = remember { ThemeMode.entries.associateWith { RevealSource() } }
+    val menuSource = rememberRevealSource()
+    fun source(mode: ThemeMode) = if (size == ControlSize.Menu) menuSource else sources.getValue(mode)
+    AdaptiveSegmentedButtons(
+        options = remember { ThemeMode.entries.map { SegmentOption(it, it.name) } },
+        selected = b.state.settings.themeMode,
+        onSelect = { mode ->
+            source(mode).mark(origin)
+            b.actions.onTheme(mode)
+        },
+        size = size,
+        segmentModifier = { source(it).modifier },
+    )
 }
 
+/** The folder field keeps 160 dp beside the button, else the button goes under it at full width. */
 @Composable
 internal fun CaptureDirControl(b: SettingsBindings) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedTextField(
-            value = b.state.settings.captureDir, onValueChange = {}, readOnly = true, singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
-        OutlinedButton(onClick = b.actions.onBrowseCaptureDir) { Text("Choose…") }
-    }
+    AdaptiveRow(
+        text = {
+            OutlinedTextField(
+                value = b.state.settings.captureDir, onValueChange = {}, readOnly = true, singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        control = { OutlinedButton(onClick = b.actions.onBrowseCaptureDir) { Text("Choose…", maxLines = 1) } },
+        textMin = 160.dp, gap = 12.dp, fillControlWhenStacked = true,
+    )
 }
 
+/** The choices as segments, or one menu button when the row is too narrow ([size]). */
 @Composable
-internal fun AfterScreenshotControl(b: SettingsBindings) {
-    val current = b.state.settings.afterShot
-    SingleChoiceSegmentedButtonRow {
-        AfterScreenshot.entries.forEachIndexed { i, choice ->
-            SegmentedButton(
-                selected = current == choice,
-                onClick = { b.actions.onAfterScreenshot(choice) },
-                shape = styledSegmentShape(i, AfterScreenshot.entries.size),
-            ) {
-                // The row sizes its segments by their min intrinsic width: make that the whole label, not its
-                // longest word, so "Show thumbnail" is not cut.
-                Text(choice.label, Modifier.width(IntrinsicSize.Max), maxLines = 1, softWrap = false)
-            }
-        }
-    }
+internal fun AfterScreenshotControl(b: SettingsBindings, size: ControlSize = ControlSize.Full) {
+    AdaptiveSegmentedButtons(
+        options = remember { AfterScreenshot.entries.map { SegmentOption(it, it.label) } },
+        selected = b.state.settings.afterShot,
+        onSelect = b.actions.onAfterScreenshot,
+        size = size,
+        // So "Show thumbnail" is not cut to its longest word.
+        wholeLabels = true,
+    )
 }
 
 @Composable
@@ -108,23 +113,31 @@ internal fun AdbPicker(b: SettingsBindings) {
                 Text("Custom path", Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp))
             }
         }
-        Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(
-                value = draft, onValueChange = { draft = it }, singleLine = true,
-                placeholder = { Text("/path/to/adb") },
-                isError = state.adbPathError != null,
-                supportingText = {
-                    val error = state.adbPathError
-                    when {
-                        error != null -> Text(error)
-                        override != null -> Text("Version ${state.customAdbVersion ?: "…"}")
-                    }
-                },
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedButton(onClick = b.actions.onBrowseAdb, modifier = Modifier.padding(top = 8.dp)) { Text("Browse…") }
-            OutlinedButton(onClick = { b.actions.onUseCustomAdb(draft) }, modifier = Modifier.padding(top = 8.dp)) { Text("Use") }
-        }
+        // The path keeps 160 dp beside the buttons, else they go under it.
+        AdaptiveRow(
+            text = {
+                OutlinedTextField(
+                    value = draft, onValueChange = { draft = it }, singleLine = true,
+                    placeholder = { Text("/path/to/adb") },
+                    isError = state.adbPathError != null,
+                    supportingText = {
+                        val error = state.adbPathError
+                        when {
+                            error != null -> Text(error)
+                            override != null -> Text("Version ${state.customAdbVersion ?: "…"}")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            control = {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = b.actions.onBrowseAdb, modifier = Modifier.padding(top = 8.dp)) { Text("Browse…", maxLines = 1) }
+                    OutlinedButton(onClick = { b.actions.onUseCustomAdb(draft) }, modifier = Modifier.padding(top = 8.dp)) { Text("Use", maxLines = 1) }
+                }
+            },
+            textMin = 160.dp, gap = 12.dp, fillControlWhenStacked = true, verticalAlignment = Alignment.Top,
+        )
     }
 }
 
@@ -133,8 +146,9 @@ internal fun DefaultPresetControl(b: SettingsBindings) {
     var open by remember { mutableStateOf(false) }
     val label = b.state.presets.firstOrNull { it.id == b.state.defaultPresetId }?.name ?: "None"
     Column {
+        // 220 dp, or the row's width when that is less (width() gives way to tighter constraints).
         OutlinedButton(onClick = { open = true }, modifier = Modifier.width(220.dp)) {
-            Text(label, Modifier.weight(1f))
+            Text(label, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {

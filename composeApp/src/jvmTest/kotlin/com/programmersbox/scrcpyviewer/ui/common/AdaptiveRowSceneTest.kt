@@ -138,6 +138,22 @@ class AdaptiveRowSceneTest {
     }
 
     @Test
+    fun `a resize that keeps the fit follows at once`() = onEdt {
+        val probe = Probe()
+        var width by mutableIntStateOf(600)
+        withScene(600, resizable(probe, reduceMotion = false) { width }) { scene ->
+            scene.frames(30)
+            // A window drag: the control stays inline and lands at the row's end on the frame of each step.
+            for (w in listOf(590, 580, 570)) {
+                width = w
+                scene.frame()
+                assertEquals((w - 300).toFloat(), probe.controlOffset.x, "control at the end at $w")
+                assertEquals(w - 300 - 16, probe.textWidth, "text width at $w")
+            }
+        }
+    }
+
+    @Test
     fun `row height springs, or changes at once under reduced motion`() = onEdt {
         for (reduceMotion in listOf(false, true)) {
             val probe = Probe()

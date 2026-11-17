@@ -11,6 +11,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -65,7 +67,9 @@ private const val CrossFadeMillis = 150
  *
  * [AdaptiveRow] also composes it in hidden probe slots, so it has no effects; the menu's open flag is its only state.
  * [fillWidth] stretches the control (segments stay equal), capped by [maxWidth]. [segmentMinWidth] keeps each segment
- * at least that wide in the segmented forms.
+ * at least that wide in the segmented forms. [wholeLabels] sizes each segment by its whole label rather than its
+ * longest word, so a two-word label is never cut. [segmentModifier] goes on each option's segment, and on the menu button
+ * for the selected option.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -78,6 +82,8 @@ fun <T> AdaptiveSegmentedButtons(
     fillWidth: Boolean = false,
     maxWidth: Dp = Dp.Unspecified,
     segmentMinWidth: Dp = Dp.Unspecified,
+    wholeLabels: Boolean = false,
+    segmentModifier: (T) -> Modifier = { Modifier },
 ) {
     val reduceMotion = LocalReduceMotion.current
     val effective = if (size == ControlSize.Icons && options.none { it.icon != null }) ControlSize.Full else size
@@ -95,9 +101,9 @@ fun <T> AdaptiveSegmentedButtons(
         label = "AdaptiveSegmented",
     ) { menu ->
         if (menu) {
-            MenuForm(options, selected, onSelect, fillWidth)
+            MenuForm(options, selected, onSelect, fillWidth, segmentModifier)
         } else {
-            SegmentedForm(options, selected, onSelect, effective == ControlSize.Icons, reduceMotion, fillWidth, segmentMinWidth)
+            SegmentedForm(options, selected, onSelect, effective == ControlSize.Icons, reduceMotion, fillWidth, segmentMinWidth, wholeLabels, segmentModifier)
         }
     }
 }
@@ -112,6 +118,8 @@ private fun <T> SegmentedForm(
     reduceMotion: Boolean,
     fillWidth: Boolean,
     segmentMinWidth: Dp,
+    wholeLabels: Boolean,
+    segmentModifier: (T) -> Modifier,
 ) {
     SingleChoiceSegmentedButtonRow(if (fillWidth) Modifier.fillMaxWidth() else Modifier) {
         options.forEachIndexed { index, option ->
@@ -124,7 +132,7 @@ private fun <T> SegmentedForm(
                     selected = isSelected,
                     onClick = { onSelect(option.value) },
                     shape = styledSegmentShape(index, options.size),
-                    modifier = Modifier.fillMaxWidth().widthIn(min = segmentMinWidth),
+                    modifier = Modifier.fillMaxWidth().widthIn(min = segmentMinWidth).then(segmentModifier(option.value)),
                     icon = {
                         val vector = option.icon
                         if (vector == null) {
@@ -141,7 +149,7 @@ private fun <T> SegmentedForm(
                     },
                     label = {
                         ShrinkingLabel(visible = !labelsHidden, reduceMotion = reduceMotion) {
-                            Text(option.label, maxLines = 1)
+                            Text(option.label, if (wholeLabels) Modifier.width(IntrinsicSize.Max) else Modifier, maxLines = 1, softWrap = !wholeLabels)
                         }
                     },
                 )
@@ -204,13 +212,14 @@ private fun <T> MenuForm(
     selected: T,
     onSelect: (T) -> Unit,
     fillWidth: Boolean,
+    segmentModifier: (T) -> Modifier,
 ) {
     var open by remember { mutableStateOf(false) }
     val current = options.firstOrNull { it.value == selected } ?: options.firstOrNull()
     Box(if (fillWidth) Modifier.fillMaxWidth() else Modifier) {
         OutlinedButton(
             onClick = { open = true },
-            modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier,
+            modifier = (if (fillWidth) Modifier.fillMaxWidth() else Modifier).then(current?.let { segmentModifier(it.value) } ?: Modifier),
             contentPadding = PaddingValues(start = 12.dp, end = 4.dp),
         ) {
             current?.icon?.let {

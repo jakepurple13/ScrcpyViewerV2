@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.LookaheadScope
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.state.appTheme
 import com.programmersbox.scrcpyviewer.ui.theme.LocalStyleTokens
@@ -68,61 +70,69 @@ internal fun StyleControl(b: SettingsBindings) {
     val theme = b.state.settings.appTheme
     val origin = LocalThemeRevealOrigin.current
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        FlowRow(
-            Modifier.selectableGroup(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            ThemeStyle.entries.forEach { style ->
-                val source = rememberRevealSource()
-                StyleTile(
-                    style = style,
-                    selected = theme.style == style,
-                    onClick = {
-                        source.mark(origin)
-                        b.actions.onStyle(style)
-                    },
-                    preview = { ScrcpyViewerTheme(theme.copy(style = style)) { StylePreview() } },
-                    modifier = source.modifier,
-                )
+        // Tiles glide to their new row when they wrap.
+        LookaheadScope {
+            FlowRow(
+                Modifier.selectableGroup(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                ThemeStyle.entries.forEach { style ->
+                    val source = rememberRevealSource()
+                    StyleTile(
+                        style = style,
+                        selected = theme.style == style,
+                        onClick = {
+                            source.mark(origin)
+                            b.actions.onStyle(style)
+                        },
+                        preview = { ScrcpyViewerTheme(theme.copy(style = style)) { StylePreview() } },
+                        modifier = Modifier.glideOnWrap(this@LookaheadScope).then(source.modifier),
+                    )
+                }
             }
         }
         AnimatedVisibility(theme.style == ThemeStyle.Retro, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Retro colors", style = MaterialTheme.typography.bodyMedium)
-                SingleChoiceSegmentedButtonRow {
-                    listOf(false to "Classic", true to "My palette").forEachIndexed { i, (value, label) ->
-                        val source = rememberRevealSource()
-                        SegmentedButton(
-                            selected = theme.retroPalette == value,
-                            onClick = {
-                                source.mark(origin)
-                                b.actions.onRetroPalette(value)
-                            },
-                            shape = styledSegmentShape(i, 2),
-                            modifier = source.modifier,
-                        ) { Text(label) }
+            // The segments go under the label when the label would get less than 160 dp.
+            AdaptiveRow(
+                text = { Text("Retro colors", style = MaterialTheme.typography.bodyMedium) },
+                packInline = true,
+                control = {
+                    SingleChoiceSegmentedButtonRow {
+                        listOf(false to "Classic", true to "My palette").forEachIndexed { i, (value, label) ->
+                            val source = rememberRevealSource()
+                            SegmentedButton(
+                                selected = theme.retroPalette == value,
+                                onClick = {
+                                    source.mark(origin)
+                                    b.actions.onRetroPalette(value)
+                                },
+                                shape = styledSegmentShape(i, 2),
+                                modifier = source.modifier,
+                            ) { Text(label, maxLines = 1) }
+                        }
                     }
-                }
-            }
+                },
+            )
         }
         AnimatedVisibility(theme.style == ThemeStyle.Glass, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 GlassOpacitySlider(theme.glassOpacity, b.actions.onGlassOpacity)
                 if (Os.isMac) {
-                    Row(
-                        Modifier.fillMaxWidth().toggleable(theme.desktopBlur, role = Role.Switch, onValueChange = b.actions.onDesktopBlur),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Blur the desktop behind windows", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "Off shows a color wallpaper drawn from your palette instead.",
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(checked = theme.desktopBlur, onCheckedChange = null)
-                    }
+                    AdaptiveRow(
+                        text = {
+                            Column {
+                                Text("Blur the desktop behind windows", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "Off shows a color wallpaper drawn from your palette instead.",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
+                        control = { Switch(checked = theme.desktopBlur, onCheckedChange = null) },
+                        modifier = Modifier.fillMaxWidth().toggleable(theme.desktopBlur, role = Role.Switch, onValueChange = b.actions.onDesktopBlur),
+                        gap = 0.dp,
+                    )
                 }
             }
         }
@@ -216,19 +226,25 @@ private fun StylePreview() {
 private fun GlassOpacitySlider(value: Float, onCommit: (Float) -> Unit) {
     var draft by remember(value) { mutableFloatStateOf(value) }
     Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Pane opacity", style = MaterialTheme.typography.bodyMedium)
+        AdaptiveRow(
+            text = {
+                Column {
+                    Text("Pane opacity", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Lower shows more of what's behind the window.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            control = {
                 Text(
-                    "Lower shows more of what's behind the window.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "${(draft * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"),
+                    maxLines = 1,
                 )
-            }
-            Text(
-                "${(draft * 100).roundToInt()}%",
-                style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"),
-            )
-        }
+            },
+            gap = 0.dp,
+        )
         Slider(
             value = draft,
             onValueChange = { draft = it },

@@ -1,5 +1,8 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CastConnected
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -16,7 +19,8 @@ import kotlin.test.assertEquals
 class SettingsTransitionTest {
     private val live = mutableListOf<String>()
 
-    private fun entry(id: String, title: String) = SettingEntry(id, title, content = {
+    // In the text slot: an Inline row also composes its control in hidden probes.
+    private fun entry(id: String, title: String) = SettingEntry(id, title, notes = {
         DisposableEffect(Unit) {
             live += id
             onDispose { live -= id }
@@ -24,8 +28,8 @@ class SettingsTransitionTest {
     })
 
     private val categories = listOf(
-        SettingsCategory(SettingsCategoryId.Appearance, "Appearance", listOf(entry("theme", "Theme"), entry("bar", "Title bar"))),
-        SettingsCategory(SettingsCategoryId.Mirroring, "Mirroring", listOf(entry("folder", "Folder"))),
+        SettingsCategory(SettingsCategoryId.Appearance, "Appearance", Icons.Outlined.Palette, listOf(entry("theme", "Theme"), entry("bar", "Title bar"))),
+        SettingsCategory(SettingsCategoryId.Mirroring, "Mirroring", Icons.Outlined.CastConnected, listOf(entry("folder", "Folder"))),
     )
 
     private fun scene(block: (SceneDriver, (SettingsNav) -> Unit) -> Unit) = onEdt {
