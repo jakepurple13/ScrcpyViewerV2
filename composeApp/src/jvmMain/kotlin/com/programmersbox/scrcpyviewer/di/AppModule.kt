@@ -100,7 +100,8 @@ class StorageModule {
     fun appSettings(dataDir: DataDir): AppSettings = AppSettings(dataDir.path.resolve("settings.json"))
 
     @Singleton
-    fun presetStore(dataDir: DataDir, scope: AppScope): PresetStore = PresetStore(dataDir.path.resolve("presets.json"), scope)
+    fun presetStore(dataDir: DataDir, scope: AppScope, telemetry: Telemetry): PresetStore =
+        PresetStore(dataDir.path.resolve("presets.json"), scope, telemetry)
 
     @Singleton
     fun actionStore(dataDir: DataDir): ActionStore = ActionStore(dataDir.path.resolve("actions.json"))
@@ -234,33 +235,36 @@ class MirrorModule {
         clipboard: PcClipboard,
         following: Lazy<InputFollowing>,
         telemetry: Telemetry,
-    ): MirrorController = MirrorController(
-        scope = scope,
-        devices = tracker.devices,
-        optionsFor = { serial ->
-            val key = tracker.devices.value.firstOrNull { it.serial == serial }?.optionsKey() ?: serial
-            deviceOptions.workingSet(key).value.values
-        },
-        newSession = { serial, values ->
-            ScrcpySession(
-                serial, values, serverLauncher,
-                decoderFactory = { meta, session ->
-                    // video-buffer delays what is shown, not what is recorded (the recorder is another sink).
-                    // A failure on the buffer's thread fails the session too (see ScrcpySession.videoPlaybackFailed).
-                    DelayedVideoSink.forOptions(
-                        VideoDecoder(meta.codecId, session::publishFrame, session::publishFps), values, session::videoPlaybackFailed,
-                    )
-                },
-                audioFactory = { codecId, _ -> AudioPlayer.forOptions(codecId, values) },
-                scope = scope,
-                captureDir = { Paths.get(settings.settings.value.captureDir) },
-                telemetry = telemetry,
-            )
-        },
-        setClipboard = clipboard::setText,
-        // Lazy: InputFollowing is built on this controller's open sessions.
-        clipboardMuted = { following.value.roleOf(it) is FollowRole.Follower },
-    )
+    ): MirrorController {
+        fun optionsKey(serial: String) = tracker.devices.value.firstOrNull { it.serial == serial }?.optionsKey() ?: serial
+        return MirrorController(
+            scope = scope,
+            devices = tracker.devices,
+            optionsFor = { serial -> deviceOptions.workingSet(optionsKey(serial)).value.values },
+            newSession = { serial, values ->
+                ScrcpySession(
+                    serial, values, serverLauncher,
+                    decoderFactory = { meta, session ->
+                        // video-buffer delays what is shown, not what is recorded (the recorder is another sink).
+                        // A failure on the buffer's thread fails the session too (see ScrcpySession.videoPlaybackFailed).
+                        DelayedVideoSink.forOptions(
+                            VideoDecoder(meta.codecId, session::publishFrame, session::publishFps), values, session::videoPlaybackFailed,
+                        )
+                    },
+                    audioFactory = { codecId, _ -> AudioPlayer.forOptions(codecId, values) },
+                    scope = scope,
+                    captureDir = { Paths.get(settings.settings.value.captureDir) },
+                    telemetry = telemetry,
+                )
+            },
+            setClipboard = clipboard::setText,
+            // Lazy: InputFollowing is built on this controller's open sessions.
+            clipboardMuted = { following.value.roleOf(it) is FollowRole.Follower },
+            telemetry = telemetry,
+            usesPreset = { serial -> deviceOptions.effectiveBasePresetId(optionsKey(serial)) != null },
+            advancedOptions = { settings.settings.value.advancedDeviceOptions },
+        )
+    }
 
     /** The open mirror windows (handles and layout info) for Arrange mirror windows; each window registers itself. */
     @Singleton
@@ -268,18 +272,24 @@ class MirrorModule {
 
     /** Arrange mirror windows: moves the registered windows into a layout, and keeps them tiled. */
     @Singleton
-    fun windowArranger(windows: MirrorWindows, screens: ScreenGeometry, settings: AppSettings, scope: AppScope): WindowArranger =
-        WindowArranger(
-            windows = windows,
-            screens = screens,
-            animateWindows = { settings.settings.value.animateMirrorWindows },
-            scope = scope,
-        )
+    fun windowArranger(
+        windows: MirrorWindows,
+        screens: ScreenGeometry,
+        settings: AppSettings,
+        scope: AppScope,
+        telemetry: Telemetry,
+    ): WindowArranger = WindowArranger(
+        windows = windows,
+        screens = screens,
+        animateWindows = { settings.settings.value.animateMirrorWindows },
+        scope = scope,
+        telemetry = telemetry,
+    )
 
     /** The app-wide follow link between mirror windows; pruned as mirrors close. */
     @Singleton
-    fun inputFollowing(mirrors: MirrorController, scope: AppScope): InputFollowing =
-        InputFollowing(mirrors.open, scope)
+    fun inputFollowing(mirrors: MirrorController, scope: AppScope, telemetry: Telemetry): InputFollowing =
+        InputFollowing(mirrors.open, scope, telemetry)
 }
 
 /** App updates, through Nucleus' updater ([UpdateBackend]). */

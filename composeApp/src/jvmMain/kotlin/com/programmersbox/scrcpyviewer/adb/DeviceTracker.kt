@@ -2,7 +2,7 @@ package com.programmersbox.scrcpyviewer.adb
 
 import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
-import com.programmersbox.scrcpyviewer.ui.devices.isEmulatorSerial
+import com.programmersbox.scrcpyviewer.telemetry.connectionOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -152,11 +152,7 @@ class DeviceTracker(
             // A version without a leading number (a preview's codename) is rare: no event rather than a made-up one.
             val major = info.androidVersion.substringBefore('.').toIntOrNull() ?: return
             TelemetryEvent.DeviceConnected(
-                connection = when {
-                    isEmulatorSerial(device.serial) -> "emulator"
-                    device.isTcp -> "wifi"
-                    else -> "usb"
-                },
+                connection = connectionOf(device.serial, device.isTcp),
                 androidMajor = major,
                 devicesConnected = raw.count { it.state == DeviceState.Device },
             )

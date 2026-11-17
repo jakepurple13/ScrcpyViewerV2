@@ -8,6 +8,8 @@ import com.programmersbox.scrcpyviewer.media.RecordingGoneException
 import com.programmersbox.scrcpyviewer.media.RecordingInfo
 import com.programmersbox.scrcpyviewer.media.RecordingProbe
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.ui.mirror.recordResultMessage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -391,6 +393,8 @@ internal suspend fun finishScreenshot(
     ticket: Long = thumbnail.begin(),
     canOpenEditor: () -> Boolean = { false },
     openEditor: (Shot) -> Unit = {},
+    /** Gets `screenshot_taken` once the file is saved, with what followed: thumbnail, copy or markup. */
+    telemetry: Telemetry = Telemetry.Noop,
 ) {
     var kept = false
     try {
@@ -400,17 +404,22 @@ internal suspend fun finishScreenshot(
                 // show() / keep() take it, or close it when a later screenshot is already on show.
                 kept = true
                 if (mode == AfterScreenshot.OpenEditor && canOpenEditor()) {
+                    telemetry.track(TelemetryEvent.ScreenshotTaken("markup"))
                     thumbnail.keep(file, bitmap, ticket)?.let(openEditor)
                 } else {
+                    telemetry.track(TelemetryEvent.ScreenshotTaken("thumbnail"))
                     thumbnail.show(file, bitmap, ticket)
                 }
             }
-            AfterScreenshot.Copy -> notify(
-                copy(file).fold(
-                    onSuccess = { "Screenshot saved and copied" },
-                    onFailure = { "Saved, but could not copy the image: ${it.message ?: it}" },
-                ),
-            )
+            AfterScreenshot.Copy -> {
+                telemetry.track(TelemetryEvent.ScreenshotTaken("copy"))
+                notify(
+                    copy(file).fold(
+                        onSuccess = { "Screenshot saved and copied" },
+                        onFailure = { "Saved, but could not copy the image: ${it.message ?: it}" },
+                    ),
+                )
+            }
         }
     } catch (e: CancellationException) {
         throw e

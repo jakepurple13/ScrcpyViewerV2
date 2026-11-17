@@ -15,6 +15,9 @@ import com.programmersbox.scrcpyviewer.adb.ShellEvent
 import com.programmersbox.scrcpyviewer.adb.ShellResult
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
 import com.programmersbox.scrcpyviewer.adb.ShellTimeoutException
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -116,10 +119,12 @@ class QuickActionsCustomTest {
         managed: MutableList<Pair<String?, Boolean>> = mutableListOf(),
         readTimeoutMs: Long = 30_000,
         followers: List<FollowRunner> = emptyList(),
+        telemetry: Telemetry = Telemetry.Noop,
     ): QuickActions {
         val qa = QuickActions(
             DeviceQuickActions(adb, "SER", readTimeoutMs), eager, serial = "SER", store = store, runner = runner, console = console,
             memory = memory, onManage = { id, new -> managed += id to new }, title = { "Galaxy A15" }, followers = { followers },
+            telemetry = telemetry,
         ) { messages += it }
         eager.launch { qa.watchActions() }
         return qa
@@ -633,6 +638,40 @@ class QuickActionsCustomTest {
         assertEquals(
             "Ran on 1 of 4 devices · Pixel 9 failed: device offline and 2 more",
             followResult(4, listOf("Pixel 9" to "device offline", "A" to "x", "B" to "y")),
+        )
+    }
+
+    @Test
+    fun `quick action runs send the built-in name or custom, never the action itself`() {
+        store.upsert(stayAwake)
+        store.upsert(RunOnceAction(id = "secret-id", name = "Secret name", command = "echo secret"))
+        val telemetry = FakeTelemetry()
+        val qa = quickActions(ShellAdb { "__scrcpyviewer_exit=0\n" }, telemetry = telemetry)
+
+        qa.onEvent(QuickActionEvent.Toggle(QuickToggle.WiFi, true))
+        qa.onEvent(QuickActionEvent.DeveloperOptions)
+        qa.onEvent(QuickActionEvent.CustomToggle("stay", true))
+        qa.onEvent(QuickActionEvent.RunCustom("secret-id"))
+        qa.onEvent(QuickActionEvent.Reboot)
+
+        assertEquals(
+            listOf("WiFi", "developer_options", "custom", "custom", "reboot"),
+            telemetry.events.filterIsInstance<TelemetryEvent.QuickActionRun>().map { it.action },
+        )
+        val sent = telemetry.events.flatMap { it.props().values }.joinToString()
+        assertTrue("secret" !in sent && "stay" !in sent, sent)
+    }
+
+    @Test
+    fun `switching sheet tabs sends the tab once per switch`() {
+        val telemetry = FakeTelemetry()
+        val qa = quickActions(telemetry = telemetry)
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Shell))
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Shell))
+        qa.onEvent(QuickActionEvent.SelectTab(SheetTab.Files))
+        assertEquals(
+            listOf("shell", "files"),
+            telemetry.events.filterIsInstance<TelemetryEvent.SheetTabOpened>().map { it.tab },
         )
     }
 }

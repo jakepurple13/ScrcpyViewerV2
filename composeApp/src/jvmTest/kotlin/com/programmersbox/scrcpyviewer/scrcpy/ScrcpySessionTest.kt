@@ -4,6 +4,7 @@ import androidx.compose.ui.unit.IntSize
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
 import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -503,5 +504,96 @@ class ScrcpySessionTest {
         withTimeout(5_000) { s.close() }
         assertEquals(SessionStatus.Disconnected, s.status.value)
         assertEquals(0, launcher.cleanups)
+    }
+
+    private fun FakeTelemetry.mirrorEvents() = events.filter {
+        it is TelemetryEvent.MirrorEnded || it is TelemetryEvent.MirrorFailed || it is TelemetryEvent.RecordingStopped
+    }
+
+    @Test
+    fun `closing sends mirror_ended once as closed`() = runBlocking {
+        val telemetry = FakeTelemetry()
+        val s = session(LocalPairLauncher(), telemetry = telemetry)
+        s.await(SessionStatus.Running)
+        s.close()
+        s.close()
+        assertEquals(listOf<TelemetryEvent>(TelemetryEvent.MirrorEnded(0, "closed")), telemetry.mirrorEvents())
+    }
+
+    @Test
+    fun `the device going away sends mirror_ended as disconnected, and closing after it sends nothing more`() = runBlocking {
+        val telemetry = FakeTelemetry()
+        val launcher = LocalPairLauncher()
+        val s = session(launcher, telemetry = telemetry)
+        s.await(SessionStatus.Running)
+        launcher.device.await().video!!.close()
+        s.await(SessionStatus.Disconnected)
+        s.close()
+        assertEquals(listOf<TelemetryEvent>(TelemetryEvent.MirrorEnded(0, "disconnected")), telemetry.mirrorEvents())
+    }
+
+    @Test
+    fun `a launch failure sends its stage and class, never its message`() = runBlocking {
+        val telemetry = FakeTelemetry()
+        val e = MirrorStageException(MirrorStage.Push, "adb push failed", null, detail = ": device 'SER' not found")
+        val s = session(ConnectionStarter { _, _ -> throw e }, telemetry = telemetry)
+        s.await(SessionStatus.Failed)
+        // The window still shows the whole text.
+        assertEquals("adb push failed: device 'SER' not found", s.error.value)
+        s.close()
+        assertEquals(
+            listOf<TelemetryEvent>(
+                TelemetryEvent.MirrorFailed("push", "MirrorStageException"),
+                TelemetryEvent.MirrorEnded(0, "error"),
+            ),
+            telemetry.mirrorEvents(),
+        )
+    }
+
+    @Test
+    fun `a launch failure of another type counts as the server stage`() = runBlocking {
+        val telemetry = FakeTelemetry()
+        val s = session(ConnectionStarter { _, _ -> throw java.io.IOException("Video, audio and control are all disabled") }, telemetry = telemetry)
+        s.await(SessionStatus.Failed)
+        assertEquals(TelemetryEvent.MirrorFailed("server", "IOException"), telemetry.mirrorEvents().first())
+        s.close()
+    }
+
+    @Test
+    fun `a decoder failure sends mirror_failed at the decode stage`() = runBlocking {
+        val launcher = LocalPairLauncher()
+        val telemetry = FakeTelemetry()
+        val s = session(launcher, sink = RecordingVideoSink(throwOnPacket = true), telemetry = telemetry)
+        s.await(SessionStatus.Running)
+        val out = DataOutputStream(launcher.device.await().video!!.getOutputStream())
+        out.writeInt(StreamProtocol.CODEC_H264)
+        out.writeSession(100, 200)
+        out.writePacket(1, byteArrayOf(9))
+        withTimeout(5_000) { s.status.first { it == SessionStatus.Failed } }
+        s.close()
+        assertEquals(
+            listOf<TelemetryEvent>(
+                TelemetryEvent.MirrorFailed("decode", "IllegalStateException"),
+                TelemetryEvent.MirrorEnded(0, "error"),
+            ),
+            telemetry.mirrorEvents(),
+        )
+    }
+
+    @Test
+    fun `stopping a recording sends its length`() = runBlocking {
+        val telemetry = FakeTelemetry()
+        val dir = java.nio.file.Files.createTempDirectory("session-record")
+        try {
+            val s = session(LocalPairLauncher(), telemetry = telemetry)
+            s.await(SessionStatus.Running)
+            s.startRecording(dir.resolve("r.mkv"))
+            s.stopRecording()
+            s.stopRecording() // nothing running: nothing sent
+            s.close()
+            assertEquals(1, telemetry.events.count { it == TelemetryEvent.RecordingStopped(0) })
+        } finally {
+            dir.toFile().deleteRecursively()
+        }
     }
 }

@@ -3,6 +3,9 @@ package com.programmersbox.scrcpyviewer.files
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.options.OptionValues
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -146,8 +149,15 @@ class FileTransferTest {
         tmp.toFile().deleteRecursively()
     }
 
-    private fun queue(adb: AdbClient, connected: () -> Boolean = { true }, target: String = DEFAULT_PUSH_TARGET, timeoutMs: Long = 5_000) =
-        FileTransferQueue("SER", adb, target, connected, { scans += it }, scope, timeoutMs, tempRoot = tmp.resolve("scrcpy-vwr"))
+    private fun queue(
+        adb: AdbClient,
+        connected: () -> Boolean = { true },
+        target: String = DEFAULT_PUSH_TARGET,
+        timeoutMs: Long = 5_000,
+        telemetry: Telemetry = Telemetry.Noop,
+    ) = FileTransferQueue(
+        "SER", adb, target, connected, { scans += it }, scope, timeoutMs, tempRoot = tmp.resolve("scrcpy-vwr"), telemetry = telemetry,
+    )
 
     private val noDirs: (java.nio.file.Path) -> Boolean = { false }
 
@@ -974,5 +984,36 @@ class FileTransferTest {
         val result = async(start = CoroutineStart.UNDISPATCHED) { q.results.first() }
         q.enqueue(listOf(TransferRequest(Paths.get("/x/b.jpg"), TransferKind.Push, deviceDir = "/system")))
         assertEquals("Could not push b.jpg: remote secure_mkdirs failed: Operation not permitted", withTimeout(5_000) { result.await() }.message)
+    }
+
+    @Test
+    fun `each transfer sends its direction, size and outcome, never its name`() = runBlocking<Unit> {
+        val telemetry = FakeTelemetry()
+        val file = java.nio.file.Files.write(tmp.resolve("holiday photo.jpg"), ByteArray(2048))
+        val dir = java.nio.file.Files.createDirectories(tmp.resolve("d"))
+        val adb = FakeAdb { args ->
+            when {
+                args[2] == "pull" && "stuck.bin" in args[3] -> awaitCancellation()
+                args[2] == "pull" -> ProcessResult(1, "", "adb: error: remote object does not exist\n")
+                else -> ProcessResult(0, "", "")
+            }
+        }
+        val q = queue(adb, telemetry = telemetry)
+        q.enqueue(listOf(TransferRequest(file, TransferKind.Push), TransferRequest(Paths.get("/x/a.apk"), TransferKind.Install)))
+        val failed = q.enqueue(listOf(pull(dir, "gone.bin", size = 100))).single()
+        q.awaitJob(failed) { it.state is JobState.Failed }
+        val stuck = q.enqueue(listOf(pull(dir, "stuck.bin", size = 5_000))).single()
+        q.awaitJob(stuck) { it.state == JobState.Running }
+        q.cancel(stuck)
+        withTimeout(5_000) { while (telemetry.events.size < 4) kotlinx.coroutines.delay(10) }
+        assertEquals(
+            listOf<TelemetryEvent>(
+                TelemetryEvent.FileTransfer("push", 2048, "done"),
+                TelemetryEvent.FileTransfer("push", 0, "done"),
+                TelemetryEvent.FileTransfer("pull", 100, "failed"),
+                TelemetryEvent.FileTransfer("pull", 5_000, "cancelled"),
+            ),
+            telemetry.events.toList(),
+        )
     }
 }

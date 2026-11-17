@@ -8,6 +8,9 @@ import com.programmersbox.scrcpyviewer.media.RecordingGoneException
 import com.programmersbox.scrcpyviewer.media.RecordingInfo
 import com.programmersbox.scrcpyviewer.media.RecordingProbe
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -266,12 +269,13 @@ class ScreenshotThumbnailStateTest {
         b: ImageBitmap,
         save: suspend () -> Path = { file },
         copy: suspend (Path) -> Result<Unit> = { Result.success(Unit) },
+        telemetry: Telemetry = Telemetry.Noop,
     ): List<String> {
         val messages = mutableListOf<String>()
         scope.launch {
             finishScreenshot(
                 b, mode, state, save, copy, notify = { messages += it },
-                canOpenEditor = { editorFree }, openEditor = { opened += it },
+                canOpenEditor = { editorFree }, openEditor = { opened += it }, telemetry = telemetry,
             )
         }
         scheduler.runCurrent()
@@ -562,5 +566,20 @@ class ScreenshotThumbnailStateTest {
         finishRecording(RecordResult.Saved(recording), state, { RecordingProbe(info, first) }, {}, ticket)
         assertFalse(state.shown.value!!.isRecording)
         assertTrue(first.closed)
+    }
+
+    @Test
+    fun `a saved screenshot sends what followed it, a failed one nothing`() {
+        val telemetry = FakeTelemetry()
+        finish(AfterScreenshot.Thumbnail, bitmap(), telemetry = telemetry)
+        finish(AfterScreenshot.Copy, bitmap(), telemetry = telemetry)
+        finish(AfterScreenshot.OpenEditor, bitmap(), telemetry = telemetry)
+        editorFree = false
+        finish(AfterScreenshot.OpenEditor, bitmap(), telemetry = telemetry) // another edit is open: the thumbnail shows
+        finish(AfterScreenshot.Thumbnail, bitmap(), save = { throw IOException("disk full") }, telemetry = telemetry)
+        assertEquals(
+            listOf("thumbnail", "copy", "markup", "thumbnail"),
+            telemetry.events.map { (it as TelemetryEvent.ScreenshotTaken).after },
+        )
     }
 }

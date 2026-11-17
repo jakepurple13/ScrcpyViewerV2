@@ -4,6 +4,8 @@ import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.scrcpy.LocalPairLauncher
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -135,5 +137,19 @@ class InputFollowingTest {
         private var read = false
         override val value: Map<String, ScrcpySession>
             get() = backing.value.also { if (!read) { read = true; onFirstRead() } }
+    }
+
+    @Test
+    fun `input_broadcast_started is sent only when following starts`() {
+        val telemetry = FakeTelemetry()
+        val f = InputFollowing(open, scope, telemetry)
+        f.setFollowers("A", setOf("B"))
+        f.setFollowers("A", setOf("B", "C")) // more followers: still the same broadcast
+        f.setFollowers("A", emptySet())
+        f.setFollowers("B", setOf("A", "B", "C")) // the leader is never its own follower
+        assertEquals(
+            listOf<TelemetryEvent>(TelemetryEvent.InputBroadcastStarted(1), TelemetryEvent.InputBroadcastStarted(2)),
+            telemetry.events.toList(),
+        )
     }
 }

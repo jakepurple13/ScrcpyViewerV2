@@ -180,27 +180,45 @@ class SettingsViewModel(
     /** Held here, not in the screen, so the selected category survives rail tab switches. Not persisted. */
     val nav: StateFlow<SettingsNav> = navState
 
-    fun selectCategory(id: SettingsCategoryId) = navState.update { it.select(id) }
+    /** Sends `settings_opened` when [id] is not the category already shown. */
+    fun selectCategory(id: SettingsCategoryId) {
+        if (navState.value.selected != id) telemetry.track(TelemetryEvent.SettingsOpened(id.name))
+        navState.update { it.select(id) }
+    }
 
     fun setQuery(query: String) = navState.update { it.withQuery(query) }
 
-    fun setTheme(mode: ThemeMode) = appSettings.update { it.copy(themeMode = mode) }
+    fun setTheme(mode: ThemeMode) = themeChange { it.copy(themeMode = mode) }
 
     /** A neon palette also turns the Neon switch on, which the user can turn off again. */
     fun setPalette(palette: ThemePalette) =
-        appSettings.update { it.copy(themePalette = palette.name, neon = it.neon || palette.neon) }
+        themeChange { it.copy(themePalette = palette.name, neon = it.neon || palette.neon) }
+
+    /** Applies [change], then sends `theme_changed` with the theme it left. */
+    private fun themeChange(change: (Settings) -> Settings) {
+        appSettings.update(change)
+        val s = appSettings.settings.value
+        telemetry.track(
+            TelemetryEvent.ThemeChanged(
+                style = ThemeStyle.fromName(s.themeStyle).name,
+                palette = ThemePalette.fromName(s.themePalette).name,
+                mode = s.themeMode.name,
+                neon = s.neon,
+            ),
+        )
+    }
 
     fun setPureBlack(value: Boolean) = appSettings.update { it.copy(pureBlack = value) }
 
     /** Called when a Custom slider is released, not on every drag step (each call writes the settings file). */
     fun setCustomPalette(custom: CustomPalette) = appSettings.update { it.copy(customPalette = custom) }
 
-    fun setNeon(value: Boolean) = appSettings.update { it.copy(neon = value) }
+    fun setNeon(value: Boolean) = themeChange { it.copy(neon = value) }
 
     /** Like [setCustomPalette], called on slider release. */
     fun setCustomNeon(custom: CustomNeon) = appSettings.update { it.copy(customNeon = custom) }
 
-    fun setStyle(style: ThemeStyle) = appSettings.update { it.copy(themeStyle = style.name) }
+    fun setStyle(style: ThemeStyle) = themeChange { it.copy(themeStyle = style.name) }
 
     fun setRetroPalette(value: Boolean) = appSettings.update { it.copy(retroPalette = value) }
 

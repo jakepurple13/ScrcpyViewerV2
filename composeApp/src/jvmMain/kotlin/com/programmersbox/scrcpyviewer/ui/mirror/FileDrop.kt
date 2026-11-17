@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.adb.AdbClient
 import com.programmersbox.scrcpyviewer.files.FileTransferQueue
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import com.programmersbox.scrcpyviewer.files.TransferProgress
@@ -228,7 +229,13 @@ internal suspend fun pickAndStart(transfers: () -> FileTransfers, pick: suspend 
  * the rest dropped) when the window closes or a Reconnect replaces the session. Results go to [notify].
  */
 @Composable
-fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient?, notify: (String) -> Unit): FileTransfers {
+fun rememberFileTransfers(
+    serial: String,
+    session: ScrcpySession,
+    adb: AdbClient?,
+    notify: (String) -> Unit,
+    telemetry: Telemetry = Telemetry.Noop,
+): FileTransfers {
     val currentNotify by rememberUpdatedState(notify)
     val scope = remember(session) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     DisposableEffect(scope) { onDispose { scope.cancel() } }
@@ -242,6 +249,7 @@ fun rememberFileTransfers(serial: String, session: ScrcpySession, adb: AdbClient
                 canTransfer = { session.status.value.isConnected() },
                 scanFile = { path -> session.send(ControlMessage.ScanFile(path)) },
                 scope = scope,
+                telemetry = telemetry,
             )
         }
         FileTransfers(queue, target, hintScope = uiScope, hintIo = Dispatchers.IO) { currentNotify(it) }

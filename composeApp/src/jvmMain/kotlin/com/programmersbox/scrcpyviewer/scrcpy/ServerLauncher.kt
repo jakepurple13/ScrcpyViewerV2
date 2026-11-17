@@ -158,8 +158,10 @@ class ServerLauncher(
     private suspend fun push(serial: String) {
         // Bounded: on a wedged link adb push never returns and the mirror would stay Connecting forever.
         val r = adb.execWithTimeout(pushTimeoutMs, "-s", serial, "push", tools.serverJar.toString(), DEVICE_SERVER_PATH)
-            ?: throw IOException("adb push timed out")
-        if (r.exitCode != 0) throw IOException("adb push failed: ${(r.stderr + r.stdout).trim()}")
+            ?: throw MirrorStageException(MirrorStage.Push, "adb push timed out", null)
+        if (r.exitCode != 0) {
+            throw MirrorStageException(MirrorStage.Push, "adb push failed", null, detail = ": ${(r.stderr + r.stdout).trim()}")
+        }
     }
 
     private fun portRange(option: String?): IntRange {
@@ -241,7 +243,7 @@ class ServerLauncher(
                 PortAllocator.release(p)
                 from = p + 1
             }
-            throw IOException("adb forward failed: $lastError")
+            throw MirrorStageException(MirrorStage.Server, "adb forward failed", null, detail = ": $lastError")
         }
 
         suspend fun closeTunnel() {
@@ -303,10 +305,11 @@ class ServerLauncher(
                 } catch (e: IOException) {
                     if (serverExited) {
                         val out = recentOutput()
-                        throw IOException(
-                            "Server exited (${runCatching { process.exitValue() }.getOrNull()})" +
-                                if (out.isNotBlank()) ":\n$out" else "",
+                        throw MirrorStageException(
+                            MirrorStage.Server,
+                            "Server exited (${runCatching { process.exitValue() }.getOrNull()})",
                             e,
+                            detail = if (out.isNotBlank()) ":\n$out" else "",
                         )
                     }
                     throw e
@@ -338,14 +341,14 @@ class ServerLauncher(
             return try {
                 runInterruptible { readDeviceMeta(DataInputStream(first.getInputStream())) }
             } catch (e: IOException) {
-                throw IOException("Could not retrieve device information", e)
+                throw MirrorStageException(MirrorStage.Server, "Could not retrieve device information", e)
             }
         }
 
         /** `connect_to_server`: the adb forward accepts even with no server behind it, so wait for the dummy byte. */
         private suspend fun connectAndReadByte(host: String, port: Int): Socket {
             repeat(connectAttempts) { attempt ->
-                if (serverExited) throw IOException("Server exited")
+                if (serverExited) throw MirrorStageException(MirrorStage.Server, "Server exited", null)
                 val s = Socket()
                 pending = s
                 val ok = try {
@@ -360,7 +363,9 @@ class ServerLauncher(
                 runCatching { s.close() }
                 if (attempt < connectAttempts - 1) delay(connectDelayMs)
             }
-            throw IOException("Could not connect to the server through adb forward on $host:$port")
+            throw MirrorStageException(
+                MirrorStage.Server, "Could not connect to the server through adb forward", null, detail = " on $host:$port",
+            )
         }
 
         suspend fun cleanup() {

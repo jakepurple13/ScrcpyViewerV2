@@ -3,6 +3,9 @@ package com.programmersbox.scrcpyviewer.ui.mirror.arrange
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindowHandle
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.ScreenGeometry
@@ -140,6 +143,7 @@ class WindowArrangerTest {
         hang: Set<String> = emptySet(),
         /** Serials whose move runs at a third of the speed (a slow frame clock), past the move's time limit. */
         slow: Set<String> = emptySet(),
+        telemetry: Telemetry = Telemetry.Noop,
     ): Rig {
         val windows = MirrorWindows().apply { mainWindowBounds = { Rectangle(100, 100, 800, 600) } }
         val animations = mutableListOf<String>()
@@ -168,6 +172,7 @@ class WindowArrangerTest {
                 }
             },
             nowMs = { testScheduler.currentTime },
+            telemetry = telemetry,
         )
         return Rig(windows, arranger, animations)
     }
@@ -642,6 +647,29 @@ class WindowArrangerTest {
         r.arranger.apply(ArrangeLayout.AsPlaced, focus = null)
         settle()
         assertEquals(startB, b.bounds)
+    }
+
+    @Test
+    fun applySendsWindowsArrangedButKeepTiledReappliesDoNot() = runTest {
+        val telemetry = FakeTelemetry()
+        val r = rig(telemetry = telemetry)
+        r.windows.register("a", entry("a", FakeHandle(Rectangle(10, 10, 300, 600))))
+        r.windows.register("b", entry("b", FakeHandle(Rectangle(20, 20, 300, 600))))
+        r.arranger.apply(ArrangeLayout.Grid, focus = null)
+        settle()
+        r.arranger.setKeepTiled(true) // applies the layout again, on its own
+        settle()
+        r.windows.register("c", entry("c", FakeHandle(Rectangle(30, 30, 300, 600)))) // and again
+        settle()
+        r.arranger.apply(ArrangeLayout.Focus, focus = "a")
+        settle()
+        assertEquals(
+            listOf<TelemetryEvent>(
+                TelemetryEvent.WindowsArranged("Grid", 2, keepTiled = false),
+                TelemetryEvent.WindowsArranged("Focus", 3, keepTiled = true),
+            ),
+            telemetry.events.toList(),
+        )
     }
 }
 

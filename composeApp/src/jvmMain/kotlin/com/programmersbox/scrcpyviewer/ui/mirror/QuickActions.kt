@@ -28,6 +28,8 @@ import com.programmersbox.scrcpyviewer.adb.ShellTimeoutException
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
 import com.programmersbox.scrcpyviewer.scrcpy.SessionStatus
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.logcat.LogcatSource
 import com.programmersbox.scrcpyviewer.links.LinkStore
 import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent
@@ -340,6 +342,8 @@ class QuickActions internal constructor(
     val logcat: LogcatController? = null,
     /** The Links tab; null without adb. */
     val links: LinksState? = null,
+    /** Gets `sheet_tab_opened` and `quick_action_run` (a built-in's name, or `custom`: never a custom action's own). */
+    private val telemetry: Telemetry = Telemetry.Noop,
     private val notify: (String) -> Unit,
 ) {
     var open by mutableStateOf(false)
@@ -482,8 +486,12 @@ class QuickActions internal constructor(
     fun onEvent(event: QuickActionEvent) {
         when (event) {
             is QuickActionEvent.Toggle -> set(event.toggle, event.on)
-            QuickActionEvent.DeveloperOptions -> launchAction("Could not open Developer options") { openDeveloperOptions() }
+            QuickActionEvent.DeveloperOptions -> {
+                ran("developer_options")
+                launchAction("Could not open Developer options") { openDeveloperOptions() }
+            }
             QuickActionEvent.Reboot -> {
+                ran("reboot")
                 close()
                 launchAction("Could not reboot") {
                     reboot()
@@ -491,7 +499,10 @@ class QuickActions internal constructor(
                 }
             }
             QuickActionEvent.Close -> close()
-            is QuickActionEvent.SelectTab -> select(event.tab)
+            is QuickActionEvent.SelectTab -> {
+                if (event.tab != tab) telemetry.track(TelemetryEvent.SheetTabOpened(event.tab.name.lowercase()))
+                select(event.tab)
+            }
             is QuickActionEvent.CustomToggle -> setCustom(event.id, event.on)
             is QuickActionEvent.RunCustom -> startRun(event.id, event.fromChip)
             is QuickActionEvent.PromptValues -> prompt?.takeIf { it.needsValues }?.let { p ->
@@ -521,6 +532,9 @@ class QuickActions internal constructor(
             }
         }
     }
+
+    /** `quick_action_run`: [action] is a built-in's name or `custom`, never anything of a custom action's own. */
+    private fun ran(action: String) = telemetry.track(TelemetryEvent.QuickActionRun(action))
 
     /** Store edits from the sheet; the action may already be gone (deleted in the main window), which is reported. */
     private fun editStore(failure: String, block: ActionStore.() -> Unit) {
@@ -570,6 +584,7 @@ class QuickActions internal constructor(
     private fun set(toggle: QuickToggle, on: Boolean) {
         val d = device ?: return
         if (toggle in pending) return
+        ran(toggle.name)
         val before = toggles[toggle]
         val targets = followers()
         val turns = takeTurns(targets, "builtin:${toggle.name}")
@@ -601,6 +616,7 @@ class QuickActions internal constructor(
         val action = custom.firstOrNull { it.id == id } as? ToggleAction ?: return
         val r = runner ?: return
         if (id in customPending) return
+        ran("custom")
         val before = customState[id]
         val targets = followers()
         val turns = takeTurns(targets, "custom:$id")
@@ -670,6 +686,7 @@ class QuickActions internal constructor(
             return
         }
         if (!toConsole && id in customPending) return
+        ran("custom")
         val names = CommandTemplate.variables(action.command)
         val values = names.associateWith { name ->
             memory.value(serial, id, name) ?: action.variables[name]?.default.orEmpty()
@@ -827,6 +844,7 @@ fun rememberQuickActions(
     tools: BundledTools = koinInject(),
     dataDir: DataDir = koinInject(),
     linkStore: LinkStore = koinInject(),
+    telemetry: Telemetry = koinInject(),
 ): QuickActions {
     val currentNotify by rememberUpdatedState(notify)
     val currentOnManage by rememberUpdatedState(onManage)
@@ -873,6 +891,7 @@ fun rememberQuickActions(
             followers = { currentFollowers() },
             logcat = adb?.let { LogcatController(LogcatSource(it, serial), scope, { msg -> currentNotify(msg) }) },
             links = runner?.let { LinksState(serial, it, linkStore, { apps.listed }, scope) },
+            telemetry = telemetry,
         ) { currentNotify(it) }
     }
     LaunchedEffect(actions) { actions.watchActions() }
