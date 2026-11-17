@@ -126,11 +126,15 @@ class NativeCrashScannerTest {
         assertEquals("native_crash", entry.getValue("type").jsonPrimitive.content)
         assertEquals("SIGSEGV", entry.getValue("value").jsonPrimitive.content)
         val mechanism = entry.getValue("mechanism").jsonObject
+        assertEquals(setOf("handled", "synthetic"), mechanism.keys)
         assertFalse(mechanism.getValue("handled").jsonPrimitive.boolean)
-        assertEquals("native", mechanism.getValue("type").jsonPrimitive.content)
+        assertFalse(mechanism.getValue("synthetic").jsonPrimitive.boolean)
         val frames = entry.getValue("stacktrace").jsonObject.getValue("frames").jsonArray.map { it.jsonObject }
         assertEquals(20, frames.size)
-        assertTrue(frames.all { it.keys == setOf("function", "in_app") }, "frames: $frames")
+        assertTrue(frames.all { it.keys == setOf("platform", "lang", "function", "resolved", "in_app") }, "frames: $frames")
+        assertTrue(frames.all { it.getValue("platform").jsonPrimitive.content == "custom" }, "frames: $frames")
+        assertTrue(frames.all { it.getValue("lang").jsonPrimitive.content == "native" }, "frames: $frames")
+        assertTrue(frames.all { it.getValue("resolved").jsonPrimitive.boolean }, "frames: $frames")
         // Oldest call first, as PostHog expects: the crashing frame is last.
         assertEquals("ff_h264_decode_mb_cabac", frames.last().getValue("function").jsonPrimitive.content)
         val inApp = frames.filter { it.getValue("in_app").jsonPrimitive.boolean }.map { it.getValue("function").jsonPrimitive.content }

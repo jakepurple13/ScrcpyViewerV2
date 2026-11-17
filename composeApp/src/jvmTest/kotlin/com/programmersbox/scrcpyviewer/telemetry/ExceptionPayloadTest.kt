@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.telemetry
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -45,8 +46,46 @@ class ExceptionPayloadTest {
     @Test fun mechanismCarriesHandledFlag() {
         val m = exceptionProperties(RuntimeException(), handled = false, Scrubber("/h"))
             .list(0).getValue("mechanism").jsonObject
-        assertEquals(false, m.getValue("handled").jsonPrimitive.boolean)
-        assertEquals("generic", m.str("type"))
+        assertEquals(mapOf("handled" to false, "synthetic" to false), m.mapValues { it.value.jsonPrimitive.boolean })
+    }
+
+    @Test fun framesMatchPostHogCustomFormat() {
+        val t = RuntimeException("x")
+        t.stackTrace = arrayOf(
+            StackTraceElement("com.programmersbox.scrcpyviewer.Foo", "bar", "Foo.kt", 12),
+            StackTraceElement("jdk.internal.Native", "call", null, -2),
+        )
+        val entry = exceptionProperties(t, true, Scrubber("/h")).list(0)
+        assertEquals("raw", entry.getValue("stacktrace").jsonObject.str("type"))
+        val frames = exceptionProperties(t, true, Scrubber("/h")).frames(0)
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "platform" to JsonPrimitive("custom"),
+                    "lang" to JsonPrimitive("java"),
+                    "function" to JsonPrimitive("call"),
+                    "module" to JsonPrimitive("jdk.internal.Native"),
+                    "resolved" to JsonPrimitive(true),
+                    "in_app" to JsonPrimitive(false),
+                ),
+            ),
+            frames[0],
+        )
+        assertEquals(
+            JsonObject(
+                mapOf(
+                    "platform" to JsonPrimitive("custom"),
+                    "lang" to JsonPrimitive("java"),
+                    "function" to JsonPrimitive("bar"),
+                    "module" to JsonPrimitive("com.programmersbox.scrcpyviewer.Foo"),
+                    "filename" to JsonPrimitive("Foo.kt"),
+                    "lineno" to JsonPrimitive(12),
+                    "resolved" to JsonPrimitive(true),
+                    "in_app" to JsonPrimitive(true),
+                ),
+            ),
+            frames[1],
+        )
     }
 
     @Test fun inAppFlagFollowsPackage() {
@@ -59,7 +98,7 @@ class ExceptionPayloadTest {
         // Oldest call first: the java.* frame, then ours.
         assertEquals(listOf("java.lang.Thread", "com.programmersbox.scrcpyviewer.Foo"), frames.map { it.str("module") })
         assertEquals(listOf(false, true), frames.map { it.getValue("in_app").jsonPrimitive.boolean })
-        assertEquals("java", frames[0].str("platform"))
+        assertEquals("custom", frames[0].str("platform"))
         assertEquals("12", frames[1].str("lineno"))
     }
 }
