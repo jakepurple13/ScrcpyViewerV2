@@ -100,7 +100,16 @@ jobs:
 
       - name: Build and package
         shell: bash
-        run: ./gradlew :composeApp:downloadBundledTools :composeApp:packageDistributionForCurrentOS --stacktrace
+        # The PostHog key is a write-only project key, injected on release tags only.
+        env:
+          POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ secrets.POSTHOG_HOST }}
+        run: |
+          ARGS=()
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            ARGS+=(-Pposthog.key="$POSTHOG_KEY" -Pposthog.host="$POSTHOG_HOST" -Pposthog.channel=release)
+          fi
+          ./gradlew :composeApp:downloadBundledTools :composeApp:packageDistributionForCurrentOS --stacktrace "${ARGS[@]}"
 
       # Only the installers and their block maps, one level down (dmg/, zip/, nsis/, deb/): deeper folders hold the
       # unpacked app. The plugin's per-format latest-*.yml are not uploaded; the release job writes merged ones.
