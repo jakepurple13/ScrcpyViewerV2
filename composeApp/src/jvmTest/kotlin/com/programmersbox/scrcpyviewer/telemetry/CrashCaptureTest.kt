@@ -7,7 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.awt.EventQueue
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 import kotlin.test.AfterTest
@@ -68,9 +67,11 @@ class CrashCaptureTest {
         val fake = FakeTelemetry()
         CrashCapture.install { fake }
         val e = IllegalStateException("boom")
-        // The event dispatch thread survives the exception and keeps running the UI: no disk write on it.
-        EventQueue.invokeLater { throw e }
-        eventually("previous handler ran") { previousGot.isNotEmpty() }
+        // The UI thread survives the exception and keeps running the windows: no disk write on it.
+        thread(name = "ui") {
+            CrashCapture.markUiThread()
+            throw e
+        }.join()
         assertEquals(listOf<Pair<Throwable, Boolean>>(e to false), fake.exceptions)
         assertTrue(fake.blocking.isEmpty(), "blocking write on the UI thread: ${fake.blocking}")
         assertEquals(listOf<Throwable>(e), previousGot)
@@ -83,6 +84,15 @@ class CrashCaptureTest {
         crashOnNewThread(e)
         assertEquals(listOf<Throwable>(e), fake.blocking)
         assertTrue(fake.exceptions.isEmpty(), "sent async: ${fake.exceptions}")
+    }
+
+    @Test fun anotherThreadThanTheMarkedUiThreadStillBlocks() {
+        val fake = FakeTelemetry()
+        CrashCapture.install { fake }
+        thread(name = "ui") { CrashCapture.markUiThread() }.join()
+        val e = IllegalStateException("boom")
+        crashOnNewThread(e)
+        assertEquals(listOf<Throwable>(e), fake.blocking)
     }
 
     @Test fun handlerSurvivesTelemetryThrowing() {

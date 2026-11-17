@@ -139,6 +139,8 @@ fun main() {
         .getOrNull()
     // Single instance off: a dev run next to the installed app must not hand off to it and exit.
     nucleusApplication(enableSingleInstance = false) {
+        // Composition runs on the UI thread: from now on a crash there is queued without blocking it.
+        remember { CrashCapture.markUiThread() }
         val settings by appSettings.settings.collectAsState()
         val mirrors by mirrorController.open.collectAsState()
         // Launch: the settings saved by the last run pick the effect, once.

@@ -9,7 +9,6 @@ import dev.nucleusframework.window.tao.LocalWindowExceptionHandlerFactory
 import dev.nucleusframework.window.tao.TaoWindow
 import dev.nucleusframework.window.tao.WindowExceptionHandlerFactory
 import kotlinx.coroutines.CoroutineExceptionHandler
-import java.awt.EventQueue
 import java.util.Collections
 import java.util.WeakHashMap
 
@@ -29,16 +28,16 @@ object CrashCapture {
     /**
      * Installs the default uncaught exception handler; call it first thing in `main()`. [telemetry] is null until
      * Koin has built it, and crashes before that are only printed. The handler writes the exception to the queue
-     * before returning, then runs the handler that was installed before (or prints it, as the JVM would). On the AWT
-     * event dispatch thread it queues the write instead: that thread survives the exception and keeps running the UI,
-     * so the process is not ending and a disk write there would freeze the windows.
+     * before returning, then runs the handler that was installed before (or prints it, as the JVM would). On the UI
+     * thread ([markUiThread]) it queues the write instead: a failed coroutine on the main dispatcher lands here while
+     * that thread goes on running the windows, so the process is not ending and a disk write there would freeze them.
      */
     fun install(telemetry: () -> Telemetry?) {
         this.telemetry = telemetry
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, t ->
             report(t) {
-                if (EventQueue.isDispatchThread()) it.captureException(t, handled = false) else it.captureExceptionBlocking(t)
+                if (Thread.currentThread() === uiThread) it.captureException(t, handled = false) else it.captureExceptionBlocking(t)
             }
             if (previous != null) {
                 previous.uncaughtException(thread, t)
@@ -48,6 +47,17 @@ object CrashCapture {
                 t.printStackTrace(System.err)
             }
         }
+    }
+
+    @Volatile
+    private var uiThread: Thread? = null
+
+    /**
+     * Records the calling thread as the UI thread, so an uncaught exception there does not block it (see [install]).
+     * Call it from the application's composition, which runs on the Tao event loop thread; the app uses no AWT.
+     */
+    fun markUiThread() {
+        uiThread = Thread.currentThread()
     }
 
     /**
