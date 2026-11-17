@@ -1,6 +1,13 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.togetherWith
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.MutableTransitionState
@@ -56,6 +63,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.files.JobState
@@ -185,6 +194,10 @@ private fun TransferRow(
             exit = if (motion) shrinkVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) + fadeOut(tween(CLOSE_MILLIS)) else ExitTransition.None,
         ) {
             val name = job.request.name
+            // Narrow: the destination leaves the name's line and leads the progress line instead (see [FilesLayout]).
+            val stacked = LocalFilesLayout.current.trayStacked
+            val glide = motion && !LocalReduceMotion.current
+            val destination = destinationLabel(job, pushTarget, downloads)
             Row(
                 Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -192,12 +205,18 @@ private fun TransferRow(
             ) {
                 Icon(directionIcon(job), null, Modifier.size(18.dp), tint = colors.onSurfaceVariant)
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row {
                         Text(name, Modifier.weight(1f, fill = false), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            "· " + destinationLabel(job, pushTarget, downloads),
-                            fontSize = 12.sp, color = colors.onSurfaceVariant, maxLines = 1,
-                        )
+                        AnimatedVisibility(
+                            !stacked,
+                            enter = if (glide) expandHorizontally(layoutSpring(), expandFrom = Alignment.Start) + fadeIn(tween(150)) else EnterTransition.None,
+                            exit = if (glide) shrinkHorizontally(layoutSpring(), shrinkTowards = Alignment.Start) + fadeOut(tween(150)) else ExitTransition.None,
+                        ) {
+                            Text(
+                                "· $destination", Modifier.padding(start = 6.dp),
+                                fontSize = 12.sp, color = colors.onSurfaceVariant, maxLines = 1,
+                            )
+                        }
                     }
                     val done = job.state == JobState.Done
                     val total = job.total
@@ -215,15 +234,27 @@ private fun TransferRow(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (done) Icon(Icons.Filled.Check, null, Modifier.size(14.dp), tint = green)
                         val status = statusText(job)
-                        if (status.isNotEmpty()) {
-                            Text(
-                                status, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                                color = when {
-                                    done -> green
-                                    job.state is JobState.Failed -> colors.error
-                                    else -> colors.onSurfaceVariant
-                                },
-                            )
+                        val statusColor = when {
+                            done -> green
+                            job.state is JobState.Failed -> colors.error
+                            else -> colors.onSurfaceVariant
+                        }
+                        // The two forms of the line cross-fade; its height follows with the layout spring.
+                        AnimatedContent(
+                            stacked,
+                            transitionSpec = {
+                                (fadeIn(tween(150)) togetherWith fadeOut(tween(150)))
+                                    .using(SizeTransform(clip = false) { _, _ -> if (glide) layoutSpring() else snap() })
+                            },
+                            contentAlignment = Alignment.TopStart,
+                        ) { joined ->
+                            if (joined) {
+                                // "To Download · 48.2 MB of 184.5 MB · 34.8 MB/s": the status stays whole, the
+                                // destination ellipsizes before it.
+                                DestinationStatus(destination, status, statusColor)
+                            } else if (status.isNotEmpty()) {
+                                Text(status, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = statusColor)
+                            }
                         }
                     }
                 }
@@ -236,6 +267,56 @@ private fun TransferRow(
                         Icon(Icons.Filled.Close, "Cancel $name", Modifier.size(16.dp))
                     }
                 }
+            }
+        }
+    }
+}
+
+/** The destination keeps at least this much beside the status before the status takes a line of its own. */
+private val DESTINATION_MIN = 48.dp
+
+/**
+ * A stacked row's last line: "To Download · 48.2 MB of 184.5 MB · 34.8 MB/s". The status always shows whole; the
+ * destination ellipsizes before it, and when not even [DESTINATION_MIN] of it fits beside the status, the status goes
+ * on a line of its own under the destination (and the dot goes).
+ */
+@Composable
+private fun DestinationStatus(destination: String, status: String, statusColor: Color) {
+    val colors = MaterialTheme.colorScheme
+    Layout(
+        content = {
+            Text(destination, fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (status.isNotEmpty()) {
+                Text("·", fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1)
+                Text(status, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = statusColor)
+            }
+        },
+    ) { measurables, constraints ->
+        val width = constraints.maxWidth
+        val gap = 4.dp.roundToPx()
+        val dest = measurables[0]
+        if (measurables.size == 1) {
+            val p = dest.measure(constraints.copy(minWidth = 0))
+            return@Layout layout(p.width, p.height) { p.placeRelative(0, 0) }
+        }
+        val dot = measurables[1].measure(Constraints())
+        val statusW = measurables[2].maxIntrinsicWidth(constraints.maxHeight)
+        val room = width - statusW - dot.width - 2 * gap
+        if (room >= DESTINATION_MIN.roundToPx().coerceAtMost(dest.maxIntrinsicWidth(constraints.maxHeight))) {
+            val d = dest.measure(Constraints(maxWidth = room.coerceAtLeast(0)))
+            val s = measurables[2].measure(Constraints(maxWidth = statusW))
+            val h = maxOf(d.height, dot.height, s.height)
+            layout(minOf(width, d.width + 2 * gap + dot.width + s.width), h) {
+                d.placeRelative(0, 0)
+                dot.placeRelative(d.width + gap, 0)
+                s.placeRelative(d.width + 2 * gap + dot.width, 0)
+            }
+        } else {
+            val d = dest.measure(Constraints(maxWidth = width))
+            val s = measurables[2].measure(Constraints(maxWidth = width))
+            layout(maxOf(d.width, s.width), d.height + s.height) {
+                d.placeRelative(0, 0)
+                s.placeRelative(0, d.height)
             }
         }
     }
