@@ -127,7 +127,8 @@ credentials must never be committed.
 ### Crash capture
 
 - `Thread.setDefaultUncaughtExceptionHandler` installed first thing in `main()`, before Koin. It writes the
-  `$exception` event to the queue synchronously, then defers to the previous handler.
+  `$exception` event to the queue synchronously, then defers to the previous handler. On the AWT event dispatch
+  thread, which survives the exception and keeps running the UI, the write is queued instead so the UI never blocks.
 - Coroutine scopes the app owns (`AppScope` and window scopes) use a `CoroutineExceptionHandler` that reports.
 - Compose window exception handling: uncaught exceptions inside Compose windows are reported the same way.
 - Native crashes (best effort, decided): `-XX:ErrorFile` is not set, because packaged JVM flags are fixed at build
