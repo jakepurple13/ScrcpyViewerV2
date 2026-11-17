@@ -64,10 +64,10 @@ class PresetsNarrowTest {
      * Runs [block] on a scene [startWidth] wide whose preset is selected and, when [pushed], open (as after a click in
      * the list); not pushed, as at launch.
      */
-    private fun scene(startWidth: Int, pushed: Boolean = true, block: SceneDriver.() -> Unit) = onEdt {
+    private fun scene(startWidth: Int, pushed: Boolean = true, windowWidth: Int = SCENE_WIDTH, block: SceneDriver.() -> Unit) = onEdt {
         state = base
         width = startWidth
-        val driver = SceneDriver(ImageComposeScene(SCENE_WIDTH, 800, Density(1f)) {
+        val driver = SceneDriver(ImageComposeScene(windowWidth, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 CompositionLocalProvider(LocalReduceMotion provides false) {
                     Surface {
@@ -131,6 +131,19 @@ class PresetsNarrowTest {
         for (label in listOf("Show list", "Switch item", "Close list")) {
             assertTrue(nodes().none { it.described(label) }, "no $label node")
         }
+    }
+
+    @Test
+    fun `the default 800 dp window shows the list alone even with a remembered selection`() = scene(800, pushed = false, windowWidth = 800) {
+        assertTrue(text("Low bandwidth").isNotEmpty(), "the list shows")
+        assertTrue(text("Apply").isEmpty(), "no detail pane")
+        assertTrue(described("Back to list").isEmpty())
+    }
+
+    @Test
+    fun `a 1000 dp window shows two panes`() = scene(1000, pushed = false, windowWidth = 1000) {
+        assertTrue(text("Low bandwidth").isNotEmpty(), "the list shows")
+        assertTrue(text("Apply").isNotEmpty(), "the detail shows beside it")
     }
 
     @Test

@@ -65,6 +65,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -142,17 +143,19 @@ enum class PaneMode {
 }
 
 /**
- * Two panes when [contentWidth] fits the list's minimum, the divider and [detailMinWidth]; the dragged
- * width does not count, so dragging never flips modes. Below that, [pushed] picks the view.
+ * Two panes when the window is at least [TwoPaneMinWindowWidth] wide (Material 3's expanded width class) and
+ * [contentWidth] fits the list's minimum, the divider and [detailMinWidth]; the dragged width does not count, so
+ * dragging never flips modes. Otherwise [pushed] picks the view.
  */
 fun paneMode(
     contentWidth: Dp,
     listMinWidth: Dp,
     pushed: Boolean,
+    windowWidth: Dp,
     detailMinWidth: Dp = DetailMinWidth,
     divider: Dp = DividerWidth,
 ): PaneMode = when {
-    contentWidth >= listMinWidth + divider + detailMinWidth -> PaneMode.TwoPane
+    windowWidth >= TwoPaneMinWindowWidth && contentWidth >= listMinWidth + divider + detailMinWidth -> PaneMode.TwoPane
     pushed -> PaneMode.ItemView
     else -> PaneMode.ListView
 }
@@ -163,6 +166,9 @@ internal fun isBackShortcut(key: Key, meta: Boolean, ctrl: Boolean, mac: Boolean
     Key.LeftBracket -> if (mac) meta && !ctrl else ctrl && !meta
     else -> false
 }
+
+/** The narrowest window that shows two panes: below it the list comes first, so the first view is just the list. */
+val TwoPaneMinWindowWidth = 840.dp
 
 /** The detail never gets less than this in two panes. */
 private val DetailMinWidth = 420.dp
@@ -223,8 +229,9 @@ fun AdaptiveListDetail(
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
         val contentWidth = maxWidth
-        val mode = paneMode(contentWidth, listMinWidth, panes.pushed && hasSelection)
         val density = LocalDensity.current
+        val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+        val mode = paneMode(contentWidth, listMinWidth, panes.pushed && hasSelection, windowWidth)
         val reduceMotion = LocalReduceMotion.current
         val maxListWidth = maxOf(listMinWidth, contentWidth - DividerWidth - DetailMinWidth)
         SideEffect {
