@@ -82,6 +82,7 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import kotlinx.coroutines.launch
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** The "Start from a template" picker as a dialog; Esc or a click outside closes it. */
 @Composable
@@ -158,7 +159,7 @@ private fun TemplateResults(
     // The query the empty message last showed, kept while the message fades out. A plain holder.
     val emptyQuery = remember { arrayOf(query.trim()) }
     if (results.isEmpty()) emptyQuery[0] = query.trim()
-    Column(modifier.heightIn(max = 520.dp).animateContentSize(arrive()).verticalScroll(rememberScrollState())) {
+    Column(modifier.heightIn(max = 520.dp).animateContentSize(layoutSpring()).verticalScroll(rememberScrollState())) {
         AnimatedVisibility(results.isEmpty(), enter = fadeIn(arrive()), exit = fadeOut(leave())) {
             Text(
                 "No templates match \"${emptyQuery[0]}\".",

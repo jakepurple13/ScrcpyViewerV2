@@ -61,7 +61,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.appTheme
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
-import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutFraction
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
@@ -74,6 +74,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.colorSchemeFor
 import com.programmersbox.scrcpyviewer.ui.theme.isDark
 import com.programmersbox.scrcpyviewer.ui.theme.oklch
 import kotlin.math.roundToInt
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 private val Emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
@@ -138,8 +139,8 @@ internal fun PaletteControl(b: SettingsBindings) {
         Tiles(ThemePalette.entries.filter { it.neon })
         AnimatedVisibility(
             visible = theme.palette == ThemePalette.CustomNeon,
-            enter = expandVertically(tween(240, easing = Emphasized), expandFrom = Alignment.Top) + fadeIn(tween(240)),
-            exit = shrinkVertically(tween(200, easing = Emphasized), shrinkTowards = Alignment.Top) + fadeOut(tween(200)),
+            enter = expandVertically(layoutSpring(), expandFrom = Alignment.Top) + fadeIn(tween(240)),
+            exit = shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top) + fadeOut(tween(200)),
         ) {
             CustomNeonEditor(
                 draft = neonDraft,
@@ -155,8 +156,8 @@ internal fun PaletteControl(b: SettingsBindings) {
         }
         AnimatedVisibility(
             visible = theme.palette == ThemePalette.Custom,
-            enter = expandVertically(tween(240, easing = Emphasized), expandFrom = Alignment.Top) + fadeIn(tween(240)),
-            exit = shrinkVertically(tween(200, easing = Emphasized), shrinkTowards = Alignment.Top) + fadeOut(tween(200)),
+            enter = expandVertically(layoutSpring(), expandFrom = Alignment.Top) + fadeIn(tween(240)),
+            exit = shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top) + fadeOut(tween(200)),
         ) {
             CustomPaletteEditor(
                 draft = draft,

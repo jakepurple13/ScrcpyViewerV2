@@ -65,6 +65,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.dropPaths
 import com.programmersbox.scrcpyviewer.ui.mirror.rootPosition
 import com.programmersbox.scrcpyviewer.ui.mirror.sourceActions
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** Where a drop on the Files tab lands. */
 sealed interface FilesDropTarget {
@@ -471,8 +472,8 @@ internal fun DragGhost(
             }
             AnimatedVisibility(
                 pulling,
-                enter = if (motion) expandVertically(tween(150)) + fadeIn(tween(150)) else EnterTransition.None,
-                exit = if (motion) shrinkVertically(tween(150)) + fadeOut(tween(150)) else ExitTransition.None,
+                enter = if (motion) expandVertically(layoutSpring()) + fadeIn(tween(150)) else EnterTransition.None,
+                exit = if (motion) shrinkVertically(layoutSpring()) + fadeOut(tween(150)) else ExitTransition.None,
             ) {
                 val bar = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 5.dp).height(2.dp)
                 if (progress == null) {

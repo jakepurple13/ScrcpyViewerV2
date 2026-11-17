@@ -94,6 +94,8 @@ import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
+import com.programmersbox.scrcpyviewer.ui.common.layoutDp
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner

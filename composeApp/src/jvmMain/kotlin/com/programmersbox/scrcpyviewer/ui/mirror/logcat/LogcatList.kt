@@ -63,6 +63,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.common.resizing
+import com.programmersbox.scrcpyviewer.ui.common.flipGliding
 
 /** A batch with more new lines than this (the `-T 1000` backlog, a resume's read-back) appears without growing. */
 private const val MAX_GROW_BATCH = 50
@@ -304,6 +307,12 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
         hoverColor = onSurface.copy(alpha = 0.7f),
     )
     val barAdapter = rememberScrollbarAdapter(listState)
+    // A resize re-wraps the rows: while the width changes, rows land at their new places at once, so the list follows
+    // a window drag; a frame after it stops, list changes glide again. Placement also stays off while the rows glide
+    // to a new shape (LogcatRow's layout fractions), so the rows below follow a growing row instead of chasing it.
+    val resizing = resizing(sheetWidth)
+    val reshaping = flipGliding(logcatRowShape(sheetWidth) to controller.compact)
+    val placementOff = resizing || reshaping
     val scrollbar = remember(follow, barAdapter) { follow.scrollbar(barAdapter) }
 
     Column(modifier.background(scheme.surfaceContainerLowest)) {
@@ -320,7 +329,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
                     items(visible, key = { it.key }, contentType = { if (it is LogcatItem.Line) 0 else 1 }) { item ->
                         val itemMotion = Modifier.animateItem(
                             fadeInSpec = if (motion) tween(240) else null,
-                            placementSpec = if (motion) tween(240, easing = EmphasizedDecelerate) else null,
+                            placementSpec = if (motion && !placementOff) layoutSpring() else null,
                             fadeOutSpec = if (motion) tween(240) else null,
                         )
                         when (item) {
@@ -378,7 +387,7 @@ private fun GrowIn(content: @Composable () -> Unit) {
     val state = remember { MutableTransitionState(false).apply { targetState = true } }
     AnimatedVisibility(
         state,
-        enter = expandVertically(tween(300, easing = EmphasizedDecelerate), expandFrom = Alignment.Top) +
+        enter = expandVertically(layoutSpring(), expandFrom = Alignment.Top) +
             fadeIn(tween(300, easing = EmphasizedDecelerate)),
     ) { content() }
 }

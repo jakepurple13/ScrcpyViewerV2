@@ -46,7 +46,6 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.SegmentOption
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import kotlin.math.roundToInt
 
 /** Options ↔ Info (motion A): the old tab slides [TAB_SLIDE] and fades out, then the new one slides in from the other side. */
@@ -113,7 +112,7 @@ internal fun deviceSwitch(fromIndex: Int, toIndex: Int, reduced: Boolean): AxisS
 }
 
 /** The [AnimatedContent] transform for this switch. Only offset and alpha animate; the size does not. */
-internal fun AxisSwitch.transform(density: Density): ContentTransform {
+internal fun AxisSwitch.transform(density: Density, reduced: Boolean = false): ContentTransform {
     val enterPx = with(density) { enterOffset.toPx() }.roundToInt()
     val exitPx = with(density) { exitOffset.toPx() }.roundToInt()
     val enterSlide = tween<IntOffset>(enterMillis, enterDelayMillis, EmphasizedDecelerate)
@@ -132,15 +131,16 @@ internal fun AxisSwitch.transform(density: Density): ContentTransform {
             AxisSwitch.Axis.Vertical -> slideOutVertically(exitSlide) { exitPx }
         }
     }
-    // Both sides fill the pane, so there is no size to animate; clipping keeps the 36 dp slide inside the pane.
-    return ContentTransform(enter, exit, sizeTransform = SizeTransform(clip = true))
+    // Both sides fill the pane, so the size seldom changes (it rides the layout spring when it does); clipping keeps
+    // the 36 dp slide inside the pane.
+    return ContentTransform(enter, exit, sizeTransform = SizeTransform(clip = true) { _, _ -> if (reduced) snap() else layoutSpring() })
 }
 
 fun detailTabTransform(from: DetailTab, to: DetailTab, reduced: Boolean, density: Density): ContentTransform =
-    detailTabSwitch(from, to, reduced).transform(density)
+    detailTabSwitch(from, to, reduced).transform(density, reduced)
 
 fun deviceSwitchTransform(fromIndex: Int, toIndex: Int, reduced: Boolean, density: Density): ContentTransform =
-    deviceSwitch(fromIndex, toIndex, reduced).transform(density)
+    deviceSwitch(fromIndex, toIndex, reduced).transform(density, reduced)
 
 /**
  * No device ↔ a device: a fade-through. The old content fades out over [SELECT_OUT_MILLIS] while the new one fades
@@ -150,13 +150,13 @@ fun deviceSwitchTransform(fromIndex: Int, toIndex: Int, reduced: Boolean, densit
 internal fun selectionFade(reduced: Boolean): ContentTransform {
     if (reduced) {
         return ContentTransform(
-            fadeIn(tween(REDUCED_FADE_MILLIS)), fadeOut(tween(REDUCED_FADE_MILLIS)), sizeTransform = SizeTransform(clip = true),
+            fadeIn(tween(REDUCED_FADE_MILLIS)), fadeOut(tween(REDUCED_FADE_MILLIS)), sizeTransform = SizeTransform(clip = true) { _, _ -> snap() },
         )
     }
     return ContentTransform(
         fadeIn(selectInSpec()),
         fadeOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate)),
-        sizeTransform = SizeTransform(clip = true),
+        sizeTransform = SizeTransform(clip = true) { _, _ -> layoutSpring() },
     )
 }
 
@@ -188,7 +188,7 @@ fun DetailTabRow(
     onTab: (DetailTab) -> Unit,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
-    reduceMotion: Boolean = remember { systemReducesMotion() },
+    reduceMotion: Boolean = LocalReduceMotion.current,
 ) {
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val backSpace = if (onBack != null) BACK_SPACE else 0.dp
@@ -258,7 +258,7 @@ fun <T> DetailPane(
     onInfoActive: (Boolean) -> Unit,
     onInfoRetry: () -> Unit,
     modifier: Modifier = Modifier,
-    reduceMotion: Boolean = remember { systemReducesMotion() },
+    reduceMotion: Boolean = LocalReduceMotion.current,
     empty: @Composable (Modifier) -> Unit,
     options: @Composable (page: T, modifier: Modifier) -> Unit,
 ) {

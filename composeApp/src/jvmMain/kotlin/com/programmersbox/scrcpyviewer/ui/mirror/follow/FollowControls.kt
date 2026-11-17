@@ -65,13 +65,14 @@ import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
 import com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** Another open mirror window the leader can send input to: its serial and device title. */
 data class FollowCandidate(val serial: String, val title: String)
@@ -165,7 +166,7 @@ fun SendInputButton(
     onChange: (Set<String>) -> Unit,
     compact: Boolean = false,
     modifier: Modifier = Modifier,
-    reduceMotion: Boolean = remember { systemReducesMotion() },
+    reduceMotion: Boolean = LocalReduceMotion.current,
 ) {
     var open by remember { mutableStateOf(false) }
     Box(modifier) {
@@ -196,12 +197,12 @@ private fun SendInputLabel(role: FollowRole, compact: Boolean, reduceMotion: Boo
                 // Words dropped or back (the strip's width): a fade while the width follows.
                 val millis = if (reduceMotion) FollowMotion.REDUCED_FADE_MILLIS else FollowMotion.LABEL_MILLIS
                 val fade = tween<Float>(millis, easing = LinearEasing)
-                (fadeIn(fade) togetherWith fadeOut(fade)).using(SizeTransform(clip = true) { _, _ -> tween(millis, easing = FastOutSlowInEasing) })
+                (fadeIn(fade) togetherWith fadeOut(fade)).using(SizeTransform(clip = true) { _, _ -> if (reduceMotion) tween(millis, easing = FastOutSlowInEasing) else layoutSpring() })
             } else {
                 val slide = tween<androidx.compose.ui.unit.IntOffset>(FollowMotion.LABEL_MILLIS, easing = EmphasizedDecelerate)
                 val fade = tween<Float>(FollowMotion.LABEL_MILLIS, easing = EmphasizedDecelerate)
                 ((slideInVertically(slide) { it * dir } + fadeIn(fade)) togetherWith (slideOutVertically(slide) { -it * dir } + fadeOut(fade)))
-                    .using(SizeTransform(clip = true) { _, _ -> tween(FollowMotion.LABEL_MILLIS, easing = FastOutSlowInEasing) })
+                    .using(SizeTransform(clip = true) { _, _ -> layoutSpring() })
             }
         },
         contentAlignment = Alignment.CenterStart,
@@ -292,7 +293,7 @@ fun FollowingChip(
     leaderTitle: String,
     layoutDiffers: Boolean,
     modifier: Modifier = Modifier,
-    reduceMotion: Boolean = remember { systemReducesMotion() },
+    reduceMotion: Boolean = LocalReduceMotion.current,
     compactWarning: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -303,7 +304,7 @@ fun FollowingChip(
             followingText(leaderTitle), colors.primaryContainer, colors.onPrimaryContainer,
             Modifier.weight(1f, fill = false).widthIn(max = FOLLOWING_MAX), animateFor = reduceMotion,
         )
-        val size = tween<androidx.compose.ui.unit.IntSize>(FollowMotion.LAYOUT_MILLIS, easing = FastOutSlowInEasing)
+        val size = layoutSpring<androidx.compose.ui.unit.IntSize>()
         val fade = tween<Float>(if (reduceMotion) FollowMotion.REDUCED_FADE_MILLIS else FollowMotion.LAYOUT_MILLIS, easing = LinearEasing)
         androidx.compose.animation.AnimatedVisibility(
             visible = layoutDiffers,
@@ -316,7 +317,7 @@ fun FollowingChip(
                 AnimatedContent(
                     targetState = compactWarning,
                     transitionSpec = {
-                        (fadeIn(fade) togetherWith fadeOut(fade)).using(SizeTransform(clip = true) { _, _ -> tween(FollowMotion.LAYOUT_MILLIS, easing = FastOutSlowInEasing) })
+                        (fadeIn(fade) togetherWith fadeOut(fade)).using(SizeTransform(clip = true) { _, _ -> if (reduceMotion) tween(FollowMotion.LAYOUT_MILLIS, easing = FastOutSlowInEasing) else layoutSpring() })
                     },
                     label = "layoutDiffers",
                 ) { compact ->
@@ -357,7 +358,7 @@ private fun Pill(text: String, container: Color, content: Color, modifier: Modif
                 transitionSpec = {
                     val fade = tween<Float>(millis, easing = if (animateFor) LinearEasing else FastOutSlowInEasing)
                     (fadeIn(fade) togetherWith fadeOut(fade))
-                        .using(SizeTransform(clip = true) { _, _ -> tween(millis, easing = FastOutSlowInEasing) })
+                        .using(SizeTransform(clip = true) { _, _ -> if (animateFor) tween(millis, easing = FastOutSlowInEasing) else layoutSpring() })
                 },
                 contentAlignment = Alignment.CenterStart,
                 label = "pillText",
@@ -378,7 +379,7 @@ private fun PillText(text: String) {
     )
 }
 
-/** [FollowingChip] while [visible]: it expands + fades in over 250 ms and shrinks + fades out over 200 ms. */
+/** [FollowingChip] while [visible]: it expands (layout spring) + fades in over 250 ms, and shrinks + fades out over 200 ms. */
 @Composable
 fun FollowerChip(
     visible: Boolean,
@@ -393,8 +394,8 @@ fun FollowerChip(
     // The chip keeps what it said while it leaves (the link is already gone). A plain holder.
     val last = remember { arrayOfNulls<String>(1) }
     if (leaderTitle != null) last[0] = leaderTitle
-    val inSize = tween<androidx.compose.ui.unit.IntSize>(FollowMotion.CHIP_IN_MILLIS, easing = FastOutSlowInEasing)
-    val outSize = tween<androidx.compose.ui.unit.IntSize>(FollowMotion.CHIP_OUT_MILLIS, easing = FastOutSlowInEasing)
+    val inSize = layoutSpring<androidx.compose.ui.unit.IntSize>()
+    val outSize = layoutSpring<androidx.compose.ui.unit.IntSize>()
     val enter: EnterTransition = if (reduceMotion) {
         fadeIn(tween(FollowMotion.REDUCED_FADE_MILLIS, easing = LinearEasing))
     } else {

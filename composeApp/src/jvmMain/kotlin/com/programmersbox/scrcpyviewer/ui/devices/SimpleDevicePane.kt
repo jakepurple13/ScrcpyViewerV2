@@ -7,8 +7,6 @@ import androidx.compose.animation.animateBounds
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -72,6 +70,7 @@ import com.programmersbox.scrcpyviewer.options.OptionCatalog
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
 
 /**
  * The detail pane's default view: the device's basics, its preset, Mirror and Connect over Wi-Fi (not for an emulator),
@@ -93,7 +92,7 @@ internal fun SimpleDevicePane(
     /** An emulator's AVD name once the launcher knows it: the title then, as in its connected row. */
     avdName: String? = null,
     /** Animates the title's change to [avdName] (a crossfade); without it the title changes at once. */
-    titleMotion: Boolean = remember { !systemReducesMotion() },
+    titleMotion: Boolean = !LocalReduceMotion.current,
 ) {
     val device = state.devices.firstOrNull { it.serial == state.selectedSerial } ?: return
     Column(modifier.fillMaxSize()) {
@@ -186,7 +185,7 @@ private fun DeviceHeader(device: Device, avdName: String?, motion: Boolean) {
                 // following.
                 Crossfade(
                     title,
-                    Modifier.then(if (motion) Modifier.animateContentSize(tween(EMULATOR_TITLE_MILLIS, easing = EmphasizedDecelerate)) else Modifier),
+                    Modifier.animateHeight(enabled = motion),
                     animationSpec = if (motion) tween(EMULATOR_TITLE_MILLIS) else snap(),
                     label = "emulatorDetailTitle",
                 ) { titleText(it) }

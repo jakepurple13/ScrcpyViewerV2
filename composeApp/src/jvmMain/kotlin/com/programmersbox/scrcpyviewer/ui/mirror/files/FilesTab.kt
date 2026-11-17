@@ -169,7 +169,7 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
 import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -191,7 +191,6 @@ private const val STAGGER_STEP_MILLIS = 16
 
 private val CRUMB_SHIFT = 10.dp
 private const val SPIN_MILLIS = 500
-private const val SORT_MILLIS = 300
 
 /** The list while the session is down. */
 private const val DISCONNECTED_ALPHA = 0.38f
@@ -220,7 +219,7 @@ fun FilesTab(
     downloads: Path = Paths.get(System.getProperty("user.home"), "Downloads"),
     zone: ZoneId = ZoneId.systemDefault(),
     locale: Locale = Locale.getDefault(),
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     isMac: Boolean = Os.isMac,
 ) = FilesTab(browser, modifier, onPushFiles, onPullTo, downloads, zone, locale, motion, isMac, ::readDragData)
 
@@ -258,7 +257,7 @@ internal fun FilesTab(
     downloads: Path = Paths.get(System.getProperty("user.home"), "Downloads"),
     zone: ZoneId = ZoneId.systemDefault(),
     locale: Locale = Locale.getDefault(),
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     isMac: Boolean = Os.isMac,
     dragData: (DragAndDropEvent) -> DragData?,
     dragOutStarter: OutboundDragStarter = remember { ComposeDragOutStarter() },
@@ -678,7 +677,7 @@ private fun AnimatedContentTransitionScope<Boolean>.searchBarTransform(searching
         fadeIn(tween(OPEN_MILLIS, delayMillis = NAV_IN_DELAY_MILLIS, easing = EmphasizedDecelerate))
     val exit = slideOutVertically(tween(NAV_OUT_MILLIS, easing = LinearEasing)) { -sign * it / 2 } +
         fadeOut(tween(NAV_OUT_MILLIS, easing = LinearEasing))
-    return (enter togetherWith exit).using(SizeTransform(clip = true))
+    return (enter togetherWith exit).using(SizeTransform(clip = true) { _, _ -> layoutSpring() })
 }
 
 @Composable
@@ -1241,7 +1240,7 @@ private fun Rows(
                     if (motion) {
                         Modifier.animateItem(
                             fadeInSpec = tween(OPEN_MILLIS),
-                            placementSpec = tween(SORT_MILLIS, easing = EmphasizedDecelerate),
+                            placementSpec = layoutSpring(),
                             fadeOutSpec = tween(NAV_OUT_MILLIS),
                         )
                     } else {

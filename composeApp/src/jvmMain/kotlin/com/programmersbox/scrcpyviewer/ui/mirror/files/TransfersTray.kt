@@ -72,7 +72,6 @@ import com.programmersbox.scrcpyviewer.files.TransferJob
 import com.programmersbox.scrcpyviewer.files.TransferKind
 import com.programmersbox.scrcpyviewer.files.formatSize
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import java.nio.file.Path
@@ -155,8 +154,8 @@ internal fun TransfersTray(
             }
             AnimatedVisibility(
                 expanded && jobs.isNotEmpty(),
-                enter = if (motion) expandVertically(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) + fadeIn(tween(OPEN_MILLIS)) else EnterTransition.None,
-                exit = if (motion) shrinkVertically(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) + fadeOut(tween(OPEN_MILLIS)) else ExitTransition.None,
+                enter = if (motion) expandVertically(layoutSpring()) + fadeIn(tween(OPEN_MILLIS)) else EnterTransition.None,
+                exit = if (motion) shrinkVertically(layoutSpring()) + fadeOut(tween(OPEN_MILLIS)) else ExitTransition.None,
             ) {
                 Column(Modifier.heightIn(max = TRAY_ROWS_MAX_HEIGHT).verticalScroll(rememberScrollState())) {
                     for (job in jobs) {
@@ -191,7 +190,7 @@ private fun TransferRow(
         AnimatedVisibility(
             !leaving,
             enter = EnterTransition.None,
-            exit = if (motion) shrinkVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) + fadeOut(tween(CLOSE_MILLIS)) else ExitTransition.None,
+            exit = if (motion) shrinkVertically(layoutSpring()) + fadeOut(tween(CLOSE_MILLIS)) else ExitTransition.None,
         ) {
             val name = job.request.name
             // Narrow: the destination leaves the name's line and leads the progress line instead (see [FilesLayout]).

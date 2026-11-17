@@ -27,7 +27,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.lerp
-import com.programmersbox.scrcpyviewer.ui.mirror.files.layoutFraction
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.update.UpdateUiState
 import com.programmersbox.scrcpyviewer.ui.update.UpdateViewModel

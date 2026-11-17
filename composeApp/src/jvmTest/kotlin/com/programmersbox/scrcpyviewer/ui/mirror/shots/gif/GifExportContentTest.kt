@@ -531,7 +531,7 @@ class GifExportContentTest {
         // Export again: the done row folds while the progress row unfolds.
         ui.export.gate = CompletableDeferred()
         ui.click("Export again")
-        ui.d.frames(30)
+        ui.d.frames(60) // the fold follows the layout spring
         assertNull(ui.texted("Pixel 8 Pro #1 ü.gif"))
         assertNotNull(ui.texted("Making the palette…"))
         ui.close()

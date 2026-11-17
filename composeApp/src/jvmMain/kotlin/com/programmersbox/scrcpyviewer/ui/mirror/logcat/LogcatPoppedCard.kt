@@ -27,7 +27,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -37,9 +36,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 
 /** How far the own-window card rises as it fades in. */
 private val CARD_RISE = 12.dp
@@ -54,7 +53,7 @@ private const val SWAP_MILLIS = 400
 fun LogcatSheetTab(
     controller: LogcatController,
     sheetWidth: Dp,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
 ) {
     val rise = with(LocalDensity.current) { CARD_RISE.roundToPx() }
     AnimatedContent(

@@ -101,7 +101,6 @@ import com.programmersbox.scrcpyviewer.ui.settings.NativeSettingsFileDialogs
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsScreen
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsViewModel
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.update.UpdateDialog
 import com.programmersbox.scrcpyviewer.ui.update.UpdateViewModel
@@ -336,7 +335,6 @@ fun App(
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             CompositionLocalProvider(
                 LocalSnackbarHostState provides snackbar,
-                LocalReduceMotion provides remember { systemReducesMotion() },
             ) {
                 Row(Modifier.fillMaxSize()) {
                     val windowWidth = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }

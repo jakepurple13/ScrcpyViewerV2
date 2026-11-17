@@ -19,8 +19,8 @@ const val CLOSE_MILLIS = 200
 
 /** Content that opens its space downward while fading in. */
 fun expandFadeIn(): EnterTransition =
-    expandVertically(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) + fadeIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate))
+    expandVertically(layoutSpring()) + fadeIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate))
 
 /** Content that fades out while its space closes upward. */
 fun shrinkFadeOut(): ExitTransition =
-    shrinkVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) + fadeOut(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate))
+    shrinkVertically(layoutSpring()) + fadeOut(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate))

@@ -169,7 +169,7 @@ class FollowControlsTest {
         d.frames(30)
         assertTrue("Layout differs" in d.texts())
         differs = false
-        d.frames(30)
+        d.frames(60) // the width springs away (layoutSpring) before the words leave
         assertFalse("Layout differs" in d.texts())
     }
 
@@ -183,7 +183,7 @@ class FollowControlsTest {
     }
 
     @Test
-    fun `chip expands in over 250 ms without jumps and shrinks out over 200 ms`() {
+    fun `chip expands in and shrinks out on the layout spring without jumps`() {
         var visible by mutableStateOf(false)
         val widths = ArrayList<Int>()
         var width = 0
@@ -193,19 +193,20 @@ class FollowControlsTest {
             }
         }
         visible = true
-        repeat(25) { d.frame(); widths += width }
+        repeat(60) { d.frame(); widths += width }
         val full = widths.last()
         assertTrue(full > 60, "chip has its width: $widths")
-        val grown = widths.indexOfFirst { it == full }
-        assertTrue(grown in 13..17, "full width after ~250 ms (16 frames), at $grown: $widths")
+        assertTrue(widths[4] in 1 until full, "between nothing and its width a few frames in: $widths")
+        assertTrue(widths.count { it in 1 until full } >= 6, "grows over several frames: $widths")
+        assertTrue(widths.takeLast(15).all { it == full }, "settled at its width: $widths")
         val steps = widths.zipWithNext { a, b -> b - a }
-        assertTrue(steps.all { it >= 0 }, "grows only: $widths")
+        assertTrue(steps.all { it >= -full / 50 }, "grows (at most a spring's small overshoot back): $widths")
         assertTrue(steps.max() <= full * 0.25, "no frame jumps more than a quarter of the width: $widths")
         visible = false
         val shrinking = ArrayList<Int>()
-        repeat(20) { d.frame(); shrinking += width }
-        val gone = shrinking.indexOfFirst { it == 0 }
-        assertTrue(gone in 10..14, "gone after ~200 ms (12 frames), at $gone: $shrinking")
+        repeat(60) { d.frame(); shrinking += width }
+        assertTrue(shrinking[4] in 1 until full, "between its width and nothing a few frames in: $shrinking")
+        assertTrue(shrinking.takeLast(15).all { it == 0 }, "gone: $shrinking")
     }
 
     @Test

@@ -34,6 +34,7 @@ import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import kotlinx.coroutines.delay
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** The snackbar rises this far as it shows, and stays this long (longer with an action). */
 private val SNACK_RISE = 16.dp
@@ -61,8 +62,7 @@ internal fun FilesSnackbar(browser: FilesBrowser, motion: Boolean, modifier: Mod
         if (barShown) SELECTION_BAR_HEIGHT else 0.dp,
         when {
             !motion -> snap()
-            barShown -> tween(OPEN_MILLIS, easing = EmphasizedDecelerate)
-            else -> tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)
+            else -> layoutSpring()
         },
     )
     val rise = with(LocalDensity.current) { SNACK_RISE.roundToPx() }

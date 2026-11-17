@@ -324,7 +324,7 @@ private fun ResultList(
         listState.bringIntoView(i, motion)
     }
     val narrowRows = LocalFilesLayout.current.modifiedBelow
-    val placement = if (motion) tween<androidx.compose.ui.unit.IntOffset>(SEARCH_PLACE_MILLIS, easing = EmphasizedDecelerate) else null
+    val placement = if (motion) layoutSpring<androidx.compose.ui.unit.IntOffset>() else null
     LazyColumn(
         Modifier.fillMaxSize().testTag(SEARCH_RESULTS_TAG),
         state = listState,
@@ -388,9 +388,6 @@ private fun ResultList(
 
 /** Room the name leaves for the icon-only Show in folder (26 dp, 10 dp from the end) on a selected narrow result. */
 private val REVEAL_ICON_INSET = 36.dp
-
-/** Search results slide into place over this long when a chip changes what is shown. */
-private const val SEARCH_PLACE_MILLIS = 300
 
 @Composable
 private fun GroupHeader(dir: String, count: Int, onOpen: () -> Unit, modifier: Modifier = Modifier) {

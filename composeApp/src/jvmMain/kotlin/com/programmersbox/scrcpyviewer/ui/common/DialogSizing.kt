@@ -53,11 +53,11 @@ fun Modifier.stackMotion(scope: LookaheadScope): Modifier {
  * Follows the content's height with [layoutSpring] when it changes (a restack makes the card taller or shorter).
  * Unlike `animateContentSize` the width is never animated, so dragging the window edge stays 1:1.
  * Clips to the animated height, so content taller than it does not draw outside during a grow.
- * Changes instantly under reduced motion.
+ * Changes instantly under reduced motion, or when [enabled] is false.
  */
 @Composable
-fun Modifier.animateHeight(): Modifier =
-    if (LocalReduceMotion.current) this else this then AnimateHeightElement then Modifier.clipToBounds()
+fun Modifier.animateHeight(enabled: Boolean = !LocalReduceMotion.current): Modifier =
+    if (!enabled) this else this then AnimateHeightElement then Modifier.clipToBounds()
 
 private object AnimateHeightElement : ModifierNodeElement<AnimateHeightNode>() {
     override fun create() = AnimateHeightNode()
