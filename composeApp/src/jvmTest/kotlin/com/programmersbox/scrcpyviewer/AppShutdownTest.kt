@@ -4,6 +4,7 @@ import com.programmersbox.scrcpyviewer.adb.Device
 import com.programmersbox.scrcpyviewer.adb.DeviceState
 import com.programmersbox.scrcpyviewer.media.FfmpegRuns
 import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.scrcpy.LocalPairLauncher
 import com.programmersbox.scrcpyviewer.scrcpy.ScrcpySession
@@ -286,5 +287,29 @@ class AppShutdownTest {
         shutdown.run()
         assertEquals(listOf("flush", "install", "exit"), events)
         assertEquals(2_000L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `app_closed counts the windows open at the request and is tracked before the flush`() = runBlocking<Unit> {
+        controller.open("A")
+        val session = controller.open.value.getValue("A")
+        withTimeout(5_000) { session.status.first { it == SessionStatus.Running } }
+        val events = java.util.Collections.synchronizedList(ArrayList<Any>())
+        val recording = object : Telemetry by Telemetry.Noop {
+            override fun track(event: TelemetryEvent) {
+                events += event
+            }
+
+            override suspend fun flush() {
+                events += "flush"
+            }
+        }
+        val shutdown = AppShutdown(
+            controller, exit = { events += "exit" }, telemetry = recording,
+            startedAtMs = 1_000, clock = { 1_000 + 25 * 60_000L },
+        )
+        shutdown.request()
+        shutdown.run()
+        assertEquals(listOf(TelemetryEvent.AppClosed(sessionMinutes = 25, mirrorWindowsOpen = 1), "flush", "exit"), events)
     }
 }

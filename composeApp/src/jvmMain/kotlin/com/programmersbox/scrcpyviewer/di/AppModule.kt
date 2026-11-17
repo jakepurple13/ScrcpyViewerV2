@@ -142,7 +142,8 @@ class AdbModule {
     }
 
     @Singleton
-    fun deviceTracker(client: AdbClient, scope: AppScope): DeviceTracker = DeviceTracker(client, scope)
+    fun deviceTracker(client: AdbClient, scope: AppScope, telemetry: Telemetry): DeviceTracker =
+        DeviceTracker(client, scope, telemetry = telemetry)
 
     /** The device selected on the Devices screen; Presets applies to it. Never an emulator still booting. */
     @Singleton(binds = [SelectedDevice::class])
@@ -166,6 +167,7 @@ class AdbModule {
         mirrors: MirrorRequests,
         dataDir: DataDir,
         scope: AppScope,
+        telemetry: Telemetry,
     ): EmulatorLauncher = EmulatorLauncher(
         adb = client,
         devices = tracker.devices,
@@ -173,6 +175,7 @@ class AdbModule {
         mirrors = mirrors,
         logDir = dataDir.path.resolve("emulator-logs"),
         scope = scope,
+        telemetry = telemetry,
     )
 
     @Singleton

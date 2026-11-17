@@ -19,7 +19,10 @@ import com.programmersbox.scrcpyviewer.actions.AiSkillInstaller
 import com.programmersbox.scrcpyviewer.presets.PresetStore
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.Settings
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
 import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent.OnboardingFinished
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.onboarding.OnboardingDialog
 import com.programmersbox.scrcpyviewer.ui.onboarding.PrivacyChoices
@@ -69,11 +72,23 @@ class PrivacyPromptTest {
         PrivacyChoices(usage = s.usageStats, crash = s.crashReports, onUsage = onUsage, onCrash = onCrash)
 
     @Test
+    fun finishingOnTheLastPageIsFinishedAndEarlierIsSkipped() {
+        val telemetry = FakeTelemetry()
+        val vm = vm(telemetry)
+        vm.finishOnboarding(lastStep = 4, pageCount = 5)
+        vm.finishOnboarding(lastStep = 1, pageCount = 5)
+        assertEquals(
+            listOf<TelemetryEvent>(OnboardingFinished("finished", lastStep = 4), OnboardingFinished("skipped", lastStep = 1)),
+            telemetry.events,
+        )
+    }
+
+    @Test
     fun keylessBuildHasFourPagesAndNeverSetsPromptSeen() {
         assertEquals(4, onboardingPageCount(null))
         val vm = vm(Telemetry.Noop)
         settings.update { it.copy(onboardingSeen = false) }
-        vm.finishOnboarding()
+        vm.finishOnboarding(lastStep = 0, pageCount = 4)
         assertTrue(settings.settings.value.onboardingSeen)
         assertFalse(settings.settings.value.privacyPromptSeen, "a keyless build never marks the prompt seen")
         vm.finishPrivacyPrompt()
@@ -91,7 +106,7 @@ class PrivacyPromptTest {
         assertEquals(5, onboardingPageCount(choices()))
         val vm = vm(KeyedTelemetry)
         settings.update { it.copy(onboardingSeen = false) }
-        vm.finishOnboarding()
+        vm.finishOnboarding(lastStep = 0, pageCount = 5)
         assertTrue(settings.settings.value.onboardingSeen)
         assertTrue(settings.settings.value.privacyPromptSeen, "finishing (or skipping) the guide counts as seeing the prompt")
         assertFalse(showPrivacyPrompt(settings.settings.value, telemetryEnabled = true, otherDialogShowing = false))

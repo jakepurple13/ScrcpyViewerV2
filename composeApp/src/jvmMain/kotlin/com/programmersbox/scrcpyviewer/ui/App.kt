@@ -96,6 +96,7 @@ import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
 import com.programmersbox.scrcpyviewer.ui.onboarding.OnboardingDialog
 import com.programmersbox.scrcpyviewer.ui.onboarding.PrivacyChoices
 import com.programmersbox.scrcpyviewer.ui.onboarding.PrivacyPromptDialog
+import com.programmersbox.scrcpyviewer.ui.onboarding.onboardingPageCount
 import com.programmersbox.scrcpyviewer.ui.onboarding.rememberPrivacyPromptOpen
 import com.programmersbox.scrcpyviewer.ui.presets.NativePresetFileDialogs
 import com.programmersbox.scrcpyviewer.ui.presets.PresetsScreen
@@ -436,7 +437,7 @@ fun App(
                     OnboardingDialog(
                         page = page,
                         onPage = { page = it },
-                        onFinish = settingsViewModel::finishOnboarding,
+                        onFinish = { settingsViewModel.finishOnboarding(page, onboardingPageCount(privacy)) },
                         privacy = privacy,
                     )
                 }

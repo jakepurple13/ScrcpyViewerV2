@@ -13,6 +13,7 @@ import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.Settings
 import com.programmersbox.scrcpyviewer.telemetry.RecentEvent
 import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
@@ -248,10 +249,15 @@ class SettingsViewModel(
 
     /**
      * The first-run guide was closed. With an analytics key its last page is the consent page, so closing it (Done,
-     * Skip or Esc) also marks the privacy prompt seen; a skip leaves the switches as they are.
+     * Skip or Esc) also marks the privacy prompt seen; a skip leaves the switches as they are. [lastStep] is the page
+     * it was closed on, of [pageCount]: closed on the last page it was finished, earlier it was skipped.
      */
-    fun finishOnboarding() = appSettings.update {
-        it.copy(onboardingSeen = true, privacyPromptSeen = it.privacyPromptSeen || telemetry.enabled)
+    fun finishOnboarding(lastStep: Int, pageCount: Int) {
+        appSettings.update {
+            it.copy(onboardingSeen = true, privacyPromptSeen = it.privacyPromptSeen || telemetry.enabled)
+        }
+        val outcome = if (lastStep == pageCount - 1) "finished" else "skipped"
+        telemetry.track(TelemetryEvent.OnboardingFinished(outcome, lastStep))
     }
 
     /** The standalone privacy prompt was closed (Done or Esc); a build without an analytics key never marks it. */

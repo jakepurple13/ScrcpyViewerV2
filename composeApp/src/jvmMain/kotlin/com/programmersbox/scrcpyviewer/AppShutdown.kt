@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer
 
 import com.programmersbox.scrcpyviewer.media.FfmpegRuns
 import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -15,15 +16,16 @@ import com.programmersbox.scrcpyviewer.ui.window.ObjC
 import com.sun.jna.Callback
 import com.sun.jna.NativeLibrary
 import com.sun.jna.Pointer
+import java.lang.management.ManagementFactory
 
 /**
  * The one way the app quits: the main window's close button and the macOS Quit command (Cmd+Q, Dock, menu) both
  * call [request]. [run] then closes every mirror session, which waits for their recorders to write the trailer
  * (bounded by [timeoutMs]), waits for running FFmpeg exports to stop and delete their temp files (bounded by
  * [ffmpegTimeoutMs], then forced: [FfmpegRuns.forceCleanup]), plays the main window's quit animation ([animateOut],
- * bounded by [animateTimeoutMs]), sends queued [telemetry] (bounded by [telemetryTimeoutMs]), then runs [install] on
- * [installDispatcher] and only then calls [exit]. While it waits, [state] says whether a recording is being finished,
- * so the UI can say so instead of freezing silently.
+ * bounded by [animateTimeoutMs]), tracks `app_closed` and sends queued [telemetry] (bounded by [telemetryTimeoutMs]),
+ * then runs [install] on [installDispatcher] and only then calls [exit]. While it waits, [state] says whether a
+ * recording is being finished, so the UI can say so instead of freezing silently.
  *
  * [install] starts a downloaded update's installer, which blocks on `adb kill-server` and ends the process with
  * `System.exit`. [run] is called on the UI thread (the Tao main thread), so [install] must not run there: blocking the
@@ -48,6 +50,9 @@ class AppShutdown(
     private val telemetry: Telemetry = Telemetry.Noop,
     /** The quit flush is cut off after this long: the exit never waits on the network. */
     private val telemetryTimeoutMs: Long = DEFAULT_TELEMETRY_TIMEOUT_MS,
+    /** When this run of the app started, for `app_closed`'s session length; read with [clock]. */
+    private val startedAtMs: Long = ManagementFactory.getRuntimeMXBean().startTime,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     sealed interface State {
         data object Running : State
@@ -57,9 +62,16 @@ class AppShutdown(
     private val _state = MutableStateFlow<State>(State.Running)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /** The mirror windows open when [request] was first called, for `app_closed`; [run] closes them. */
+    @Volatile
+    private var mirrorWindowsOpen = 0
+
     /** Starts shutting down; later calls are ignored. Safe from any thread. */
     fun request() {
-        val recording = controller.open.value.values.any { it.hasUnfinishedRecording }
+        val open = controller.open.value.values
+        val recording = open.any { it.hasUnfinishedRecording }
+        // Set before the state changes, so run() (started by that change) reads it.
+        if (_state.value == State.Running) mirrorWindowsOpen = open.size
         _state.compareAndSet(State.Running, State.ShuttingDown(recording))
     }
 
@@ -85,6 +97,9 @@ class AppShutdown(
             log.log(System.Logger.Level.WARNING, "Quit animation failed, exiting anyway", t)
         }
         quitHook.release()
+        // Before the flush, which waits for it to be queued and sends it with the rest.
+        val minutes = (clock() - startedAtMs) / 60_000
+        telemetry.track(TelemetryEvent.AppClosed(sessionMinutes = minutes, mirrorWindowsOpen = mirrorWindowsOpen))
         // Telemetry.flush never throws; whatever is not sent in time stays queued for the next launch.
         if (withTimeoutOrNull(telemetryTimeoutMs) { telemetry.flush() } == null) {
             log.log(System.Logger.Level.WARNING, "Telemetry still sending after $telemetryTimeoutMs ms, exiting anyway")

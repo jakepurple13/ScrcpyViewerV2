@@ -385,6 +385,8 @@ class ScrcpySession(
             throw e
         } catch (t: Throwable) {
             log.log(System.Logger.Level.WARNING, "Could not start session $serial", t)
+            // An adb failure's message can name the device: scrubbed even if the device list has not listed it yet.
+            telemetry.rememberSerial(serial)
             telemetry.captureException(t, handled = true)
             fail(t.message ?: t.toString())
             return

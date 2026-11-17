@@ -7,6 +7,9 @@ import com.programmersbox.scrcpyviewer.adb.MdnsType
 import com.programmersbox.scrcpyviewer.adb.NetworkScanner
 import com.programmersbox.scrcpyviewer.adb.Subnet
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent.WifiPairing
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewmodel.initializer
@@ -33,6 +36,7 @@ import kotlin.test.assertTrue
 class WifiPairingViewModelTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val done = CompletableDeferred<WifiNotice>()
+    private val telemetry = FakeTelemetry()
 
     private val polls = AtomicInteger()
     private val wireless = object : FakeWirelessAdb() {
@@ -43,7 +47,7 @@ class WifiPairingViewModelTest {
     }
 
     private fun vm(scope: CoroutineScope = this.scope) =
-        WifiPairingViewModel(wireless, random = Random(1), pollMs = 10, connectWaitMs = 100, scope = scope).also { vm ->
+        WifiPairingViewModel(wireless, telemetry, random = Random(1), pollMs = 10, connectWaitMs = 100, scope = scope).also { vm ->
             this.scope.launch { done.complete(vm.results.first()) }
         }
 
@@ -77,6 +81,7 @@ class WifiPairingViewModelTest {
         assertEquals("adb-ABC-x", notice.mdnsName)
         assertTrue("pair 192.168.1.31:41877 ${s.qrPassword}" in wireless.calls)
         assertTrue("connect 192.168.1.31:37215" in wireless.calls)
+        assertEquals(listOf<TelemetryEvent>(WifiPairing("qr", success = true)), telemetry.events)
     }
 
     @Test
@@ -90,6 +95,7 @@ class WifiPairingViewModelTest {
         vm.submit()
         assertEquals("Paired with ABC", withTimeout(3000) { done.await() }.text)
         assertEquals(listOf("pair 192.168.1.31:41877 482913"), wireless.calls)
+        assertEquals(listOf<TelemetryEvent>(WifiPairing("code", success = true)), telemetry.events)
     }
 
     @Test
@@ -105,6 +111,7 @@ class WifiPairingViewModelTest {
         awaitState(vm) { it.error != null && !it.busy }
         assertEquals("Wrong pairing code. Check the code on the phone and try again.", vm.state.value.error)
         assertFalse(done.isCompleted)
+        assertEquals(listOf<TelemetryEvent>(WifiPairing("code", success = false)), telemetry.events)
     }
 
     @Test
@@ -145,6 +152,7 @@ class WifiPairingViewModelTest {
         vm.submit()
         assertEquals("192.168.1.31:5555 connected over Wi-Fi", withTimeout(3000) { done.await() }.text)
         assertEquals(listOf("pair 192.168.1.31:41877 482913", "connect 192.168.1.31:5555"), wireless.calls)
+        assertEquals(listOf<TelemetryEvent>(WifiPairing("ip", success = true)), telemetry.events)
     }
 
     @Test
@@ -156,6 +164,7 @@ class WifiPairingViewModelTest {
         vm.submit()
         awaitState(vm) { it.error != null && !it.busy }
         assertEquals("Couldn't connect: Connection refused", vm.state.value.error)
+        assertEquals(listOf<TelemetryEvent>(WifiPairing("ip", success = false)), telemetry.events)
     }
 
     @Test
@@ -187,7 +196,7 @@ class WifiPairingViewModelTest {
     }
 
     private fun scanVm(vararg alive: String, probedPorts: MutableList<Int> = mutableListOf()) = WifiPairingViewModel(
-        wireless, random = Random(1), pollMs = 10, connectWaitMs = 100,
+        wireless, telemetry, random = Random(1), pollMs = 10, connectWaitMs = 100,
         scanner = NetworkScanner(
             subnets = { listOf(Subnet(NetworkScanner.ipToLong("192.168.1.10"), 24)) },
             probe = { host, port, _ -> synchronized(probedPorts) { probedPorts += port }; host in alive },
@@ -205,6 +214,7 @@ class WifiPairingViewModelTest {
         assertEquals("192.168.1.42", s.ip)
         assertEquals(253, s.scanTotal)
         assertEquals(253, s.scanDone)
+        assertEquals(listOf<TelemetryEvent>(WifiPairing("scan", success = true)), telemetry.events)
     }
 
     @Test
@@ -226,6 +236,7 @@ class WifiPairingViewModelTest {
         awaitState(vm) { !it.scanning && it.scanResults != null }
         assertEquals(emptyList(), vm.state.value.scanResults)
         assertTrue(ports.isNotEmpty() && ports.all { it == 6000 })
+        assertEquals(listOf<TelemetryEvent>(WifiPairing("scan", success = false)), telemetry.events)
     }
 
     @Test

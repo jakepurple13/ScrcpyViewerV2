@@ -48,6 +48,9 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorWindow
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.MirrorWindows
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.WindowArranger
 import com.programmersbox.scrcpyviewer.state.AppSettings
+import com.programmersbox.scrcpyviewer.state.Settings
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
 import com.programmersbox.scrcpyviewer.ui.App
 import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
@@ -124,6 +127,7 @@ fun main() {
         crashTelemetry.set(it)
         it.start()
     }
+    trackLaunch(telemetry, appSettings.firstLaunch, appSettings.settings.value, updateManager.updatedFrom)
     // Native crashes of earlier runs: reported when crash reports are on, their logs deleted either way. Not in a
     // build without a key, so a dev run leaves its crash logs for the developer.
     if (telemetry.enabled) {
@@ -370,4 +374,10 @@ private fun NucleusApplicationScope.FinishingRecordingWindow(theme: AppTheme) = 
             }
         }
     }
+}
+
+/** The launch events: `app_opened`, and `update_installed` on the first launch after an update ([updatedFrom]). */
+internal fun trackLaunch(telemetry: Telemetry, firstLaunch: Boolean, settings: Settings, updatedFrom: String?) {
+    telemetry.track(TelemetryEvent.AppOpened(firstLaunch, ThemeStyle.fromName(settings.themeStyle).name))
+    if (updatedFrom != null) telemetry.track(TelemetryEvent.UpdateInstalled(fromVersion = updatedFrom, toVersion = APP_VERSION))
 }

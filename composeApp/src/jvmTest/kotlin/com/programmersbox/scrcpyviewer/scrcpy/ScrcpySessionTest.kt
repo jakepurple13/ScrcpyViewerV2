@@ -436,6 +436,8 @@ class ScrcpySessionTest {
         val s = session(ConnectionStarter { _, _ -> throw e }, telemetry = telemetry)
         s.await(SessionStatus.Failed)
         assertEquals(listOf<Pair<Throwable, Boolean>>(e to true), telemetry.exceptions.toList())
+        // An adb failure's message can name the device: its serial is scrubbed from what is sent.
+        assertEquals(listOf("SER"), telemetry.serials.toList())
         s.close()
     }
 

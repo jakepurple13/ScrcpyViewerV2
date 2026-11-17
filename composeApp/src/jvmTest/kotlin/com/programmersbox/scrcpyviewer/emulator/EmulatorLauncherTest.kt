@@ -7,6 +7,9 @@ import com.programmersbox.scrcpyviewer.adb.DeviceState
 import com.programmersbox.scrcpyviewer.adb.ProcessResult
 import com.programmersbox.scrcpyviewer.state.AppSettings
 import com.programmersbox.scrcpyviewer.state.EmulatorPrefs
+import com.programmersbox.scrcpyviewer.telemetry.FakeTelemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent.EmulatorStarted
 import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -51,6 +54,7 @@ class EmulatorLauncherTest {
     private val starter = FakeStarter()
     private var busyPorts = emptySet<Int>()
     private var uiContext: CoroutineContext = EmptyCoroutineContext
+    private val telemetry = FakeTelemetry()
 
     private class FakeProcess(var exitOnDestroy: Boolean = true) : EmulatorProcess {
         override val exit = CompletableDeferred<Int>()
@@ -127,6 +131,7 @@ class EmulatorLauncherTest {
         uiContext = uiContext,
         // The real deletion, on the test thread (temp folders only).
         wipeData = wipeData ?: { wipeAvdData(it) },
+        telemetry = telemetry,
     ).also { runCurrent() }
 
     private fun TestScope.notices(launcher: EmulatorLauncher): List<EmulatorNotice> {
@@ -249,6 +254,7 @@ class EmulatorLauncherTest {
         assertEquals(12_000, settings.settings.value.emulatorPrefs.getValue(pixel.id).lastBootMillis)
         assertEquals(listOf(EmulatorNotice("Pixel 9 is ready.")), notices)
         assertTrue(requested.replayCache.isEmpty())
+        assertEquals(listOf<TelemetryEvent>(EmulatorStarted(coldBoot = false, success = true, bootSeconds = 12)), telemetry.events)
     }
 
     @Test
@@ -313,6 +319,7 @@ class EmulatorLauncherTest {
             launcher.stateOf(pixel.id),
         )
         assertEquals(listOf(EmulatorNotice("Pixel 9 didn't start.", logFile = started.log)), notices)
+        assertEquals(listOf<TelemetryEvent>(EmulatorStarted(coldBoot = true, success = false, bootSeconds = 3)), telemetry.events)
         assertEquals(emptySet(), launcher.bootingSerials.value)
         // No polling outlives the failure.
         val calls = adb.shellCalls
@@ -342,10 +349,11 @@ class EmulatorLauncherTest {
         val launcher = EmulatorLauncher(
             adb, devices, settings, MirrorRequests(requested), logDir, backgroundScope,
             starter = { _, _, _ -> throw java.io.IOException("Permission denied") },
-            clock = { testScheduler.currentTime }, isPortFree = { true },
+            clock = { testScheduler.currentTime }, isPortFree = { true }, telemetry = telemetry,
         )
         launcher.start(pixel, sdk)
         assertEquals(AvdState.Failed("Couldn't start the emulator: Permission denied", cold = false), launcher.stateOf(pixel.id))
+        assertEquals(listOf<TelemetryEvent>(EmulatorStarted(coldBoot = false, success = false, bootSeconds = 0)), telemetry.events)
     }
 
     @Test
@@ -367,6 +375,7 @@ class EmulatorLauncherTest {
         advanceTimeBy(STOP_WAIT_MS + 1)
         assertTrue(process.destroyed)
         assertEquals(AvdState.Failed(BOOT_TIMEOUT_REASON, cold = false), launcher.stateOf(pixel.id))
+        assertEquals(false, (telemetry.events.single() as EmulatorStarted).success)
         assertEquals("Android didn't finish booting in 4 minutes.", BOOT_TIMEOUT_REASON)
         assertEquals(listOf(EmulatorNotice("Pixel 9 didn't start.", logFile = logDir.resolve("Pixel_9_API_36.log"))), notices)
         val calls = adb.shellCalls
@@ -508,6 +517,7 @@ class EmulatorLauncherTest {
         runCurrent()
         assertEquals(AvdState.Stopped, launcher.stateOf(pixel.id))
         assertTrue(notices.isEmpty())
+        assertTrue(telemetry.events.isEmpty(), "a stopped boot is neither a success nor a failure")
         assertTrue(requested.replayCache.isEmpty())
         assertNull(settings.settings.value.emulatorPrefs.getValue(pixel.id).lastBootMillis)
     }
@@ -525,6 +535,7 @@ class EmulatorLauncherTest {
         runCurrent()
         assertEquals(AvdState.Running("emulator-5554"), launcher.stateOf(pixel.id))
         assertNull(settings.settings.value.emulatorPrefs[pixel.id]?.lastBootMillis)
+        assertEquals(listOf<TelemetryEvent>(EmulatorStarted(coldBoot = true, success = true, bootSeconds = 40)), telemetry.events)
     }
 
     @Test

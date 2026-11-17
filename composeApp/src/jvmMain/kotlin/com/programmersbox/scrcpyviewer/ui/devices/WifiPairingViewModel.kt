@@ -8,6 +8,8 @@ import com.programmersbox.scrcpyviewer.adb.MdnsType
 import com.programmersbox.scrcpyviewer.adb.NetworkScanner
 import com.programmersbox.scrcpyviewer.adb.WirelessAdb
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
+import com.programmersbox.scrcpyviewer.telemetry.Telemetry
+import com.programmersbox.scrcpyviewer.telemetry.TelemetryEvent
 import com.programmersbox.scrcpyviewer.ui.common.defaultViewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -72,6 +74,8 @@ data class WifiPairingState(
 @KoinViewModel
 class WifiPairingViewModel(
     private val wireless: WirelessAdb,
+    /** Gets a `wifi_pairing` event for each pair or connect that ends, and for each finished network scan. */
+    private val telemetry: Telemetry,
     random: Random = Random.Default,
     private val pollMs: Long = 1000,
     private val connectWaitMs: Long = 10_000,
@@ -104,7 +108,7 @@ class WifiPairingViewModel(
                 val s = _state.value
                 if (s.tab == PairingTab.Qr && !s.busy) {
                     pairing.firstOrNull { it.name == s.qrName && triedQr.add(it.address) }
-                        ?.let { pairAndConnect(it, s.qrPassword) }
+                        ?.let { pairAndConnect(it, s.qrPassword, PairingTab.Qr) }
                 }
                 delay(pollMs)
             }
@@ -136,7 +140,7 @@ class WifiPairingViewModel(
                     ?: s.chosen?.let { MdnsService(it, MdnsType.Pairing, it) }
                     ?: return
                 if (s.code.length != 6) return
-                viewModelScope.launch { pairAndConnect(service, s.code) }
+                viewModelScope.launch { pairAndConnect(service, s.code, PairingTab.Code) }
             }
             PairingTab.Ip -> submitIp(s)
         }
@@ -161,6 +165,7 @@ class WifiPairingViewModel(
                     onProgress = { done, total -> _state.update { it.copy(scanDone = done, scanTotal = total) } },
                     onFound = { host -> _state.update { it.copy(scanResults = it.scanResults.orEmpty() + host) } },
                 )
+                telemetry.track(TelemetryEvent.WifiPairing(method = "scan", success = found.isNotEmpty()))
                 _state.update {
                     it.copy(
                         scanning = false,
@@ -208,19 +213,20 @@ class WifiPairingViewModel(
             busy(true)
             if (s.pairPort.isNotEmpty() && s.pairCode.isNotEmpty()) {
                 val paired = wireless.pair("${s.ip}:${s.pairPort}", s.pairCode)
-                if (paired != AdbOutcome.Ok) return@launch fail(pairError(paired), paired)
+                if (paired != AdbOutcome.Ok) return@launch fail(PairingTab.Ip, pairError(paired), paired)
             }
             when (val connected = wireless.connect(address)) {
-                AdbOutcome.Ok -> succeed(WifiNotice("$address connected over Wi-Fi", address))
-                else -> fail("Couldn't connect: ${message(connected)}", connected)
+                AdbOutcome.Ok -> succeed(PairingTab.Ip, WifiNotice("$address connected over Wi-Fi", address))
+                else -> fail(PairingTab.Ip, "Couldn't connect: ${message(connected)}", connected)
             }
         }
     }
 
-    private suspend fun pairAndConnect(service: MdnsService, code: String) {
+    /** [tab] is the one the pairing started on: the user may switch tabs while it runs. */
+    private suspend fun pairAndConnect(service: MdnsService, code: String, tab: PairingTab) {
         busy(true)
         val paired = wireless.pair(service.address, code)
-        if (paired != AdbOutcome.Ok) return fail(pairError(paired), paired)
+        if (paired != AdbOutcome.Ok) return fail(tab, pairError(paired), paired)
         // adb usually connects by itself once the phone advertises its connect service; connecting again is harmless.
         val connectService = withTimeoutOrNull(connectWaitMs) {
             var found: MdnsService? = null
@@ -230,28 +236,38 @@ class WifiPairingViewModel(
             }
             found
         }
-        if (connectService == null) return succeed(WifiNotice("Paired with ${label(service.name, service.address)}"))
+        if (connectService == null) return succeed(tab, WifiNotice("Paired with ${label(service.name, service.address)}"))
         when (val connected = wireless.connect(connectService.address)) {
             AdbOutcome.Ok -> {
                 val name = label(connectService.name, connectService.address)
-                succeed(WifiNotice("$name connected over Wi-Fi", connectService.address, mdnsName = connectService.name))
+                succeed(tab, WifiNotice("$name connected over Wi-Fi", connectService.address, mdnsName = connectService.name))
             }
-            else -> fail("Couldn't connect: ${message(connected)}", connected)
+            else -> fail(tab, "Couldn't connect: ${message(connected)}", connected)
         }
     }
 
     private fun busy(value: Boolean) =
         _state.update { it.copy(busy = value, error = if (value) null else it.error, canRestartAdb = if (value) false else it.canRestartAdb) }
 
-    private fun fail(error: String, outcome: AdbOutcome? = null) {
+    private fun fail(tab: PairingTab, error: String, outcome: AdbOutcome) {
+        telemetry.track(TelemetryEvent.WifiPairing(method = tab.method, success = false))
         val restart = (outcome as? AdbOutcome.Failed)?.restartCanFix == true
         _state.update { it.copy(busy = false, error = error, canRestartAdb = restart) }
     }
 
-    private fun succeed(notice: WifiNotice) {
+    private fun succeed(tab: PairingTab, notice: WifiNotice) {
+        telemetry.track(TelemetryEvent.WifiPairing(method = tab.method, success = true))
         _state.update { it.copy(busy = false) }
         _results.trySend(notice)
     }
+
+    /** The `wifi_pairing` method for a pair or connect started on this tab. */
+    private val PairingTab.method: String
+        get() = when (this) {
+            PairingTab.Qr -> "qr"
+            PairingTab.Code -> "code"
+            PairingTab.Ip -> "ip"
+        }
 
     private fun pairError(outcome: AdbOutcome): String = when (outcome) {
         AdbOutcome.WrongCode -> "Wrong pairing code. Check the code on the phone and try again."
