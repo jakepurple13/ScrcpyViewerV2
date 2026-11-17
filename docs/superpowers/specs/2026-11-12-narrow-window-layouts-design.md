@@ -339,11 +339,11 @@ Tao window backend is merged. This branch has been fast-forwarded there.
 
 ## Constraints
 
-- Compose Multiplatform 1.12.2, Kotlin 2.3.21, Material 3 adaptive (`ListDetailPaneScaffold` is already used
-  by `ResizableListDetail`). Windows run on Nucleus Tao (`MaterialDecoratedWindow`) since v1.16.0.
-- **Keep the existing list–detail model:** `ListDetailNavigation.detailOpen`, the draggable divider and
-  `PaneWidthLimits` (min / preferred list widths). The strip is a third presentation of the list pane.
-  Divider dragging only applies in two-pane mode.
+- Compose Multiplatform 1.12.2, Kotlin 2.3.21. Windows run on Nucleus Tao (`MaterialDecoratedWindow`) since
+  v1.16.0.
+- **List-detail:** `AdaptiveListDetail` is a custom layout. Below 840 dp it is list-first and pushes the detail
+  via `ListDetailPanes.pushed`; from an 840 dp window it shows two panes. There is no strip. Settings keeps its
+  own sidebar. The draggable divider and `PaneWidthLimits` apply only in two-pane mode.
 - **Reduced motion** (*my call*): every new transition reads one shared reduce-motion source. Hoist the OS
   check that `MirrorWindowMotion.kt:285` already does into a shared helper. When it's on, movement becomes a
   short fade or an instant change. `animateMirrorWindows` stays specific to mirror window open/close.

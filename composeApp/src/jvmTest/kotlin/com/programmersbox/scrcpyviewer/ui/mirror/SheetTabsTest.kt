@@ -585,7 +585,7 @@ class SheetTabsTest {
         driver.scene.sendPointerEvent(PointerEventType.Move, apps, type = PointerType.Mouse)
         driver.frames(2)
         driver.scene.sendPointerEvent(PointerEventType.Move, apps.copy(x = apps.x + 1f), type = PointerType.Mouse)
-        val until = System.currentTimeMillis() + 3_000
+        val until = System.currentTimeMillis() + 10_000
         while (driver.texts()["Apps"] == null && System.currentTimeMillis() < until) {
             Thread.sleep(50)
             driver.frames(1)

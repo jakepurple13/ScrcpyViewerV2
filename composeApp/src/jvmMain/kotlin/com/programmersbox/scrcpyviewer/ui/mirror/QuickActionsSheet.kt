@@ -675,9 +675,9 @@ private fun SegmentBody(compact: Boolean, motion: Boolean, content: @Composable 
         targetState = compact,
         transitionSpec = {
             if (motion) {
-                (fadeIn(tween(SEGMENT_ICONS_MILLIS)) togetherWith fadeOut(tween(SEGMENT_ICONS_MILLIS))) using SizeTransform(clip = false)
+                (fadeIn(tween(SEGMENT_ICONS_MILLIS)) togetherWith fadeOut(tween(SEGMENT_ICONS_MILLIS))) using SizeTransform(clip = false) { _, _ -> layoutSpring() }
             } else {
-                (EnterTransition.None togetherWith ExitTransition.None) using SizeTransform(clip = false)
+                (EnterTransition.None togetherWith ExitTransition.None) using SizeTransform(clip = false) { _, _ -> snap() }
             }
         },
         contentAlignment = Alignment.Center,

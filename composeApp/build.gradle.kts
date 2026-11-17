@@ -120,8 +120,6 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.androidx.navigation3.ui)
             implementation(libs.lifecycle.runtime.compose)
-            implementation(libs.material3.adaptive)
-            implementation(libs.material3.adaptive.layout)
             implementation(libs.qrose)
             implementation(project.dependencies.platform(libs.koin.bom))
             implementation(libs.koin.core)

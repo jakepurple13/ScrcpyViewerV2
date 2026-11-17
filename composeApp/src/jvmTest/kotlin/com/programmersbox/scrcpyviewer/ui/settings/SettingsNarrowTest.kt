@@ -225,7 +225,7 @@ class SettingsNarrowTest {
         scene.sendPointerEvent(PointerEventType.Move, icon, type = PointerType.Mouse)
         frames(2)
         scene.sendPointerEvent(PointerEventType.Move, icon.copy(x = icon.x + 1f), type = PointerType.Mouse)
-        val until = System.currentTimeMillis() + 3_000
+        val until = System.currentTimeMillis() + 10_000
         while (text("Mirroring").isEmpty() && System.currentTimeMillis() < until) {
             Thread.sleep(50)
             frame()

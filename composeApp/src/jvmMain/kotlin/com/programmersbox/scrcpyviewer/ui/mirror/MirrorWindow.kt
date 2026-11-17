@@ -236,7 +236,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.common.ImageClipboard
 import com.programmersbox.scrcpyviewer.ui.common.openExternally
 import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
