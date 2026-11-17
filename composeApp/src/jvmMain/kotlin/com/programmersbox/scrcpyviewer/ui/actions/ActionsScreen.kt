@@ -791,7 +791,7 @@ private fun ActionRow(
                 Icons.Filled.DragIndicator,
                 contentDescription = "Drag to reorder",
                 tint = colors.onSurfaceVariant,
-                modifier = handle.pointerHoverIcon(PointerIcon(Cursor(Cursor.MOVE_CURSOR))).padding(4.dp).size(20.dp),
+                modifier = handle.pointerHoverIcon(PointerIcon.Hand).padding(4.dp).size(20.dp),
             )
         } else {
             Spacer(Modifier.size(8.dp))
