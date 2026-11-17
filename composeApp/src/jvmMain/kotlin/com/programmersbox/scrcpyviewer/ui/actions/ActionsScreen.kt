@@ -117,7 +117,6 @@ import com.programmersbox.scrcpyviewer.ui.presets.ErrorBanner
 import com.programmersbox.scrcpyviewer.ui.presets.PresetFileDialogs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.awt.Cursor
 import java.nio.file.Files
 import kotlin.math.roundToInt
 
