@@ -7,18 +7,18 @@ import kotlin.test.assertEquals
 class PaneModeTest {
     // 676 = list min 240 + divider 16 + detail min 420.
     @Test
-    fun `two panes when the list min, divider and detail min fit`() {
-        assertEquals(PaneMode.TwoPane, paneMode(676.dp, 240.dp, detailOpen = false))
-        assertEquals(PaneMode.TwoPane, paneMode(676.dp, 240.dp, detailOpen = true))
+    fun `two panes when the list min, divider and detail min fit, pushed or not`() {
+        assertEquals(PaneMode.TwoPane, paneMode(676.dp, 240.dp, pushed = false))
+        assertEquals(PaneMode.TwoPane, paneMode(676.dp, 240.dp, pushed = true))
     }
 
     @Test
-    fun `one dp short shows the list alone when nothing is open`() {
-        assertEquals(PaneMode.ListView, paneMode(675.dp, 240.dp, detailOpen = false))
+    fun `one dp short shows the list alone when nothing is pushed`() {
+        assertEquals(PaneMode.ListView, paneMode(675.dp, 240.dp, pushed = false))
     }
 
     @Test
-    fun `one dp short shows the item view when the detail is open`() {
-        assertEquals(PaneMode.ItemView, paneMode(675.dp, 240.dp, detailOpen = true))
+    fun `one dp short shows the pushed detail when an item is pushed`() {
+        assertEquals(PaneMode.ItemView, paneMode(675.dp, 240.dp, pushed = true))
     }
 }

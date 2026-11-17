@@ -78,16 +78,13 @@ class PairDialogAnchor {
 
     /** The button clicked last; null before any click, when every button reports its bounds. */
     internal var owner: PairOrigin? = null
-
-    /** The clicked button shows only its icon (the device strip's), so the dialog grows from that face. */
-    internal var iconOnly by mutableStateOf(false)
 }
 
 /**
- * One "Pair over Wi-Fi" button the dialog can grow from. Several can be on screen (the device strip and the full list
- * over it); the one clicked ([claim]) owns [PairDialogAnchor.bounds] until another is clicked.
+ * One "Pair over Wi-Fi" button the dialog can grow from. When more than one is composed (a screen left and shown
+ * again), the one clicked ([claim]) owns [PairDialogAnchor.bounds] until another is clicked.
  */
-internal class PairOrigin(val anchor: PairDialogAnchor, val iconOnly: Boolean) {
+internal class PairOrigin(val anchor: PairDialogAnchor) {
     var coordinates: LayoutCoordinates? = null
 
     val owns: Boolean get() = anchor.owner.let { it == null || it === this }
@@ -95,14 +92,13 @@ internal class PairOrigin(val anchor: PairDialogAnchor, val iconOnly: Boolean) {
     /** Makes this button the one the dialog grows from and shrinks back into; call it when it is clicked. */
     fun claim() {
         anchor.owner = this
-        anchor.iconOnly = iconOnly
         coordinates?.takeIf { it.isAttached }?.let { anchor.bounds = it.boundsInWindow() }
     }
 }
 
 @Composable
-internal fun rememberPairOrigin(anchor: PairDialogAnchor?, iconOnly: Boolean): PairOrigin? =
-    anchor?.let { remember(it, iconOnly) { PairOrigin(it, iconOnly) } }
+internal fun rememberPairOrigin(anchor: PairDialogAnchor?): PairOrigin? =
+    anchor?.let { remember(it) { PairOrigin(it) } }
 
 /** Tracks this button's window bounds for [origin] and hides it while the pairing dialog grown from it covers it. */
 internal fun Modifier.pairDialogOrigin(origin: PairOrigin?): Modifier {

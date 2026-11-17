@@ -102,7 +102,7 @@ class DevicesScreenshotTest {
         state: DevicesUiState = this.state,
         width: Int = 1280,
         listWidthPx: Int? = null,
-        detailOpen: Boolean = false,
+        pushed: Boolean = false,
         detailTab: DetailTab = DetailTab.Options,
         info: DeviceInfoUiState = DeviceInfoUiState(),
         settleMillis: Long = 1_000,
@@ -115,7 +115,7 @@ class DevicesScreenshotTest {
                     CompositionLocalProvider(LocalInfoNow provides { infoNow }) {
                         DevicesContent(
                             state, {}, {}, {}, {}, { _, _ -> }, { _, _ -> }, {}, {}, {},
-                            panes = screenshotPanes(listWidthPx, detailOpen),
+                            panes = screenshotPanes(listWidthPx, pushed),
                             detailTab = detailTab, info = info,
                             emulators = emulators, motion = true, emulatorNow = { emulatorNow },
                         )
@@ -136,17 +136,17 @@ class DevicesScreenshotTest {
     fun `devices narrow list`() = render("devices-light-narrow-list.png", ThemeMode.Light, width = 640)
 
     @Test
-    fun `devices narrow detail`() = render("devices-light-narrow-detail.png", ThemeMode.Light, width = 640, detailOpen = true)
+    fun `devices narrow detail`() = render("devices-light-narrow-detail.png", ThemeMode.Light, width = 640, pushed = true)
 
     @Test
-    fun `devices dark narrow detail`() = render("devices-dark-narrow-detail.png", ThemeMode.Dark, width = 640, detailOpen = true)
+    fun `devices dark narrow detail`() = render("devices-dark-narrow-detail.png", ThemeMode.Dark, width = 640, pushed = true)
 
     @Test
-    fun `devices phone width advanced`() = render("devices-light-phone-advanced.png", ThemeMode.Light, width = 360, detailOpen = true)
+    fun `devices phone width advanced`() = render("devices-light-phone-advanced.png", ThemeMode.Light, width = 360, pushed = true)
 
     @Test
     fun `devices phone width simple`() =
-        render("devices-light-phone-simple.png", ThemeMode.Light, simple, width = 360, detailOpen = true)
+        render("devices-light-phone-simple.png", ThemeMode.Light, simple, width = 360, pushed = true)
 
     private val samsungStatic = StaticInfo(
         software = SoftwareInfo(
@@ -224,7 +224,7 @@ class DevicesScreenshotTest {
 
     @Test
     fun `devices simple narrow detail`() =
-        render("devices-simple-light-narrow-detail.png", ThemeMode.Light, simple, width = 640, detailOpen = true)
+        render("devices-simple-light-narrow-detail.png", ThemeMode.Light, simple, width = 640, pushed = true)
 
     @Test
     fun `devices simple wifi device`() = render(
@@ -348,11 +348,11 @@ class DevicesScreenshotTest {
     private fun renderEmulators(name: String, mode: ThemeMode, emulators: EmulatorsUiState, listWidthPx: Int = 460, width: Int = 1280) =
         render(name, mode, withEmulators, width = width, listWidthPx = listWidthPx, emulators = emulators.copy(hiddenSerials = setOf("emulator-5556")))
 
-    /** Item view's strip: the device, the "AVD" divider, the emulator tile with its count, and the running Pixel 9. */
+    /** A narrow window's full list (nothing pushed): the devices, the running Pixel 9, and the Emulators section. */
     @Test
-    fun `emulators narrow strip`() = render(
-        "emulators-light-narrow-strip.png", ThemeMode.Light, withEmulators.copy(advanced = false, canMirror = true, errors = emptyMap()),
-        width = 640, detailOpen = true, emulators = allStates,
+    fun `emulators narrow list`() = render(
+        "emulators-light-narrow-list.png", ThemeMode.Light, withEmulators.copy(advanced = false, canMirror = true, errors = emptyMap()),
+        width = 640, emulators = allStates,
     )
 
     /** An emulator's right-click menu: Mirror only, no Wi-Fi item. */

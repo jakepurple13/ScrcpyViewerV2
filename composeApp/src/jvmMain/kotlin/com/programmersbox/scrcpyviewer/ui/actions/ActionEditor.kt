@@ -89,6 +89,7 @@ import com.programmersbox.scrcpyviewer.actions.Variable
 import com.programmersbox.scrcpyviewer.actions.VariableKind
 import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
 import com.programmersbox.scrcpyviewer.ui.common.AdaptiveSegmentedButtons
+import com.programmersbox.scrcpyviewer.ui.common.BackArrowRow
 import com.programmersbox.scrcpyviewer.ui.common.BarItem
 import com.programmersbox.scrcpyviewer.ui.common.BarSpacer
 import com.programmersbox.scrcpyviewer.ui.common.ControlSize
@@ -121,8 +122,8 @@ fun ActionEditor(
     draft: ActionDraft,
     packages: List<String>?,
     onEvent: (ActionsEvent) -> Unit,
-    /** Item view's switcher chip, on its own line above the header. */
-    switcher: (@Composable () -> Unit)?,
+    /** Back to the list, while the editor is pushed over it: the arrow starts the header row. */
+    onBack: (() -> Unit)?,
 ) {
     val edit = { transform: (ActionDraft) -> ActionDraft -> onEvent(ActionsEvent.Edit(transform)) }
     val errors = state.errors
@@ -132,24 +133,25 @@ fun ActionEditor(
 
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 16.dp, bottom = 8.dp)) {
-            switcher?.invoke()
             // The title (down to 90 dp) never folds; "Unsaved changes" folds into More when there is no room.
             val title = if (draft.id == null) "New action" else "Edit action"
-            PriorityBar(
-                listOfNotNull(
-                    BarItem("title", priority = 0, menuLabel = title, onMenuClick = null, minWidth = 90.dp, grow = true) {
-                        Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    },
-                    if (state.dirty) {
-                        BarItem("unsaved", priority = 1, menuLabel = "Unsaved changes", onMenuClick = null) {
-                            Text("Unsaved changes", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                        }
-                    } else {
-                        null
-                    },
-                ),
-                Modifier.fillMaxWidth(),
-            )
+            BackArrowRow(onBack) { barModifier ->
+                PriorityBar(
+                    listOfNotNull(
+                        BarItem("title", priority = 0, menuLabel = title, onMenuClick = null, minWidth = 90.dp, grow = true) {
+                            Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        },
+                        if (state.dirty) {
+                            BarItem("unsaved", priority = 1, menuLabel = "Unsaved changes", onMenuClick = null) {
+                                Text("Unsaved changes", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
+                        } else {
+                            null
+                        },
+                    ),
+                    barModifier,
+                )
+            }
         }
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 4.dp),

@@ -83,8 +83,8 @@ class ActionsScreenshotTest {
     }
 
     @Composable
-    private fun screen(state: ActionsUiState, detailOpen: Boolean = false) =
-        ActionsContent(state, onEvent = {}, panes = screenshotPanes(detailOpen = detailOpen))
+    private fun screen(state: ActionsUiState, pushed: Boolean = false) =
+        ActionsContent(state, onEvent = {}, panes = screenshotPanes(pushed = pushed))
 
     private val toggleState get() = state.copy(
         selectedId = "awake",
@@ -98,16 +98,16 @@ class ActionsScreenshotTest {
     )
 
     @Test
-    fun `actions narrow editor`() = shot("actions-narrow-editor.png", ThemeMode.Light, width = 640) { screen(state, detailOpen = true) }
+    fun `actions narrow editor`() = shot("actions-narrow-editor.png", ThemeMode.Light, width = 640) { screen(state, pushed = true) }
 
     @Test
     fun `actions narrow list`() = shot("actions-narrow-list.png", ThemeMode.Light, width = 640) { screen(state) }
 
     @Test
-    fun `actions phone width toggle editor`() = shot("actions-phone-toggle.png", ThemeMode.Light, width = 299) { screen(toggleState, detailOpen = true) }
+    fun `actions phone width toggle editor`() = shot("actions-phone-toggle.png", ThemeMode.Light, width = 299) { screen(toggleState, pushed = true) }
 
     @Test
-    fun `actions phone width run once editor`() = shot("actions-phone-run-once.png", ThemeMode.Light, width = 299) { screen(state, detailOpen = true) }
+    fun `actions phone width run once editor`() = shot("actions-phone-run-once.png", ThemeMode.Light, width = 299) { screen(state, pushed = true) }
 
     @Test
     fun `actions list and editor light`() = shot("actions-list-editor.png", ThemeMode.Light) { screen(state) }

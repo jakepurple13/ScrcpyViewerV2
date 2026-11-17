@@ -13,12 +13,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
@@ -35,9 +39,9 @@ import kotlin.test.assertTrue
 
 /**
  * The Presets screen at narrow widths, laid out offscreen (1 px = 1 dp) and read off the semantics tree: two panes
- * at 1100, the strip beside the open preset at 700 (below 280 + 16 + 420 dp of content), the full list from
- * "Show list", one flag column at phone width, and the list view after the open preset is deleted. Motion is on and
- * passed explicitly: CI runners report reduce motion on.
+ * at 1100; at 700 (below 280 + 16 + 420 dp of content) the full list first and the pushed preset after a click, with
+ * "Back to list" returning; one flag column at phone width, and the list view after the open preset is deleted. Motion
+ * is on and passed explicitly: CI runners report reduce motion on.
  */
 private const val SCENE_WIDTH = 1100
 
@@ -56,8 +60,11 @@ class PresetsNarrowTest {
     private var width by mutableIntStateOf(1100)
     private lateinit var panes: ListDetailPanes
 
-    /** Runs [block] on a scene [startWidth] wide whose preset is open (as after a click in the list). */
-    private fun scene(startWidth: Int, block: SceneDriver.() -> Unit) = onEdt {
+    /**
+     * Runs [block] on a scene [startWidth] wide whose preset is selected and, when [pushed], open (as after a click in
+     * the list); not pushed, as at launch.
+     */
+    private fun scene(startWidth: Int, pushed: Boolean = true, block: SceneDriver.() -> Unit) = onEdt {
         state = base
         width = startWidth
         val driver = SceneDriver(ImageComposeScene(SCENE_WIDTH, 800, Density(1f)) {
@@ -66,9 +73,9 @@ class PresetsNarrowTest {
                     Surface {
                         Box(Modifier.width(width.dp).fillMaxHeight()) {
                             panes = rememberListDetailPanes()
-                            remember(panes) { panes.navigation.openDetail() }
+                            remember(panes) { if (pushed) panes.push() }
                             PresetsContent(
-                                state, onSelect = {}, onNew = { qa }, onEdit = { _, _, _, _ -> }, onDuplicate = {},
+                                state, onSelect = { id -> state = state.copy(selected = state.presets.first { it.id == id }) }, onNew = { qa }, onEdit = { _, _, _, _ -> }, onDuplicate = {},
                                 onDelete = { id ->
                                     // As the view model does: the first remaining preset becomes the selection.
                                     val left = state.presets.filter { it.id != id }
@@ -94,7 +101,8 @@ class PresetsNarrowTest {
         val out = mutableListOf<SemanticsNode>()
         fun walk(node: SemanticsNode) {
             out += node
-            node.children.forEach(::walk)
+            // A cleared subtree (the list covered by a pushed detail) is out of the semantics tree.
+            if (!node.config.isClearingSemantics) node.children.forEach(::walk)
         }
         scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
         return out.filter { it.layoutInfo.isPlaced }
@@ -118,12 +126,11 @@ class PresetsNarrowTest {
         frames(150)
     }
 
-    @Test
-    fun `strip initials - first letters of two words, else the first two letters`() {
-        assertEquals("QD", presetInitials("QA default"))
-        assertEquals("LB", presetInitials("  low   bandwidth  "))
-        assertEquals("DE", presetInitials("demo"))
-        assertEquals("X", presetInitials("x"))
+    /** No node of the removed strip, switcher chip or list overlay exists anywhere, on screen or off. */
+    private fun SceneDriver.assertNoStripOrChip() {
+        for (label in listOf("Show list", "Switch item", "Close list")) {
+            assertTrue(nodes().none { it.described(label) }, "no $label node")
+        }
     }
 
     @Test
@@ -131,16 +138,42 @@ class PresetsNarrowTest {
         assertTrue(text("Low bandwidth").isNotEmpty(), "the list shows its rows")
         assertTrue(text("Apply").isNotEmpty(), "the detail shows beside the list")
         assertTrue(text("Duplicate").isNotEmpty(), "every header action shows")
-        assertTrue(described("Show list").isEmpty(), "no strip in two panes")
-        assertTrue(described("Switch item").isEmpty(), "no switcher chip in two panes")
+        assertTrue(described("Back to list").isEmpty(), "no back arrow in two panes")
+        assertNoStripOrChip()
     }
 
     @Test
-    fun `below two panes - Apply and More show and Duplicate is in the menu`() = scene(700) {
-        assertTrue(described("Show list").isNotEmpty(), "the strip")
-        assertTrue(described("Switch item").isNotEmpty(), "the switcher chip")
-        assertTrue(described("New preset").isNotEmpty(), "the strip's New preset button")
-        assertTrue(nodes().none { it.described("Back to list") }, "no back button")
+    fun `launch - a narrow window shows the full list even with a selection`() = scene(700, pushed = false) {
+        for (name in listOf("QA default", "Low bandwidth", "Record demo")) assertTrue(text(name).isNotEmpty(), "$name shows")
+        assertTrue(text("Import").isNotEmpty(), "the toolbar's Import")
+        assertTrue(text("Apply").isEmpty(), "no detail")
+        assertTrue(described("Back to list").isEmpty())
+        assertNoStripOrChip()
+    }
+
+    @Test
+    fun `clicking a preset pushes its detail, Back returns to the list`() = scene(700, pushed = false) {
+        click("Low bandwidth")
+        assertTrue(panes.pushed)
+        assertEquals("low", state.selected?.id)
+        assertTrue(described("Back to list").isNotEmpty(), "the back arrow")
+        assertTrue(text("Apply").isNotEmpty(), "the detail")
+        assertNoStripOrChip()
+        // The arrow starts the header row, before the name.
+        val back = described("Back to list").first().boundsInRoot
+        val name = text("Low bandwidth").maxBy { it.boundsInRoot.left }.boundsInRoot
+        assertTrue(back.right <= name.left && back.bottom > name.top && back.top < name.bottom, "arrow $back before the name $name")
+        click("Back to list")
+        assertTrue(!panes.pushed)
+        assertTrue(text("Apply").isEmpty(), "the detail left")
+        assertTrue(text("Import").isNotEmpty(), "the full list again")
+        assertEquals("low", state.selected?.id, "the selection stays")
+    }
+
+    @Test
+    fun `a 600 dp window - Apply and More show and Duplicate is in the menu`() = scene(600) {
+        assertTrue(described("Back to list").isNotEmpty(), "the back arrow")
+        assertNoStripOrChip()
         assertTrue(text("Apply").isNotEmpty(), "Apply never folds")
         assertTrue(text("Duplicate").isEmpty(), "Duplicate folded")
         click("More")
@@ -152,8 +185,7 @@ class PresetsNarrowTest {
 
     @Test
     fun `phone window - the name, Apply and More all show inside the detail`() = scene(phoneContentWidth) {
-        // The header name is the lower one; the switcher chip above it shows the name too.
-        val name = assertNotNull(text("QA default").filter { it.boundsInRoot.left > 76f }.maxByOrNull { it.boundsInRoot.top }, "the header name").boundsInRoot
+        val name = assertNotNull(text("QA default").singleOrNull(), "the header name, the only one on screen").boundsInRoot
         val apply = assertNotNull(text("Apply").firstOrNull(), "Apply").boundsInRoot
         val more = assertNotNull(described("More").firstOrNull(), "More").boundsInRoot
         assertTrue(name.width > 0f && name.right <= apply.left, "name $name before Apply $apply")
@@ -165,14 +197,6 @@ class PresetsNarrowTest {
         val copy = assertNotNull(text("Copy JSON").firstOrNull() ?: described("Copy JSON").firstOrNull(), "Copy JSON").boundsInRoot
         val json = assertNotNull(nodes().firstOrNull { n -> n.texts().any { it.startsWith("{") } }, "the JSON").boundsInRoot
         assertTrue(copy.bottom <= json.top + 1f, "Copy JSON $copy above the text $json")
-    }
-
-    @Test
-    fun `Show list brings back the full list with its toolbar`() = scene(700) {
-        click("Show list")
-        assertTrue(text("Import").isNotEmpty(), "the toolbar's Import")
-        assertTrue(text("Low bandwidth").isNotEmpty(), "the full rows")
-        assertTrue(text("Apply").isEmpty(), "the detail is gone")
     }
 
     @Test
@@ -188,15 +212,50 @@ class PresetsNarrowTest {
         assertTrue(tops[0] == tops[1], "the first two cells share a row: $tops")
     }
 
+    @OptIn(androidx.compose.ui.InternalComposeUiApi::class)
+    private fun SceneDriver.key(key: Key, meta: Boolean = false, ctrl: Boolean = false) {
+        for (type in listOf(KeyEventType.KeyDown, KeyEventType.KeyUp)) {
+            scene.sendKeyEvent(KeyEvent(key = key, type = type, isMetaPressed = meta, isCtrlPressed = ctrl))
+            frame()
+        }
+    }
+
+    @Test
+    fun `in the editor's name field Esc stays with the field and the bracket shortcut goes back`() = scene(700) {
+        click("Edit")
+        assertTrue(text("Edit preset").isNotEmpty(), "the editor")
+        val field = assertNotNull(
+            nodes().firstOrNull { it.config.getOrNull(SemanticsProperties.EditableText)?.text == "QA default" },
+            "the name field",
+        )
+        field.config[SemanticsActions.RequestFocus].action?.invoke()
+        frames(30)
+        assertTrue(nodes().any { it.config.getOrNull(SemanticsProperties.Focused) == true && it.config.getOrNull(SemanticsProperties.EditableText) != null }, "the field has focus")
+        key(Key.Escape)
+        frames(60)
+        assertTrue(panes.pushed, "Esc stayed with the field")
+        key(Key.LeftBracket, meta = Os.isMac, ctrl = !Os.isMac)
+        frames(90)
+        assertTrue(!panes.pushed, "the bracket shortcut went back")
+    }
+
+    @Test
+    fun `Esc goes back when no text field has focus`() = scene(700) {
+        assertTrue(panes.pushed)
+        key(Key.Escape)
+        frames(90)
+        assertTrue(!panes.pushed)
+    }
+
     @Test
     fun `deleting the open preset goes back to the list view`() = scene(700) {
-        assertTrue(described("Switch item").isNotEmpty())
+        assertTrue(described("Back to list").isNotEmpty())
         if (text("Delete").isEmpty()) click("More")
         click("Delete")
         // The confirmation's Delete (the dialog is the topmost layer).
         click("Delete")
-        assertTrue(described("Switch item").isEmpty(), "item view closed")
-        assertTrue(described("Show list").isEmpty(), "no strip in the list view")
+        assertTrue(described("Back to list").isEmpty(), "the pushed detail closed")
+        assertTrue(!panes.pushed)
         assertTrue(text("Low bandwidth").isNotEmpty(), "the full list")
         assertTrue(text("Apply").isEmpty(), "no detail")
     }

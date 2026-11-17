@@ -55,10 +55,10 @@ class PresetsScreenshotTest {
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
     }
 
-    private fun screen(state: PresetsUiState, listWidthPx: Int? = null, detailOpen: Boolean = false) = @androidx.compose.runtime.Composable {
+    private fun screen(state: PresetsUiState, listWidthPx: Int? = null, pushed: Boolean = false) = @androidx.compose.runtime.Composable {
         PresetsContent(
             state, {}, { qa }, { _, _, _, _ -> }, {}, {}, {}, {}, {}, {}, {}, {},
-            panes = screenshotPanes(listWidthPx, detailOpen),
+            panes = screenshotPanes(listWidthPx, pushed),
         )
     }
 
@@ -72,13 +72,13 @@ class PresetsScreenshotTest {
     fun `presets narrow list`() = shot("presets-light-narrow-list.png", ThemeMode.Light, width = 640, content = screen(state))
 
     @Test
-    fun `presets narrow detail`() = shot("presets-light-narrow-detail.png", ThemeMode.Light, width = 640, content = screen(state, detailOpen = true))
+    fun `presets narrow detail`() = shot("presets-light-narrow-detail.png", ThemeMode.Light, width = 640, content = screen(state, pushed = true))
 
     @Test
-    fun `presets dark narrow detail`() = shot("presets-dark-narrow-detail.png", ThemeMode.Dark, width = 640, content = screen(state, detailOpen = true))
+    fun `presets dark narrow detail`() = shot("presets-dark-narrow-detail.png", ThemeMode.Dark, width = 640, content = screen(state, pushed = true))
 
     @Test
-    fun `presets phone width detail`() = shot("presets-light-phone-detail.png", ThemeMode.Light, width = 360, content = screen(state, detailOpen = true))
+    fun `presets phone width detail`() = shot("presets-light-phone-detail.png", ThemeMode.Light, width = 360, content = screen(state, pushed = true))
 
     @Test
     fun `presets light`() = shot("presets-light.png", ThemeMode.Light, screen(state))

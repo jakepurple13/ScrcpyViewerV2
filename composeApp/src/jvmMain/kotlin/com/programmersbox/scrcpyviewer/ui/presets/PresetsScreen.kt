@@ -1,12 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.presets
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.animateBounds
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,7 +15,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,7 +28,6 @@ import com.programmersbox.scrcpyviewer.ui.theme.listRow
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import com.programmersbox.scrcpyviewer.ui.theme.AlertDialog
@@ -40,7 +36,6 @@ import com.programmersbox.scrcpyviewer.ui.theme.AssistChip
 import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
@@ -77,14 +72,11 @@ import com.programmersbox.scrcpyviewer.ui.common.BarItem
 import com.programmersbox.scrcpyviewer.ui.common.BarSpacer
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
-import com.programmersbox.scrcpyviewer.ui.common.ListPresentation
-import com.programmersbox.scrcpyviewer.ui.common.ListStrip
-import com.programmersbox.scrcpyviewer.ui.common.ListSwitcherChip
+import com.programmersbox.scrcpyviewer.ui.common.BackArrowRow
+import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.PriorityBar
 import com.programmersbox.scrcpyviewer.ui.common.RowHighlight
-import com.programmersbox.scrcpyviewer.ui.common.StripItem
-import com.programmersbox.scrcpyviewer.ui.common.closeOverlay
 import com.programmersbox.scrcpyviewer.ui.common.highlightContainer
 import com.programmersbox.scrcpyviewer.ui.common.RowOrigin
 import com.programmersbox.scrcpyviewer.ui.common.highlightPart
@@ -204,40 +196,24 @@ fun PresetsContent(
             listMinWidth = PRESET_LIST_MIN_WIDTH,
             listPreferredWidth = PresetListPreferredWidth,
             hasSelection = state.selected != null,
-            list = { presentation ->
-                // Rows and avatars cross-fade while the list's width glides between them.
-                Crossfade(presentation, animationSpec = tween(if (reduceMotion) 150 else 220), label = "presetPresentation") { shown ->
-                    when (shown) {
-                        ListPresentation.Full -> PresetList(
-                            state,
-                            onSelect = {
-                                editingId = null
-                                onSelect(it)
-                                panes.navigation.openDetail()
-                                panes.closeOverlay()
-                            },
-                            onNew = {
-                                editingId = onNew().id
-                                panes.navigation.openDetail()
-                                panes.closeOverlay()
-                            },
-                            onExportAll = onExportAll, onImportFile = onImportFile, onImportPaste = onImportPaste,
-                        )
-                        ListPresentation.Strip -> PresetStrip(
-                            state,
-                            onSelect = { editingId = null; onSelect(it) },
-                            onShowList = panes.navigation::backToList,
-                            onNew = { editingId = onNew().id },
-                        )
-                    }
-                }
+            list = {
+                PresetList(
+                    state,
+                    onSelect = {
+                        editingId = null
+                        onSelect(it)
+                        panes.push()
+                    },
+                    onNew = {
+                        editingId = onNew().id
+                        panes.push()
+                    },
+                    onExportAll = onExportAll, onImportFile = onImportFile, onImportPaste = onImportPaste,
+                )
             },
-            detail = { openSwitcher ->
-                // Item view only: the open preset leaving the list (deleted) leaves item view too.
-                if (openSwitcher != null) BackToListWhenGone(state, panes.navigation::backToList)
-                val switcher: (@Composable () -> Unit)? = openSwitcher?.let { open ->
-                    { ListSwitcherChip(state.selected?.name ?: "Presets", open, Modifier.padding(bottom = 4.dp)) }
-                }
+            detail = { onBack ->
+                // Deleting the open preset moves the selection to another one: return to the list.
+                BackToListWhenGone(state, panes::back)
                 val ids = state.presets.map { it.id }
                 // Keyed by preset, so editing one updates it in place; switching presets slides between them.
                 AnimatedContent(
@@ -252,7 +228,7 @@ fun PresetsContent(
                     Box(Modifier.fillMaxSize()) {
                         when {
                             selected == null -> {
-                                switcher?.let { Box(Modifier.padding(start = 22.dp, top = 16.dp)) { it() } }
+                                onBack?.let { DetailBackButton(it, Modifier.padding(start = 10.dp, top = 12.dp)) }
                                 Text(
                                     "No presets yet. Create one with + New preset, or import a file.",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -264,12 +240,12 @@ fun PresetsContent(
                                 isNameTaken = { n -> state.presets.any { it.id != selected.id && it.name.equals(n.trim(), ignoreCase = true) } },
                                 onSave = { name, description, values -> onEdit(selected.id, name, description, values); editingId = null },
                                 onCancel = { editingId = null },
-                                switcher = switcher,
+                                onBack = onBack,
                             )
                             else -> PresetDetail(
                                 selected, state, onEdit = { editingId = selected.id },
                                 onDuplicate = onDuplicate, onDelete = onDelete, onSetDefault = onSetDefault,
-                                onApply = onApply, onExport = onExport, switcher = switcher,
+                                onApply = onApply, onExport = onExport, onBack = onBack,
                             )
                         }
                     }
@@ -281,8 +257,8 @@ fun PresetsContent(
 }
 
 /**
- * Calls [backToList] when the preset that was open leaves the list (deleted): item view would otherwise jump to
- * whichever preset is selected next.
+ * Calls [backToList] when the preset that was open leaves the list (deleted): the pushed detail would otherwise jump
+ * to whichever preset is selected next.
  */
 @Composable
 private fun BackToListWhenGone(state: PresetsUiState, backToList: () -> Unit) {
@@ -292,42 +268,6 @@ private fun BackToListWhenGone(state: PresetsUiState, backToList: () -> Unit) {
         val was = open[0]
         open[0] = state.selected?.id
         if (was != null && was !in ids) backToList()
-    }
-}
-
-/** A preset's strip avatar: the first letters of its first two words, else its first two letters, uppercased. */
-internal fun presetInitials(name: String): String {
-    val words = name.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-    return when {
-        words.size >= 2 -> "${words[0].first()}${words[1].first()}"
-        else -> name.trim().take(2)
-    }.uppercase()
-}
-
-/**
- * The preset list beside an open preset: an initials avatar per preset (the default one badged), and a New preset
- * button under them. Import and Export stay in the full list.
- */
-@Composable
-private fun PresetStrip(state: PresetsUiState, onSelect: (String) -> Unit, onShowList: () -> Unit, onNew: () -> Unit) {
-    val primary = MaterialTheme.colorScheme.primary
-    val items = state.presets.map { preset ->
-        StripItem(
-            key = preset.id,
-            label = preset.name,
-            avatar = { Text(presetInitials(preset.name), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium, maxLines = 1) },
-            badgeColor = primary.takeIf { preset.id == state.defaultId },
-        )
-    }
-    ListStrip(
-        items, state.selected?.id,
-        onSelect = { onSelect(it as String) },
-        onShowList = onShowList,
-        modifier = Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow),
-    ) {
-        FilledTonalIconButton(onClick = onNew, modifier = Modifier.padding(top = 4.dp, bottom = 8.dp).size(44.dp)) {
-            Icon(Icons.Filled.Add, contentDescription = "New preset", Modifier.size(20.dp))
-        }
     }
 }
 
@@ -453,13 +393,12 @@ private fun PresetDetail(
     onSetDefault: (String?) -> Unit,
     onApply: (String) -> Unit,
     onExport: (Preset) -> Unit,
-    /** Item view's switcher chip, on its own line above the header. */
-    switcher: (@Composable () -> Unit)?,
+    /** Back to the list, while the detail is pushed over it: the arrow starts the header row. */
+    onBack: (() -> Unit)?,
 ) {
     var confirmDelete by rememberSaveable(preset.id) { mutableStateOf(false) }
     val isDefault = preset.id == state.defaultId
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        switcher?.invoke()
         // Out of room, Duplicate folds into More first, then Export, Delete, Edit and the default chip; the name
         // (down to 110 dp) and Apply never fold. The name ellipsizes first; the chip stays right after it.
         val items = listOf(
@@ -492,7 +431,7 @@ private fun PresetDetail(
                 Button({ onApply(preset.id) }, enabled = state.canApply) { Text("Apply") }
             },
         )
-        PriorityBar(items, Modifier.fillMaxWidth(), gap = 4.dp)
+        BackArrowRow(onBack) { PriorityBar(items, it, gap = 4.dp) }
         if (!state.canApply) {
             Text(APPLY_DISABLED_HINT, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.End))
         }
@@ -638,8 +577,8 @@ private fun PresetEditor(
     isNameTaken: (String) -> Boolean,
     onSave: (String, String, OptionValues) -> Unit,
     onCancel: () -> Unit,
-    /** Item view's switcher chip, on its own line above the header. */
-    switcher: (@Composable () -> Unit)?,
+    /** Back to the list, while the editor is pushed over it: the arrow starts the header row. */
+    onBack: (() -> Unit)?,
 ) {
     // Saveable so an unsaved draft survives switching rail tabs.
     var name by rememberSaveable(preset.id) { mutableStateOf(preset.name) }
@@ -648,11 +587,12 @@ private fun PresetEditor(
     val errors = values.validate()
     val nameTaken = isNameTaken(name)
     Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        switcher?.invoke()
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Edit preset", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            TextButton(onCancel) { Text("Cancel") }
-            Button({ onSave(name, description, values) }, enabled = name.isNotBlank() && !nameTaken && errors.isEmpty()) { Text("Save") }
+        BackArrowRow(onBack) { rowModifier ->
+            Row(rowModifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Edit preset", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                TextButton(onCancel) { Text("Cancel") }
+                Button({ onSave(name, description, values) }, enabled = name.isNotBlank() && !nameTaken && errors.isEmpty()) { Text("Save") }
+            }
         }
         val reduceMotion = LocalReduceMotion.current
         LookaheadScope {
