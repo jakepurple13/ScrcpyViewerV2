@@ -158,8 +158,8 @@ If the overlay cannot be created, or `animateOut` throws, quit proceeds without 
   where AppKit's blur shows, so the overlay could not match the real window. Glass without blur, and every other
   style, get the chosen animation.
 - Which platforms use the overlay is one switch per platform in code (`macOS`, `Windows`, `Linux X11`,
-  `Linux Wayland`). macOS is on. Windows and both Linux sessions start off (fade) and are turned on only after the
-  user confirms the spike on that platform. *(Builder's call.)*
+  `Linux Wayland`). macOS and Windows (since 2026-11-17) are on. Both Linux sessions start off (fade) and are turned
+  on only after the user confirms the spike on that platform. *(Builder's call.)*
 
 ### Where it lives
 

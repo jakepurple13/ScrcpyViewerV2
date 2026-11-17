@@ -27,10 +27,11 @@ enum class OverlayPlatform {
 }
 
 /**
- * The platforms that draw the launch and quit overlay; the others fade. A platform is added once the user has run the
- * overlay spike there by hand (see docs/superpowers/notes/2026-11-13-launch-overlay-spike.md).
+ * The platforms that draw the launch and quit overlay; the others fade. A platform is added once the user has seen the
+ * overlay spike work there (see docs/superpowers/notes/2026-11-13-launch-overlay-spike.md). Windows was approved from
+ * screen recordings of a CI runner.
  */
-val OverlayEnabled: Set<OverlayPlatform> = setOf(OverlayPlatform.MacOS)
+val OverlayEnabled: Set<OverlayPlatform> = setOf(OverlayPlatform.MacOS, OverlayPlatform.Windows)
 
 /** What the main window does on a launch or a quit. */
 sealed interface LaunchEffect {
