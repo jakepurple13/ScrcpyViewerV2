@@ -253,18 +253,19 @@ internal fun PrivacyBanner(b: SettingsBindings) {
     }
 }
 
-/** The whole row toggles; in a keyless build it is disabled and fades back. */
+/** The whole row toggles; in a keyless build it is disabled, shows off whatever is saved, and fades back. */
 @Composable
 internal fun privacyToggle(b: SettingsBindings, value: Boolean, onChange: (Boolean) -> Unit): Modifier {
     val enabled = b.state.telemetryEnabled
     val alpha by animateFloatAsState(if (enabled) 1f else PRIVACY_DISABLED_ALPHA, tween(PRIVACY_FADE_MILLIS), label = "privacyRowAlpha")
     return Modifier.graphicsLayer { this.alpha = alpha }
-        .toggleable(value = value, enabled = enabled, role = Role.Switch, onValueChange = onChange)
+        .toggleable(value = value && enabled, enabled = enabled, role = Role.Switch, onValueChange = onChange)
 }
 
 @Composable
 internal fun PrivacySwitch(b: SettingsBindings, checked: Boolean) {
-    Switch(checked = checked, onCheckedChange = null, enabled = b.state.telemetryEnabled)
+    // A keyless build sends nothing, so both switches show off even though crash reports default on.
+    Switch(checked = checked && b.state.telemetryEnabled, onCheckedChange = null, enabled = b.state.telemetryEnabled)
 }
 
 /** A Show / Hide button over the recent events, which unfold below it. */

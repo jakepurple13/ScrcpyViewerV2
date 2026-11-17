@@ -184,6 +184,8 @@ class PrivacySettingsTest {
         assertTrue(text(KEYLESS_BANNER).isNotEmpty(), "the banner")
         for (label in listOf("Share usage statistics", "Send crash reports")) {
             assertTrue(SemanticsProperties.Disabled in toggle(label).config, "$label is disabled")
+            // Off, whatever is saved: crash reports default on, but nothing is sent in this build.
+            assertEquals(ToggleableState.Off, toggle(label).config[SemanticsProperties.ToggleableState], "$label is off")
         }
     }
 
