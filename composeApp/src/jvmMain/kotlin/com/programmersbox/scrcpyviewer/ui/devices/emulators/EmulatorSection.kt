@@ -102,6 +102,7 @@ import com.programmersbox.scrcpyviewer.emulator.AvdState
 import com.programmersbox.scrcpyviewer.emulator.BootStage
 import com.programmersbox.scrcpyviewer.emulator.SdkLookup
 import com.programmersbox.scrcpyviewer.emulator.formatSize
+import com.programmersbox.scrcpyviewer.ui.common.LabelTooltip
 import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
 import com.programmersbox.scrcpyviewer.ui.common.animateHeight
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
@@ -845,13 +846,6 @@ private fun WipeCard(name: String, onConfirm: () -> Unit, onDismiss: () -> Unit,
 @Composable
 private fun Tooltip(label: String, content: @Composable () -> Unit) {
     TooltipArea(
-        tooltip = {
-            Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
-                Text(
-                    label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.inverseOnSurface,
-                )
-            }
-        },
+        tooltip = { LabelTooltip(label) },
     ) { content() }
 }

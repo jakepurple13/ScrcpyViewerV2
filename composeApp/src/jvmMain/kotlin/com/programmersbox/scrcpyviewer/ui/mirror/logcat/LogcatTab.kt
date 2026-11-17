@@ -93,6 +93,7 @@ import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import com.programmersbox.scrcpyviewer.ui.common.LabelTooltip
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.layoutDp
@@ -263,7 +264,6 @@ private fun PlayPauseButton(controller: LogcatController, motion: Boolean, compa
  */
 @Composable
 private fun HoverTooltip(label: String, shown: Boolean, content: @Composable () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
     var open by remember { mutableStateOf(false) }
@@ -282,12 +282,7 @@ private fun HoverTooltip(label: String, shown: Boolean, content: @Composable () 
                 popupPositionProvider = remember(gap) { BelowAnchor(gap) },
                 properties = PopupProperties(focusable = false),
             ) {
-                Surface(shape = RoundedCornerShape(4.dp), color = scheme.inverseSurface) {
-                    Text(
-                        label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall, color = scheme.inverseOnSurface,
-                    )
-                }
+                LabelTooltip(label, shape = RoundedCornerShape(4.dp))
             }
         }
     }

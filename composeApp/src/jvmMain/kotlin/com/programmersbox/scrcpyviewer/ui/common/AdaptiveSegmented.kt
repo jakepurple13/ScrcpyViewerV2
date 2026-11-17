@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.IntrinsicMeasurable
 import androidx.compose.ui.layout.IntrinsicMeasureScope
@@ -194,9 +195,13 @@ private class ShrinkPolicy(private val fraction: Float) : MeasurePolicy {
         measurables.single().maxIntrinsicHeight(width)
 }
 
+/**
+ * The app's tooltip body: [label] in small type on the inverse surface. [shape] is square in Retro by default; pass a
+ * fixed shape to keep the rounded corner in every style.
+ */
 @Composable
-internal fun LabelTooltip(label: String) {
-    Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
+internal fun LabelTooltip(label: String, shape: Shape = styledCorner(4.dp)) {
+    Surface(shape = shape, color = MaterialTheme.colorScheme.inverseSurface) {
         Text(
             label,
             Modifier.padding(horizontal = 8.dp, vertical = 4.dp),

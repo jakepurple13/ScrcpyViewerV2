@@ -23,7 +23,6 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
-import androidx.compose.material3.Surface
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.offset
@@ -119,6 +118,7 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import kotlin.math.roundToInt
+import com.programmersbox.scrcpyviewer.ui.common.LabelTooltip
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
@@ -894,19 +894,11 @@ private fun SegmentName(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SegmentTooltip(name: String, show: Boolean, modifier: Modifier, content: @Composable () -> Unit) {
-    val colors = MaterialTheme.colorScheme
     val current by rememberUpdatedState(content)
     val body = remember { movableContentOf { current() } }
     if (show) {
         TooltipArea(
-            tooltip = {
-                Surface(shape = RoundedCornerShape(4.dp), color = colors.inverseSurface) {
-                    Text(
-                        name, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall, color = colors.inverseOnSurface,
-                    )
-                }
-            },
+            tooltip = { LabelTooltip(name, shape = RoundedCornerShape(4.dp)) },
             modifier = modifier,
         ) { body() }
     } else {
