@@ -122,6 +122,35 @@ room, so the mirrored image keeps its size. Drag the sheet's edge to resize it. 
 - First-run welcome guide. You can reopen it from Settings.
 - Uses the bundled adb by default, or a custom adb path you choose.
 
+## Privacy
+
+Scrcpy Vwr can send anonymous usage statistics and crash reports to PostHog (US cloud). You choose what to share.
+
+**What is sent**
+- Which features you use, such as mirroring, screenshots, recording, file transfer, presets and quick actions.
+- The Android major version of a device and how it connects (USB, Wi-Fi or emulator).
+- Durations and sizes, as ranges (for example "1 to 5 minutes"), never exact values.
+- The app version, your OS and your CPU architecture.
+- An anonymous random install ID. It is not linked to you or to any device.
+- For crashes: the crash type and the stack trace, with file paths and device serials removed. For native crashes
+  only the signal and function names are sent.
+
+**What is never sent**
+- Device serials, IP addresses and device model names.
+- Package or app names.
+- Shell commands, logcat lines and custom action commands.
+- File names, folder paths and link URLs.
+- Preset names and scrcpy option values.
+- Screenshots and recordings.
+
+**Defaults.** Crash reports are on. Usage statistics are off. The first-run welcome guide asks about both.
+
+**Change it.** Open Settings › Privacy. It has a switch for each, shows what was sent recently, and can reset your
+anonymous ID.
+
+**Building from source.** A build from source sends nothing unless you add your own `posthog.key` (and optionally
+`posthog.host`) to `local.properties`. Release builds get the key from the release workflow.
+
 ## Download
 
 Installers for each release are on the [Releases](https://github.com/jakepurple13/ScrcpyViewerV2/releases) page:
@@ -244,6 +273,9 @@ follow them in order.
    must have 10 files: `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, the macOS `.dmg` and `.zip`, the Windows
    `-nsis.exe`, the Linux `.deb`, and a `.blockmap` for the `.dmg`, `.zip` and `.exe`. Installed apps find it through
    their update check.
+
+The `POSTHOG_KEY` and `POSTHOG_HOST` repository secrets must be set for release builds to report usage statistics
+and crash reports.
 
 If a job fails on the tag run, re-run only the failed jobs (`gh run rerun <id> --failed`); some tests are timing
 sensitive. Never move or delete a tag that has a published release. If the code needs a fix, merge it and release
