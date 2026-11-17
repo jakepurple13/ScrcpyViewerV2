@@ -786,6 +786,15 @@ class MirrorScreenshotTest {
     fun `mirror quick actions open`() = render("mirror-quick-actions.png", ThemeMode.Light, state.copy(quickActions = quickActionsOpen))
 
     @Test
+    fun `mirror quick actions floating and full in narrow windows`() {
+        render("mirror-quick-actions-floating-450.png", ThemeMode.Light, state.copy(quickActions = quickActionsOpen), width = 450, height = 760)
+        render(
+            "mirror-quick-actions-full-344-files.png", ThemeMode.Dark,
+            state.copy(quickActions = quickActionsOpen.copy(tab = SheetTab.Files, filesTransfersRunning = 2)), width = 344, height = 760,
+        )
+    }
+
+    @Test
     fun `mirror quick actions open dark`() = render("mirror-quick-actions-dark.png", ThemeMode.Dark, state.copy(quickActions = quickActionsOpen))
 
     private val customActions = listOf(
@@ -974,9 +983,9 @@ class MirrorScreenshotTest {
         CoroutineScope(Dispatchers.Unconfined), {}, enqueue = { emptyList() }, jobs = emptyFlow(),
     )
 
-    private fun renderFiles(name: String, theme: AppTheme, browser: FilesBrowser) {
+    private fun renderFiles(name: String, theme: AppTheme, browser: FilesBrowser, width: Int = 440) {
         val out = outDir.resolve(name)
-        renderToPng(440, 800, out, settleMillis = 1_000) {
+        renderToPng(width, 800, out, settleMillis = 1_000) {
             ScrcpyViewerTheme(theme) {
                 Box(Modifier.fillMaxSize().styleBackdrop()) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainer) {
@@ -1128,6 +1137,31 @@ class MirrorScreenshotTest {
 
     @Test
     fun `mirror files tab retro`() = filesStates(ThemeStyle.Retro, onlySelection = true)
+
+    /** The Files tab in a narrow sheet: 360 dp (dates under names) and 280 dp (everything folded). */
+    @Test
+    fun `mirror files tab narrow`() {
+        for (width in listOf(360, 280)) {
+            for (mode in listOf(ThemeMode.Light, ThemeMode.Dark)) {
+                val theme = AppTheme(mode)
+                val m = mode.name.lowercase()
+                renderFiles("mirror-files-narrow-$width-selection-$m.png", theme, filesBrowser("/sdcard/Download").apply {
+                    click("Telegram"); toggle("notes.txt"); toggle("app-release.apk")
+                }, width)
+                renderFiles("mirror-files-narrow-$width-delete-$m.png", theme, filesBrowser("/sdcard/Download").apply {
+                    click("notes.txt"); toggle("Telegram"); askDelete()
+                }, width)
+                val transfers = filesTransfers()
+                transfers.jobs = listOf(
+                    TransferJob(
+                        1, TransferRequest(Paths.get("/Users/me/trip.mp4"), TransferKind.Push),
+                        JobState.Running, 120_000_000, 380_000_000, 18_000_000,
+                    ),
+                )
+                renderFiles("mirror-files-narrow-$width-tray-$m.png", theme, filesBrowser("/sdcard/Download", transfers), width)
+            }
+        }
+    }
 
     /** Answers `am start -W` with [answer]. */
     private class LinksShotRunner(private val answer: String) :

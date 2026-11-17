@@ -24,11 +24,13 @@ enum class KeyTarget {
  * Where a key goes. While keyboard focus is in the open quick actions sheet ([sheetFocused]) every key stays there:
  * Backspace, Delete, Enter, arrows, Tab and shortcuts edit the field, Cmd/Ctrl+V pastes into it, zoom shortcuts do not
  * fire, and Esc goes to the field first (the sheet closes on an Esc nothing in it used). With focus elsewhere, Esc
- * closes an open sheet and every other key goes to the device.
+ * closes an open sheet and every other key goes to the device, unless the sheet floats over the stage
+ * ([stageCovered]): then no key reaches the device (they go to the sheet, which ignores them without focus).
  */
-fun keyTarget(sheetOpen: Boolean, sheetFocused: Boolean, keyCode: Int): KeyTarget = when {
+fun keyTarget(sheetOpen: Boolean, sheetFocused: Boolean, keyCode: Int, stageCovered: Boolean = false): KeyTarget = when {
     sheetOpen && sheetFocused -> KeyTarget.Sheet
     sheetOpen && keyCode == AwtKeyEvent.VK_ESCAPE -> KeyTarget.Window
+    sheetOpen && stageCovered -> KeyTarget.Sheet
     else -> KeyTarget.Device
 }
 

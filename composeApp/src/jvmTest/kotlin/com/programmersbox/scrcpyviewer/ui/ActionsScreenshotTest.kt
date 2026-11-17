@@ -74,16 +74,40 @@ class ActionsScreenshotTest {
         test = TestResult(running = false, output = "Success", exitCode = 0, note = null),
     )
 
-    private fun shot(name: String, mode: ThemeMode, height: Int = 800, content: @Composable () -> Unit) {
+    private fun shot(name: String, mode: ThemeMode, height: Int = 800, width: Int = 1280, content: @Composable () -> Unit) {
         val out = outDir.resolve(name)
-        renderToPng(1280, height, out, settleMillis = 1_000) {
+        renderToPng(width, height, out, settleMillis = 1_000) {
             ScrcpyViewerTheme(mode) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) { content() } }
         }
         assertTrue(Files.size(out) > 10_000, "$name should not be blank")
     }
 
     @Composable
-    private fun screen(state: ActionsUiState) = ActionsContent(state, onEvent = {}, panes = screenshotPanes())
+    private fun screen(state: ActionsUiState, pushed: Boolean = false) =
+        ActionsContent(state, onEvent = {}, panes = screenshotPanes(pushed = pushed))
+
+    private val toggleState get() = state.copy(
+        selectedId = "awake",
+        draft = ActionDraft(
+            id = "awake", type = ActionType.Toggle, name = "Stay awake", icon = "battery_full",
+            on = "svc power stayon true", off = "svc power stayon false",
+            read = "settings get global stay_on_while_plugged_in", matchValue = "7",
+        ),
+        dirty = true,
+        test = TestResult(running = false, output = "7", exitCode = 0, note = "Counts as on", isRead = true, readOn = true),
+    )
+
+    @Test
+    fun `actions narrow editor`() = shot("actions-narrow-editor.png", ThemeMode.Light, width = 640) { screen(state, pushed = true) }
+
+    @Test
+    fun `actions narrow list`() = shot("actions-narrow-list.png", ThemeMode.Light, width = 640) { screen(state) }
+
+    @Test
+    fun `actions phone width toggle editor`() = shot("actions-phone-toggle.png", ThemeMode.Light, width = 299) { screen(toggleState, pushed = true) }
+
+    @Test
+    fun `actions phone width run once editor`() = shot("actions-phone-run-once.png", ThemeMode.Light, width = 299) { screen(state, pushed = true) }
 
     @Test
     fun `actions list and editor light`() = shot("actions-list-editor.png", ThemeMode.Light) { screen(state) }

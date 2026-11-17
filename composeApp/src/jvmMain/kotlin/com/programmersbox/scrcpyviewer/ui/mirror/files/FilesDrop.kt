@@ -49,6 +49,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.files.DEVICE_ROOT
@@ -64,6 +65,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.dropPaths
 import com.programmersbox.scrcpyviewer.ui.mirror.rootPosition
 import com.programmersbox.scrcpyviewer.ui.mirror.sourceActions
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** Where a drop on the Files tab lands. */
 sealed interface FilesDropTarget {
@@ -439,7 +441,7 @@ internal fun DropChip(label: String?, motion: Boolean, modifier: Modifier = Modi
         Surface(shape = styledCorner(16.dp), color = colors.inverseSurface, tonalElevation = 3.dp, shadowElevation = 3.dp) {
             Text(
                 shown[0].orEmpty(), Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                fontSize = 12.sp, color = colors.inverseOnSurface, maxLines = 1,
+                fontSize = 12.sp, color = colors.inverseOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -470,8 +472,8 @@ internal fun DragGhost(
             }
             AnimatedVisibility(
                 pulling,
-                enter = if (motion) expandVertically(tween(150)) + fadeIn(tween(150)) else EnterTransition.None,
-                exit = if (motion) shrinkVertically(tween(150)) + fadeOut(tween(150)) else ExitTransition.None,
+                enter = if (motion) expandVertically(layoutSpring()) + fadeIn(tween(150)) else EnterTransition.None,
+                exit = if (motion) shrinkVertically(layoutSpring()) + fadeOut(tween(150)) else ExitTransition.None,
             ) {
                 val bar = Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 5.dp).height(2.dp)
                 if (progress == null) {

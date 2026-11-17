@@ -71,11 +71,15 @@ import com.mikepenz.aboutlibraries.ui.compose.produceLibraries
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.openWebUrl
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import java.net.URI
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.common.resizing
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 
 // --- Data ---------------------------------------------------------------------------------------------------------
 
@@ -274,7 +278,7 @@ fun LicensesDialog(
     visible: Boolean,
     entries: List<LicenseEntry>?,
     onDismiss: () -> Unit,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     onOpenUrl: (String) -> Unit = { openWebUrl(it) },
     initialQuery: String = "",
     initialOpen: String? = null,
@@ -319,6 +323,8 @@ fun LicensesDialog(
             )
             val fadeIn = tween<Float>(if (motion) RESULTS_FADE_MILLIS else HELP_REDUCED_MILLIS, easing = EmphasizedDecelerate)
             val fadeOut = tween<Float>(HELP_REDUCED_MILLIS, easing = EmphasizedAccelerate)
+            // An open license's body wraps with the width: while the window is dragged, rows follow it at once.
+            val resizing = resizing(with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() })
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 12.dp, end = 12.dp, bottom = 8.dp),
@@ -326,7 +332,7 @@ fun LicensesDialog(
                 items(items, key = { it.key }, contentType = { it::class }) { item ->
                     val anim = Modifier.animateItem(
                         fadeInSpec = fadeIn,
-                        placementSpec = if (motion) tween(RESULTS_FADE_MILLIS, easing = EmphasizedDecelerate) else null,
+                        placementSpec = if (motion && !resizing) layoutSpring() else null,
                         fadeOutSpec = fadeOut,
                     )
                     when (item) {
@@ -422,9 +428,9 @@ private fun LicenseRow(
         val unfold = if (motion) UNFOLD_MILLIS else HELP_REDUCED_MILLIS
         AnimatedVisibility(
             visible = open,
-            enter = expandVertically(tween(unfold, easing = EmphasizedDecelerate), expandFrom = Alignment.Top) +
+            enter = expandVertically(if (motion) layoutSpring() else tween(unfold, easing = EmphasizedDecelerate), expandFrom = Alignment.Top) +
                 fadeIn(tween(if (motion) RESULTS_FADE_MILLIS else HELP_REDUCED_MILLIS, delayMillis = if (motion) 100 else 0)),
-            exit = shrinkVertically(tween(if (motion) 250 else HELP_REDUCED_MILLIS, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Top) +
+            exit = shrinkVertically(if (motion) layoutSpring() else tween(HELP_REDUCED_MILLIS, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Top) +
                 fadeOut(tween(HELP_REDUCED_MILLIS)),
         ) {
             LicenseBody(entry, onOpenUrl)

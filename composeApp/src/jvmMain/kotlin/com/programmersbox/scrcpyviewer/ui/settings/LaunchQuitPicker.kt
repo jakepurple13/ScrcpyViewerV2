@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -42,29 +43,35 @@ import com.programmersbox.scrcpyviewer.state.LaunchQuitAnimation
 import com.programmersbox.scrcpyviewer.state.launchQuit
 import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchQuitPreview
 import com.programmersbox.scrcpyviewer.ui.window.launch.LaunchPreview
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 
 /**
  * One tile per [LaunchQuitAnimation], laid out like the Style picker: a small desktop that loops the animation while
- * hovered and plays it once when picked, the name with a radio dot, and a line on what it does.
+ * hovered and plays it once when picked, the name with a radio dot, and a line on what it does. Tiles are 200 dp, or the
+ * row's width when that is less, and glide to their new row when they wrap.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LaunchQuitAnimationControl(b: SettingsBindings) {
     val current = b.state.settings.launchQuit
-    FlowRow(
-        Modifier.selectableGroup(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        LaunchQuitAnimation.entries.forEach { anim ->
-            LaunchQuitTile(anim, selected = anim == current, onClick = { b.actions.onLaunchQuitAnimation(anim) })
+    LookaheadScope {
+        FlowRow(
+            Modifier.selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            LaunchQuitAnimation.entries.forEach { anim ->
+                LaunchQuitTile(
+                    anim, selected = anim == current, onClick = { b.actions.onLaunchQuitAnimation(anim) },
+                    modifier = Modifier.glideOnWrap(this@LookaheadScope),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun LaunchQuitTile(anim: LaunchQuitAnimation, selected: Boolean, onClick: () -> Unit) {
+private fun LaunchQuitTile(anim: LaunchQuitAnimation, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     var picks by remember { mutableIntStateOf(0) }
@@ -81,8 +88,9 @@ private fun LaunchQuitTile(anim: LaunchQuitAnimation, selected: Boolean, onClick
         tween(200),
     )
     Column(
-        Modifier
-            .width(200.dp)
+        modifier
+            .widthIn(max = TileWidth)
+            .fillMaxWidth()
             .clip(tileShape)
             .background(fill)
             .border(borderWidth, border, tileShape)
@@ -94,7 +102,7 @@ private fun LaunchQuitTile(anim: LaunchQuitAnimation, selected: Boolean, onClick
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        val reduceMotion = remember { systemReducesMotion() }
+        val reduceMotion = LocalReduceMotion.current
         LaunchQuitPreview(
             anim, looping = LaunchPreview.loops(hovered, reduceMotion), playOnce = picks,
             modifier = Modifier.fillMaxWidth().height(116.dp).clip(RoundedCornerShape(8.dp)),
@@ -112,6 +120,8 @@ private fun LaunchQuitTile(anim: LaunchQuitAnimation, selected: Boolean, onClick
         )
     }
 }
+
+private val TileWidth = 200.dp
 
 /** A radio button's ring with its dot growing in when selected. */
 @Composable

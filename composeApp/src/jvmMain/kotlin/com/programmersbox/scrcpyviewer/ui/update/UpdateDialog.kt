@@ -35,6 +35,7 @@ import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -45,19 +46,25 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.programmersbox.scrcpyviewer.ui.common.openWebUrl
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
+import com.programmersbox.scrcpyviewer.ui.common.dialogWidth
+import com.programmersbox.scrcpyviewer.ui.common.openWebUrl
+import com.programmersbox.scrcpyviewer.ui.common.stackMotion
+import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import com.programmersbox.scrcpyviewer.update.Release
 import com.programmersbox.scrcpyviewer.update.UpdateState
 
@@ -106,12 +113,12 @@ fun UpdateDialog(
 @Composable
 private fun DialogCard(content: @Composable () -> Unit) {
     Surface(
-        modifier = Modifier.dialogEntrance().width(400.dp),
+        modifier = Modifier.dialogEntrance().dialogWidth(400.dp).testTag("update-card"),
         shape = MaterialTheme.shapes.extraLarge,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 6.dp,
     ) {
-        Column(Modifier.padding(24.dp)) { content() }
+        Column(Modifier.animateHeight().verticalScroll(rememberScrollState()).padding(24.dp)) { content() }
     }
 }
 
@@ -124,7 +131,7 @@ private fun OfferDialog(
     onUpdate: () -> Unit,
     openUrl: (String) -> Boolean,
 ) {
-    Dialog(onDismissRequest = onLater) {
+    Dialog(onDismissRequest = onLater, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         DialogCard {
             Text("Update available", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(8.dp))
@@ -154,19 +161,54 @@ private fun OfferDialog(
                     modifier = Modifier.padding(top = 12.dp),
                 )
             }
-            Row(
-                Modifier.fillMaxWidth().padding(top = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-            ) {
-                // The release page, for notes that could not be fetched or are cut off above. Without self-update the
-                // main button already opens it.
-                if (ui.canSelfUpdate) {
-                    TextButton(onClick = { openUrl(ui.releasePageUrl) }) { Text("Release notes") }
-                    Spacer(Modifier.weight(1f))
+            OfferButtons(ui, onLater, onUpdate, { openUrl(it) }, Modifier.padding(top = 16.dp))
+        }
+    }
+}
+
+/**
+ * Release notes, Later and the primary button in a row, or stacked full width with the primary on top when the card
+ * is narrower than 340 dp. The buttons keep their identity across the change so they slide between the layouts.
+ */
+@Composable
+private fun OfferButtons(
+    ui: UpdateUiState,
+    onLater: () -> Unit,
+    onUpdate: () -> Unit,
+    open: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val primaryLabel = if (ui.canSelfUpdate) "Update now" else "Download from GitHub"
+    val onPrimary = if (ui.canSelfUpdate) onUpdate else ({ open(ui.releasePageUrl) })
+    LookaheadScope {
+        val scope = this
+        BoxWithConstraints(modifier.fillMaxWidth()) {
+            val stacked = maxWidth < 340.dp
+            // The release page, for notes that could not be fetched or are cut off above. Without self-update the
+            // main button already opens it.
+            val primary = remember { movableContentOf { m: Modifier, label: String, click: () -> Unit ->
+                Button(onClick = click, modifier = m) { Text(label) }
+            } }
+            val later = remember { movableContentOf { m: Modifier, click: () -> Unit ->
+                TextButton(onClick = click, modifier = m) { Text("Later") }
+            } }
+            val notes = remember { movableContentOf { m: Modifier, click: () -> Unit ->
+                TextButton(onClick = click, modifier = m) { Text("Release notes") }
+            } }
+            if (stacked) {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    primary(Modifier.fillMaxWidth().stackMotion(scope), primaryLabel, onPrimary)
+                    later(Modifier.fillMaxWidth().stackMotion(scope), onLater)
+                    if (ui.canSelfUpdate) notes(Modifier.fillMaxWidth().stackMotion(scope)) { open(ui.releasePageUrl) }
                 }
-                TextButton(onClick = onLater) { Text("Later") }
-                Button(onClick = if (ui.canSelfUpdate) onUpdate else ({ openUrl(ui.releasePageUrl); Unit })) {
-                    Text(if (ui.canSelfUpdate) "Update now" else "Download from GitHub")
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+                    if (ui.canSelfUpdate) {
+                        notes(Modifier.stackMotion(scope)) { open(ui.releasePageUrl) }
+                        Spacer(Modifier.weight(1f))
+                    }
+                    later(Modifier.stackMotion(scope), onLater)
+                    primary(Modifier.stackMotion(scope), primaryLabel, onPrimary)
                 }
             }
         }
@@ -232,7 +274,7 @@ private fun ProgressDialog(state: UpdateState, onCancel: () -> Unit) {
     val release = downloading?.release ?: (state as UpdateState.Installing).release
     Dialog(
         onDismissRequest = {},
-        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false, usePlatformDefaultWidth = false),
     ) {
         DialogCard {
             Text("Updating to ${release.versionLabel}", style = MaterialTheme.typography.headlineSmall)

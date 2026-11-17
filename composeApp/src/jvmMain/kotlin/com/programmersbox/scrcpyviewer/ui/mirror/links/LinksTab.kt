@@ -6,6 +6,8 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -24,6 +26,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -71,6 +74,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
@@ -85,6 +89,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -96,9 +102,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.programmersbox.scrcpyviewer.ui.presets.ErrorBanner
 import com.programmersbox.scrcpyviewer.apps.DeviceApp
 import com.programmersbox.scrcpyviewer.links.Before
@@ -107,9 +115,12 @@ import com.programmersbox.scrcpyviewer.links.LinkKind
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.mirror.AppsUiState
+import com.programmersbox.scrcpyviewer.ui.common.layoutDp
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import com.programmersbox.scrcpyviewer.ui.mirror.reportsSheetFocus
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
@@ -140,10 +151,10 @@ private fun beforeLabel(before: Before): String = when (before) {
     Before.ClearTask -> "Clear the task (--activity-clear-task)"
 }
 
-/** Opens downward from its top edge over [millis] (size FastOutSlowIn, with a fade), or fades in [REDUCED_FADE_MILLIS]. */
+/** Opens downward from its top edge on the layout spring while it fades in over [millis], or fades in [REDUCED_FADE_MILLIS]. */
 internal fun expandIn(millis: Int, motion: Boolean): EnterTransition =
     if (motion) {
-        expandVertically(tween(millis, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) + fadeIn(tween(millis))
+        expandVertically(layoutSpring(), expandFrom = Alignment.Top) + fadeIn(tween(millis))
     } else {
         fadeIn(tween(REDUCED_FADE_MILLIS))
     }
@@ -151,7 +162,7 @@ internal fun expandIn(millis: Int, motion: Boolean): EnterTransition =
 /** The reverse of [expandIn]. */
 internal fun foldOut(millis: Int, motion: Boolean): ExitTransition =
     if (motion) {
-        shrinkVertically(tween(millis, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top) + fadeOut(tween(millis))
+        shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top) + fadeOut(tween(millis))
     } else {
         fadeOut(tween(REDUCED_FADE_MILLIS))
     }
@@ -212,108 +223,206 @@ fun LinksTabContent(
     enabled: Boolean,
     onEvent: (LinksEvent) -> Unit,
     modifier: Modifier = Modifier,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     now: () -> Long = System::currentTimeMillis,
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp)) {
-        PersistenceBanners(links, motion)
-        FieldLabel("Link or intent")
-        val flash = rememberReplay(links.fills, FLASH_MILLIS, motion)
-        val (kind, kindLabel) = links.kind
-        LinkTextField(
-            value = links.text,
-            onChange = { onEvent(LinksEvent.SetText(it)) },
-            description = "Link or intent",
-            onEnter = { if (enabled) onEvent(LinksEvent.Open) },
-            modifier = Modifier.testTag(FIELD_TAG),
-            flash = { flashStrength(flash.value) },
-            leading = {
-                Icon(Icons.Filled.Link, contentDescription = null, Modifier.padding(end = 8.dp).size(18.dp), tint = colors.onSurfaceVariant)
-            },
-            trailing = {
-                AnimatedVisibility(
-                    visible = links.text.isNotBlank(),
-                    enter = if (motion) scaleIn(tween(KIND_POP_MILLIS, easing = EmphasizedDecelerate), 0.7f) + fadeIn(tween(KIND_POP_MILLIS)) else fadeIn(tween(REDUCED_FADE_MILLIS)),
-                    exit = if (motion) scaleOut(tween(CLOSE_MILLIS), 0.7f) + fadeOut(tween(CLOSE_MILLIS)) else fadeOut(tween(REDUCED_FADE_MILLIS)),
-                ) {
-                    KindChip(kind, kindLabel, motion, Modifier.padding(start = 8.dp))
-                }
-            },
-        )
+    val glide = motion && !LocalReduceMotion.current
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val stacked = linksStacked(maxWidth)
+        // 0 side by side .. 1 stacked: a spring over a stack/unstack flip, the target itself otherwise (a plain resize
+        // moves the fields in the same frame).
+        val stack = layoutFraction(stacked, glide)
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp)) {
+            PersistenceBanners(links, motion)
+            FieldLabel("Link or intent")
+            val flash = rememberReplay(links.fills, FLASH_MILLIS, motion)
+            val (kind, kindLabel) = links.kind
+            LinkTextField(
+                value = links.text,
+                onChange = { onEvent(LinksEvent.SetText(it)) },
+                description = "Link or intent",
+                onEnter = { if (enabled) onEvent(LinksEvent.Open) },
+                modifier = Modifier.testTag(FIELD_TAG),
+                flash = { flashStrength(flash.value) },
+                leading = {
+                    Icon(Icons.Filled.Link, contentDescription = null, Modifier.padding(end = 8.dp).size(18.dp), tint = colors.onSurfaceVariant)
+                },
+                trailing = {
+                    AnimatedVisibility(
+                        visible = links.text.isNotBlank(),
+                        enter = if (motion) scaleIn(tween(KIND_POP_MILLIS, easing = EmphasizedDecelerate), 0.7f) + fadeIn(tween(KIND_POP_MILLIS)) else fadeIn(tween(REDUCED_FADE_MILLIS)),
+                        exit = if (motion) scaleOut(tween(CLOSE_MILLIS), 0.7f) + fadeOut(tween(CLOSE_MILLIS)) else fadeOut(tween(REDUCED_FADE_MILLIS)),
+                    ) {
+                        KindChip(kind, kindLabel, motion, Modifier.padding(start = 8.dp))
+                    }
+                },
+            )
 
-        Row(Modifier.padding(top = 12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.weight(1f)) {
-                FieldLabel("Open with")
-                val listed = remember(apps.apps) { apps.apps.orEmpty().sortedBy { it.label.lowercase() } }
-                val chosen = links.packageName
-                DropdownField(
-                    value = chosen?.let { p -> listed.firstOrNull { it.packageName == p }?.label ?: p } ?: "Let Android choose",
-                    options = listOf<DeviceApp?>(null) + listed,
-                    description = "Open with",
-                    enabled = enabled,
-                    motion = motion,
-                    onSelect = { onEvent(LinksEvent.SetPackage(it?.packageName)) },
-                ) { app ->
-                    if (app == null) {
-                        Text("Let Android choose")
-                    } else {
-                        Column {
-                            Text(app.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                app.packageName, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
-                                color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
+            // One box a row when stacked, two otherwise; the boxes keep their identity so they glide between the layouts.
+            // The container's height follows with the same spring.
+            Pickers(links, apps, enabled, motion, stack, onEvent)
+            // While the Apps tab's listing loads, "Open with" has only "Let Android choose": a thin line says more is coming.
+            AnimatedVisibility(apps.loading, enter = expandIn(OPEN_MILLIS, motion), exit = foldOut(CLOSE_MILLIS, motion)) {
+                LinearProgressIndicator(Modifier.padding(top = 6.dp).fillMaxWidth().height(2.dp))
+            }
+
+            DetailsHeader(links.detailsOpen, motion) { onEvent(LinksEvent.ToggleDetails) }
+            AnimatedVisibility(links.detailsOpen, enter = expandIn(DETAILS_MILLIS, motion), exit = foldOut(DETAILS_MILLIS, motion)) {
+                DetailsBody(links, onEvent, enabled, motion, stacked, glide, stack)
+            }
+
+            CommandPreview(links.preview, motion, Modifier.padding(top = 12.dp))
+
+            Box(Modifier.padding(top = 12.dp).then(resizes(glide))) {
+                LookaheadScope {
+                    val glides = glides(this, glide)
+                    FlowRow(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        itemVerticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OpenButton(links, enabled, motion, glides) { onEvent(LinksEvent.Open) }
+                        TextButton(onClick = { onEvent(LinksEvent.Save) }, modifier = glides, enabled = enabled && kind != LinkKind.NotALink) {
+                            Icon(Icons.Filled.Add, contentDescription = null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save as quick action")
                         }
                     }
                 }
             }
-            Column(Modifier.weight(1f)) {
-                FieldLabel("Before opening")
-                // Force-stop needs an app: offered only with one chosen, and shown as "Nothing" without.
-                val choices = if (links.packageName != null) Before.entries else listOf(Before.None, Before.ClearTask)
-                val shown = links.request.before
-                DropdownField(
-                    value = beforeLabel(shown),
-                    options = choices,
-                    description = "Before opening",
-                    enabled = enabled,
-                    motion = motion,
-                    onSelect = { onEvent(LinksEvent.SetBefore(it)) },
-                ) { Text(beforeLabel(it)) }
-            }
+
+            ResultStrip(links, motion)
+
+            HistorySection(links, onEvent, motion, now)
         }
-        // While the Apps tab's listing loads, "Open with" has only "Let Android choose": a thin line says more is coming.
-        AnimatedVisibility(apps.loading, enter = expandIn(OPEN_MILLIS, motion), exit = foldOut(CLOSE_MILLIS, motion)) {
-            LinearProgressIndicator(Modifier.padding(top = 6.dp).fillMaxWidth().height(2.dp))
-        }
-
-        DetailsHeader(links.detailsOpen, motion) { onEvent(LinksEvent.ToggleDetails) }
-        AnimatedVisibility(links.detailsOpen, enter = expandIn(DETAILS_MILLIS, motion), exit = foldOut(DETAILS_MILLIS, motion)) {
-            DetailsBody(links, onEvent, enabled, motion)
-        }
-
-        CommandPreview(links.preview, motion, Modifier.padding(top = 12.dp))
-
-        FlowRow(
-            Modifier.padding(top = 12.dp).fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            itemVerticalAlignment = Alignment.CenterVertically,
-        ) {
-            OpenButton(links, enabled, motion) { onEvent(LinksEvent.Open) }
-            TextButton(onClick = { onEvent(LinksEvent.Save) }, enabled = enabled && kind != LinkKind.NotALink) {
-                Icon(Icons.Filled.Add, contentDescription = null, Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Save as quick action")
-            }
-        }
-
-        ResultStrip(links, motion)
-
-        HistorySection(links, onEvent, motion, now)
     }
 }
+
+/** "Open with" and "Before opening": side by side, or stacked in a narrow tab ([stack] 0..1 morphs between the two). */
+@Composable
+private fun Pickers(
+    links: LinksState,
+    apps: AppsUiState,
+    enabled: Boolean,
+    motion: Boolean,
+    stack: State<Float>,
+    onEvent: (LinksEvent) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    MorphRow(stack, Arrangement.spacedBy(12.dp), 14.dp, listOf(null, null), Modifier.padding(top = 12.dp)) {
+        Column {
+            FieldLabel("Open with")
+            val listed = remember(apps.apps) { apps.apps.orEmpty().sortedBy { it.label.lowercase() } }
+            val chosen = links.packageName
+            DropdownField(
+                value = chosen?.let { p -> listed.firstOrNull { it.packageName == p }?.label ?: p } ?: "Let Android choose",
+                options = listOf<DeviceApp?>(null) + listed,
+                description = "Open with",
+                enabled = enabled,
+                motion = motion,
+                onSelect = { onEvent(LinksEvent.SetPackage(it?.packageName)) },
+            ) { app ->
+                if (app == null) {
+                    Text("Let Android choose")
+                } else {
+                    Column {
+                        Text(app.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            app.packageName, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
+                            color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+        Column {
+            FieldLabel("Before opening")
+            // Force-stop needs an app: offered only with one chosen, and shown as "Nothing" without.
+            val choices = if (links.packageName != null) Before.entries else listOf(Before.None, Before.ClearTask)
+            val shown = links.request.before
+            DropdownField(
+                value = beforeLabel(shown),
+                options = choices,
+                description = "Before opening",
+                enabled = enabled,
+                motion = motion,
+                onSelect = { onEvent(LinksEvent.SetBefore(it)) },
+            ) { Text(beforeLabel(it)) }
+        }
+    }
+}
+
+/**
+ * Lays [content]'s children in one row ([stack] 0) or one under another ([stack] 1), and anything between by
+ * interpolating each child's width and position, so the move follows whatever drives [stack] (a spring, or nothing).
+ * [fixed] lists each child's own width (null: a share of what is left in the row; full width when stacked).
+ */
+@Composable
+internal fun MorphRow(
+    stack: State<Float>,
+    horizontal: Arrangement.Horizontal,
+    gapY: Dp,
+    fixed: List<Dp?>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Layout(content, modifier.fillMaxWidth()) { measurables, constraints ->
+        val gapX = horizontal.spacing.roundToPx()
+        val gy = gapY.roundToPx()
+        val n = measurables.size
+        if (!constraints.hasBoundedWidth) {
+            // No width to share: the children's own widths, in one row.
+            val natural = measurables.map { it.measure(Constraints()) }
+            val h = natural.maxOfOrNull { it.height } ?: 0
+            layout(natural.sumOf { it.width } + gapX * (n - 1).coerceAtLeast(0), h) {
+                var x = 0
+                natural.forEach {
+                    it.place(x, (h - it.height) / 2)
+                    x += it.width + gapX
+                }
+            }
+        } else {
+            val f = stack.value.coerceIn(0f, 1f)
+            // Staged so the children never overlap: first they move down (f 0..0.5), then they widen (f 0.5..1).
+            val drop = FastOutSlowInEasing.transform((f / 0.5f).coerceIn(0f, 1f))
+            val widen = FastOutSlowInEasing.transform(((f - 0.5f) / 0.5f).coerceIn(0f, 1f))
+            val width = constraints.maxWidth
+            val own = fixed.map { it?.roundToPx() }
+            val flexible = own.count { it == null }.coerceAtLeast(1)
+            val share = ((width - own.sumOf { it ?: 0 } - gapX * (n - 1)) / flexible).coerceAtLeast(0)
+            val wide = own.map { it ?: share }
+            val tall = own.map { it ?: width }
+            val placeables = measurables.mapIndexed { i, m ->
+                val w = (wide[i] + (tall[i] - wide[i]) * widen).roundToInt()
+                m.measure(Constraints(minWidth = w, maxWidth = w))
+            }
+            val rowHeight = placeables.maxOfOrNull { it.height } ?: 0
+            val stackedHeight = placeables.sumOf { it.height } + gy * (n - 1).coerceAtLeast(0)
+            val height = (rowHeight + (stackedHeight - rowHeight) * drop).roundToInt()
+            layout(width, height) {
+                var wideX = 0
+                var stackedY = 0
+                placeables.forEachIndexed { i, p ->
+                    val x = wideX * (1f - widen)
+                    val y = (rowHeight - p.height) / 2f * (1f - drop) + stackedY * drop
+                    p.place(x.roundToInt(), y.roundToInt())
+                    wideX += wide[i] + gapX
+                    stackedY += p.height + gy
+                }
+            }
+        }
+    }
+}
+
+/** A size change follows [layoutSpring]; none without [glide]. */
+private fun resizes(glide: Boolean): Modifier = if (glide) Modifier.animateContentSize(layoutSpring()) else Modifier
+
+/** Position changes glide with [layoutSpring]; none without [glide]. */
+@OptIn(ExperimentalSharedTransitionApi::class)
+private fun glides(scope: LookaheadScope, glide: Boolean): Modifier =
+    if (glide) Modifier.animateBounds(scope, boundsTransform = { _, _ -> layoutSpring() }) else Modifier
 
 @Composable
 private fun FieldLabel(text: String, modifier: Modifier = Modifier) {
@@ -434,7 +543,7 @@ private fun KindChip(kind: LinkKind, label: String, motion: Boolean, modifier: M
                 scaleY = scale
                 alpha = 0.3f + 0.7f * p
             }
-            .then(if (motion) Modifier.animateContentSize(tween(KIND_POP_MILLIS, easing = EmphasizedDecelerate)) else Modifier)
+            .then(if (motion) Modifier.animateContentSize(layoutSpring()) else Modifier)
             .clip(ChipShape).background(container)
             .padding(horizontal = 9.dp, vertical = 3.dp)
             .semantics { contentDescription = "Kind: $label" },
@@ -519,33 +628,46 @@ private fun DetailsHeader(open: Boolean, motion: Boolean, onToggle: () -> Unit) 
 
 /** Action, Category and one extra (type, key, value). Used only while open. */
 @Composable
-private fun DetailsBody(links: LinksState, onEvent: (LinksEvent) -> Unit, enabled: Boolean, motion: Boolean) {
+private fun DetailsBody(links: LinksState, onEvent: (LinksEvent) -> Unit, enabled: Boolean, motion: Boolean, stacked: Boolean, glide: Boolean, stack: State<Float>) {
+    val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
         FieldLabel("Action")
         LinkTextField(links.action, { onEvent(LinksEvent.SetAction(it)) }, description = "Action", enabled = enabled)
         FieldLabel("Category", Modifier.padding(top = 10.dp))
         LinkTextField(links.category, { onEvent(LinksEvent.SetCategory(it)) }, description = "Category", enabled = enabled)
         FieldLabel("Extra", Modifier.padding(top = 10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            val extra = links.extra
-            DropdownField(
-                value = extra.type.name.lowercase(),
-                options = ExtraType.entries,
-                description = "Extra type",
-                enabled = enabled,
-                mono = true,
-                motion = motion,
-                onSelect = { onEvent(LinksEvent.SetExtra(extra.copy(type = it))) },
-                modifier = Modifier.width(92.dp),
-            ) { Text(it.name.lowercase(), fontFamily = FontFamily.Monospace) }
-            LinkTextField(
-                extra.key, { onEvent(LinksEvent.SetExtra(links.extra.copy(key = it))) },
-                description = "Extra key", placeholder = "key", enabled = enabled, modifier = Modifier.weight(1f),
-            )
-            LinkTextField(
-                extra.value, { onEvent(LinksEvent.SetExtra(links.extra.copy(value = it))) },
-                description = "Extra value", placeholder = "value", enabled = enabled, modifier = Modifier.weight(1f),
-            )
+        // Stacked: the type field alone on the first line, key and value full width under it, with a 2 dp rule at the
+        // group's start. The details' expand is outside this scope; the fields glide inside it.
+        val rule by layoutDp(if (stacked) 8.dp else 0.dp, glide)
+        val ruleColor = colors.outlineVariant
+        Box(
+            Modifier.fillMaxWidth()
+                .drawBehind {
+                    val share = (rule.toPx() / 8.dp.toPx()).coerceIn(0f, 1f)
+                    if (share > 0f) drawRect(ruleColor.copy(alpha = ruleColor.alpha * share), size = Size(2.dp.toPx(), size.height))
+                }
+                .padding(start = rule.coerceAtLeast(0.dp)),
+        ) {
+            MorphRow(stack, Arrangement.spacedBy(8.dp), 8.dp, listOf(92.dp, null, null)) {
+                val extra = links.extra
+                DropdownField(
+                    value = extra.type.name.lowercase(),
+                    options = ExtraType.entries,
+                    description = "Extra type",
+                    enabled = enabled,
+                    mono = true,
+                    motion = motion,
+                    onSelect = { onEvent(LinksEvent.SetExtra(extra.copy(type = it))) },
+                ) { Text(it.name.lowercase(), fontFamily = FontFamily.Monospace) }
+                LinkTextField(
+                    extra.key, { onEvent(LinksEvent.SetExtra(links.extra.copy(key = it))) },
+                    description = "Extra key", placeholder = "key", enabled = enabled,
+                )
+                LinkTextField(
+                    extra.value, { onEvent(LinksEvent.SetExtra(links.extra.copy(value = it))) },
+                    description = "Extra value", placeholder = "value", enabled = enabled,
+                )
+            }
         }
     }
 }
@@ -565,7 +687,7 @@ private fun CommandPreview(command: String, motion: Boolean, modifier: Modifier 
                     fontFamily = FontFamily.Monospace,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier
-                        .then(if (motion) Modifier.animateContentSize(tween(OPEN_MILLIS, easing = FastOutSlowInEasing)) else Modifier)
+                        .then(if (motion) Modifier.animateContentSize(layoutSpring()) else Modifier)
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                         .semantics { contentDescription = "Command" },
                 )
@@ -577,14 +699,14 @@ private fun CommandPreview(command: String, motion: Boolean, modifier: Modifier 
 
 /** Open on device: its text crossfades to a spinner and "Opening…" while the command runs (clicks then do nothing). */
 @Composable
-private fun OpenButton(links: LinksState, enabled: Boolean, motion: Boolean, onOpen: () -> Unit) {
-    Button(onClick = onOpen, enabled = enabled && (links.canOpen || links.running)) {
+private fun OpenButton(links: LinksState, enabled: Boolean, motion: Boolean, modifier: Modifier, onOpen: () -> Unit) {
+    Button(onClick = onOpen, modifier = modifier, enabled = enabled && (links.canOpen || links.running)) {
         AnimatedContent(
             targetState = links.running,
             transitionSpec = {
                 if (motion) {
                     fadeIn(tween(OPEN_MILLIS, delayMillis = 60)) togetherWith fadeOut(tween(CLOSE_MILLIS / 2)) using
-                        SizeTransform(clip = false) { _, _ -> tween(OPEN_MILLIS, easing = FastOutSlowInEasing) }
+                        SizeTransform(clip = false) { _, _ -> layoutSpring() }
                 } else {
                     fadeIn(tween(REDUCED_FADE_MILLIS)) togetherWith fadeOut(tween(REDUCED_FADE_MILLIS)) using
                         SizeTransform(clip = false) { _, _ -> snap() }
@@ -643,7 +765,7 @@ private fun ResultStrip(links: LinksState, motion: Boolean) {
                     transitionSpec = {
                         if (motion) {
                             fadeIn(tween(RESULT_MILLIS)) togetherWith fadeOut(tween(RESULT_MILLIS / 2)) using
-                                SizeTransform(clip = false) { _, _ -> tween(RESULT_MILLIS, easing = FastOutSlowInEasing) }
+                                SizeTransform(clip = false) { _, _ -> layoutSpring() }
                         } else {
                             fadeIn(tween(REDUCED_FADE_MILLIS)) togetherWith fadeOut(tween(REDUCED_FADE_MILLIS)) using
                                 SizeTransform(clip = false) { _, _ -> snap() }
@@ -725,3 +847,6 @@ private fun Banner(text: String?, motion: Boolean, tag: String, content: @Compos
 
 internal const val BANNER_ERROR_TAG = "links-error-banner"
 internal const val BANNER_NOTICE_TAG = "links-notice-banner"
+
+/** Under 300 dp the Links tab stacks its dropdowns and the extra's fields. */
+fun linksStacked(contentWidth: Dp): Boolean = contentWidth < 300.dp

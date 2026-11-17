@@ -1,6 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.shots.gif
 
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import androidx.compose.material3.Surface
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
@@ -301,6 +305,98 @@ class GifExportContentTest {
         ui.close()
     }
 
+    // Narrow windows: the preview gives way so the controls keep their room.
+
+    @Test
+    fun `a wide clip in a 600 dp window narrows its preview and keeps Export and Close inside`() = onEdt {
+        val ui = Ui(motion = false, state = GifExportState(file, RecordingInfo(18_000, 2340, 1080)), w = 600, h = 500)
+        val export = assertNotNull(ui.texted("Export")).boundsInRoot
+        val close = assertNotNull(ui.texted("Close")).boundsInRoot
+        assertTrue(export.right <= 600f && close.right <= 600f && close.left >= 0f, "inside 600: $close $export")
+        val preview = assertNotNull(ui.described("Preview")).boundsInRoot
+        assertEquals(gifPreviewWidth(568.dp, (468 * 2340f / 1080f).dp).value, preview.width, 1.5f)
+        assertTrue(preview.height < 150f, "preview at its own aspect height: $preview")
+        assertEquals(250f, preview.center.y, 2f, "centered vertically")
+        ui.close()
+    }
+
+    @Test
+    fun `a portrait clip in a 600 dp window keeps its full-height preview`() = onEdt {
+        val ui = Ui(motion = false, state = GifExportState(file, RecordingInfo(18_000, 1080, 2340)), w = 600, h = 480)
+        val preview = assertNotNull(ui.described("Preview")).boundsInRoot
+        assertEquals(448f, preview.height, 1.5f)
+        ui.close()
+    }
+
+    /** A GIF window of [w] dp (changeable), showing [state] (changeable); the preview's width read back. */
+    private inner class Resizable(val motion: Boolean, w: Int, first: GifExportState) {
+        val width = androidx.compose.runtime.mutableStateOf(w)
+        val state = androidx.compose.runtime.mutableStateOf(first)
+        val d = SceneDriver(ImageComposeScene(1000, 500, Density(1f)) {
+            ScrcpyViewerTheme(ThemeMode.Light) {
+                androidx.compose.runtime.CompositionLocalProvider(com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion provides !motion) {
+                    Surface(Modifier.fillMaxHeight()) {
+                        androidx.compose.foundation.layout.Box(Modifier.width(width.value.dp).fillMaxHeight()) {
+                            GifExportContent(
+                                state.value, motion, FakeExport().fn, FakeFrames(), {}, {}, {},
+                                modifier = Modifier.fillMaxSize(), decode = EmptyCoroutineContext,
+                            )
+                        }
+                    }
+                }
+            }
+        }).also { it.frames(4) }
+
+        fun previewWidth(): Float {
+            val all = mutableListOf<SemanticsNode>()
+            fun walk(n: SemanticsNode) {
+                all += n
+                n.children.forEach(::walk)
+            }
+            d.scene.semanticsOwners.forEach { walk(it.unmergedRootSemanticsNode) }
+            return all.firstOrNull { it.config.getOrNull(SemanticsProperties.ContentDescription)?.contains("Preview") == true }?.boundsInRoot?.width ?: 0f
+        }
+    }
+
+    @Test
+    fun `the preview follows a window drag directly, without lagging, even with motion on`() = onEdt {
+        val ui = Resizable(motion = true, w = 900, first = GifExportState(file, RecordingInfo(18_000, 2340, 1080)))
+        ui.width.value = 600
+        ui.d.frame()
+        ui.d.frame()
+        assertEquals(gifPreviewWidth(568.dp, 1014.dp).value, ui.previewWidth(), 1.5f)
+        ui.width.value = 500
+        ui.d.frame()
+        ui.d.frame()
+        assertEquals(gifPreviewWidth(468.dp, 1014.dp).value, ui.previewWidth(), 1.5f)
+        ui.width.value = 300
+        ui.d.frames(2)
+        assertEquals(0f, ui.previewWidth(), 1.5f)
+        ui.d.scene.close()
+    }
+
+    @Test
+    fun `switching to a clip of another shape glides the preview with motion and snaps without`() = onEdt {
+        for (motion in listOf(true, false)) {
+            val ui = Resizable(motion, 1000, GifExportState(file, RecordingInfo(18_000, 2340, 1080)))
+            val before = ui.previewWidth()
+            ui.state.value = GifExportState(file, RecordingInfo(18_000, 1080, 2340))
+            val path = listOf(before) + List(40) {
+                ui.d.frame()
+                ui.previewWidth()
+            }
+            val total = abs(path.last() - before)
+            val steps = path.zipWithNext { a, b -> abs(b - a) }
+            assertTrue(total > 100f, "the preview changes shape: $path")
+            if (motion) {
+                assertTrue(steps.count { it > 0.5f } >= 4 && steps.max() <= total * 0.5f, "glides: $path")
+            } else {
+                assertTrue(steps.count { it > 0.5f } <= 2, "snaps: $path")
+            }
+            ui.d.scene.close()
+        }
+    }
+
     @Test
     fun `dragging a handle trims, the frame and the readout follow the pointer`() = onEdt {
         val ui = Ui(motion = true)
@@ -435,7 +531,7 @@ class GifExportContentTest {
         // Export again: the done row folds while the progress row unfolds.
         ui.export.gate = CompletableDeferred()
         ui.click("Export again")
-        ui.d.frames(30)
+        ui.d.frames(60) // the fold follows the layout spring
         assertNull(ui.texted("Pixel 8 Pro #1 ü.gif"))
         assertNotNull(ui.texted("Making the palette…"))
         ui.close()

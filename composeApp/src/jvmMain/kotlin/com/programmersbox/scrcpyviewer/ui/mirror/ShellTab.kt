@@ -44,6 +44,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.text.style.TextOverflow
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
+import com.programmersbox.scrcpyviewer.ui.common.BarItem
+import com.programmersbox.scrcpyviewer.ui.common.PriorityBar
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -142,19 +146,37 @@ private fun FilterField(console: ShellConsole) {
 @Composable
 private fun LiveBar(console: ShellConsole, onCopy: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).background(colors.error, CircleShape))
-        Text(
-            "Streaming · ${console.lineCount} lines", Modifier.weight(1f).padding(start = 8.dp),
-            style = MaterialTheme.typography.labelLarge, color = colors.onSurface, maxLines = 1,
-        )
-        TextButton(onClick = { console.paused = !console.paused }) { Text(if (console.paused) "Resume" else "Pause") }
-        TextButton(onClick = onCopy) {
-            Icon(Icons.Filled.ContentCopy, contentDescription = null, Modifier.size(16.dp))
-            Text("Copy", Modifier.padding(start = 6.dp))
-        }
-    }
+    // Pause never folds; Copy goes into the ⋮ menu once the line count would get under LIVE_TEXT_MIN (a bar under
+    // about 330 dp, a sheet under about 360 dp).
+    PriorityBar(
+        listOf(
+            BarItem("status", priority = 0, menuLabel = "", onMenuClick = null, minWidth = LIVE_TEXT_MIN, grow = true) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(8.dp).background(colors.error, CircleShape))
+                    Text(
+                        "Streaming · ${console.lineCount} lines", Modifier.weight(1f).padding(start = 8.dp),
+                        style = MaterialTheme.typography.labelLarge, color = colors.onSurface, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            },
+            BarItem("pause", priority = 0, menuLabel = if (console.paused) "Resume" else "Pause", onMenuClick = null) {
+                TextButton(onClick = { console.paused = !console.paused }) { Text(if (console.paused) "Resume" else "Pause") }
+            },
+            BarItem("copy", priority = 1, menuLabel = "Copy", onMenuClick = onCopy) {
+                TextButton(onClick = onCopy) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = null, Modifier.size(16.dp))
+                    Text("Copy", Modifier.padding(start = 6.dp))
+                }
+            },
+        ),
+        Modifier.fillMaxWidth(),
+        gap = 0.dp,
+    )
 }
+
+/** The live bar's line count keeps at least this much beside its buttons before Copy folds into the menu. */
+private val LIVE_TEXT_MIN = 168.dp
 
 @Composable
 private fun Console(console: ShellConsole, modifier: Modifier, onCopy: () -> Unit) {
@@ -247,50 +269,72 @@ private fun highlighted(text: String, filter: String, highlight: Color): Annotat
 
 @Composable
 private fun CommandField(console: ShellConsole, selected: Boolean) {
-    val colors = MaterialTheme.colorScheme
     val focus = remember { FocusRequester() }
-    LaunchedEffect(selected) { if (selected) runCatching { focus.requestFocus() } }
     // The field keeps its own selection; the console owns the text (history recall and clearing change it).
     var value by remember { mutableStateOf(TextFieldValue(console.input)) }
     if (value.text != console.input) value = TextFieldValue(console.input, TextRange(console.input.length))
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            Modifier.weight(1f).heightIn(min = 44.dp).clip(FieldShape).background(colors.surfaceContainerHighest).padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("$", style = MonoStyle.copy(fontSize = 14.sp), color = colors.primary, fontWeight = FontWeight.Bold)
-            Box(Modifier.weight(1f).padding(start = 8.dp)) {
-                if (value.text.isEmpty()) Text("Type an adb shell command", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1)
-                BasicTextField(
-                    value = value,
-                    onValueChange = {
-                        value = it
-                        if (it.text != console.input) console.input = it.text
-                    },
-                    singleLine = true,
-                    textStyle = MonoStyle.copy(fontSize = 13.sp, color = colors.onSurface),
-                    cursorBrush = SolidColor(colors.primary),
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus).onPreviewKeyEvent { event ->
-                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        when {
-                            (event.key == Key.Enter || event.key == Key.NumPadEnter) && !event.isShiftPressed -> { console.submit(); true }
-                            event.key == Key.DirectionUp -> { console.historyUp(); true }
-                            event.key == Key.DirectionDown -> { console.historyDown(); true }
-                            // Ctrl, not Cmd, so Cmd+C stays copy on macOS; with a selection Ctrl+C copies too.
-                            event.key == Key.C && event.isCtrlPressed && console.running && value.selection.collapsed -> { console.stop(); true }
-                            else -> false
-                        }
-                    },
-                )
-            }
+    // The field keeps 120 dp beside Run (or Stop); with less, the button goes under it.
+    AdaptiveRow(
+        text = { CommandInput(console, value, { value = it }, focus, selected) },
+        control = { RunStopButton(console) },
+        modifier = Modifier.fillMaxWidth(),
+        textMin = 120.dp,
+        gap = 8.dp,
+    )
+}
+
+@Composable
+private fun CommandInput(
+    console: ShellConsole,
+    value: TextFieldValue,
+    onValue: (TextFieldValue) -> Unit,
+    focus: FocusRequester,
+    selected: Boolean,
+) {
+    // Here, in the row's text slot (composed with the row's layout), so the field is attached when it asks.
+    LaunchedEffect(selected) { if (selected) runCatching { focus.requestFocus() } }
+    val colors = MaterialTheme.colorScheme
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(FieldShape).background(colors.surfaceContainerHighest).padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("$", style = MonoStyle.copy(fontSize = 14.sp), color = colors.primary, fontWeight = FontWeight.Bold)
+        Box(Modifier.weight(1f).padding(start = 8.dp)) {
+            if (value.text.isEmpty()) Text("Type an adb shell command", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1)
+            BasicTextField(
+                value = value,
+                onValueChange = {
+                    onValue(it)
+                    if (it.text != console.input) console.input = it.text
+                },
+                singleLine = true,
+                textStyle = MonoStyle.copy(fontSize = 13.sp, color = colors.onSurface),
+                cursorBrush = SolidColor(colors.primary),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus).onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when {
+                        (event.key == Key.Enter || event.key == Key.NumPadEnter) && !event.isShiftPressed -> { console.submit(); true }
+                        event.key == Key.DirectionUp -> { console.historyUp(); true }
+                        event.key == Key.DirectionDown -> { console.historyDown(); true }
+                        // Ctrl, not Cmd, so Cmd+C stays copy on macOS; with a selection Ctrl+C copies too.
+                        event.key == Key.C && event.isCtrlPressed && console.running && value.selection.collapsed -> { console.stop(); true }
+                        else -> false
+                    }
+                },
+            )
         }
-        if (console.running) {
-            Button(
-                onClick = { console.stop() },
-                colors = ButtonDefaults.buttonColors(containerColor = colors.error, contentColor = colors.onError),
-            ) { Text("■ Stop") }
-        } else {
-            Button(onClick = { console.submit() }, enabled = console.input.isNotBlank()) { Text("Run") }
-        }
+    }
+}
+
+@Composable
+private fun RunStopButton(console: ShellConsole) {
+    val colors = MaterialTheme.colorScheme
+    if (console.running) {
+        Button(
+            onClick = { console.stop() },
+            colors = ButtonDefaults.buttonColors(containerColor = colors.error, contentColor = colors.onError),
+        ) { Text("■ Stop") }
+    } else {
+        Button(onClick = { console.submit() }, enabled = console.input.isNotBlank()) { Text("Run") }
     }
 }

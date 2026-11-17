@@ -69,10 +69,11 @@ class SheetTabsTest {
         state: () -> QuickActionsUiState,
         events: MutableList<QuickActionEvent>,
         motion: Boolean = true,
+        rowWidth: androidx.compose.ui.unit.Dp? = null,
     ): SceneDriver =
         SceneDriver(ImageComposeScene(600, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
-                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state(), { events += it }, console = null, motion = motion) }
+                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state(), { events += it }, console = null, rowWidth = rowWidth, motion = motion) }
             }
         }).also { it.frames(5) }
 
@@ -154,18 +155,54 @@ class SheetTabsTest {
     )
 
     @Test
-    fun `at the Actions width segments show icons, with the Shell dot and the Files badge beside them`() = onEdt {
-        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Actions, logcatPopped = false), icons = true)
+    fun `at the Actions width the tabs are compact, with the Shell dot and the Files badge on their icons`() = onEdt {
+        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Actions, logcatPopped = false), compact = true)
     }
 
     @Test
-    fun `at the Actions width a two-digit Files count still fits beside its icon`() = onEdt {
-        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Actions, logcatPopped = false).copy(filesTransfersRunning = 12), icons = true)
+    fun `at the Actions width a two-digit Files count still fits on its icon`() = onEdt {
+        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Actions, logcatPopped = false).copy(filesTransfersRunning = 12), compact = true)
+    }
+
+    @Test
+    fun `compact, the selected Files segment shows its name after the badged icon`() = onEdt {
+        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Files, logcatPopped = false), compact = true, rowWidth = 344.dp)
     }
 
     @Test
     fun `at the Actions width a popped Logcat segment shows the window icon with the live badge instead`() = onEdt {
-        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Actions, logcatPopped = true), logcatIconOnly = true, icons = true)
+        assertSegmentsFit(QUICK_ACTIONS_WIDTH.value.toInt(), busy(SheetTab.Actions, logcatPopped = true), logcatIconOnly = true, compact = true)
+    }
+
+    @Test
+    fun `just above 340 dp the tabs are icons only, and the compact ones below`() = onEdt {
+        assertSegmentsFit(340, busy(SheetTab.Actions, logcatPopped = false).copy(widths = SheetWidths(actions = 340.dp)), icons = true)
+        assertSegmentsFit(339, busy(SheetTab.Actions, logcatPopped = false).copy(widths = SheetWidths(actions = 339.dp)), compact = true)
+    }
+
+    @Test
+    fun `compact, the selected segment springs wider and the highlight follows it`() = onEdt {
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true))
+        // A 344 dp row: every tab's sheet is 280 dp (full), so the tabs stay compact across the switch.
+        val driver = panel({ state }, mutableListOf(), rowWidth = 344.dp)
+        fun tabs() = driver.nodes(merged = true).filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
+        driver.frames(60)
+        val wide = tabs()[SheetTab.Actions.ordinal].boundsInRoot.width
+        val narrow = tabs()[SheetTab.Apps.ordinal].boundsInRoot.width
+        assertEquals(2.2f, wide / narrow, 0.1f)
+        state = state.copy(tab = SheetTab.Apps)
+        driver.frames(4)
+        val mid = tabs()[SheetTab.Apps.ordinal].boundsInRoot.width
+        assertTrue(mid > narrow + 1f && mid < wide - 1f, "the Apps segment springs wider: $narrow, $mid, $wide")
+        driver.frames(60)
+        assertEquals(wide, tabs()[SheetTab.Apps.ordinal].boundsInRoot.width, 1f)
+        // The highlight (the surface color) fills the selected segment, not the old one.
+        val pixels = driver.snapshot()
+        val surface = androidx.compose.material3.lightColorScheme().surface
+        fun colorAt(r: androidx.compose.ui.geometry.Rect) = pixels[(r.left + 6).toInt(), r.center.y.toInt()]
+        val apps = tabs()[SheetTab.Apps.ordinal].boundsInRoot
+        val actions = tabs()[SheetTab.Actions.ordinal].boundsInRoot
+        assertTrue(colorAt(apps) != colorAt(actions), "only the selected segment is highlighted")
     }
 
     @Test
@@ -203,10 +240,18 @@ class SheetTabsTest {
         assertSegmentsFit(QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(), busy(SheetTab.Logcat, logcatPopped = true))
     }
 
-    private fun assertSegmentsFit(width: Int, state: QuickActionsUiState, logcatIconOnly: Boolean = false, icons: Boolean = false) {
+    private fun assertSegmentsFit(
+        width: Int,
+        state: QuickActionsUiState,
+        logcatIconOnly: Boolean = false,
+        icons: Boolean = false,
+        compact: Boolean = false,
+        /** The content row the sheet sits in; 344 dp makes every tab's sheet 280 dp (SheetPlacement.Full). */
+        rowWidth: androidx.compose.ui.unit.Dp? = null,
+    ) {
         val driver = SceneDriver(ImageComposeScene(width, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
-                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null) }
+                Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state, {}, console = null, rowWidth = rowWidth) }
             }
         })
         driver.frames(60) // the Files badge has scaled in
@@ -234,6 +279,39 @@ class SheetTabsTest {
                 }
                 val i = icon.boundsInRoot
                 assertTrue(dot.boundsInRoot.center.x > i.center.x && dot.boundsInRoot.center.y < i.center.y, "the badge sits on the top-end corner")
+                continue
+            }
+            if (compact) {
+                // Compact (under 340 dp): every segment its icon, the selected one also its name; the Shell dot and
+                // the Files badge sit on the icon's top-end corner, inside the segment.
+                val nodes = descendants(tab)
+                val segment = SheetTab.entries[tabs.indexOf(tab)]
+                val label = nodes.firstOrNull { it.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text == segment.name }
+                // The selected segment's name names it; the others' icons do (16 dp, inside the segment).
+                val icon = nodes.firstOrNull { it.description() == segment.name }
+                if (segment == state.tab) {
+                    assertNotNull(label, "the selected ${segment.name} shows its name")
+                    assertTrue(label.boundsInRoot.right <= tab.boundsInRoot.right + 0.5f, "${segment.name} name spills out at $width")
+                } else {
+                    assertNull(label, "${segment.name} shows no name")
+                    assertNotNull(icon, "the ${segment.name} icon names it")
+                    assertEquals(16f, icon.boundsInRoot.width, "${segment.name} icon width")
+                    assertTrue(icon.boundsInRoot.left >= tab.boundsInRoot.left && icon.boundsInRoot.right <= tab.boundsInRoot.right, "${segment.name} icon spills out at $width")
+                }
+                val extras = nodes.filter { it.description() == "Command running" || it.description()?.endsWith("transfers running") == true }
+                for (extra in extras) {
+                    val b = extra.boundsInRoot
+                    assertTrue(b.left >= tab.boundsInRoot.left && b.right <= tab.boundsInRoot.right && b.top >= tab.boundsInRoot.top, "${extra.description()} spills out of ${segment.name}")
+                    icon?.boundsInRoot?.let { i ->
+                        assertTrue(b.center.x > i.center.x && b.center.y < i.center.y, "${extra.description()} sits on the ${segment.name} icon's top-end corner")
+                    }
+                    if (label != null) assertTrue(label.boundsInRoot.left >= b.right - 0.5f, "${extra.description()} overlaps the ${segment.name} name")
+                }
+                when (segment) {
+                    SheetTab.Shell -> assertEquals(listOf("Command running"), extras.map { it.description() })
+                    SheetTab.Files -> assertEquals(1, extras.size, extras.map { it.description() }.toString())
+                    else -> assertEquals(emptyList(), extras.map { it.description() }, segment.name)
+                }
                 continue
             }
             if (icons) {
@@ -304,8 +382,9 @@ class SheetTabsTest {
         })
         driver.frames(5)
         fun labelSize(): Float {
-            val label = driver.nodes().filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
-                .first().children.first { it.config.getOrNull(SemanticsProperties.Text) != null }
+            fun descendants(n: SemanticsNode): List<SemanticsNode> = n.children.flatMap { listOf(it) + descendants(it) }
+            val label = descendants(driver.nodes().first { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab })
+                .first { it.config.getOrNull(SemanticsProperties.Text) != null }
             val layouts = mutableListOf<TextLayoutResult>()
             label.config[SemanticsActions.GetTextLayoutResult].action!!(layouts)
             return layouts.single().layoutInput.style.fontSize.value
@@ -463,7 +542,8 @@ class SheetTabsTest {
     @Test
     fun `resizing across 56 dp a segment cross-fades icons and names over 200 ms, at once without motion`() = onEdt {
         for (motion in listOf(true, false)) {
-            var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, consoleRunning = true))
+            // 360 dp: icons only (under 340 dp the tabs are compact instead).
+            var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, consoleRunning = true, widths = SheetWidths(actions = 360.dp)))
             val driver = panel({ state }, mutableListOf(), motion)
             driver.frames(30)
             // The Shell dot sits after the segment's name, all centered: its distance from the segment's center follows
@@ -472,7 +552,7 @@ class SheetTabsTest {
                 val shell = driver.nodes().filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }[SheetTab.Shell.ordinal]
                 return checkNotNull(driver.described("Command running")).boundsInRoot.left - shell.boundsInRoot.center.x
             }
-            assertNotNull(driver.described("Shell"), "icons at 280 dp")
+            assertNotNull(driver.described("Shell"), "icons at 360 dp")
             val start = dot()
             state = state.copy(widths = SheetWidths(actions = 400.dp)) // a resize: the sheet follows at once
             val path = listOf(start) + List(24) {
@@ -505,7 +585,7 @@ class SheetTabsTest {
         driver.scene.sendPointerEvent(PointerEventType.Move, apps, type = PointerType.Mouse)
         driver.frames(2)
         driver.scene.sendPointerEvent(PointerEventType.Move, apps.copy(x = apps.x + 1f), type = PointerType.Mouse)
-        val until = System.currentTimeMillis() + 3_000
+        val until = System.currentTimeMillis() + 10_000
         while (driver.texts()["Apps"] == null && System.currentTimeMillis() < until) {
             Thread.sleep(50)
             driver.frames(1)

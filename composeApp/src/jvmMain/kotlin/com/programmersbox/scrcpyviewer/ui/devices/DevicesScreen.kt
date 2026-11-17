@@ -4,13 +4,9 @@ import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.animateBounds
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.animateContentSize
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -22,6 +18,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -33,6 +30,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
@@ -87,7 +85,20 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.runtime.Stable
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.onPointerEvent
@@ -104,15 +115,32 @@ import com.programmersbox.scrcpyviewer.options.OptionCatalog
 import com.programmersbox.scrcpyviewer.options.OptionGroup
 import com.programmersbox.scrcpyviewer.options.OptionSpec
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
-import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveListDetail
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
+import com.programmersbox.scrcpyviewer.ui.common.BarItem
+import com.programmersbox.scrcpyviewer.ui.common.BarSpacer
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
-import com.programmersbox.scrcpyviewer.ui.common.ResizableListDetail
+import com.programmersbox.scrcpyviewer.ui.common.LocalBarProbe
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.PriorityBar
+import com.programmersbox.scrcpyviewer.ui.common.SelectionHighlightState
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.common.rememberSelectionHighlight
+import com.programmersbox.scrcpyviewer.ui.common.RowHighlight
+import com.programmersbox.scrcpyviewer.ui.common.highlightContainer
+import com.programmersbox.scrcpyviewer.ui.common.RowOrigin
+import com.programmersbox.scrcpyviewer.ui.common.highlightPart
+import com.programmersbox.scrcpyviewer.ui.common.rowOrigin
+import com.programmersbox.scrcpyviewer.ui.common.rememberRowHighlight
+import com.programmersbox.scrcpyviewer.ui.common.selectionHighlightTarget
 import com.programmersbox.scrcpyviewer.ui.common.rememberComposedViewModelStoreOwner
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
 import org.koin.compose.viewmodel.koinViewModel
 import com.programmersbox.scrcpyviewer.ui.common.OptionRow
-import com.programmersbox.scrcpyviewer.ui.theme.warnColor
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import com.programmersbox.scrcpyviewer.ui.theme.selectedRow
+import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTab
 import com.programmersbox.scrcpyviewer.ui.devices.info.DetailTabRow
 import com.programmersbox.scrcpyviewer.ui.devices.info.DetailPane
@@ -122,9 +150,9 @@ import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorSection
 import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsUiState
 import com.programmersbox.scrcpyviewer.ui.devices.emulators.EmulatorsViewModel
 import com.programmersbox.scrcpyviewer.ui.common.rememberPickerGuard
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import androidx.compose.runtime.rememberCoroutineScope
 import java.nio.file.Path
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
 
 @Composable
 internal fun DevicesScreen(
@@ -212,8 +240,8 @@ internal fun DevicesScreen(
 val DEVICE_LIST_MIN_WIDTH = 240.dp
 private val DeviceListPreferredWidth = 270.dp
 
-/** Narrowest options pane that still fits the search field and two columns of option rows. */
-val DEVICE_OPTIONS_MIN_WIDTH = 640.dp
+/** The option grid splits into two columns from this pane content width. */
+private val TwoOptionColumnsWidth = 560.dp
 
 /** Stateless Devices screen (Concept C: device column, searchable option grid, command footer). */
 @Composable
@@ -259,7 +287,7 @@ internal fun DevicesContent(
     emulators: EmulatorsUiState? = null,
     onEmulator: (EmulatorEvent) -> Unit = {},
     onChooseSdk: () -> Unit = {},
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     /** The wall clock the emulators' boot timers read (screenshots pass a fixed one). */
     emulatorNow: () -> Long = System::currentTimeMillis,
 ) {
@@ -275,22 +303,28 @@ internal fun DevicesContent(
                 )
             }
         }
-        ResizableListDetail(
+        AdaptiveListDetail(
             panes = panes,
             listMinWidth = DEVICE_LIST_MIN_WIDTH,
             listPreferredWidth = DeviceListPreferredWidth,
-            detailMinWidth = DEVICE_OPTIONS_MIN_WIDTH,
+            hasSelection = state.selectedSerial != null,
             list = {
                 DeviceColumn(
-                    state, onSelect = { onSelect(it); panes.navigation.openDetail() }, onSelect, rowActions, onPairWifi,
+                    state,
+                    onSelect = {
+                        onSelect(it)
+                        panes.push()
+                    },
+                    onSelect, rowActions, onPairWifi,
                     contextMenuSerial, onRestartAdb, restartSucceeded, pairAnchor,
                     emulators, onEmulator, onChooseSdk, motion, emulatorNow,
                 )
             },
             detail = { onBack ->
+                // The open device leaving adb's list moves the selection to another device: return to the list.
+                BackToListWhenGone(state, panes::back)
                 Column(Modifier.fillMaxSize()) {
-                    // The back button lives in the tab row, so the panes below get none of their own.
-                    DetailTabRow(state.selectedSerial != null, detailTab, onDetailTab, onBack)
+                    DetailTabRow(state.selectedSerial != null, detailTab, onDetailTab, onBack = onBack, reduceMotion = LocalReduceMotion.current)
                     // Each device's content (and none) animates in and out as a whole; `shown` is that device's state.
                     DetailPane(
                         state, { it.selectedSerial }, state.devices.map { it.serial }, detailTab, info, onInfoActive, onInfoRetry,
@@ -307,7 +341,9 @@ internal fun DevicesContent(
                                     ViewSwitchContainer(motion, isPane = true, Modifier.matchParentSize())
                                     Column(Modifier.fillMaxSize()) {
                                         OptionsPane(
-                                            shown, onQuery, onGroup, onToggle, onValue, onBack = null,
+                                            shown, onQuery, onGroup, onToggle, onValue,
+                                            // False while this device's pane leaves for another's.
+                                            current = shown.selectedSerial == state.selectedSerial,
                                             onSimple = { onAdvanced(false) },
                                             modifier = Modifier.weight(1f).advancedContentMotion(motion),
                                         )
@@ -329,6 +365,21 @@ internal fun DevicesContent(
             },
             modifier = Modifier.weight(1f).fillMaxWidth(),
         )
+    }
+}
+
+/**
+ * Calls [backToList] when the device that was open leaves adb's list (unplugged, or adb restarted): the pushed detail
+ * would otherwise jump to whichever device is selected next.
+ */
+@Composable
+private fun BackToListWhenGone(state: DevicesUiState, backToList: () -> Unit) {
+    val open = remember { arrayOf(state.selectedSerial) }
+    val serials = state.devices.map { it.serial }
+    LaunchedEffect(state.selectedSerial, serials) {
+        val was = open[0]
+        open[0] = state.selectedSerial
+        if (was != null && was !in serials) backToList()
     }
 }
 
@@ -364,6 +415,7 @@ private fun DeviceColumn(
     val devices = remember(state.devices, hidden) { connectedRows(state.devices, hidden) }
     val list = rememberDeviceEntries(devices, live)
     val entries = list.entries
+    val highlight = rememberRowHighlight()
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -373,12 +425,20 @@ private fun DeviceColumn(
                 if (state.adbConnected && !state.restartingAdb) deviceSummary(devices) else "Devices",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
             RestartAdbButton(restarting = state.restartingAdb, onClick = onRestartAdb, succeeded = restartSucceeded)
         }
         // The device rows (or what stands in for them) and the Emulators section scroll together.
-        Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+        // Material: the selected row's highlight slides between rows; it is drawn in the scrolled content, so it
+        // scrolls with them (see RowHighlight). The other styles mark the selected row themselves (selectedRow).
+        Column(
+            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).then(
+                if (currentStyle == ThemeStyle.Material) Modifier.highlightContainer(highlight) else Modifier,
+            ),
+        ) {
             when {
                 !live -> Row(
                     Modifier.padding(4.dp),
@@ -410,10 +470,12 @@ private fun DeviceColumn(
                             interactive = entry.present,
                             status = chipStatus(device, switching = device.serial in state.switching),
                             glow = glow,
+                            highlight = highlight,
                             avdName = emulators?.avdNames?.get(device.serial),
                             motion = motion,
                             // Icon unfold's launch: the rows fade up in a stagger as the window appears.
-                            modifier = Modifier.launchEntrance(index).padding(bottom = 6.dp),
+                            modifier = Modifier.padding(bottom = 6.dp),
+                            entrance = Modifier.launchEntrance(index),
                         )
                     }
                 }
@@ -425,15 +487,27 @@ private fun DeviceColumn(
                 )
             }
         }
+        val pairOrigin = rememberPairOrigin(pairAnchor)
         FilledTonalButton(
-            onClick = onPairWifi,
-            modifier = Modifier.fillMaxWidth().then(pairAnchor?.let { Modifier.pairDialogOrigin(it) } ?: Modifier),
+            onClick = {
+                pairOrigin?.claim()
+                onPairWifi()
+            },
+            modifier = Modifier.fillMaxWidth().pairDialogOrigin(pairOrigin),
         ) {
             Icon(Icons.Filled.Wifi, contentDescription = null, Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("Pair over Wi-Fi")
         }
     }
+}
+
+/** A device row's status dot: ready, waiting for approval, or a problem. */
+@Composable
+private fun statusDotColor(state: DeviceState): Color = when (state) {
+    DeviceState.Device -> MaterialTheme.colorScheme.primary
+    DeviceState.Unauthorized -> warnColor()
+    DeviceState.Offline, DeviceState.Other -> MaterialTheme.colorScheme.error
 }
 
 /** The devices the connected rows show: all but the emulators still booting ([hidden]). */
@@ -493,7 +567,11 @@ private fun DeviceRow(
     status: ChipStatus,
     /** Plays the "just arrived" tint: the device connected after the list first loaded. */
     glow: Boolean,
+    /** The list's sliding selection (Material); the selected row marks itself as its target. */
+    highlight: RowHighlight,
     modifier: Modifier = Modifier,
+    /** The row's entrance; it moves the row in a layer, so the highlight's bounds are read outside it. */
+    entrance: Modifier = Modifier,
     /** False while the row plays its exit: it ignores clicks and opens no menu. */
     interactive: Boolean = true,
     /** An emulator's AVD display name once the launcher knows it: its title instead of the system model. */
@@ -503,13 +581,15 @@ private fun DeviceRow(
     var menuAt by remember { mutableStateOf(if (menuInitiallyOpen) Offset(120f, 40f) else null) }
     val shape = styledCorner(12.dp)
     val emulator = isEmulatorSerial(device.serial)
-    val dot = when (device.state) {
-        DeviceState.Device -> MaterialTheme.colorScheme.primary
-        DeviceState.Unauthorized -> warnColor()
-        DeviceState.Offline, DeviceState.Other -> MaterialTheme.colorScheme.error
-    }
+    val dot = statusDotColor(device.state)
+    val material = currentStyle == ThemeStyle.Material
     val hint = deviceHint(device)
-    Box(modifier) {
+    val origin = remember { RowOrigin() }
+    Box(
+        modifier
+            .then(if (material) Modifier.selectionHighlightTarget(highlight.state, selected).rowOrigin(highlight, origin) else Modifier)
+            .then(entrance),
+    ) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -521,7 +601,8 @@ private fun DeviceRow(
             }
             .clip(shape)
             .arrivalGlow(glow, MaterialTheme.colorScheme.surface)
-            .then(if (selected) Modifier.selectedRow(shape) else Modifier)
+            // Material: the sliding highlight, over this row's surface. The other styles keep their own selected look.
+            .then(if (material) Modifier.highlightPart(highlight, shape, origin) else if (selected) Modifier.selectedRow(shape) else Modifier)
             .combinedClickable(enabled = interactive, onClick = onClick, onDoubleClick = onDoubleClick)
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -530,8 +611,9 @@ private fun DeviceRow(
         Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
         Column(
             Modifier.weight(1f).then(
-                // An emulator's title can change while it shows (its AVD is matched): the row's height follows.
-                if (emulator && motion) Modifier.animateContentSize(tween(EMULATOR_TITLE_MILLIS, easing = EmphasizedDecelerate)) else Modifier,
+                // An emulator's title can change while it shows (its AVD is matched): the row's height follows on the layout
+                // spring; the width is the row's, so a window drag moves it at once.
+                Modifier.animateHeight(enabled = emulator && motion),
             ),
         ) {
             val title = connectedTitle(device, avdName)
@@ -549,15 +631,21 @@ private fun DeviceRow(
                             modifier = modifier,
                         )
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        if (shownTitle != device.serial) {
-                            Text(shownTitle, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                        } else {
-                            serialText(Modifier.weight(1f, fill = false))
-                        }
+                    // The name keeps 80 dp; below that the chip goes under it.
+                    AdaptiveRow(
+                        text = {
+                            if (shownTitle != device.serial) {
+                                Text(shownTitle, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            } else {
+                                serialText(Modifier)
+                            }
+                        },
                         // An emulator's connection is no USB cable: its tag says what it is (the dot gives its state).
-                        if (emulator) EmulatorTag() else StatusChip(status)
-                    }
+                        control = { if (emulator) EmulatorTag() else StatusChip(status) },
+                        textMin = 80.dp,
+                        gap = 6.dp,
+                        packInline = true,
+                    )
                     if (shownTitle != device.serial) serialText(Modifier)
                 }
             }
@@ -571,7 +659,7 @@ private fun DeviceRow(
                 titleBlock(title)
             }
             if (hint != null) {
-                Text(hint, style = MaterialTheme.typography.labelSmall, color = dot)
+                Text(hint, style = MaterialTheme.typography.labelSmall, color = dot, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -622,47 +710,87 @@ private fun OptionsPane(
     onGroup: (OptionGroup?) -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onValue: (String, String) -> Unit,
-    onBack: (() -> Unit)?,
+    current: Boolean,
     onSimple: () -> Unit,
     modifier: Modifier,
 ) {
+    var searchOpen by remember { mutableStateOf(false) }
+    // Another device's pane takes over: its popup must not linger while this one animates out.
+    LaunchedEffect(current) { if (!current) searchOpen = false }
     Column(modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (onBack != null) DetailBackButton(onBack, Modifier.offset(x = (-8).dp))
-            TextButton(onSimple, modifier = Modifier.offset(x = (-8).dp)) {
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, Modifier.size(18.dp))
-                Text("Simple view")
-            }
-            Text("Options", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            OutlinedTextField(
-                value = state.query,
-                onValueChange = onQuery,
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                placeholder = { Text("Search ${OptionCatalog.all.size} options") },
-                shape = styledCorner(28.dp),
-                modifier = Modifier.width(260.dp),
+        // Folds Simple view, then the search field, into More; the folded search opens in a popup.
+        Box {
+            PriorityBar(
+                listOf(
+                    BarItem("simple", priority = 2, menuLabel = "Simple view", onMenuClick = onSimple) {
+                        TextButton(onSimple, modifier = Modifier.offset(x = (-8).dp)) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, Modifier.size(18.dp))
+                            Text("Simple view")
+                        }
+                    },
+                    BarItem("title", priority = 0, menuLabel = "Options", onMenuClick = null, minWidth = 110.dp, grow = true) {
+                        Text("Options", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    },
+                    BarItem("search", priority = 1, menuLabel = "Search options", onMenuClick = { searchOpen = true }) {
+                        // The bar shows the field again (the window widened): it replaces the popup.
+                        if (!LocalBarProbe.current) LaunchedEffect(Unit) { searchOpen = false }
+                        OptionSearchField(state.query, onQuery, Modifier.widthIn(max = 260.dp))
+                    },
+                ),
+                gap = 10.dp,
             )
+            if (searchOpen && current) {
+                Popup(
+                    alignment = Alignment.TopEnd,
+                    onDismissRequest = { searchOpen = false },
+                    properties = PopupProperties(focusable = true),
+                ) {
+                    val focus = remember { FocusRequester() }
+                    LaunchedEffect(focus) { focus.requestFocus() }
+                    Surface(shape = styledCorner(28.dp), shadowElevation = 6.dp, modifier = Modifier.testTag("option-search-popup")) {
+                        OptionSearchField(state.query, onQuery, Modifier.widthIn(max = 260.dp).focusRequester(focus))
+                    }
+                }
+            }
         }
         GroupChips(state.groupFilter, onGroup)
         val scroll = rememberScrollState()
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             if (state.visibleOptions.isEmpty()) {
                 Text("No options match.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(8.dp))
             } else {
+                val twoColumns = maxWidth >= TwoOptionColumnsWidth
                 val (left, right) = remember(state.visibleOptions) { splitColumns(state.visibleOptions) }
                 Box(Modifier.fillMaxSize().verticalScroll(scroll)) {
                     LookaheadScope {
+                        // The same movable items in either layout, so each glides to its place when the columns change.
                         val items = rememberOptionItems(this, state, onToggle, onValue)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-                            OptionColumn(left, items, Modifier.weight(1f))
-                            OptionColumn(right, items, Modifier.weight(1f))
+                            if (twoColumns) {
+                                OptionColumn(left, items, Modifier.weight(1f))
+                                OptionColumn(right, items, Modifier.weight(1f))
+                            } else {
+                                OptionColumn(left + right, items, Modifier.weight(1f))
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun OptionSearchField(query: String, onQuery: (String) -> Unit, modifier: Modifier) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQuery,
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+        placeholder = { Text("Search ${OptionCatalog.all.size} options", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        shape = styledCorner(28.dp),
+        modifier = modifier,
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -755,14 +883,17 @@ private fun rememberOptionItems(
     }
 }
 
-/** Slides an option to its new bounds when the visible set changes, and fades it in when it first appears. */
+/**
+ * Slides an option to its new bounds when the visible set or the column count changes, and fades it in when it first
+ * appears. Under reduced motion it jumps.
+ */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun Modifier.optionMotion(lookahead: LookaheadScope): Modifier {
     val alpha = remember { Animatable(0f) }
     LaunchedEffect(Unit) { alpha.animateTo(1f, tween(220)) }
-    return animateBounds(lookahead, boundsTransform = { _, _ -> spring(stiffness = Spring.StiffnessMediumLow) })
-        .graphicsLayer { this.alpha = alpha.value }
+    val glide = if (LocalReduceMotion.current) this else animateBounds(lookahead, boundsTransform = { _, _ -> layoutSpring() })
+    return glide.graphicsLayer { this.alpha = alpha.value }
 }
 
 @Composable
@@ -787,38 +918,65 @@ private fun Footer(
     motion: ViewSwitchMotion? = null,
 ) {
     var naming by rememberSaveable { mutableStateOf(false) }
+    var presetOpen by remember { mutableStateOf(presetMenuOpen) }
     val modified = state.isModified
     Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 12.dp)) {
         // Everything but the shared controls fades with the pane; those glide in from the simple view instead.
         HorizontalDivider(Modifier.advancedContentMotion(motion), color = MaterialTheme.colorScheme.outlineVariant)
-        Row(
-            Modifier.fillMaxWidth().padding(top = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            PresetChip(state, onPreset, presetMenuOpen, Modifier.sharedPart(motion, SharedPart.Preset))
-            if (modified) {
-                if (state.hasBasePreset) TextButton(onSave, Modifier.advancedContentMotion(motion)) { Text("Save") }
+        // Out of room, Save as new preset folds into More first, then the preset chip, Save and Wi-Fi; Mirror never.
+        // An item measured by the bar (LocalBarProbe) leaves out its shared bounds and mirror origin: those exist once.
+        val items = buildList {
+            add(
+                BarItem("preset", priority = 3, menuLabel = "Preset: ${state.presetLabel}", onMenuClick = { presetOpen = true }.takeIf { state.selectedSerial != null }) {
+                    PresetChip(state, onOpen = { presetOpen = true }, Modifier.sharedPartOutsideProbe(motion, SharedPart.Preset))
+                },
+            )
+            if (modified && state.hasBasePreset) {
+                add(BarItem("save", priority = 2, menuLabel = "Save", onMenuClick = onSave) {
+                    TextButton(onSave, Modifier.advancedContentMotionOutsideProbe(motion)) { Text("Save") }
+                })
             }
             if (modified || !state.hasBasePreset) {
-                TextButton({ naming = true }, Modifier.advancedContentMotion(motion)) { Text("Save as new preset") }
+                add(BarItem("saveAs", priority = 5, menuLabel = "Save as new preset", onMenuClick = { naming = true }) {
+                    TextButton({ naming = true }, Modifier.advancedContentMotionOutsideProbe(motion)) { Text("Save as new preset") }
+                })
             }
-            Spacer(Modifier.weight(1f))
+            add(BarSpacer)
             // An emulator has no Wi-Fi to switch to: no button.
             state.devices.firstOrNull { it.serial == state.selectedSerial && !isEmulatorSerial(it.serial) }?.let { device ->
                 val wifi = wifiButtonState(device, state)
-                OutlinedButton(
-                    onClick = { onConnectWifi(device.serial) },
-                    enabled = wifi.enabled,
-                    modifier = Modifier.sharedPart(motion, SharedPart.Wifi),
-                ) {
-                    Icon(Icons.Filled.Wifi, contentDescription = null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(wifi.label)
-                }
+                val connect = { onConnectWifi(device.serial) }
+                add(BarItem("wifi", priority = 1, menuLabel = wifi.label, onMenuClick = connect.takeIf { wifi.enabled }) {
+                    OutlinedButton(
+                        onClick = connect,
+                        enabled = wifi.enabled,
+                        modifier = Modifier.sharedPartOutsideProbe(motion, SharedPart.Wifi),
+                    ) {
+                        Icon(Icons.Filled.Wifi, contentDescription = null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(wifi.label, maxLines = 1)
+                    }
+                })
             }
-            Button(onClick = onMirror, enabled = state.canMirror, modifier = Modifier.sharedPart(motion, SharedPart.Mirror).mirrorOrigin(state.selectedSerial)) {
-                Text("Mirror")
+            add(BarItem("mirror", priority = 0, menuLabel = "Mirror", onMenuClick = onMirror.takeIf { state.canMirror }) {
+                val probe = LocalBarProbe.current
+                Button(
+                    onClick = onMirror,
+                    enabled = state.canMirror,
+                    modifier = if (probe) Modifier else Modifier.sharedPart(motion, SharedPart.Mirror).mirrorOrigin(state.selectedSerial),
+                ) {
+                    Text("Mirror")
+                }
+            })
+        }
+        Box(Modifier.padding(top = 10.dp)) {
+            PriorityBar(items, Modifier.fillMaxWidth(), gap = 10.dp)
+            // Outside the bar, which composes its items twice; it opens under the bar's start, where the chip sits.
+            DropdownMenu(expanded = presetOpen, onDismissRequest = { presetOpen = false }) {
+                PresetMenuItem("No preset", checked = state.basePresetId == null) { presetOpen = false; onPreset(null) }
+                state.presets.forEach { preset ->
+                    PresetMenuItem(preset.name, checked = state.basePresetId == preset.id) { presetOpen = false; onPreset(preset.id) }
+                }
             }
         }
         Row(
@@ -848,24 +1006,27 @@ private fun Footer(
     if (naming) SaveAsDialog(onDismiss = { naming = false }, onConfirm = { onSaveAsNew(it); naming = false })
 }
 
+/** The footer's "Preset: …" chip; [onOpen] opens the preset menu, which the footer keeps outside its bar. */
 @Composable
-private fun PresetChip(state: DevicesUiState, onPreset: (String?) -> Unit, initiallyOpen: Boolean, modifier: Modifier = Modifier) {
-    var open by remember { mutableStateOf(initiallyOpen) }
-    Box(modifier) {
-        AssistChip(
-            onClick = { open = true },
-            enabled = state.selectedSerial != null,
-            label = { Text("Preset: ${state.presetLabel}") },
-            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose preset", Modifier.size(18.dp)) },
-        )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            PresetMenuItem("No preset", checked = state.basePresetId == null) { open = false; onPreset(null) }
-            state.presets.forEach { preset ->
-                PresetMenuItem(preset.name, checked = state.basePresetId == preset.id) { open = false; onPreset(preset.id) }
-            }
-        }
-    }
+private fun PresetChip(state: DevicesUiState, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    AssistChip(
+        onClick = onOpen,
+        enabled = state.selectedSerial != null,
+        label = { Text("Preset: ${state.presetLabel}", maxLines = 1) },
+        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose preset", Modifier.size(18.dp)) },
+        modifier = modifier,
+    )
 }
+
+/** [sharedPart], except while a [PriorityBar] only measures the item (a shared element must exist once). */
+@Composable
+private fun Modifier.sharedPartOutsideProbe(motion: ViewSwitchMotion?, part: SharedPart): Modifier =
+    if (LocalBarProbe.current) this else sharedPart(motion, part)
+
+/** [advancedContentMotion], except while a [PriorityBar] only measures the item. */
+@Composable
+private fun Modifier.advancedContentMotionOutsideProbe(motion: ViewSwitchMotion?): Modifier =
+    if (LocalBarProbe.current) this else advancedContentMotion(motion)
 
 @Composable
 internal fun PresetMenuItem(label: String, checked: Boolean, onClick: () -> Unit) {

@@ -63,6 +63,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.common.resizing
+import com.programmersbox.scrcpyviewer.ui.common.flipGliding
 
 /** A batch with more new lines than this (the `-T 1000` backlog, a resume's read-back) appears without growing. */
 private const val MAX_GROW_BATCH = 50
@@ -168,6 +171,18 @@ internal class LogcatFollow(val state: LazyListState) {
                 if (!more) {
                     pinned = true
                     unseen = 0
+                } else if (pinned && held == null) {
+                    // The rows grew under a pinned list (a resize stacked them, a fold opened) with no new line to
+                    // follow: keep the newest in view. A user scroll up unpins first, so this never fights it. Rows
+                    // that glide keep growing after a stick, so it re-sticks each frame until the end stays put (or
+                    // the last row is at the top: one taller than the list can't be stuck any further). Each stick
+                    // waits for a frame first: this can resume mid-measure, where scrolling throws.
+                    while (true) {
+                        withFrameMillis { }
+                        if (!pinned || held != null || !state.canScrollForward) break
+                        stick()
+                        if (state.firstVisibleItemIndex >= state.layoutInfo.totalItemsCount - 1) break
+                    }
                 }
             }
         }
@@ -230,7 +245,8 @@ internal class LogcatFollow(val state: LazyListState) {
  * The log: a column header, then the rows of [LogcatController.visible] newest at the bottom, the paused banner,
  * the "N new lines" pill, the empty-filter message and, before the first play, the start card. While an export runs
  * its bar ([LogcatExportBar]) crosses the top edge and the rows dim to 0.55 (300 ms). Rows are monospace with
- * selectable messages and traces; columns follow compact view and [sheetWidth] (PID-TID and Package hide under 600 dp).
+ * selectable messages and traces; columns follow compact view and [sheetWidth] ([logcatRowShape]: PID-TID and Package
+ * hide under 600 dp, rows take two lines under 420 dp).
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -243,7 +259,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
     val listState = rememberLazyListState()
     val follow = remember(listState) { LogcatFollow(listState) }
     val visible = follow.held ?: controller.visible
-    val columns = rememberLogcatColumns(controller.compact, sheetWidth < 600.dp, motion)
+    val columns = rememberLogcatColumns(controller.compact, logcatRowShape(sheetWidth), motion)
     val words = controller.parsed.highlightWords
     // `age:` is judged against the clock, which isn't state: re-check it on showing and every second after.
     val ageing = controller.parsed.ageLimits.isNotEmpty()
@@ -291,6 +307,12 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
         hoverColor = onSurface.copy(alpha = 0.7f),
     )
     val barAdapter = rememberScrollbarAdapter(listState)
+    // A resize re-wraps the rows: while the width changes, rows land at their new places at once, so the list follows
+    // a window drag; a frame after it stops, list changes glide again. Placement also stays off while the rows glide
+    // to a new shape (LogcatRow's layout fractions), so the rows below follow a growing row instead of chasing it.
+    val resizing = resizing(sheetWidth)
+    val reshaping = flipGliding(logcatRowShape(sheetWidth) to controller.compact)
+    val placementOff = resizing || reshaping
     val scrollbar = remember(follow, barAdapter) { follow.scrollbar(barAdapter) }
 
     Column(modifier.background(scheme.surfaceContainerLowest)) {
@@ -307,7 +329,7 @@ fun LogcatList(controller: LogcatController, sheetWidth: Dp, motion: Boolean, mo
                     items(visible, key = { it.key }, contentType = { if (it is LogcatItem.Line) 0 else 1 }) { item ->
                         val itemMotion = Modifier.animateItem(
                             fadeInSpec = if (motion) tween(240) else null,
-                            placementSpec = if (motion) tween(240, easing = EmphasizedDecelerate) else null,
+                            placementSpec = if (motion && !placementOff) layoutSpring() else null,
                             fadeOutSpec = if (motion) tween(240) else null,
                         )
                         when (item) {
@@ -365,7 +387,7 @@ private fun GrowIn(content: @Composable () -> Unit) {
     val state = remember { MutableTransitionState(false).apply { targetState = true } }
     AnimatedVisibility(
         state,
-        enter = expandVertically(tween(300, easing = EmphasizedDecelerate), expandFrom = Alignment.Top) +
+        enter = expandVertically(layoutSpring(), expandFrom = Alignment.Top) +
             fadeIn(tween(300, easing = EmphasizedDecelerate)),
     ) { content() }
 }

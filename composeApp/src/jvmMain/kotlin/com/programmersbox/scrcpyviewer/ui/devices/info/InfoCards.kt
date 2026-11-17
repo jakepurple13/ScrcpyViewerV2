@@ -2,9 +2,7 @@ package com.programmersbox.scrcpyviewer.ui.devices.info
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.BoundsTransform
 import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.animateBounds
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.expandVertically
@@ -84,6 +82,8 @@ import androidx.compose.ui.layout.IntrinsicMeasureScope
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.text.style.TextOverflow
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.ui.layout.Measurable
 import androidx.compose.ui.layout.MeasurePolicy
 import androidx.compose.ui.layout.MeasureResult
@@ -116,6 +116,10 @@ import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import com.programmersbox.scrcpyviewer.ui.theme.styleRaised
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import kotlinx.coroutines.delay
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.FlipNotingPolicy
+import com.programmersbox.scrcpyviewer.ui.common.LayoutFlips
+import com.programmersbox.scrcpyviewer.ui.common.glideOnFlip
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Motion numbers (spec "Motion" table)
@@ -144,9 +148,6 @@ internal const val REDUCED_FADE_MILLIS = 150
  * reads as a jump for a card or pane resizing, so sizes use the standard curve and only fades use the emphasized ones.
  */
 internal val SizeEasing = FastOutSlowInEasing
-
-/** True when the OS asks for less motion: the pane's changes become instant swaps or [REDUCED_FADE_MILLIS] fades. */
-internal val LocalInfoReduceMotion = staticCompositionLocalOf { false }
 
 /** The footer's clock (epoch millis); screenshots pin it so "Updated N s ago" is steady. */
 internal val LocalInfoNow = staticCompositionLocalOf<() -> Long> { System::currentTimeMillis }
@@ -177,7 +178,7 @@ private fun bigNumberStyle(): TextStyle = MaterialTheme.typography.headlineMediu
  */
 @Composable
 private fun animateGrow(target: Float, millis: Int): Animatable<Float, AnimationVector1D> {
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     val value = remember { Animatable(if (reduce) target else 0f) }
     LaunchedEffect(target, reduce) {
         if (reduce) value.snapTo(target) else value.animateTo(target, tween(millis, easing = EmphasizedDecelerate))
@@ -206,8 +207,10 @@ internal fun TickingText(
     color: Color = Color.Unspecified,
     fontFamily: FontFamily? = null,
     textAlign: TextAlign? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
 ) {
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     val tabular = style.merge(TextStyle(fontFeatureSettings = "tnum"))
     AnimatedContent(
         targetState = value,
@@ -220,13 +223,13 @@ internal fun TickingText(
                     fadeIn(tween(TICK_MILLIS, easing = EmphasizedDecelerate))) togetherWith
                     (slideOutVertically(tween(TICK_MILLIS, easing = EmphasizedAccelerate)) { -it } +
                         fadeOut(tween(TICK_MILLIS, easing = EmphasizedAccelerate))) using
-                    SizeTransform(clip = false) { _, _ -> tween(TICK_MILLIS, easing = EmphasizedDecelerate) }
+                    SizeTransform(clip = false) { _, _ -> layoutSpring() }
             }
         },
         contentAlignment = if (textAlign == TextAlign.End) Alignment.CenterEnd else Alignment.CenterStart,
         label = "tick",
     ) {
-        Text(it, style = tabular, color = color, fontFamily = fontFamily, textAlign = textAlign)
+        Text(it, style = tabular, color = color, fontFamily = fontFamily, textAlign = textAlign, maxLines = maxLines, overflow = overflow)
     }
 }
 
@@ -236,7 +239,7 @@ internal fun crossFade(reduce: Boolean): ContentTransform {
     return ContentTransform(
         targetContentEnter = fadeIn(tween(millis, easing = EmphasizedDecelerate)),
         initialContentExit = fadeOut(tween(millis, easing = EmphasizedAccelerate)),
-        sizeTransform = SizeTransform(clip = false) { _, _ -> tween(millis, easing = SizeEasing) },
+        sizeTransform = SizeTransform(clip = false) { _, _ -> if (reduce) tween(millis, easing = SizeEasing) else layoutSpring() },
     )
 }
 
@@ -272,7 +275,7 @@ internal fun StackedBar(segments: List<BarSegment>, modifier: Modifier = Modifie
     val known = remember { LinkedHashMap<String, Color>() }
     segments.forEach { known[it.key] = it.color }
     val byKey = segments.associateBy { it.key }
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     val drawn = known.map { (k, color) ->
         key(k) {
             val width = animateGrow((byKey[k]?.fraction ?: 0f).coerceIn(0f, 1f), BAR_MILLIS)
@@ -296,7 +299,7 @@ internal fun StackedBar(segments: List<BarSegment>, modifier: Modifier = Modifie
 /** A soft pulse of the surface color for placeholders, one loop per [PULSE_MILLIS]; steady with reduced motion. */
 @Composable
 internal fun rememberPulse(): State<Float> {
-    if (LocalInfoReduceMotion.current) return remember { mutableStateOf(0.7f) }
+    if (LocalReduceMotion.current) return remember { mutableStateOf(0.7f) }
     val transition = rememberInfiniteTransition(label = "pulse")
     return transition.animateFloat(
         initialValue = 0.45f,
@@ -406,13 +409,13 @@ private fun <T : Any> rememberLast(value: T?): T? {
 /** A line that comes into a card: its space opens while it fades in. */
 private fun lineEnter(reduce: Boolean): EnterTransition {
     val millis = if (reduce) REDUCED_FADE_MILLIS else CROSSFADE_MILLIS
-    return expandVertically(tween(millis, easing = SizeEasing)) + fadeIn(tween(millis, easing = EmphasizedDecelerate))
+    return expandVertically(if (reduce) tween(millis, easing = SizeEasing) else layoutSpring()) + fadeIn(tween(millis, easing = EmphasizedDecelerate))
 }
 
 /** A line that leaves a card: it fades while its space closes. */
 private fun lineExit(reduce: Boolean): ExitTransition {
     val millis = if (reduce) REDUCED_FADE_MILLIS else CLOSE_MILLIS
-    return shrinkVertically(tween(millis, easing = SizeEasing)) + fadeOut(tween(millis, easing = EmphasizedAccelerate))
+    return shrinkVertically(if (reduce) tween(millis, easing = SizeEasing) else layoutSpring()) + fadeOut(tween(millis, easing = EmphasizedAccelerate))
 }
 
 /**
@@ -421,7 +424,7 @@ private fun lineExit(reduce: Boolean): ExitTransition {
  */
 @Composable
 private fun ColumnScope.OptionalRow(value: String?, row: @Composable (String) -> Unit) {
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     val shown = rememberLast(value)
     AnimatedVisibility(value != null, enter = lineEnter(reduce), exit = lineExit(reduce)) {
         if (shown != null) Box(Modifier.padding(vertical = 2.dp)) { row(shown) }
@@ -456,7 +459,7 @@ private fun KvRows(content: @Composable ColumnScope.() -> Unit) {
  */
 @Composable
 private fun <T : Any> PresentOrMuted(value: T?, absent: String, label: String, content: @Composable ColumnScope.(T) -> Unit) {
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     val shown = rememberLast(value)
     AnimatedContent(value == null, transitionSpec = { crossFade(reduce) }, label = label) { none ->
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -521,14 +524,16 @@ private fun KvRow(
     val fill = if (pulse != null) Modifier.pulseFill(pulse) else Modifier
     val labelColor = if (hidden) Color.Transparent else MaterialTheme.colorScheme.onSurfaceVariant
     val valueColor = if (hidden) Color.Transparent else Color.Unspecified
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
+    val flips = remember { LayoutFlips() }
     LookaheadScope {
         // A value that moves between beside the label and below it (the card got narrower or wider) slides and
-        // resizes to its new place. Ticking rows hold short values that never stack, and animate their own width.
-        val move = if (reduce || ticking) Modifier else Modifier.animateBounds(this, boundsTransform = ReflowBounds)
+        // resizes to its new place on the layout spring; a drag that keeps it where it is moves it at once. Ticking
+        // rows hold short values that never stack, and animate their own width.
+        val move = if (ticking) Modifier else Modifier.glideOnFlip(this, flips, enabled = !reduce)
         Layout(
             content = {
-                Text(label, style = style, color = labelColor, modifier = move.then(fill))
+                Text(label, style = style, color = labelColor, modifier = fill)
                 if (ticking && !hidden) {
                     TickingText(shown, style = style, fontFamily = family)
                 } else {
@@ -546,16 +551,18 @@ private fun KvRow(
                     }
                 }
             },
-            measurePolicy = KvRowPolicy,
+            measurePolicy = remember(flips) { KvRowMeasure(centerInline = false, flips) },
         )
     }
 }
 
 /**
  * Lays out a [KvRow]: label left and value right-aligned on one line when the value fits beside the label without
- * wrapping; otherwise the label on its own line and the value below it at full width, left-aligned.
+ * wrapping; otherwise the label on its own line and the value below it at full width, left-aligned. [centerInline]
+ * centres label and value on their shared line (for a value taller than the label line; [CopyableKvRow]'s value
+ * carries its copy icon). Each pass notes which of the two it is in [flips], so the value glides only when that changes.
  */
-private object KvRowPolicy : MeasurePolicy {
+private class KvRowMeasure(private val centerInline: Boolean, flips: LayoutFlips) : FlipNotingPolicy(flips) {
     private val gap = 12.dp
 
     override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
@@ -564,12 +571,14 @@ private object KvRowPolicy : MeasurePolicy {
         val label = labelM.measure(Constraints(maxWidth = width))
         val gapPx = gap.roundToPx()
         val inline = !constraints.hasBoundedWidth || label.width + gapPx + valueM.maxIntrinsicWidth(Constraints.Infinity) <= width
+        noteShape(inline)
         return if (inline) {
             val value = valueM.measure(Constraints(maxWidth = if (constraints.hasBoundedWidth) width - label.width - gapPx else Constraints.Infinity))
             val rowWidth = if (constraints.hasBoundedWidth) width else label.width + gapPx + value.width
-            layout(rowWidth, maxOf(label.height, value.height)) {
-                label.placeRelative(0, 0)
-                value.placeRelative(rowWidth - value.width, 0)
+            val height = maxOf(label.height, value.height)
+            layout(rowWidth, height) {
+                label.placeRelative(0, if (centerInline) (height - label.height) / 2 else 0)
+                value.placeRelative(rowWidth - value.width, if (centerInline) (height - value.height) / 2 else 0)
             }
         } else {
             val value = valueM.measure(Constraints(maxWidth = width))
@@ -629,7 +638,7 @@ private fun LiveSection(live: Load<LiveInfo>, placeholderIndex: Int, content: @C
         live is Load.Failed -> LiveKind.Failed
         else -> LiveKind.Loading
     }
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     AnimatedContent(kind, transitionSpec = { crossFade(reduce) }, label = "liveSection") { k ->
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when (k) {
@@ -650,7 +659,7 @@ internal fun BatteryCard(live: Load<LiveInfo>, modifier: Modifier = Modifier) {
     InfoCard("Battery", Icons.Filled.BatteryFull, modifier) {
         LiveSection(live, placeholderIndex = 0) { info ->
             val battery = rememberLast(info.battery)
-            val reduce = LocalInfoReduceMotion.current
+            val reduce = LocalReduceMotion.current
             AnimatedContent(info.battery == null, transitionSpec = { crossFade(reduce) }, label = "batteryPresent") { none ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (none || battery == null) Muted(InfoText.NO_BATTERY) else BatteryBody(battery)
@@ -664,7 +673,7 @@ internal fun BatteryCard(live: Load<LiveInfo>, modifier: Modifier = Modifier) {
 private fun BatteryBody(b: BatteryInfo) {
     val plugged = b.status == ChargeStatus.Charging || b.status == ChargeStatus.Full
     val low = b.level < 20 && !plugged
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         BatteryRing(b.level / 100f, if (low) MaterialTheme.colorScheme.error else readyColor())
         Column {
@@ -711,7 +720,7 @@ private fun StorageBody(storage: StorageInfo) {
     }
     StackedBar(segments)
     val legend = parts.filter { it.second > 0 }
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     AnimatedContent(legend, transitionSpec = { crossFade(reduce) }, label = "storageLegend") { shownLegend ->
         if (shownLegend.isNotEmpty()) WrapRow(horizontalGap = 12.dp, verticalGap = 4.dp) {
             shownLegend.forEach { (name, bytes, color) ->
@@ -734,7 +743,7 @@ internal fun MemoryCard(live: Load<LiveInfo>, modifier: Modifier = Modifier) {
         LiveSection(live, placeholderIndex = 2) { info ->
             val usable = info.memory?.takeIf { it.totalKb > 0 }
             val memory = rememberLast(usable)
-            val reduce = LocalInfoReduceMotion.current
+            val reduce = LocalReduceMotion.current
             AnimatedContent(usable == null, transitionSpec = { crossFade(reduce) }, label = "memoryPresent") { none ->
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (none || memory == null) Muted("Couldn't read memory") else MemoryBody(memory)
@@ -779,6 +788,7 @@ internal fun NetworkCard(network: NetworkInfo, modifier: Modifier = Modifier) {
 }
 
 /** A key/value row whose value copies on click; the trailing copy icon morphs into a check while "Copied" shows. */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun CopyableKvRow(label: String, value: String) {
     val copy = rememberCopyAction()
@@ -788,45 +798,60 @@ private fun CopyableKvRow(label: String, value: String) {
         delay(COPY_CONFIRM_MILLIS)
         copies = 0
     }
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     val tint by animateColorAsState(
         if (copies > 0) readyColor() else MaterialTheme.colorScheme.onSurfaceVariant, tween(260), label = "ipCopyTint",
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.weight(1f))
-        Row(
-            Modifier
-                .clip(styledCorner(4.dp))
-                .clickable(onClickLabel = "Copy $label") { copy(value); copies++ }
-                .pointerHoverIcon(PointerIcon.Hand)
-                .padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            AnimatedContent(value, transitionSpec = { crossFade(reduce) }, label = "copyValue") { v ->
-                Text(
-                    v,
-                    style = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFeatureSettings = "tnum")),
-                    fontFamily = FontFamily.Monospace,
-                )
-            }
-            AnimatedContent(
-                copies > 0,
-                transitionSpec = {
-                    val millis = if (reduce) REDUCED_FADE_MILLIS else 300
-                    (fadeIn(tween(millis, easing = EmphasizedDecelerate)) + scaleIn(tween(millis, easing = EmphasizedDecelerate), initialScale = if (reduce) 1f else 0.3f)) togetherWith
-                        (fadeOut(tween(millis, easing = EmphasizedAccelerate)) + scaleOut(tween(millis, easing = EmphasizedAccelerate), targetScale = if (reduce) 1f else 0.3f))
-                },
-                label = "ipCopyIcon",
-            ) { copied ->
-                Icon(
-                    if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(12.dp),
-                )
-            }
+    // Like KvRow: the value sits beside the label while it fits, else under it, wrapping; the copy icon stays at the
+    // value's end. Moving between the two springs ([layoutSpring]), or is instant under reduced motion; a drag that
+    // keeps the value where it is moves it at once.
+    val flips = remember { LayoutFlips() }
+    LookaheadScope {
+        val move = Modifier.glideOnFlip(this, flips, enabled = !reduce)
+        Layout(
+            content = {
+                Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                CopyableValue(label, value, copies, tint, reduce, move) { copy(value); copies++ }
+            },
+            measurePolicy = remember(flips) { KvRowMeasure(centerInline = true, flips) },
+        )
+    }
+}
+
+/** [CopyableKvRow]'s value and its copy icon, clickable as one. */
+@Composable
+private fun CopyableValue(label: String, value: String, copies: Int, tint: Color, reduce: Boolean, modifier: Modifier, onCopy: () -> Unit) {
+    Row(
+        modifier
+            .clip(styledCorner(4.dp))
+            .clickable(onClickLabel = "Copy $label", onClick = onCopy)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .padding(horizontal = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        AnimatedContent(value, Modifier.weight(1f, fill = false), transitionSpec = { crossFade(reduce) }, label = "copyValue") { v ->
+            Text(
+                v,
+                style = MaterialTheme.typography.bodySmall.merge(TextStyle(fontFeatureSettings = "tnum")),
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+        AnimatedContent(
+            copies > 0,
+            transitionSpec = {
+                val millis = if (reduce) REDUCED_FADE_MILLIS else 300
+                (fadeIn(tween(millis, easing = EmphasizedDecelerate)) + scaleIn(tween(millis, easing = EmphasizedDecelerate), initialScale = if (reduce) 1f else 0.3f)) togetherWith
+                    (fadeOut(tween(millis, easing = EmphasizedAccelerate)) + scaleOut(tween(millis, easing = EmphasizedAccelerate), targetScale = if (reduce) 1f else 0.3f))
+            },
+            label = "ipCopyIcon",
+        ) { copied ->
+            Icon(
+                if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(12.dp),
+            )
         }
     }
 }
@@ -881,36 +906,30 @@ internal const val GRID_MAX_COLUMNS = 3
 @Composable
 @OptIn(ExperimentalSharedTransitionApi::class)
 internal fun InfoGrid(count: Int, modifier: Modifier = Modifier, item: @Composable (index: Int, Modifier) -> Unit) {
-    val reduce = LocalInfoReduceMotion.current
+    val flips = remember { LayoutFlips() }
     LookaheadScope {
-        // Each card animates from where it was to where the lookahead pass puts it: a new column after a resize, a
-        // new width, or a new y when a card above it changes height. Nothing moves on first layout.
-        val bounds = if (reduce) Modifier else Modifier.animateBounds(this, boundsTransform = ReflowBounds)
+        // A change of column count glides each card from where it was to its new column and width on the layout
+        // spring. A resize within the same column count moves the cards with the window at once, and a card whose
+        // content grows animates its own height (the cards below follow). Nothing moves on first layout.
         Layout(
-            content = { repeat(count) { index -> item(index, bounds) } },
+            content = { repeat(count) { index -> key(index) { item(index, Modifier.glideOnFlip(this@LookaheadScope, flips)) } } },
             modifier = modifier.fillMaxWidth(),
-            measurePolicy = MasonryPolicy,
+            measurePolicy = remember(flips) { MasonryPolicy(flips) },
         )
     }
 }
-
-/** Resize reflow: position and size ease together on the standard curve (see [SizeEasing]). */
-@OptIn(ExperimentalSharedTransitionApi::class)
-private val ReflowBounds = BoundsTransform { _, _ -> tween(REFLOW_MILLIS, easing = SizeEasing) }
-
-/** How long a card takes to move to its new column, width or height after the window resizes. */
-internal const val REFLOW_MILLIS = 350
 
 /**
  * Masonry placement for [InfoGrid]: [gridColumns] equal columns [GridGap] apart; child `i` goes to column
  * `i % columns` ([masonryColumn]) under the cards before it. All cards are children of this one layout, so a change
  * of column count moves them without recomposing them in a new parent.
  */
-private object MasonryPolicy : MeasurePolicy {
+private class MasonryPolicy(flips: LayoutFlips) : FlipNotingPolicy(flips) {
     override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
         val width = if (constraints.hasBoundedWidth) constraints.maxWidth else (GridMinColumn * GRID_MAX_COLUMNS).roundToPx()
         val gap = GridGap.roundToPx()
         val columns = gridColumns(width.toDp())
+        noteShape(columns)
         val columnWidth = ((width - gap * (columns - 1)) / columns).coerceAtLeast(0)
         val placeables = measurables.map { it.measure(Constraints.fixedWidth(columnWidth)) }
         val tops = IntArray(columns)

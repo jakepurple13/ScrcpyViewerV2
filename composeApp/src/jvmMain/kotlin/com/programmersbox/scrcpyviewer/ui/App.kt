@@ -1,6 +1,18 @@
 package com.programmersbox.scrcpyviewer.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.Dp
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.navigation.railShowsLabels
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.contentColorFor
@@ -88,6 +100,7 @@ import com.programmersbox.scrcpyviewer.ui.presets.PresetsViewModel
 import com.programmersbox.scrcpyviewer.ui.settings.NativeSettingsFileDialogs
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsScreen
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsViewModel
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
 import com.programmersbox.scrcpyviewer.ui.update.UpdateDialog
 import com.programmersbox.scrcpyviewer.ui.update.UpdateViewModel
@@ -156,7 +169,10 @@ private fun SettingsBadge(visible: Boolean, pulse: Boolean) {
 private const val BADGE_PULSE_MILLIS = 700
 
 @Composable
-private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean, settingsBadgePulse: Boolean = false) {
+internal fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean, windowWidth: Dp, settingsBadgePulse: Boolean = false) {
+    val showLabels = railShowsLabels(windowWidth)
+    val reduceMotion = LocalReduceMotion.current
+    val railWidth by animateDpAsState(if (showLabels) 80.dp else 60.dp, if (reduceMotion) tween(120) else layoutSpring())
     val indicator = remember { RailIndicator() }
     val selected = navigator.current
     val selectedCenter = indicator.centers[selected]
@@ -198,7 +214,8 @@ private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean, settingsB
                 if (tokens.style == ThemeStyle.Retro) drawBevel(tokens.bevel, raised = false, topLeft, pillSize)
             },
     ) {
-        NavigationRail(containerColor = Color.Transparent, contentColor = contentColorFor(container)) {
+        // The rail's own minimum width is 80 dp; a tight outer width wins over it.
+        NavigationRail(Modifier.width(railWidth), containerColor = Color.Transparent, contentColor = contentColorFor(container)) {
             TopLevelRoute.all.forEach { route ->
                 val icon = Modifier.onGloballyPositioned { coordinates ->
                     val rail = railCoordinates[0] ?: return@onGloballyPositioned
@@ -218,7 +235,13 @@ private fun Rail(navigator: TopLevelNavigator, settingsBadge: Boolean, settingsB
                             Icon(route.icon, contentDescription = route.label, modifier = icon)
                         }
                     },
-                    label = { Text(route.label) },
+                    label = {
+                        AnimatedVisibility(
+                            showLabels,
+                            enter = if (reduceMotion) fadeIn(tween(120)) else fadeIn() + expandVertically(layoutSpring()),
+                            exit = if (reduceMotion) fadeOut(tween(120)) else fadeOut() + shrinkVertically(layoutSpring()),
+                        ) { Text(route.label) }
+                    },
                     // The shared pill above replaces the item's own indicator.
                     colors = NavigationRailItemDefaults.colors(
                         indicatorColor = Color.Transparent, selectedIconColor = onPill,
@@ -299,8 +322,8 @@ fun App(
         actionsNavigation.requests.collect { request ->
             navigator.select(TopLevelRoute.Actions)
             actionsViewModel.handle(request)
-            // In the single-pane layout, an opened action shows the editor rather than the list.
-            if (request.new || request.actionId != null) actionsPanes.navigation.openDetail()
+            // An opened action is pushed: a narrow window shows its editor over the list.
+            if (request.new || request.actionId != null) actionsPanes.push()
         }
     }
     // The tray menu's Settings… (or a device it can't mirror): show that destination. Main.kt raises the window.
@@ -310,11 +333,15 @@ fun App(
     // Inside AppWindow: follow the window's revealed theme, not the settings directly.
     ScrcpyViewerTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-            CompositionLocalProvider(LocalSnackbarHostState provides snackbar) {
+            CompositionLocalProvider(
+                LocalSnackbarHostState provides snackbar,
+            ) {
                 Row(Modifier.fillMaxSize()) {
+                    val windowWidth = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
                     Rail(
                         navigator,
                         settingsBadge = update.available != null,
+                        windowWidth = windowWidth,
                         // A background download breathes the badge until it is Ready.
                         settingsBadgePulse = (update.state as? UpdateState.Downloading)?.background == true,
                     )

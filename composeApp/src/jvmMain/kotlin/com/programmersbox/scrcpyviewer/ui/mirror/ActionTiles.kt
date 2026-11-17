@@ -357,7 +357,7 @@ private fun ActionTile(
             }
         }
         Spacer(Modifier.height(4.dp))
-        Text(title, style = MaterialTheme.typography.bodyMedium, color = if (dashed) secondary else content, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(title, style = MaterialTheme.typography.bodyMedium, color = if (dashed) secondary else content, maxLines = 2, overflow = TextOverflow.Ellipsis)
         if (stateLine != null) {
             Text(stateLine, style = MaterialTheme.typography.labelSmall, color = secondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }

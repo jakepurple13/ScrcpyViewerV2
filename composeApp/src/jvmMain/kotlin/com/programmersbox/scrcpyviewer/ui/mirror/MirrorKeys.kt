@@ -86,6 +86,8 @@ class MirrorKeys(
     private val followerSend: (List<ControlMessage>) -> Unit = {},
     /** False with the leader's `no-key-repeat`: followers get no repeated presses either. */
     followerKeyRepeat: Boolean = true,
+    /** The open sheet floats over the stage: no key goes to the device ([keyTarget]). */
+    private val stageCovered: () -> Boolean = { false },
 ) {
     /** Keys only (no geometry needed); its own state, as [InputMapper] is stateful and not thread-safe. */
     private val followerMapper = InputMapper(
@@ -103,7 +105,7 @@ class MirrorKeys(
     }
 
     private fun onKey(ev: AwtKeyTuple): Boolean {
-        when (keyTarget(sheetOpen(), sheetFocused(), ev.keyCode)) {
+        when (keyTarget(sheetOpen(), sheetFocused(), ev.keyCode, stageCovered())) {
             // Typed into the quick actions sheet: Compose gets every key, the device none (keyTarget).
             KeyTarget.Sheet -> return false
             KeyTarget.Window -> {
@@ -177,6 +179,9 @@ class MirrorKeys(
      * their release.
      */
     fun onSheetFocusGained() = releaseHeld()
+
+    /** The sheet started floating over the stage: from here no key reaches the device, so none may stay held. */
+    fun onStageCovered() = releaseHeld()
 
     private fun releaseHeld() {
         hidKeyboard?.let { send(it.releaseAll()) }

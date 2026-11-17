@@ -1,6 +1,20 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.layout.Layout
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.unit.Constraints
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
@@ -155,7 +169,7 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.OPEN_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
 import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -177,7 +191,6 @@ private const val STAGGER_STEP_MILLIS = 16
 
 private val CRUMB_SHIFT = 10.dp
 private const val SPIN_MILLIS = 500
-private const val SORT_MILLIS = 300
 
 /** The list while the session is down. */
 private const val DISCONNECTED_ALPHA = 0.38f
@@ -206,7 +219,7 @@ fun FilesTab(
     downloads: Path = Paths.get(System.getProperty("user.home"), "Downloads"),
     zone: ZoneId = ZoneId.systemDefault(),
     locale: Locale = Locale.getDefault(),
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     isMac: Boolean = Os.isMac,
 ) = FilesTab(browser, modifier, onPushFiles, onPullTo, downloads, zone, locale, motion, isMac, ::readDragData)
 
@@ -244,7 +257,7 @@ internal fun FilesTab(
     downloads: Path = Paths.get(System.getProperty("user.home"), "Downloads"),
     zone: ZoneId = ZoneId.systemDefault(),
     locale: Locale = Locale.getDefault(),
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     isMac: Boolean = Os.isMac,
     dragData: (DragAndDropEvent) -> DragData?,
     dragOutStarter: OutboundDragStarter = remember { ComposeDragOutStarter() },
@@ -376,7 +389,8 @@ internal fun FilesTab(
         return true
     }
     fun toTab(window: Offset): Offset = tabCoords[0]?.windowToLocal(window) ?: window
-    Box(
+    // The tab's own width sets what folds and what moves to a second line (see [filesLayout]).
+    BoxWithConstraints(
         modifier.fillMaxSize()
             .onGloballyPositioned { tabCoords[0] = it }
             .dragAndDropTarget(shouldStartDragAndDrop = pushTarget::accepts, target = pushTarget)
@@ -432,6 +446,9 @@ internal fun FilesTab(
                 }
             },
     ) {
+        val tabWidth = maxWidth
+        val layout = filesLayout(tabWidth)
+        CompositionLocalProvider(LocalFilesLayout provides layout) {
         // A press above the list (toolbar, filter, header) during a rename moves focus off the field first, so its
         // blur commits the name before the button acts.
         val commitOnPress = Modifier.pointerInput(browser) {
@@ -468,7 +485,7 @@ internal fun FilesTab(
                     } else {
                         Toolbar(
                             browser, drop, motion, onPushFiles,
-                            onViewMenu = { at -> menu = FilesMenu.View(toTab(at)) },
+                            onViewMenu = { at -> menu = FilesMenu.View(toTab(at), layout.foldRefreshAndNew, layout.foldPush) },
                             onSearch = ::openSearch,
                         )
                     }
@@ -495,7 +512,7 @@ internal fun FilesTab(
                                 runCatching { listFocus.requestFocus() }
                             },
                         )
-                        ColumnHeader(browser, motion)
+                        ColumnHeader(browser, motion, onSortMenu = { at -> menu = FilesMenu.Sort(toTab(at)) })
                     }
                 }
                 androidx.compose.animation.AnimatedVisibility(
@@ -602,13 +619,15 @@ internal fun FilesTab(
                 SelectionBar(
                     browser, motion,
                     onPull = { actions.pullToDownloads(browser.visible.map { it.name }.filter { it in browser.selection.names }) },
-                    onMore = { at -> menu = FilesMenu.Item(toTab(at), browser.selection.names) },
+                    onMore = { at -> menu = FilesMenu.Item(toTab(at), browser.selection.names, renameDeleteFirst = layout.foldRenameDelete) },
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
                 DropChip(
                     drop.hover?.label, motion,
                     Modifier.align(Alignment.BottomCenter)
-                        .padding(bottom = if (browser.selection.names.isNotEmpty()) 72.dp else 14.dp),
+                        .padding(bottom = if (browser.selection.names.isNotEmpty()) 72.dp else 14.dp)
+                        // Never wider than the list: a long folder name ellipsizes.
+                        .widthIn(max = (tabWidth - 24.dp).coerceAtLeast(0.dp)),
                 )
             }
             TransfersTray(
@@ -646,6 +665,7 @@ internal fun FilesTab(
         FilesSnackbar(browser, motion, Modifier.align(Alignment.BottomCenter).padding(bottom = with(LocalDensity.current) { trayHeight.toDp() }))
         FilesDialogHost(browser, motion)
         FilesMenuHost(menu, browser, actions, isMac, motion, onDismiss = { menu = null })
+        }
     }
 }
 
@@ -657,7 +677,7 @@ private fun AnimatedContentTransitionScope<Boolean>.searchBarTransform(searching
         fadeIn(tween(OPEN_MILLIS, delayMillis = NAV_IN_DELAY_MILLIS, easing = EmphasizedDecelerate))
     val exit = slideOutVertically(tween(NAV_OUT_MILLIS, easing = LinearEasing)) { -sign * it / 2 } +
         fadeOut(tween(NAV_OUT_MILLIS, easing = LinearEasing))
-    return (enter togetherWith exit).using(SizeTransform(clip = true))
+    return (enter togetherWith exit).using(SizeTransform(clip = true) { _, _ -> layoutSpring() })
 }
 
 @Composable
@@ -673,38 +693,68 @@ private fun Toolbar(
     val listed = browser.listingPath == browser.path
     val scope = rememberCoroutineScope()
     val spin = remember { Animatable(0f) }
+    val layout = LocalFilesLayout.current
+    val glide = motion && !LocalReduceMotion.current
+    // Each slot after the first carries its own 2 dp gap, so a folding button takes its gap with it.
+    val gap = Modifier.padding(start = 2.dp)
     Row(
         Modifier.fillMaxWidth().padding(start = 8.dp, end = 6.dp, top = 8.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         ToolButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", connected && browser.canGoBack, onClick = browser::back)
-        ToolButton(Icons.Filled.ArrowUpward, "Up one folder", connected && browser.canGoUp, onClick = browser::up)
-        Crumbs(browser, drop, motion, Modifier.weight(1f))
-        ToolButton(Icons.Filled.Search, "Search device", connected, onClick = onSearch)
-        ToolButton(Icons.Filled.Refresh, "Refresh", connected, iconModifier = Modifier.graphicsLayer { rotationZ = spin.value }) {
-            browser.refresh()
-            if (motion) {
-                scope.launch {
-                    spin.snapTo(0f)
-                    spin.animateTo(360f, tween(SPIN_MILLIS, easing = EmphasizedDecelerate))
-                    spin.snapTo(0f)
+        Box(gap) { ToolButton(Icons.Filled.ArrowUpward, "Up one folder", connected && browser.canGoUp, onClick = browser::up) }
+        Crumbs(browser, drop, motion, gap.weight(1f).widthIn(min = CRUMBS_MIN_WIDTH))
+        Box(gap) { ToolButton(Icons.Filled.Search, "Search device", connected, onClick = onSearch) }
+        // Folded buttons slide shut and fade; they lead the ⋮ menu instead (see [filesLayout]).
+        FoldingSlot(!layout.foldRefreshAndNew, glide) {
+            Box(gap) {
+                ToolButton(Icons.Filled.Refresh, "Refresh", connected, iconModifier = Modifier.graphicsLayer { rotationZ = spin.value }) {
+                    browser.refresh()
+                    if (motion) {
+                        scope.launch {
+                            spin.snapTo(0f)
+                            spin.animateTo(360f, tween(SPIN_MILLIS, easing = EmphasizedDecelerate))
+                            spin.snapTo(0f)
+                        }
+                    }
                 }
             }
         }
-        ToolButton(
-            Icons.Filled.CreateNewFolder, "New folder",
-            connected && listed && browser.listing is Listing.Entries && browser.pendingNewFolder == null && !browser.readOnlyHere,
-            onClick = browser::newFolder,
-        )
-        ToolButton(Icons.Filled.FileUpload, "Push files here", connected && !browser.readOnlyHere, onClick = onPushFiles)
+        FoldingSlot(!layout.foldRefreshAndNew, glide) {
+            Box(gap) {
+                ToolButton(
+                    Icons.Filled.CreateNewFolder, "New folder",
+                    connected && listed && browser.listing is Listing.Entries && browser.pendingNewFolder == null && !browser.readOnlyHere,
+                    onClick = browser::newFolder,
+                )
+            }
+        }
+        FoldingSlot(!layout.foldPush, glide) {
+            Box(gap) { ToolButton(Icons.Filled.FileUpload, "Push files here", connected && !browser.readOnlyHere, onClick = onPushFiles) }
+        }
         val more = remember { arrayOfNulls<LayoutCoordinates>(1) }
-        Box(Modifier.onGloballyPositioned { more[0] = it }) {
+        Box(gap.onGloballyPositioned { more[0] = it }) {
             ToolButton(Icons.Filled.MoreVert, "View options", enabled = true) {
                 more[0]?.let { onViewMenu(it.localToWindow(Offset(0f, it.size.height.toFloat()))) }
             }
         }
     }
+}
+
+/** The crumbs never narrow past this; the buttons fold first. */
+private val CRUMBS_MIN_WIDTH = 120.dp
+
+/**
+ * A toolbar or bar slot that folds away: its width closes with [layoutSpring] as it fades (snaps when [glide] is
+ * false). A slot shown from the start just shows.
+ */
+@Composable
+internal fun RowScope.FoldingSlot(visible: Boolean, glide: Boolean, content: @Composable () -> Unit) {
+    AnimatedVisibility(
+        visible,
+        enter = if (glide) expandHorizontally(layoutSpring(), expandFrom = Alignment.Start) + fadeIn(tween(150)) else EnterTransition.None,
+        exit = if (glide) shrinkHorizontally(layoutSpring(), shrinkTowards = Alignment.Start) + fadeOut(tween(150)) else ExitTransition.None,
+    ) { content() }
 }
 
 @Composable
@@ -826,89 +876,182 @@ private fun Crumbs(browser: FilesBrowser, drop: FilesDropState, motion: Boolean,
     }
 }
 
-/** The filter pill ("Filter in Download"; Esc clears it) and the device's free space. */
+/**
+ * The filter pill ("Filter in Download"; Esc clears it) and the device's free space: beside the pill, or (narrow, see
+ * [FilesLayout.spaceBelowFilter]) on a line of its own under it, the meter filling the line and "41.2 GB free" at its
+ * end. The move glides with [layoutSpring].
+ */
 @Composable
 private fun FilterRow(browser: FilesBrowser, motion: Boolean, onFocus: (Boolean) -> Unit, onDown: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val filter = browser.filter
-    Row(
-        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Row(
-            Modifier.weight(1f).height(32.dp).clip(styledCorner(16.dp)).background(colors.surfaceContainerHighest)
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.Search, contentDescription = null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
-            Box(Modifier.weight(1f).padding(start = 6.dp), contentAlignment = Alignment.CenterStart) {
-                if (filter.isEmpty()) {
-                    Text("Filter in ${folderLabel(browser.path)}", fontSize = 13.sp, color = colors.onSurfaceVariant, maxLines = 1)
+    val below = LocalFilesLayout.current.spaceBelowFilter
+    val glide = motion && !LocalReduceMotion.current
+    val t = layoutFraction(below, glide)
+    val space = browser.free
+    // The last space shown, so the meter keeps its content while it fades out. A plain holder.
+    val shown = remember { arrayOfNulls<DeviceSpace>(1) }
+    if (space != null) shown[0] = space
+    val spaceAlpha = animateFloatAsState(
+        if (space != null) 1f else 0f,
+        if (motion) tween(if (space != null) OPEN_MILLIS else 150) else snap(),
+    )
+    // Below the filter, the free space's line opens and closes with the layout spring as the space comes and goes.
+    val present = layoutFraction(space != null, glide)
+    val composed by remember(browser) {
+        derivedStateOf { browser.free != null || spaceAlpha.value > 0f || present.value > 0f }
+    }
+    val kept = shown[0]
+    Layout(
+        content = {
+            Row(
+                Modifier.height(32.dp).clip(styledCorner(16.dp)).background(colors.surfaceContainerHighest)
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Filled.Search, contentDescription = null, Modifier.size(16.dp), tint = colors.onSurfaceVariant)
+                Box(Modifier.weight(1f).padding(start = 6.dp), contentAlignment = Alignment.CenterStart) {
+                    if (filter.isEmpty()) {
+                        Text("Filter in ${folderLabel(browser.path)}", fontSize = 13.sp, color = colors.onSurfaceVariant, maxLines = 1)
+                    }
+                    BasicTextField(
+                        value = filter,
+                        onValueChange = browser::setFilter,
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, color = colors.onSurface),
+                        cursorBrush = SolidColor(colors.primary),
+                        modifier = Modifier.fillMaxWidth()
+                            .semantics { contentDescription = "Filter this folder" }
+                            .onFocusChanged { onFocus(it.isFocused) }
+                            // ↓ moves to the list; Esc is the tab's (it clears the filter in its turn).
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                    onDown()
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                    )
                 }
-                BasicTextField(
-                    value = filter,
-                    onValueChange = browser::setFilter,
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, color = colors.onSurface),
-                    cursorBrush = SolidColor(colors.primary),
-                    modifier = Modifier.fillMaxWidth()
-                        .semantics { contentDescription = "Filter this folder" }
-                        .onFocusChanged { onFocus(it.isFocused) }
-                        // ↓ moves to the list; Esc is the tab's (it clears the filter in its turn).
-                        .onPreviewKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                onDown()
-                                true
-                            } else {
-                                false
-                            }
-                        },
-                )
+            }
+            if (kept != null && composed) {
+                val fade = Modifier.graphicsLayer { alpha = spaceAlpha.value }
+                SpaceMeter(kept, fade)
+                Text(formatFree(kept.free), fade, fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1)
+            }
+        },
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 2.dp, bottom = 8.dp).clipToBounds(),
+    ) { measurables, constraints ->
+        val f = t.value.coerceIn(0f, 1f)
+        val p = present.value.coerceIn(0f, 1f)
+        // Beside the pill the space keeps its room until it has faded out, as before.
+        val inline = browser.free != null || spaceAlpha.value > 0f
+        val width = constraints.maxWidth
+        val gap = 10.dp.roundToPx()
+        val meterGap = 6.dp.roundToPx()
+        val lineGap = 6.dp.roundToPx()
+        val meterInline = 54.dp.roundToPx()
+        val text = measurables.getOrNull(2)?.measure(Constraints())
+        val textW = text?.width ?: 0
+        val textH = text?.height ?: 0
+        // Beside the pill: 10 dp, the meter, 6 dp, the text. Below: the meter fills the line up to the text.
+        val pillInline = if (text == null || !inline) width else (width - gap - meterInline - meterGap - textW).coerceAtLeast(0)
+        val pillW = lerpPx(pillInline, width, f)
+        val pill = measurables[0].measure(Constraints.fixed(pillW, 32.dp.roundToPx()))
+        val meterW = lerpPx(meterInline, (width - meterGap - textW).coerceAtLeast(0), f)
+        val meter = measurables.getOrNull(1)?.measure(Constraints.fixed(meterW, 4.dp.roundToPx()))
+        // The free space's own row, as the Row it was: the meter and the text centred in it.
+        val spaceH = maxOf(meter?.height ?: 0, textH)
+        val oneLineH = maxOf(pill.height, spaceH)
+        val twoLineH = pill.height + if (text == null) 0 else ((lineGap + spaceH) * p).roundToInt()
+        val height = lerpPx(oneLineH, twoLineH, f)
+        layout(width, height) {
+            pill.placeRelative(0, lerpPx(Alignment.CenterVertically.align(pill.height, oneLineH), 0, f))
+            if (meter != null && text != null) {
+                val rowY = lerpPx(Alignment.CenterVertically.align(spaceH, oneLineH), pill.height + lineGap, f)
+                val inlineX = pillInline + gap
+                meter.placeRelative(lerpPx(inlineX, 0, f), rowY + Alignment.CenterVertically.align(meter.height, spaceH))
+                text.placeRelative(lerpPx(inlineX + meterInline + meterGap, width - textW, f), rowY + Alignment.CenterVertically.align(textH, spaceH))
             }
         }
-        val space = browser.free
-        // The last space shown, so the meter keeps its content while it fades out. A plain holder.
-        val shown = remember { arrayOfNulls<DeviceSpace>(1) }
-        if (space != null) shown[0] = space
-        AnimatedVisibility(
-            space != null,
-            enter = fadeIn(if (motion) tween(OPEN_MILLIS) else snap()),
-            exit = fadeOut(if (motion) tween(150) else snap()),
-        ) {
-            shown[0]?.let { FreeSpace(it) }
-        }
     }
 }
 
-/** A thin used-space meter and "41.2 GB free". */
+/** [from] toward [to] by [fraction], in whole pixels. */
+internal fun lerpPx(from: Int, to: Int, fraction: Float): Int = from + ((to - from) * fraction).roundToInt()
+
+/** A thin used-space meter, filling the size it is given. */
 @Composable
-private fun FreeSpace(space: DeviceSpace) {
+private fun SpaceMeter(space: DeviceSpace, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val used = space.usedFraction
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(
-            Modifier.width(54.dp).height(4.dp).clip(styledCorner(2.dp)).background(colors.surfaceContainerHighest)
-                .semantics { contentDescription = "${(used * 100).roundToInt()}% used" },
-        ) {
-            Box(Modifier.fillMaxWidth(used).fillMaxHeight().background(colors.primary))
-        }
-        Text(formatFree(space.free), fontSize = 11.sp, color = colors.onSurfaceVariant, maxLines = 1)
+    Box(
+        modifier.clip(styledCorner(2.dp)).background(colors.surfaceContainerHighest)
+            .semantics { contentDescription = "${(used * 100).roundToInt()}% used" },
+    ) {
+        Box(Modifier.fillMaxWidth(used).fillMaxHeight().background(colors.primary))
     }
 }
 
-/** Name, Size, Modified: a click sorts by the column, a second reverses it; the arrow turns with the direction. */
+/**
+ * Name, Size, Modified: a click sorts by the column, a second reverses it; the arrow turns with the direction. Once the
+ * rows put their date on a second line ([FilesLayout.modifiedBelow]) the columns no longer line up: one sort chip (the
+ * current key and direction) stands in, opening [onSortMenu] at its bottom-left corner (window coordinates). The two
+ * forms cross-fade in the header's fixed height.
+ */
 @Composable
-private fun ColumnHeader(browser: FilesBrowser, motion: Boolean) {
+private fun ColumnHeader(browser: FilesBrowser, motion: Boolean, onSortMenu: (Offset) -> Unit) {
+    AnimatedContent(
+        LocalFilesLayout.current.modifiedBelow,
+        transitionSpec = {
+            val fade = if (motion) tween<Float>(150) else snap()
+            (fadeIn(fade) togetherWith fadeOut(fade)).using(SizeTransform(clip = false) { _, _ -> snap() })
+        },
+        contentAlignment = Alignment.TopStart,
+    ) { chip ->
+        Row(
+            Modifier.fillMaxWidth().height(26.dp).padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(COLUMN_GAP),
+        ) {
+            Spacer(Modifier.width(ICON_COLUMN))
+            if (chip) {
+                SortChip(browser, onSortMenu)
+            } else {
+                HeaderCell("Name", SortKey.Name, browser, motion, Modifier.weight(1f), end = false)
+                HeaderCell("Size", SortKey.Size, browser, motion, Modifier.width(SIZE_COLUMN), end = true)
+                HeaderCell("Modified", SortKey.Modified, browser, motion, Modifier.width(DATE_COLUMN), end = true)
+            }
+        }
+    }
+}
+
+/** The current sort key with its direction arrow and a drop-down mark; a click opens the sort items. */
+@Composable
+private fun SortChip(browser: FilesBrowser, onSortMenu: (Offset) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val at = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val label = when (browser.sort) {
+        SortKey.Name -> "Name"
+        SortKey.Size -> "Size"
+        SortKey.Modified -> "Modified"
+    }
     Row(
-        Modifier.fillMaxWidth().height(26.dp).padding(horizontal = 12.dp),
+        Modifier.onGloballyPositioned { at[0] = it }.clip(styledCorner(4.dp))
+            .clickable(role = Role.Button) { at[0]?.let { onSortMenu(it.localToWindow(Offset(0f, it.size.height.toFloat()))) } }
+            .semantics { contentDescription = "Sort by" }
+            .padding(end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(COLUMN_GAP),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Spacer(Modifier.width(ICON_COLUMN))
-        HeaderCell("Name", SortKey.Name, browser, motion, Modifier.weight(1f), end = false)
-        HeaderCell("Size", SortKey.Size, browser, motion, Modifier.width(SIZE_COLUMN), end = true)
-        HeaderCell("Modified", SortKey.Modified, browser, motion, Modifier.width(DATE_COLUMN), end = true)
+        Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = colors.onSurfaceVariant, maxLines = 1)
+        Icon(
+            if (browser.descending) Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
+            contentDescription = if (browser.descending) "Descending" else "Ascending",
+            Modifier.size(12.dp), tint = colors.onSurfaceVariant,
+        )
+        Icon(Icons.Filled.ArrowDropDown, contentDescription = null, Modifier.size(14.dp), tint = colors.onSurfaceVariant)
     }
 }
 
@@ -1097,7 +1240,7 @@ private fun Rows(
                     if (motion) {
                         Modifier.animateItem(
                             fadeInSpec = tween(OPEN_MILLIS),
-                            placementSpec = tween(SORT_MILLIS, easing = EmphasizedDecelerate),
+                            placementSpec = layoutSpring(),
                             fadeOutSpec = tween(NAV_OUT_MILLIS),
                         )
                     } else {

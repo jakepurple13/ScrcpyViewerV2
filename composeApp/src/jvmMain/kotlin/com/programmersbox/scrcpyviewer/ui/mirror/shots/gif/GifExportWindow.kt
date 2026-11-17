@@ -230,6 +230,7 @@ private fun ExportWindow(
         theme = theme,
         state = windowState,
         visible = shown,
+        reduceMotion = !motion,
         onPreviewKeyEvent = { event ->
             if (event.key == Key.Escape && event.type == KeyEventType.KeyDown) entry.leave()
             event.key == Key.Escape

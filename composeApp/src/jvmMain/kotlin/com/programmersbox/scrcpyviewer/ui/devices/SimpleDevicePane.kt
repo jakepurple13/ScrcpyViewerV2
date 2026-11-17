@@ -2,11 +2,11 @@ package com.programmersbox.scrcpyviewer.ui.devices
 
 import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -56,6 +56,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LookaheadScope
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -67,6 +70,7 @@ import com.programmersbox.scrcpyviewer.options.OptionCatalog
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
 
 /**
  * The detail pane's default view: the device's basics, its preset, Mirror and Connect over Wi-Fi (not for an emulator),
@@ -88,7 +92,7 @@ internal fun SimpleDevicePane(
     /** An emulator's AVD name once the launcher knows it: the title then, as in its connected row. */
     avdName: String? = null,
     /** Animates the title's change to [avdName] (a crossfade); without it the title changes at once. */
-    titleMotion: Boolean = remember { !systemReducesMotion() },
+    titleMotion: Boolean = !LocalReduceMotion.current,
 ) {
     val device = state.devices.firstOrNull { it.serial == state.selectedSerial } ?: return
     Column(modifier.fillMaxSize()) {
@@ -181,14 +185,14 @@ private fun DeviceHeader(device: Device, avdName: String?, motion: Boolean) {
                 // following.
                 Crossfade(
                     title,
-                    Modifier.then(if (motion) Modifier.animateContentSize(tween(EMULATOR_TITLE_MILLIS, easing = EmphasizedDecelerate)) else Modifier),
+                    Modifier.animateHeight(enabled = motion),
                     animationSpec = if (motion) tween(EMULATOR_TITLE_MILLIS) else snap(),
                     label = "emulatorDetailTitle",
                 ) { titleText(it) }
             } else {
                 titleText(title)
             }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            GlidingFlowRow { glide ->
                 val connection = when {
                     isEmulatorSerial(device.serial) -> "Emulator"
                     device.isTcp -> "Wi-Fi"
@@ -197,17 +201,17 @@ private fun DeviceHeader(device: Device, avdName: String?, motion: Boolean) {
                 when (device.state) {
                     DeviceState.Device -> Fact(
                         "Connected · $connection",
-                        MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer,
+                        MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer, modifier = glide,
                     )
-                    DeviceState.Unauthorized -> Fact("Needs USB debugging approval", contentColor = warnColor())
-                    DeviceState.Offline -> Fact("Offline", contentColor = MaterialTheme.colorScheme.error)
-                    DeviceState.Other -> Fact(device.rawState, contentColor = MaterialTheme.colorScheme.error)
+                    DeviceState.Unauthorized -> Fact("Needs USB debugging approval", contentColor = warnColor(), modifier = glide)
+                    DeviceState.Offline -> Fact("Offline", contentColor = MaterialTheme.colorScheme.error, modifier = glide)
+                    DeviceState.Other -> Fact(device.rawState, contentColor = MaterialTheme.colorScheme.error, modifier = glide)
                 }
                 device.info?.let { info ->
-                    Fact("Android ${info.androidVersion}")
-                    Fact("SDK ${info.sdk}")
+                    Fact("Android ${info.androidVersion}", modifier = glide)
+                    Fact("SDK ${info.sdk}", modifier = glide)
                 }
-                Fact(device.serial, mono = true)
+                Fact(device.serial, mono = true, modifier = glide)
             }
         }
     }
@@ -219,8 +223,9 @@ private fun Fact(
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     contentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     mono: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
-    Surface(color = containerColor, contentColor = contentColor, shape = styledCorner(8.dp)) {
+    Surface(color = containerColor, contentColor = contentColor, shape = styledCorner(8.dp), modifier = modifier) {
         Text(
             text,
             style = MaterialTheme.typography.labelMedium,
@@ -270,9 +275,9 @@ private fun PresetSection(state: DevicesUiState, onPreset: (String?) -> Unit, in
                 }
             }
         }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        GlidingFlowRow { glide ->
             val flags = flagSummary(state.values)
-            if (flags.isEmpty()) FlagChip("no extra options") else flags.forEach { FlagChip(it) }
+            if (flags.isEmpty()) FlagChip("no extra options", glide) else flags.forEach { FlagChip(it, glide) }
         }
     }
 }
@@ -284,15 +289,36 @@ internal fun flagSummary(values: OptionValues): List<String> =
         if (value.isNullOrEmpty()) "--${spec.flag}" else "--${spec.flag}=$value"
     }
 
+/**
+ * A wrapping row of chips: when the width changes which line a chip sits on, each chip ([content] gets the modifier
+ * to put on it) glides to its new place and the row's height springs, both with [layoutSpring]. Under reduced motion
+ * they jump.
+ */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalSharedTransitionApi::class)
 @Composable
-private fun FlagChip(text: String) {
+private fun GlidingFlowRow(content: @Composable (glide: Modifier) -> Unit) {
+    val reduce = LocalReduceMotion.current
+    // The height springs here, outside the lookahead: a size animated by animateBounds can overshoot below zero.
+    Box(if (reduce) Modifier else Modifier.animateContentSize(layoutSpring())) {
+        LookaheadScope {
+            val glide = if (reduce) Modifier else Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) { content(glide) }
+        }
+    }
+}
+
+@Composable
+private fun FlagChip(text: String, modifier: Modifier = Modifier) {
     val shape = styledCorner(6.dp)
     Text(
         text,
         style = MaterialTheme.typography.labelSmall,
         fontFamily = FontFamily.Monospace,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape).padding(horizontal = 8.dp, vertical = 2.dp),
+        modifier = modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape).padding(horizontal = 8.dp, vertical = 2.dp),
     )
 }
 

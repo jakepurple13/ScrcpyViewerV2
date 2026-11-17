@@ -35,6 +35,8 @@ import androidx.compose.ui.window.rememberWindowState
 import com.programmersbox.scrcpyviewer.AppIcon
 import com.programmersbox.scrcpyviewer.Os
 import com.programmersbox.scrcpyviewer.ui.common.ProvideAppClipboard
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.LocalStyleTokens
 import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
@@ -54,6 +56,12 @@ import dev.nucleusframework.window.styling.TitleBarColors
 import dev.nucleusframework.window.styling.TitleBarMetrics
 import dev.nucleusframework.window.styling.TitleBarStyle
 import kotlin.math.roundToInt
+
+/** The smallest the main window can be dragged to. */
+val MainWindowMinSize = DpSize(360.dp, 480.dp)
+
+/** The smallest a mirror window can be dragged to; applied by the mirror window. */
+val MirrorWindowMinSize = DpSize(344.dp, 360.dp)
 
 /** What a title-bar slot can use: the window's [chrome], and [interactive] for clickable parts of the bar. */
 interface AppTitleBarScope {
@@ -82,6 +90,10 @@ private object CustomTitleBarScope : AppTitleBarScope {
  * Glass with desktop blur needs a see-through window, which Tao only makes when the window is created: a window opened
  * in another style keeps an opaque background until it is opened again (and one opened in Glass stays see-through,
  * painted opaque by its content in the other styles).
+ *
+ * The window root is where the OS's reduce motion is read: [reduceMotion] is provided to [content] as
+ * [LocalReduceMotion], so every screen in the window moves the same way. A window that reads it earlier (for its own
+ * open motion) passes the value it read.
  */
 @Composable
 fun NucleusApplicationScope.AppWindow(
@@ -93,8 +105,12 @@ fun NucleusApplicationScope.AppWindow(
     alwaysOnTop: Boolean = false,
     icon: Painter? = AppIcon.painter,
     titleBarHeight: Dp = 38.dp,
+    /** The smallest size the user can drag the window to; null for no limit. */
+    minSize: DpSize? = null,
     /** Sees each key event of this window before its focused content; true consumes it. */
     onPreviewKeyEvent: (KeyEvent) -> Boolean = { false },
+    /** Whether the OS asks for less motion, read once as the window opens. */
+    reduceMotion: Boolean = remember { systemReducesMotion() },
     titleBar: @Composable AppTitleBarScope.() -> Unit,
     content: @Composable NucleusDecoratedWindowScope.() -> Unit,
 ) {
@@ -118,10 +134,15 @@ fun NucleusApplicationScope.AppWindow(
             onPreviewKeyEvent = onPreviewKeyEvent,
             titleBarStyle = nucleusTitleBarStyle(bar, titleBarHeight),
             transparent = transparent,
+            // Nucleus applies it through NucleusWindow.setMinimumSize (Tao: taoWindow.setMinimumSize).
+            minimumSize = minSize,
         ) {
             // Tao windows run their own Compose scene: the theme, the reveal origin and the clipboard are provided
             // again here (Nucleus bridges the outer locals, but the theme must follow `shown` inside the window too).
-            CompositionLocalProvider(LocalThemeRevealOrigin provides reveal.origin) {
+            CompositionLocalProvider(
+                LocalThemeRevealOrigin provides reveal.origin,
+                LocalReduceMotion provides reduceMotion,
+            ) {
                 ProvideAppClipboard {
                     ScrcpyViewerTheme(shown) {
                         // Drawn with the bar's own colors, see-through for Glass with blur (see nucleusTitleBarStyle).

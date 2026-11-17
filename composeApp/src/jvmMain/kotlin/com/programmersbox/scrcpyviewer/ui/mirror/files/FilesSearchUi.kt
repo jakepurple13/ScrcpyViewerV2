@@ -1,6 +1,12 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.material3.Surface
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -118,7 +124,10 @@ internal fun SearchBar(
             Icon(Icons.Filled.PhoneAndroid, contentDescription = null, Modifier.size(16.dp), tint = colors.primary)
             Box(Modifier.weight(1f).padding(start = 6.dp), contentAlignment = Alignment.CenterStart) {
                 if (search.query.isEmpty()) {
-                    Text("Search all of internal storage", fontSize = 13.sp, color = colors.onSurfaceVariant, maxLines = 1)
+                    Text(
+                        "Search all of internal storage", fontSize = 13.sp, color = colors.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 BasicTextField(
                     value = search.query,
@@ -314,7 +323,8 @@ private fun ResultList(
         val i = cursor?.let { currentIndex[it] } ?: return@LaunchedEffect
         listState.bringIntoView(i, motion)
     }
-    val placement = if (motion) tween<androidx.compose.ui.unit.IntOffset>(SEARCH_PLACE_MILLIS, easing = EmphasizedDecelerate) else null
+    val narrowRows = LocalFilesLayout.current.modifiedBelow
+    val placement = if (motion) layoutSpring<androidx.compose.ui.unit.IntOffset>() else null
     LazyColumn(
         Modifier.fillMaxSize().testTag(SEARCH_RESULTS_TAG),
         state = listState,
@@ -358,6 +368,8 @@ private fun ResultList(
                         },
                         focused = listFocused && selected,
                         match = highlight,
+                        // The icon-only Show in folder sits at the end of the name's line: the name stops short of it.
+                        endInset = if (selected && narrowRows) REVEAL_ICON_INSET else 0.dp,
                     )
                     // Show in folder sits over the date while the match has the cursor.
                     AnimatedVisibility(
@@ -366,7 +378,7 @@ private fun ResultList(
                         enter = if (motion) fadeIn(tween(150)) + scaleIn(tween(150, easing = EmphasizedDecelerate), initialScale = 0.85f) else fadeIn(snap()),
                         exit = if (motion) fadeOut(tween(110)) + scaleOut(tween(110), targetScale = 0.85f) else fadeOut(snap()),
                     ) {
-                        RevealButton { browser.reveal(hit) }
+                        RevealButton(motion) { browser.reveal(hit) }
                     }
                 }
             }
@@ -374,8 +386,8 @@ private fun ResultList(
     }
 }
 
-/** Search results slide into place over this long when a chip changes what is shown. */
-private const val SEARCH_PLACE_MILLIS = 300
+/** Room the name leaves for the icon-only Show in folder (26 dp, 10 dp from the end) on a selected narrow result. */
+private val REVEAL_ICON_INSET = 36.dp
 
 @Composable
 private fun GroupHeader(dir: String, count: Int, onOpen: () -> Unit, modifier: Modifier = Modifier) {
@@ -399,16 +411,53 @@ private fun GroupHeader(dir: String, count: Int, onOpen: () -> Unit, modifier: M
     }
 }
 
+/**
+ * The primary pill "Show in folder"; once the rows put their date under the name ([FilesLayout.modifiedBelow]) just
+ * its folder icon (described "Show in folder", with a tooltip), so it no longer covers the name. The two forms
+ * cross-fade while the button's size follows with [layoutSpring].
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RevealButton(onClick: () -> Unit) {
+private fun RevealButton(motion: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Row(
-        Modifier.height(26.dp).clip(styledCorner(13.dp)).background(colors.primary)
-            .clickable(role = Role.Button, onClick = onClick).padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Icon(Icons.Filled.FolderOpen, contentDescription = null, Modifier.size(14.dp), tint = colors.onPrimary)
-        Text("Show in folder", fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = colors.onPrimary, maxLines = 1)
+    val iconOnly = LocalFilesLayout.current.modifiedBelow
+    val glide = motion && !LocalReduceMotion.current
+    AnimatedContent(
+        iconOnly,
+        Modifier.clip(styledCorner(13.dp)).background(colors.primary),
+        transitionSpec = {
+            (fadeIn(tween(150)) togetherWith fadeOut(tween(150)))
+                .using(SizeTransform(clip = true) { _, _ -> if (glide) layoutSpring() else snap() })
+        },
+        contentAlignment = Alignment.CenterEnd,
+    ) { icon ->
+        if (icon) {
+            TooltipArea(
+                tooltip = {
+                    Surface(shape = styledCorner(4.dp), color = colors.inverseSurface) {
+                        Text(
+                            "Show in folder", Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.bodySmall, color = colors.inverseOnSurface,
+                        )
+                    }
+                },
+            ) {
+                Box(
+                    Modifier.size(26.dp).clickable(role = Role.Button, onClick = onClick),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.FolderOpen, contentDescription = "Show in folder", Modifier.size(14.dp), tint = colors.onPrimary)
+                }
+            }
+        } else {
+            Row(
+                Modifier.height(26.dp).clickable(role = Role.Button, onClick = onClick).padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(Icons.Filled.FolderOpen, contentDescription = null, Modifier.size(14.dp), tint = colors.onPrimary)
+                Text("Show in folder", fontSize = 11.5.sp, fontWeight = FontWeight.Medium, color = colors.onPrimary, maxLines = 1)
+            }
+        }
     }
 }

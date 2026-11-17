@@ -1,6 +1,21 @@
 package com.programmersbox.scrcpyviewer.ui.actions
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateBounds
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.ButtonDefaults
+import com.programmersbox.scrcpyviewer.ui.common.LabelTooltip
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,7 +28,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -27,17 +42,12 @@ import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
@@ -48,11 +58,22 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -66,10 +87,22 @@ import com.programmersbox.scrcpyviewer.actions.MatchMode
 import com.programmersbox.scrcpyviewer.actions.OutputTarget
 import com.programmersbox.scrcpyviewer.actions.Variable
 import com.programmersbox.scrcpyviewer.actions.VariableKind
-import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveSegmentedButtons
+import com.programmersbox.scrcpyviewer.ui.common.BackArrowRow
+import com.programmersbox.scrcpyviewer.ui.common.BarItem
+import com.programmersbox.scrcpyviewer.ui.common.BarSpacer
+import com.programmersbox.scrcpyviewer.ui.common.ControlSize
+import com.programmersbox.scrcpyviewer.ui.common.LocalBarProbe
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.PriorityBar
+import com.programmersbox.scrcpyviewer.ui.common.SegmentOption
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import com.programmersbox.scrcpyviewer.ui.common.rowFit
 import com.programmersbox.scrcpyviewer.ui.common.expandFadeIn
 import com.programmersbox.scrcpyviewer.ui.common.shrinkFadeOut
 import com.programmersbox.scrcpyviewer.ui.mirror.VariablesDialog
+import kotlin.math.roundToInt
 
 /** Shown under the Output field: Toast and None runs stop at 30 s. */
 const val OUTPUT_HINT = "Long or streaming commands need Shell tab"
@@ -89,6 +122,7 @@ fun ActionEditor(
     draft: ActionDraft,
     packages: List<String>?,
     onEvent: (ActionsEvent) -> Unit,
+    /** Back to the list, while the editor is pushed over it: the arrow starts the header row. */
     onBack: (() -> Unit)?,
 ) {
     val edit = { transform: (ActionDraft) -> ActionDraft -> onEvent(ActionsEvent.Edit(transform)) }
@@ -98,14 +132,26 @@ fun ActionEditor(
     val monospace = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace)
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 16.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (onBack != null) DetailBackButton(onBack, Modifier.offset(x = (-8).dp))
-            Text(if (draft.id == null) "New action" else "Edit action", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            if (state.dirty) Text("Unsaved changes", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 16.dp, bottom = 8.dp)) {
+            // The title (down to 90 dp) never folds; "Unsaved changes" folds into More when there is no room.
+            val title = if (draft.id == null) "New action" else "Edit action"
+            BackArrowRow(onBack) { barModifier ->
+                PriorityBar(
+                    listOfNotNull(
+                        BarItem("title", priority = 0, menuLabel = title, onMenuClick = null, minWidth = 90.dp, grow = true) {
+                            Text(title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        },
+                        if (state.dirty) {
+                            BarItem("unsaved", priority = 1, menuLabel = "Unsaved changes", onMenuClick = null) {
+                                Text("Unsaved changes", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            }
+                        } else {
+                            null
+                        },
+                    ),
+                    barModifier,
+                )
+            }
         }
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 4.dp),
@@ -119,7 +165,7 @@ fun ActionEditor(
                     TextButton({ onEvent(ActionsEvent.MarkAsUser(draft.id)) }) { Text("Move to Your actions") }
                 }
             }
-            Segments(typeLabels, draft.type) { onEvent(ActionsEvent.SetType(it)) }
+            FitSegments(typeLabels, draft.type) { onEvent(ActionsEvent.SetType(it)) }
             Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 IconButtonWithPicker(draft) { icon -> edit { it.copy(icon = icon) } }
                 OutlinedTextField(
@@ -136,23 +182,17 @@ fun ActionEditor(
             AnimatedPresence(state.test) { TestOutput(it, Modifier.padding(top = 12.dp)) }
         }
         HorizontalDivider()
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            TestRunControl(
-                state,
-                onRun = {
-                    val variables = draft.type == ActionType.RunOnce && draft.variables.isNotEmpty()
-                    if (variables) askValues = true else onEvent(ActionsEvent.TestRun(emptyMap()))
-                },
-                onDevice = { onEvent(ActionsEvent.SetTestDevice(it)) },
-            )
-            Box(Modifier.weight(1f))
-            if (draft.id != null) TextButton({ confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-            Button({ onEvent(ActionsEvent.Save) }, enabled = state.dirty || draft.id == null) { Text("Save") }
-        }
+        EditorBottomBar(
+            state,
+            canDelete = draft.id != null,
+            onRun = {
+                val variables = draft.type == ActionType.RunOnce && draft.variables.isNotEmpty()
+                if (variables) askValues = true else onEvent(ActionsEvent.TestRun(emptyMap()))
+            },
+            onDevice = { onEvent(ActionsEvent.SetTestDevice(it)) },
+            onDelete = { confirmDelete = true },
+            onSave = { onEvent(ActionsEvent.Save) },
+        )
     }
 
     if (askValues) {
@@ -222,16 +262,22 @@ private fun ToggleFields(
     ) { v -> edit { it.copy(read = v) } }
     if (draft.read.isNotBlank()) {
         SectionLabel("On when output")
-        // Segments share the row's width equally; give "matches regex" room.
-        Segments(matchLabels, draft.matchMode, Modifier.width(420.dp)) { mode -> edit { it.copy(matchMode = mode) } }
+        // Segments share the row's width equally; give "matches regex" room (420 dp, less when the editor is narrower).
+        FitSegments(matchLabels, draft.matchMode, fillWidth = true, maxWidth = 420.dp) { mode -> edit { it.copy(matchMode = mode) } }
         val matchError = onWhenError(draft.matchMode, draft.matchValue)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(
-                draft.matchValue, { v -> edit { it.copy(matchValue = v) } }, Modifier.weight(1f),
-                placeholder = { Text("Value") }, singleLine = true, textStyle = monospace, isError = matchError != null,
-            )
-            OutlinedButton(onTestRead, enabled = state.testDevice != null && state.test?.running != true) { Text("Test read") }
-        }
+        // Test read moves under Value when Value would get less than 160 dp beside it.
+        val canTestRead = state.testDevice != null && state.test?.running != true
+        AdaptiveRow(
+            text = {
+                OutlinedTextField(
+                    draft.matchValue, { v -> edit { it.copy(matchValue = v) } }, Modifier.fillMaxWidth(),
+                    placeholder = { Text("Value") }, singleLine = true, textStyle = monospace, isError = matchError != null,
+                )
+            },
+            control = { OutlinedButton(onTestRead, enabled = canTestRead) { Text("Test read", maxLines = 1) } },
+            textMin = 160.dp,
+            gap = 10.dp,
+        )
         // A pattern that does not compile says so in place of the sentence (Save reports it too).
         if (matchError != null) {
             Text(matchError, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
@@ -273,7 +319,7 @@ private fun RunOnceFields(draft: ActionDraft, errors: DraftErrors, monospace: Te
         }
     }
     SectionLabel("Output")
-    Segments(outputLabels, draft.output) { output -> edit { it.copy(output = output) } }
+    FitSegments(outputLabels, draft.output) { output -> edit { it.copy(output = output) } }
     Hint(OUTPUT_HINT)
     Row(
         Modifier.clickable(role = Role.Checkbox) { edit { it.copy(confirm = !it.confirm) } },
@@ -341,13 +387,20 @@ private fun VariableRowItem(
 private fun VariableRow(name: String, variable: Variable, monospace: TextStyle, modifier: Modifier, onChange: (Variable) -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = styledCorner(12.dp), modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("{$name}", style = monospace, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(120.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                OutlinedTextField(
-                    variable.label, { onChange(variable.copy(label = it)) }, Modifier.weight(1f),
-                    label = { Text("Label") }, singleLine = true,
+            val reduceMotion = LocalReduceMotion.current
+            LookaheadScope {
+                // The three glide between one row and stacked.
+                val glide = if (reduceMotion) Modifier else Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
+                VariableFields(
+                    name = { Text("{$name}", glide, style = monospace, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    label = {
+                        OutlinedTextField(
+                            variable.label, { onChange(variable.copy(label = it)) }, glide,
+                            label = { Text("Label") }, singleLine = true,
+                        )
+                    },
+                    kind = { KindMenu(variable.kind, glide) { onChange(variable.copy(kind = it)) } },
                 )
-                KindMenu(variable.kind) { onChange(variable.copy(kind = it)) }
             }
             when (variable.kind) {
                 VariableKind.Text -> OutlinedTextField(
@@ -377,10 +430,49 @@ private fun ChoicesField(name: String, choices: List<String>, onChange: (List<St
     )
 }
 
+/** The variable card's fields in one row ({name} 120 dp, Label, Asks with 170 dp) from this card width, else stacked. */
+private val VariableRowMinWidth = 440.dp
+private val VariableNameWidth = 120.dp
+private val VariableKindWidth = 170.dp
+private val VariableGap = 10.dp
+
+/** Lays out a variable's {name}, Label and Asks with in one row, or stacked full width under [VariableRowMinWidth]. */
 @Composable
-private fun KindMenu(kind: VariableKind, onPick: (VariableKind) -> Unit) {
+private fun VariableFields(name: @Composable () -> Unit, label: @Composable () -> Unit, kind: @Composable () -> Unit) {
+    Layout(contents = listOf(name, label, kind)) { (n, l, k), constraints ->
+        val width = constraints.maxWidth
+        val gap = VariableGap.roundToPx()
+        if (width >= VariableRowMinWidth.roundToPx()) {
+            val nameWidth = VariableNameWidth.roundToPx()
+            val kindWidth = VariableKindWidth.roundToPx()
+            val labelWidth = (width - nameWidth - kindWidth - 2 * gap).coerceAtLeast(0)
+            val np = n.first().measure(Constraints.fixedWidth(nameWidth))
+            val lp = l.first().measure(Constraints.fixedWidth(labelWidth))
+            val kp = k.first().measure(Constraints.fixedWidth(kindWidth))
+            val height = maxOf(np.height, lp.height, kp.height)
+            layout(width, height) {
+                np.place(0, (height - np.height) / 2)
+                lp.place(nameWidth + gap, (height - lp.height) / 2)
+                kp.place(width - kindWidth, (height - kp.height) / 2)
+            }
+        } else {
+            val placeables = listOf(n, l, k).map { it.first().measure(Constraints.fixedWidth(width)) }
+            val height = placeables.sumOf { it.height } + gap * (placeables.size - 1)
+            layout(width, height) {
+                var y = 0
+                placeables.forEach { p ->
+                    p.place(0, y)
+                    y += p.height + gap
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun KindMenu(kind: VariableKind, modifier: Modifier, onPick: (VariableKind) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box(Modifier.width(170.dp)) {
+    Box(modifier) {
         OutlinedTextField(
             kindLabels.first { it.first == kind }.second, {}, Modifier.fillMaxWidth(), readOnly = true,
             label = { Text("Asks with") }, singleLine = true,
@@ -403,26 +495,135 @@ private fun CommandField(label: String, value: String, error: String?, style: Te
     )
 }
 
-/** Test run [ on <device> ▾ ]: disabled with no device connected. */
+/**
+ * Test run [ on <device> ▾ ] … Delete, Save. Out of room the device picker folds into More first (its label ellipsizes
+ * before that, from 260 dp), then Delete; Test run and Save never fold. The device menu is outside the bar (the bar
+ * composes its items twice) and opens at the control clicked: the picker, or More when the picker is folded.
+ *
+ * Under [CompactBarWidth] (a phone-width window) Test run and Save would not fit beside More: Test run's label slides
+ * shut, leaving its play icon, and both buttons' side padding shrinks from 24 to 16 dp.
+ */
 @Composable
-private fun TestRunControl(state: ActionsUiState, onRun: () -> Unit, onDevice: (String) -> Unit) {
+private fun EditorBottomBar(
+    state: ActionsUiState,
+    canDelete: Boolean,
+    onRun: () -> Unit,
+    onDevice: (String) -> Unit,
+    onDelete: () -> Unit,
+    onSave: () -> Unit,
+) {
     val device = state.testDevice
-    Button(onRun, enabled = device != null && state.test?.running != true) { Text("Test run") }
-    if (device == null) {
-        Text("No device connected", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        return
+    val draft = state.draft
+    var container by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var picker by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    // Where the device menu opens, relative to the bar's box; null while closed.
+    var menuAt by remember { mutableStateOf<Rect?>(null) }
+    // A disconnect closes the menu, so it does not reopen by itself when a device comes back.
+    LaunchedEffect(device == null) { if (device == null) menuAt = null }
+    val moreWidth = with(LocalDensity.current) { 48.dp.toPx() }
+    fun openFromPicker() {
+        val box = container?.takeIf { it.isAttached } ?: return
+        val from = picker?.takeIf { it.isAttached }
+        menuAt = if (from != null) box.localBoundingBoxOf(from) else Rect(box.size.width - moreWidth, 0f, box.size.width.toFloat(), box.size.height.toFloat())
     }
-    var open by remember { mutableStateOf(false) }
-    Box {
-        TextButton({ open = true }) {
-            Text("on $device", maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose test device")
+    fun openFromMore() {
+        val box = container?.takeIf { it.isAttached } ?: return
+        // More sits at the bar's end. 48 dp is PriorityBar's overflow button (an IconButton at its minimum touch
+        // size); PriorityBar does not expose its bounds, so a change to that button must be mirrored here.
+        menuAt = Rect(box.size.width - moreWidth, 0f, box.size.width.toFloat(), box.size.height.toFloat())
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp).onGloballyPositioned { container = it }) {
+        val compact = maxWidth < CompactBarWidth
+        val reduceMotion = LocalReduceMotion.current
+        val sidePadding by animateDpAsState(
+            if (compact) 16.dp else ButtonSidePadding,
+            if (reduceMotion) snap() else layoutSpring(),
+            label = "barButtonPadding",
+        )
+        /** The measuring copies use the target padding; only the displayed buttons animate. */
+        @Composable
+        fun padding(): PaddingValues {
+            val side = if (LocalBarProbe.current) (if (compact) 16.dp else ButtonSidePadding) else sidePadding
+            return if (side == ButtonSidePadding) ButtonDefaults.ContentPadding else PaddingValues(horizontal = side, vertical = ButtonVerticalPadding)
         }
-        DropdownMenu(open, { open = false }) {
-            state.devices.forEach { serial ->
-                DropdownMenuItem(text = { Text(serial) }, onClick = { open = false; onDevice(serial) })
+        val items = listOfNotNull(
+            BarItem("run", priority = 0, menuLabel = "Test run", onMenuClick = null) {
+                Button(onRun, enabled = device != null && state.test?.running != true, contentPadding = padding()) {
+                    TestRunLabel(compact, reduceMotion)
+                }
+            },
+            if (device == null) {
+                BarItem("device", priority = 3, menuLabel = "No device connected", onMenuClick = null) {
+                    Text("No device connected", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+            } else {
+                BarItem("device", priority = 3, menuLabel = "Test on $device", onMenuClick = ::openFromMore) {
+                    val probe = LocalBarProbe.current
+                    TextButton(
+                        ::openFromPicker,
+                        Modifier.widthIn(max = 260.dp).then(if (probe) Modifier else Modifier.onGloballyPositioned { picker = it }),
+                    ) {
+                        Text("on $device", Modifier.weight(1f, fill = false), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Choose test device")
+                    }
+                }
+            },
+            BarSpacer,
+            if (canDelete) {
+                BarItem("delete", priority = 2, menuLabel = "Delete", onMenuClick = onDelete) {
+                    TextButton(onDelete) { Text("Delete", color = MaterialTheme.colorScheme.error, maxLines = 1) }
+                }
+            } else {
+                null
+            },
+            BarItem("save", priority = 0, menuLabel = "Save", onMenuClick = null) {
+                Button(onSave, enabled = state.dirty || draft?.id == null, contentPadding = padding()) { Text("Save", maxLines = 1) }
+            },
+        )
+        PriorityBar(items, Modifier.fillMaxWidth())
+        val at = menuAt
+        if (at != null && device != null) {
+            val density = LocalDensity.current
+            Box(
+                Modifier
+                    .offset { IntOffset(at.left.roundToInt(), at.top.roundToInt()) }
+                    .size(with(density) { at.width.toDp() }, with(density) { at.height.toDp() }),
+            ) {
+                DropdownMenu(true, { menuAt = null }) {
+                    state.devices.forEach { serial ->
+                        DropdownMenuItem(text = { Text(serial) }, onClick = { menuAt = null; onDevice(serial) })
+                    }
+                }
             }
         }
+    }
+}
+
+/** Below this bar width Test run shows only its icon (Test run, Save and More need 248 dp at full size). */
+private val CompactBarWidth = 250.dp
+private val ButtonSidePadding = 24.dp
+private val ButtonVerticalPadding = 8.dp
+
+/**
+ * "Test run", or its play icon alone when [compact] (named for screen readers and in a tooltip). The label slides shut
+ * and the icon grows in; the bar's measuring copy shows the target form at once.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TestRunLabel(compact: Boolean, reduceMotion: Boolean) {
+    val icon = @Composable { Icon(Icons.Filled.PlayArrow, contentDescription = "Test run", Modifier.size(20.dp)) }
+    val label = @Composable { Text("Test run", maxLines = 1) }
+    if (LocalBarProbe.current) {
+        if (compact) icon() else label()
+        return
+    }
+    val enter = if (reduceMotion) fadeIn(tween(120)) else expandHorizontally(layoutSpring()) + fadeIn(tween(150))
+    val exit = if (reduceMotion) fadeOut(tween(120)) else shrinkHorizontally(layoutSpring()) + fadeOut(tween(150))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        AnimatedVisibility(compact, enter = enter, exit = exit) {
+            TooltipArea(tooltip = { LabelTooltip("Test run") }) { icon() }
+        }
+        AnimatedVisibility(!compact, enter = enter, exit = exit) { label() }
     }
 }
 
@@ -431,15 +632,41 @@ private fun TestRunControl(state: ActionsUiState, onRun: () -> Unit, onDevice: (
 private fun TestOutput(test: TestResult, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SectionLabel("Test output")
-            if (test.running) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-            test.exitCode?.let { code ->
-                Text("exit $code", style = MaterialTheme.typography.labelMedium, color = if (code == 0) colors.onSurfaceVariant else colors.error)
-            }
-            test.note?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant) }
-            test.shownLines?.let { Text("Showing last $it lines", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant) }
-        }
+        // The label and exit code never shrink. The note takes the room left and ellipsizes away first; "Showing last
+        // N lines" keeps its width while there is room, then ellipsizes too. Neither folds, so no More button takes
+        // room at phone width.
+        PriorityBar(
+            listOfNotNull(
+                BarItem("label", priority = 0, menuLabel = "Test output", onMenuClick = null) { SectionLabel("Test output") },
+                if (test.running) {
+                    BarItem("running", priority = 0, menuLabel = "Running", onMenuClick = null) {
+                        // A plain box while measured: the spinner's animation runs only in the displayed copy.
+                        if (LocalBarProbe.current) Box(Modifier.size(14.dp)) else CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    }
+                } else {
+                    null
+                },
+                test.exitCode?.let { code ->
+                    BarItem("exit", priority = 0, menuLabel = "exit $code", onMenuClick = null) {
+                        Text("exit $code", style = MaterialTheme.typography.labelMedium, color = if (code == 0) colors.onSurfaceVariant else colors.error, maxLines = 1)
+                    }
+                },
+                test.note?.let { note ->
+                    BarItem("note", priority = 0, menuLabel = note, onMenuClick = null, minWidth = 0.dp, grow = true) {
+                        Text(note, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                },
+                test.shownLines?.let { n ->
+                    BarItem(
+                        "shown", priority = 1, menuLabel = "Showing last $n lines", onMenuClick = null,
+                        minWidth = 0.dp, grow = true, growToNatural = true,
+                    ) {
+                        Text("Showing last $n lines", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                },
+            ),
+            Modifier.fillMaxWidth(),
+        )
         if (test.output.isNotEmpty() || test.running) {
             Surface(color = colors.surfaceContainerHighest, shape = styledCorner(12.dp), modifier = Modifier.fillMaxWidth()) {
                 SelectionContainer(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState())) {
@@ -477,16 +704,38 @@ private fun Hint(text: String, modifier: Modifier = Modifier) {
     Text(text, modifier = modifier, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * An [AdaptiveSegmentedButtons] at the size [rowFit] picks for the width it gets (no text beside it): the segmented
+ * row when its full width fits, else the menu. The full width is read from a hidden probe.
+ */
 @Composable
-private fun <T> Segments(options: List<Pair<T, String>>, selected: T, modifier: Modifier = Modifier, onSelect: (T) -> Unit) {
-    SingleChoiceSegmentedButtonRow(modifier) {
-        options.forEachIndexed { i, (value, label) ->
-            SegmentedButton(
-                selected = value == selected,
-                onClick = { onSelect(value) },
-                shape = styledSegmentShape(i, options.size),
-            ) { Text(label, maxLines = 1) }
+private fun <T> FitSegments(
+    options: List<Pair<T, String>>,
+    selected: T,
+    fillWidth: Boolean = false,
+    maxWidth: Dp = Dp.Unspecified,
+    onSelect: (T) -> Unit,
+) {
+    val segments = remember(options) { options.map { (value, label) -> SegmentOption(value, label) } }
+    val currentSelected by rememberUpdatedState(selected)
+    val currentOnSelect by rememberUpdatedState(onSelect)
+    SubcomposeLayout { constraints ->
+        val size = if (!constraints.hasBoundedWidth) {
+            ControlSize.Full
+        } else {
+            val full = subcompose(FitProbe) {
+                AdaptiveSegmentedButtons(segments, currentSelected, {}, ControlSize.Full, fillWidth = fillWidth, maxWidth = maxWidth)
+            }.maxOfOrNull { it.maxIntrinsicWidth(Constraints.Infinity) } ?: 0
+            rowFit(constraints.maxWidth, textMin = 0, gap = 0, full = full).size
         }
+        val placeables = subcompose(FitContent) {
+            AdaptiveSegmentedButtons(segments, currentSelected, { currentOnSelect(it) }, size, fillWidth = fillWidth, maxWidth = maxWidth)
+        }.map { it.measure(constraints.copy(minWidth = 0)) }
+        val width = placeables.maxOfOrNull { it.width } ?: 0
+        val height = placeables.maxOfOrNull { it.height } ?: 0
+        layout(width, height) { placeables.forEach { it.place(0, 0) } }
     }
 }
+
+private object FitProbe
+private object FitContent

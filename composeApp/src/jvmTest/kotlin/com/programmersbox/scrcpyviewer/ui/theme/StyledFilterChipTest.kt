@@ -163,19 +163,19 @@ class StyledFilterChipTest {
                 frames(30)
                 val bare = chip().boundsInRoot.width
                 count = "142"
-                frames(5) // ~80 ms of 250
+                frames(5) // on the layout spring's way
                 val early = chip().boundsInRoot.width
-                frames(30)
+                frames(60)
                 val full = chip().boundsInRoot.width
                 assertNotNull(tagged(FilterChipBadgeTag), "$style badge shown")
                 assertTrue(full > bare + 20f, "$style the badge widens the chip: $bare to $full")
-                assertTrue(early > bare && early < full, "$style mid-grow at ~80 ms: $bare < $early < $full")
+                assertTrue(early > bare && early < full, "$style mid-grow: $bare < $early < $full")
                 count = null
-                frames(5) // ~80 ms of 200
+                frames(5)
                 val leaving = chip().boundsInRoot.width
                 assertTrue(leaving > bare && leaving < full, "$style shrinking: $bare < $leaving < $full")
                 assertNotNull(tagged(FilterChipBadgeTag), "$style the last count draws during the exit")
-                frames(30)
+                frames(60)
                 assertEquals(bare, chip().boundsInRoot.width, "$style back to the bare width")
                 assertNull(tagged(FilterChipBadgeTag), "$style badge gone")
             }

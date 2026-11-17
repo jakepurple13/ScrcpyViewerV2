@@ -11,12 +11,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 
 /** One blink of a live dot: down to [LIVE_BLINK_LOW] opacity and back, the mockup's 1.6 s. */
 internal const val LIVE_BLINK_MILLIS = 1_600
@@ -33,7 +32,7 @@ internal fun LogcatLiveDot(
     size: Dp,
     blinking: Boolean,
     modifier: Modifier = Modifier,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
 ) {
     val blink = if (blinking && motion) {
         rememberInfiniteTransition(label = "logcat live").animateFloat(

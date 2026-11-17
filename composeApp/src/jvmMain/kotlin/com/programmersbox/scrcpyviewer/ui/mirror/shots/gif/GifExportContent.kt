@@ -5,6 +5,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.snap
@@ -86,6 +87,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -113,6 +115,8 @@ import com.programmersbox.scrcpyviewer.media.decodePng
 import com.programmersbox.scrcpyviewer.media.estimateBytes
 import com.programmersbox.scrcpyviewer.media.gifHeight
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.mirror.WakeStage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -512,106 +516,117 @@ fun GifExportContent(
 
     val (trimColor, okColor, okBackground) = gifColors()
 
-    Row(modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        // The preview, at the recording's aspect ratio, as tall as the window allows.
-        val aspect = video.width.toFloat() / video.height.coerceAtLeast(1)
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .aspectRatio(aspect, matchHeightConstraintsFirst = true)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color.Black),
-        ) {
-            val image = preview.shown?.takeIf { !it.asSkiaBitmap().isClosed }
-                ?: firstFrame?.takeIf { !it.asSkiaBitmap().isClosed }
-            val picture: @Composable () -> Unit = {
-                if (image != null) {
-                    Image(image, contentDescription = "Preview", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                } else {
-                    Box(Modifier.fillMaxSize().semantics { contentDescription = "Preview" })
-                }
-            }
-            if (wakeFades) {
-                Box(Modifier.matchParentSize().graphicsLayer { alpha = wake().coerceIn(0f, 1f) }) { picture() }
-            } else {
-                WakeStage(wake, standby = false) { picture() }
-            }
-            Text(
-                "PREVIEW · LOOP",
-                Modifier
-                    .align(Alignment.TopStart)
-                    .padding(6.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(3.dp))
-                    .padding(horizontal = 5.dp, vertical = 1.dp),
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 9.sp, lineHeight = 12.sp,
-                ),
-            )
-        }
-
-        Column(Modifier.weight(1f).fillMaxHeight()) {
-            Column(
-                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("Export GIF", style = MaterialTheme.typography.titleMedium)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    SectionLabel("Trim")
-                    TrimStrip(state, strip, { playhead }, trimColor, active)
-                    RangeLine(state)
-                }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        SectionLabel("Width")
-                        Segmented(GIF_WIDTHS, state.width, { "$it px" }, "width", motion, active, state::pickWidth)
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        SectionLabel("Frame rate")
-                        Segmented(GIF_FPS, state.fps, { "$it fps" }, "rate", motion, active, state::pickFps)
-                    }
-                }
-                Estimate(state, motion)
-                ProgressRow(state, motion)
-                DoneRow(state.done.takeIf { !state.exporting }, motion, okColor, okBackground)
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val done = state.done
-                AnimatedVisibility(
-                    done != null && !state.exporting,
-                    enter = fadeIn(tween(if (motion) GIF_ROW_MILLIS else GIF_FADE_MILLIS)),
-                    exit = fadeOut(tween(if (motion) GIF_LABEL_MILLIS else GIF_FADE_MILLIS)),
+    // The preview's shape. A switch to a clip of another shape glides (layoutSpring); the window's own size never does.
+    val glide = motion && !LocalReduceMotion.current
+    val shape = (video.width.toFloat() / video.height.coerceAtLeast(1)).coerceAtLeast(0.01f)
+    val glidingShape by animateFloatAsState(shape, if (glide) layoutSpring() else snap())
+    val aspect = if (glide) glidingShape.coerceAtLeast(0.01f) else shape
+    BoxWithConstraints(modifier.padding(16.dp)) {
+        val availableWidth = maxWidth
+        val availableHeight = maxHeight
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            // The preview, at the recording's aspect ratio, as tall as the window allows, but narrower when the controls
+            // beside it would otherwise lose their room; then it is centered vertically at its own height.
+            val previewWidth = gifPreviewWidth(availableWidth, availableHeight * aspect)
+            Box(Modifier.fillMaxHeight().width(previewWidth), contentAlignment = Alignment.Center) {
+                Box(
+                    // Kept composed at zero width (aspectRatio can't size a zero-width box).
+                    (if (previewWidth > 0.dp) Modifier.fillMaxWidth().aspectRatio(aspect) else Modifier.size(0.dp))
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black),
                 ) {
-                    TextButton(onClick = { if (active) done?.let { onReveal(it.file) } }) {
-                        Icon(Icons.Filled.FolderOpen, contentDescription = null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Show in folder")
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { if (active) onClose() }) { Text("Close") }
-                val label = when {
-                    state.exporting -> "Cancel"
-                    state.done != null -> "Export again"
-                    else -> "Export"
-                }
-                Button(
-                    onClick = {
-                        if (!active) return@Button
-                        if (state.exporting) {
-                            scope.launch { if (state.cancelExport()) currentSay(GIF_CANCELLED_MESSAGE) }
+                    val image = preview.shown?.takeIf { !it.asSkiaBitmap().isClosed }
+                        ?: firstFrame?.takeIf { !it.asSkiaBitmap().isClosed }
+                    val picture: @Composable () -> Unit = {
+                        if (image != null) {
+                            Image(image, contentDescription = "Preview", Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
                         } else {
-                            state.export(scope, currentExport, currentSay)
+                            Box(Modifier.fillMaxSize().semantics { contentDescription = "Preview" })
                         }
-                    },
-                    enabled = state.exporting || state.canExport,
-                    modifier = if (motion) Modifier.animateContentSize(tween(GIF_LABEL_MILLIS, easing = EmphasizedDecelerate)) else Modifier,
+                    }
+                    if (wakeFades) {
+                        Box(Modifier.matchParentSize().graphicsLayer { alpha = wake().coerceIn(0f, 1f) }) { picture() }
+                    } else {
+                        WakeStage(wake, standby = false) { picture() }
+                    }
+                    Text(
+                        "PREVIEW · LOOP",
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(3.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold, fontSize = 9.sp, lineHeight = 12.sp,
+                        ),
+                    )
+                }
+            }
+
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                Column(
+                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Icon(Icons.Filled.Gif, contentDescription = null, Modifier.size(20.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Crossfade(label, animationSpec = tween(if (motion) GIF_LABEL_MILLIS else GIF_FADE_MILLIS), label = "exportLabel") {
-                        Text(it, maxLines = 1)
+                    Text("Export GIF", style = MaterialTheme.typography.titleMedium)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SectionLabel("Trim")
+                        TrimStrip(state, strip, { playhead }, trimColor, active)
+                        RangeLine(state)
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            SectionLabel("Width")
+                            Segmented(GIF_WIDTHS, state.width, { "$it px" }, "width", motion, active, state::pickWidth)
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            SectionLabel("Frame rate")
+                            Segmented(GIF_FPS, state.fps, { "$it fps" }, "rate", motion, active, state::pickFps)
+                        }
+                    }
+                    Estimate(state, motion)
+                    ProgressRow(state, motion)
+                    DoneRow(state.done.takeIf { !state.exporting }, motion, okColor, okBackground)
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val done = state.done
+                    AnimatedVisibility(
+                        done != null && !state.exporting,
+                        enter = fadeIn(tween(if (motion) GIF_ROW_MILLIS else GIF_FADE_MILLIS)),
+                        exit = fadeOut(tween(if (motion) GIF_LABEL_MILLIS else GIF_FADE_MILLIS)),
+                    ) {
+                        TextButton(onClick = { if (active) done?.let { onReveal(it.file) } }) {
+                            Icon(Icons.Filled.FolderOpen, contentDescription = null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Show in folder")
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { if (active) onClose() }) { Text("Close") }
+                    val label = when {
+                        state.exporting -> "Cancel"
+                        state.done != null -> "Export again"
+                        else -> "Export"
+                    }
+                    Button(
+                        onClick = {
+                            if (!active) return@Button
+                            if (state.exporting) {
+                                scope.launch { if (state.cancelExport()) currentSay(GIF_CANCELLED_MESSAGE) }
+                            } else {
+                                state.export(scope, currentExport, currentSay)
+                            }
+                        },
+                        enabled = state.exporting || state.canExport,
+                        modifier = if (motion) Modifier.animateContentSize(layoutSpring()) else Modifier,
+                    ) {
+                        Icon(Icons.Filled.Gif, contentDescription = null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Crossfade(label, animationSpec = tween(if (motion) GIF_LABEL_MILLIS else GIF_FADE_MILLIS), label = "exportLabel") {
+                            Text(it, maxLines = 1)
+                        }
                     }
                 }
             }
@@ -886,12 +901,12 @@ private fun ProgressRow(state: GifExportState, motion: Boolean) {
         progress != null,
         modifier = Modifier.testTag("gif progress row"),
         enter = if (motion) {
-            expandVertically(tween(GIF_ROW_MILLIS, easing = EmphasizedDecelerate)) + fadeIn(tween(GIF_ROW_MILLIS))
+            expandVertically(layoutSpring()) + fadeIn(tween(GIF_ROW_MILLIS))
         } else {
             fadeIn(tween(GIF_FADE_MILLIS))
         },
         exit = if (motion) {
-            shrinkVertically(tween(GIF_ROW_MILLIS, easing = EmphasizedDecelerate)) + fadeOut(tween(GIF_ROW_MILLIS))
+            shrinkVertically(layoutSpring()) + fadeOut(tween(GIF_ROW_MILLIS))
         } else {
             fadeOut(tween(GIF_FADE_MILLIS))
         },
@@ -921,12 +936,12 @@ private fun DoneRow(done: GifDone?, motion: Boolean, ok: Color, okBackground: Co
     AnimatedVisibility(
         done != null,
         enter = if (motion) {
-            expandVertically(tween(GIF_ROW_MILLIS, easing = EmphasizedDecelerate)) + fadeIn(tween(GIF_ROW_MILLIS))
+            expandVertically(layoutSpring()) + fadeIn(tween(GIF_ROW_MILLIS))
         } else {
             fadeIn(tween(GIF_FADE_MILLIS))
         },
         exit = if (motion) {
-            shrinkVertically(tween(GIF_ROW_MILLIS, easing = EmphasizedDecelerate)) + fadeOut(tween(GIF_ROW_MILLIS))
+            shrinkVertically(layoutSpring()) + fadeOut(tween(GIF_ROW_MILLIS))
         } else {
             fadeOut(tween(GIF_FADE_MILLIS))
         },
@@ -991,3 +1006,10 @@ private fun DoneCheck(done: GifDone, motion: Boolean, ok: Color, tick: Color) {
             },
     )
 }
+
+/**
+ * The preview's width: its full-height width, but never so wide that the controls beside it (and the 16 dp gap) lose
+ * their 340 dp out of [available].
+ */
+fun gifPreviewWidth(available: Dp, fullHeightWidth: Dp): Dp =
+    minOf(fullHeightWidth, available - 16.dp - 340.dp).coerceAtLeast(0.dp)

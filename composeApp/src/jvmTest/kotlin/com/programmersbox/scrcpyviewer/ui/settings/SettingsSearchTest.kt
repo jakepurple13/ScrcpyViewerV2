@@ -1,5 +1,9 @@
 package com.programmersbox.scrcpyviewer.ui.settings
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CastConnected
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Palette
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -9,8 +13,8 @@ class SettingsSearchTest {
     private val titleBar = SettingEntry("title-bar", "Use system title bar")
     private val folder = SettingEntry("capture-dir", "Screenshots and recordings folder", "Where captures are saved.")
     private val version = SettingEntry("version", "Version v1.5")
-    private val appearance = SettingsCategory(SettingsCategoryId.Appearance, "Appearance", listOf(theme, titleBar))
-    private val mirroring = SettingsCategory(SettingsCategoryId.Mirroring, "Mirroring", listOf(folder, version))
+    private val appearance = SettingsCategory(SettingsCategoryId.Appearance, "Appearance", Icons.Outlined.Palette, listOf(theme, titleBar))
+    private val mirroring = SettingsCategory(SettingsCategoryId.Mirroring, "Mirroring", Icons.Outlined.CastConnected, listOf(folder, version))
     private val cats = listOf(appearance, mirroring)
 
     private fun ids(query: String) = searchSettings(cats, query).associate { m -> m.category.id to m.entries.map { it.id } }
@@ -53,7 +57,7 @@ class SettingsSearchTest {
         assertTrue(searchSettings(cats, "(").isEmpty())
         assertEquals(mapOf(SettingsCategoryId.Appearance to listOf("theme"), SettingsCategoryId.Mirroring to listOf("capture-dir", "version")), ids("."))
         assertEquals(mapOf(SettingsCategoryId.Mirroring to listOf("version")), ids("1.5"))
-        val v105 = SettingsCategory(SettingsCategoryId.Help, "Help", listOf(SettingEntry("x", "v105")))
+        val v105 = SettingsCategory(SettingsCategoryId.Help, "Help", Icons.Outlined.Info, listOf(SettingEntry("x", "v105")))
         assertTrue(searchSettings(listOf(v105), "1.5").isEmpty())
     }
 

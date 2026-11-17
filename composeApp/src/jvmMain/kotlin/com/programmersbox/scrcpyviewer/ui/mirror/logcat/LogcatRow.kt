@@ -35,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -48,6 +49,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.isAltPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -66,8 +71,11 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
-import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
+import kotlin.math.roundToInt
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** The log rows' font: monospace 12 sp, tabular digits. */
 internal val LogRowStyle = LogcatMono.copy(fontSize = 12.sp, lineHeight = 18.sp, fontFeatureSettings = "tnum")
@@ -85,8 +93,9 @@ private val MIN_TRACE_WIDTH = 480.dp
 
 /**
  * Column widths for the header and every row. [ids] animates 1 → 0 as PID-TID and Package hide (compact view or a
- * sheet under 600 dp), [squeeze] 0 → 1 into compact view. Widths are read in layout, so their animation doesn't
- * recompose rows; [idsShown] flips only when the columns appear or finish hiding.
+ * sheet under 600 dp), [squeeze] 0 → 1 into compact view, [stack] 0 → 1 into two-line rows (under 420 dp, see
+ * [LogcatRowShape.Stacked]). Widths and the stack are read in layout, so their animation doesn't recompose rows;
+ * [idsShown], [stacked] and [headerShown] flip only at the animation's ends or middle.
  */
 @Stable
 internal class LogcatColumns(
@@ -94,14 +103,30 @@ internal class LogcatColumns(
     private val ids: State<Float>,
     private val squeeze: State<Float>,
     private val narrow: State<Float>,
+    private val stack: State<Float> = mutableFloatStateOf(0f),
 ) {
     val idsShown: Boolean by derivedStateOf { ids.value > 0.001f }
 
+    /** True from halfway into two-line rows: the time drops its millis (its place is measured as if it already had). */
+    val stacked: Boolean by derivedStateOf { stack.value >= 0.5f }
+
+    /**
+     * True as soon as rows start to stack, until they are back on one line: an unwrapped message gets its 2 lines
+     * from the start, so the row's height rides the glide (see [rowCells]).
+     */
+    val stacking: Boolean by derivedStateOf { stack.value > 0f }
+
+    /** False once rows have finished stacking: the header has folded away. */
+    val headerShown: Boolean by derivedStateOf { stack.value < 0.999f }
+
+    /** 0 for one-line rows, 1 for two-line rows, in between while they glide (read in layout). */
+    fun stack(): Float = stack.value.coerceIn(0f, 1f)
+
     // Mockup grid: 92 86 128 150 20, compact 62 112 20, each plus a 10 dp gap.
     fun time(): Dp = lerp(92f, 62f, squeeze.value) + GAP.dp
-    fun pid(): Dp = (86f + GAP).dp * ids.value
+    fun pid(): Dp = (86f + GAP).dp * ids.value.coerceAtLeast(0f)
     fun tag(): Dp = lerp(128f, 112f, squeeze.value) + GAP.dp
-    fun pkg(): Dp = (150f + GAP).dp * ids.value
+    fun pkg(): Dp = (150f + GAP).dp * ids.value.coerceAtLeast(0f)
 
     /**
      * Where trace text starts in a row [rowWidth] wide. The mockup's indents (386 dp, 224 dp in compact view, 10 dp
@@ -122,14 +147,19 @@ internal class LogcatColumns(
     private fun lerp(a: Float, b: Float, t: Float) = (a + (b - a) * t).dp
 }
 
-/** Columns for [compact] view in a sheet that is [narrow] (under 600 dp), animating 250 ms with [motion]. */
+/**
+ * Columns for [compact] view in rows of [shape]. Every column change (the ID columns hiding, compact view's narrower
+ * columns, two-line rows) glides with [layoutSpring] when [motion] and the OS allows it, so they move on one clock;
+ * otherwise each lands in the same frame.
+ */
 @Composable
-internal fun rememberLogcatColumns(compact: Boolean, narrow: Boolean, motion: Boolean): LogcatColumns {
-    val spec = if (motion) tween<Float>(250, easing = EmphasizedDecelerate) else snap()
-    val ids = animateFloatAsState(if (compact || narrow) 0f else 1f, spec)
-    val squeeze = animateFloatAsState(if (compact) 1f else 0f, spec)
-    val tight = animateFloatAsState(if (narrow) 1f else 0f, spec)
-    return remember(compact) { LogcatColumns(compact, ids, squeeze, tight) }
+internal fun rememberLogcatColumns(compact: Boolean, shape: LogcatRowShape, motion: Boolean): LogcatColumns {
+    val glide = motion && !LocalReduceMotion.current
+    val ids = layoutFraction(!(compact || shape != LogcatRowShape.Full), glide)
+    val squeeze = layoutFraction(compact, glide)
+    val tight = layoutFraction(shape != LogcatRowShape.Full, glide)
+    val stack = layoutFraction(shape == LogcatRowShape.Stacked, glide)
+    return remember(compact, ids, squeeze, tight, stack) { LogcatColumns(compact, ids, squeeze, tight, stack) }
 }
 
 /** Sizes the element to [width] (read during layout), clipping what doesn't fit. */
@@ -153,11 +183,13 @@ private fun Modifier.startBy(start: (Dp) -> Dp): Modifier = layout { measurable,
 /** The header over the list: column names for the [columns] shown. */
 @Composable
 internal fun LogcatHeader(columns: LogcatColumns) {
+    // Two-line rows have no columns to name: the header folds up as they stack.
+    if (!columns.headerShown) return
     val scheme = MaterialTheme.colorScheme
     val style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, letterSpacing = 0.6.sp)
     val edge = scheme.outlineVariant
     Row(
-        Modifier.fillMaxWidth().background(scheme.surfaceContainerLow)
+        Modifier.foldBy(columns::stack).fillMaxWidth().background(scheme.surfaceContainerLow)
             .drawBehind { drawLine(edge, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), 1f) }
             .padding(horizontal = PAD.dp, vertical = 6.dp),
     ) {
@@ -168,6 +200,13 @@ internal fun LogcatHeader(columns: LogcatColumns) {
         Spacer(Modifier.width((BADGE + GAP).dp))
         Text("MESSAGE", style = style, color = scheme.onSurfaceVariant, maxLines = 1)
     }
+}
+
+/** Shows the element's top (1 - [folded]) of its height (read during layout), clipping the rest. */
+private fun Modifier.foldBy(folded: () -> Float): Modifier = clipToBounds().layout { measurable, constraints ->
+    val p = measurable.measure(constraints)
+    val h = (p.height * (1f - folded().coerceIn(0f, 1f))).roundToInt()
+    layout(p.width, h) { p.place(0, 0) }
 }
 
 @Composable
@@ -188,6 +227,8 @@ internal class LogcatRowActions(
 /**
  * One log entry: time, PID-TID, tag, package, level badge and message, then its folded trace when [expanded].
  * Crash rows sit on a red tint and, with [flash], flash red once (1.2 s). [words] are highlighted in the message.
+ * In two-line rows ([LogcatColumns.stack]) the same cells move: the badge, tag and HH:mm:ss on the first line, the
+ * message under the tag on the second (2 lines, or all of it with [wrap]).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -216,42 +257,144 @@ internal fun LogcatLineRow(
         if (f > 0f) drawRect(flashColor.copy(alpha = flashColor.alpha * f))
     }
     val messageColor = LogcatColors.message(line.level)
+    val timeText = if (columns.compact || columns.stacked) line.time.take(STACKED_TIME_CHARS) else line.time
+    val stacking = columns.stacking
     Column(Modifier.fillMaxWidth().then(bg)) {
-        Row(Modifier.padding(horizontal = PAD.dp, vertical = 1.dp), verticalAlignment = Alignment.Top) {
-            val dim = scheme.onSurfaceVariant
-            // Only the message and trace are selectable. Compose's selection across texts side by side, next to a
-            // wrapped message, can end up with start > end and crash in draw.
-            DisableSelection {
-                Text(if (columns.compact) line.time.take(8) else line.time, Modifier.widthBy(columns::time), style = LogRowStyle, color = dim, maxLines = 1, softWrap = false)
-                if (columns.idsShown) {
-                    Text("${line.pid}-${line.tid}", Modifier.widthBy(columns::pid), style = LogRowStyle, color = dim, maxLines = 1, softWrap = false)
-                }
-                Box(Modifier.widthBy(columns::tag)) {
-                    FilterCell(line.tag, LogcatColors.tag(line.tag)) { exclude -> actions.filter("tag", line.tag, exclude) }
-                }
-                if (columns.idsShown) {
-                    Box(Modifier.widthBy(columns::pkg)) {
-                        val pkg = item.pkg
-                        if (pkg != null) FilterCell(pkg, dim) { exclude -> actions.filter("package", pkg, exclude) }
+        Layout(
+            content = {
+                val dim = scheme.onSurfaceVariant
+                // Only the message and trace are selectable. Compose's selection across texts side by side, next to a
+                // wrapped message, can end up with start > end and crash in draw.
+                // The cells in [rowCells]'s order: time, (PID-TID), tag, (package), badge, message.
+                DisableSelection {
+                    Text(timeText, Modifier.clipToBounds(), style = LogRowStyle, color = dim, maxLines = 1, softWrap = false)
+                    if (columns.idsShown) {
+                        Text("${line.pid}-${line.tid}", Modifier.clipToBounds(), style = LogRowStyle, color = dim, maxLines = 1, softWrap = false)
                     }
+                    Box(Modifier.clipToBounds()) {
+                        FilterCell(line.tag, LogcatColors.tag(line.tag)) { exclude -> actions.filter("tag", line.tag, exclude) }
+                    }
+                    if (columns.idsShown) {
+                        Box(Modifier.clipToBounds()) {
+                            val pkg = item.pkg
+                            if (pkg != null) FilterCell(pkg, dim) { exclude -> actions.filter("package", pkg, exclude) }
+                        }
+                    }
+                    LevelBadge(line.level)
                 }
-                LevelBadge(line.level)
-            }
-            Spacer(Modifier.width(GAP.dp))
-            Row(Modifier.weight(1f)) {
-                MessageText(line.message, words, messageColor, line.level == LogLevel.Assert, wrap, Modifier.weight(1f, fill = false))
-                if (entry.hasTrace) DisableSelection { TraceToggle(entry.trace.size, expanded, motion) { actions.toggle(entry.seq) } }
-            }
-        }
+                Row {
+                    MessageText(
+                        line.message, words, messageColor, line.level == LogLevel.Assert, wrap,
+                        if (stacking) STACKED_MESSAGE_LINES else 1, Modifier.weight(1f, fill = false),
+                    )
+                    if (entry.hasTrace) DisableSelection { TraceToggle(entry.trace.size, expanded, motion) { actions.toggle(entry.seq) } }
+                }
+            },
+            // Mid-glide an unwrapped message's second line can reach past the row's height, which rides the glide.
+            modifier = Modifier.clipToBounds(),
+        ) { measurables, constraints -> rowCells(measurables, constraints, columns, timeText.length, wrap) }
         if (entry.hasTrace) {
             AnimatedVisibility(
                 expanded,
-                enter = if (motion) expandVertically(tween(260, easing = EmphasizedDecelerate)) + fadeIn(tween(200)) else EnterTransition.None,
-                exit = if (motion) shrinkVertically(tween(260, easing = EmphasizedAccelerate)) + fadeOut(tween(160)) else ExitTransition.None,
+                enter = if (motion) expandVertically(layoutSpring()) + fadeIn(tween(200)) else EnterTransition.None,
+                exit = if (motion) shrinkVertically(layoutSpring()) + fadeOut(tween(160)) else ExitTransition.None,
             ) {
                 TraceText(entry.trace, mine, actions.copyFrame, Modifier.startBy(columns::traceIndent).padding(end = PAD.dp, bottom = 2.dp))
             }
         }
+    }
+}
+
+/** An unwrapped message's lines in a two-line row. */
+private const val STACKED_MESSAGE_LINES = 2
+
+/** The time's characters on a two-line row (and in compact view): HH:mm:ss. */
+private const val STACKED_TIME_CHARS = 8
+
+/** Between the badge and the tag on a two-line row's first line. */
+private const val STACK_BADGE_GAP = 8 // dp
+
+private fun lerpPx(a: Int, b: Int, t: Float): Int = (a + (b - a) * t).roundToInt()
+
+private fun fixedWidth(w: Int): Constraints = Constraints.fixedWidth(w.coerceAtLeast(0))
+
+/**
+ * Lays a row's cells out on one line (time, PID-TID, tag, package at their column widths, the badge, then the
+ * message filling the rest, all top-aligned in 1 dp of vertical padding, as a Row would), or at [LogcatColumns.stack]
+ * 1 on two: the badge, the tag and the time at the end, then the message from the tag's start. Fractions between
+ * place and size each cell part way, so the cells glide between the two and the row's height follows: from one line
+ * (an unwrapped message counted at one line's height) to the line plus the whole message.
+ *
+ * [measurables] are the cells in order, PID-TID and package only when there are 6. The time's two-line place is
+ * measured for its HH:mm:ss form, [timeChars] being what it shows now (monospace), so the place doesn't jump when the
+ * millis drop halfway.
+ */
+private fun MeasureScope.rowCells(
+    measurables: List<Measurable>,
+    constraints: Constraints,
+    columns: LogcatColumns,
+    timeChars: Int,
+    wrap: Boolean,
+): MeasureResult {
+    val ids = measurables.size == 6
+    val timeM = measurables[0]
+    val pidM = if (ids) measurables[1] else null
+    val tagM = measurables[if (ids) 2 else 1]
+    val pkgM = if (ids) measurables[3] else null
+    val badgeM = measurables[if (ids) 4 else 2]
+    val messageM = measurables[if (ids) 5 else 3]
+    val width = constraints.maxWidth
+    val pad = PAD.dp.roundToPx()
+    val gap = GAP.dp.roundToPx()
+    val top = 1.dp.roundToPx()
+    val s = columns.stack()
+
+    // One line, as the Row did: each fixed cell gets its column width, at most what is left.
+    var left = (width - 2 * pad).coerceAtLeast(0)
+    val timeCol = columns.time().roundToPx().coerceIn(0, left)
+    left -= timeCol
+    val pidCol = if (ids) columns.pid().roundToPx().coerceIn(0, left) else 0
+    left -= pidCol
+    val tagCol = columns.tag().roundToPx().coerceIn(0, left)
+    left -= tagCol
+    val pkgCol = if (ids) columns.pkg().roundToPx().coerceIn(0, left) else 0
+    left -= pkgCol
+    val badge = badgeM.measure(Constraints(maxWidth = left))
+    val inlineMessage = (left - badge.width - gap).coerceAtLeast(0)
+    val timeX0 = pad
+    val pidX0 = timeX0 + timeCol
+    val tagX0 = pidX0 + pidCol
+    val pkgX0 = tagX0 + tagCol
+    val badgeX0 = pkgX0 + pkgCol
+    val messageX0 = badgeX0 + badge.width + gap
+
+    // Two lines: badge, tag, time at the end; the message under the tag. Not needed on one line.
+    val timeOwn = if (s == 0f) {
+        timeCol
+    } else {
+        val now = timeM.maxIntrinsicWidth(Constraints.Infinity)
+        val own = if (timeChars > STACKED_TIME_CHARS) now * STACKED_TIME_CHARS / timeChars else now
+        own.coerceAtMost((width - 2 * pad).coerceAtLeast(0))
+    }
+    val tagX1 = pad + badge.width + STACK_BADGE_GAP.dp.roundToPx()
+    val timeX1 = (width - pad - timeOwn).coerceAtLeast(tagX1)
+
+    val time = timeM.measure(fixedWidth(lerpPx(timeCol, timeOwn, s)))
+    val pid = pidM?.measure(fixedWidth(pidCol))
+    val tag = tagM.measure(fixedWidth(lerpPx(tagCol, timeX1 - tagX1, s)))
+    val pkg = pkgM?.measure(fixedWidth(pkgCol))
+    val message = messageM.measure(fixedWidth(lerpPx(inlineMessage, width - pad - tagX1, s)))
+    val line1 = maxOf(time.height, tag.height, badge.height, pid?.height ?: 0, pkg?.height ?: 0)
+    val oneLine = if (wrap) message.height else minOf(message.height, line1)
+    val height = lerpPx(top + maxOf(line1, oneLine) + top, top + line1 + message.height + top, s)
+    val messageY = top + lerpPx(0, line1, s)
+    return layout(width, height) {
+        time.placeRelative(lerpPx(timeX0, timeX1, s), top)
+        pid?.placeRelative(lerpPx(pidX0, tagX1, s), top)
+        tag.placeRelative(lerpPx(tagX0, tagX1, s), top)
+        pkg?.placeRelative(lerpPx(pkgX0, tagX1, s), top)
+        badge.placeRelative(lerpPx(badgeX0, pad, s), top)
+        message.placeRelative(lerpPx(messageX0, tagX1, s), messageY)
     }
 }
 
@@ -283,15 +426,17 @@ private fun LevelBadge(level: LogLevel) {
 private val BadgeShape = RoundedCornerShape(4.dp)
 
 @Composable
-private fun MessageText(message: String, words: List<String>, color: Color, bold: Boolean, wrap: Boolean, modifier: Modifier) {
+private fun MessageText(message: String, words: List<String>, color: Color, bold: Boolean, wrap: Boolean, lines: Int, modifier: Modifier) {
     val mark = LogcatColors.level(LogLevel.Warn).first.copy(alpha = 0.45f)
     val weight = if (bold) FontWeight.SemiBold else null
-    val maxLines = if (wrap) Int.MAX_VALUE else 1
+    // [lines] unwrapped; all of it with wrap on.
+    val maxLines = if (wrap) Int.MAX_VALUE else lines
+    val softWrap = wrap || lines > 1
     if (words.isEmpty()) {
-        Text(message, modifier, style = LogRowStyle, color = color, fontWeight = weight, maxLines = maxLines, overflow = TextOverflow.Ellipsis, softWrap = wrap)
+        Text(message, modifier, style = LogRowStyle, color = color, fontWeight = weight, maxLines = maxLines, overflow = TextOverflow.Ellipsis, softWrap = softWrap)
     } else {
         val text = remember(message, words, mark) { highlight(message, words, mark) }
-        Text(text, modifier, style = LogRowStyle, color = color, fontWeight = weight, maxLines = maxLines, overflow = TextOverflow.Ellipsis, softWrap = wrap)
+        Text(text, modifier, style = LogRowStyle, color = color, fontWeight = weight, maxLines = maxLines, overflow = TextOverflow.Ellipsis, softWrap = softWrap)
     }
 }
 
