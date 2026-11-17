@@ -294,7 +294,9 @@ class FilesNarrowTest {
             } else {
                 assertTrue(progress.top >= destination.bottom, "$width: $progress under $destination")
             }
-            assertTrue(progress.height < 1.6f * destination.height, "$width: the status is one line: $progress")
+            // One line at 360; at 280 the status may wrap to a second line (wider fonts on Linux), never a third.
+            val lines = if (width == 360) 1.6f else 2.6f
+            assertTrue(progress.height < lines * destination.height, "$width: the status fits its lines: $progress")
         }
     }
 
