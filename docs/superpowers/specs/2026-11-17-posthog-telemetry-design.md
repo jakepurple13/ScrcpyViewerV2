@@ -94,7 +94,7 @@ credentials must never be committed.
   to 100 events to `{host}/batch/` with `api_key`. Flushes every 30 s, at startup (leftovers from last run), and
   during `AppShutdown` with a 2 s timeout. On failure: exponential backoff up to 10 min; 4xx other than 429 drops the
   batch. Never logs to the UI.
-- **`Scrubber`**: replaces the user's home path with `~`, device serials seen this session and IPv4/IPv6 addresses
+- **`Scrubber`**: replaces the user's home path with `~` (any case, `/` or `\` separators, whole folder only), device serials seen this session and IPv4/IPv6 addresses
   with `<device>` / `<ip>`, and caps strings at 500 characters. Applied to every property value and stack frame.
   Serials are kept in memory only, never written to disk.
 - **Exception messages** (decided): `$exception_list[].value` carries the message only for exception types that

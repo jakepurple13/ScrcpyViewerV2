@@ -90,7 +90,8 @@ class TelemetryQueue(
         rewrite(all)
     }
 
-    private fun lineCount(): Int = readLines().size
+    /** The file ends with a newline, so the empty piece after it is not an event. */
+    private fun lineCount(): Int = readLines().count { it.isNotEmpty() }
 
     /** Lenient decode: bytes cut mid-character by a crash become U+FFFD instead of throwing. */
     private fun readLines(): List<String> = Files.readAllBytes(file).toString(Charsets.UTF_8).lines()

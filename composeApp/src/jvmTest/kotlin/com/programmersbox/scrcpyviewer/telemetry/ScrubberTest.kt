@@ -6,6 +6,21 @@ import kotlin.test.assertEquals
 class ScrubberTest {
     @Test fun homePathBecomesTilde() = assertEquals("~/x/y.txt", Scrubber(home = "/Users/jake").scrub("/Users/jake/x/y.txt"))
 
+    @Test fun windowsHomeMatchesAnyCaseAndSeparator() {
+        val s = Scrubber(home = "C:\\Users\\Jake")
+        assertEquals("~\\x", s.scrub("C:\\Users\\Jake\\x"))
+        assertEquals("~/x", s.scrub("c:/users/jake/x"))
+        assertEquals("at ~", s.scrub("at C:\\Users\\Jake"))
+    }
+
+    @Test fun homeOnlyMatchesAWholeFolder() {
+        val s = Scrubber(home = "/Users/jake")
+        assertEquals("/Users/jake2/x", s.scrub("/Users/jake2/x"))
+        // A dot may end a sentence, so it still counts as the end of the folder.
+        assertEquals("in ~.", s.scrub("in /Users/jake."))
+        assertEquals("~: missing", s.scrub("/Users/jake: missing"))
+    }
+
     @Test fun rememberedSerialIsReplaced() {
         val s = Scrubber("/h"); s.rememberSerial("R5CX12GDWPZ")
         assertEquals("dev <device> gone", s.scrub("dev R5CX12GDWPZ gone"))
