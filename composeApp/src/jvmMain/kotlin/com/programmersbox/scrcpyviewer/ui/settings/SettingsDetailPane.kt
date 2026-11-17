@@ -4,7 +4,6 @@ import com.programmersbox.scrcpyviewer.ui.theme.stylePane
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,15 +19,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
-import com.programmersbox.scrcpyviewer.ui.common.BackArrowRow
 import com.programmersbox.scrcpyviewer.ui.common.ControlSize
 import com.programmersbox.scrcpyviewer.ui.common.staggerDelayMillis
 import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
 
-/**
- * One category's settings as rows in a card; [entries] is the (possibly search-filtered) subset to show. [onBack] is set
- * while the category is pushed over the list in a narrow window: a back arrow starts the title row.
- */
+/** One category's settings as rows in a card; [entries] is the (possibly search-filtered) subset to show. */
 @Composable
 fun SettingsDetailPane(
     category: SettingsCategory?,
@@ -36,16 +31,12 @@ fun SettingsDetailPane(
     query: String,
     bindings: SettingsBindings,
     modifier: Modifier = Modifier,
-    onBack: (() -> Unit)? = null,
 ) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(28.dp)) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
             bindings.state.persistenceError?.let { PersistenceError(it) }
-            if (category == null) {
-                onBack?.let { BackArrowRow(it) { m -> Spacer(m) } }
-                return@Column
-            }
-            BackArrowRow(onBack) { m -> Text(category.title, m, style = MaterialTheme.typography.headlineSmall) }
+            if (category == null) return@Column
+            Text(category.title, Modifier.fillMaxWidth(), style = MaterialTheme.typography.headlineSmall)
             Surface(Modifier.stylePane(MaterialTheme.shapes.large), color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large) {
                 // The rows fill in one after another when they appear and whenever search changes which are shown.
                 val shownIds = remember(entries) { entries.map { it.id } }

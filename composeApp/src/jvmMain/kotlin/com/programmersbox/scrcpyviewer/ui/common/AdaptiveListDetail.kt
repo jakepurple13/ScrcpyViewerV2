@@ -213,8 +213,7 @@ private class PushMotion(var mode: PaneMode, var target: Float, var fullWidth: B
  * [DetailBackButton] for it at the start of their header. Esc (unless a text field in the detail has focus) and ⌘[
  * (Ctrl+[ elsewhere) go back too, and Back hands keyboard focus to the row the item was opened from. Losing the
  * selection clears the push. The covered list takes no pointer input or focus and leaves the semantics tree; the
- * detail leaving after Back takes none either. [gap] is the space between the panes in two panes (its hairline is
- * centred in it); a fixed split ([resizable] false) can make it just the 1 dp hairline.
+ * detail leaving after Back takes none either.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -227,15 +226,14 @@ fun AdaptiveListDetail(
     detail: @Composable (onBack: (() -> Unit)?) -> Unit,
     modifier: Modifier = Modifier,
     resizable: Boolean = true,
-    gap: Dp = DividerWidth,
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
         val contentWidth = maxWidth
         val density = LocalDensity.current
         val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
-        val mode = paneMode(contentWidth, listMinWidth, panes.pushed && hasSelection, windowWidth, divider = gap)
+        val mode = paneMode(contentWidth, listMinWidth, panes.pushed && hasSelection, windowWidth)
         val reduceMotion = LocalReduceMotion.current
-        val maxListWidth = maxOf(listMinWidth, contentWidth - gap - DetailMinWidth)
+        val maxListWidth = maxOf(listMinWidth, contentWidth - DividerWidth - DetailMinWidth)
         SideEffect {
             with(density) { panes.limits.update(minFirst = listMinWidth.toPx(), maxFirst = maxListWidth.toPx()) }
         }
@@ -262,7 +260,7 @@ fun AdaptiveListDetail(
             noOvershootPastTarget = mode == PaneMode.TwoPane,
         )
         val gapWidth by animateDpAsState(
-            targetValue = if (mode == PaneMode.TwoPane) gap else 0.dp,
+            targetValue = if (mode == PaneMode.TwoPane) DividerWidth else 0.dp,
             animationSpec = if (reduceMotion) snap() else layoutSpring(),
             label = "gapWidth",
         )
