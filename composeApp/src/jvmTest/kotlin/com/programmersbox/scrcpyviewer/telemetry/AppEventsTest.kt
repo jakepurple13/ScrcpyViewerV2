@@ -113,10 +113,11 @@ class AppEventsTest {
     }
 
     @Test
-    fun adbExceptionMessageHasRememberedSerialScrubbed() {
+    fun adbExceptionMessageIsNotSent() {
+        // adb's text can name the device, so AdbException is not a SafeMessage: only its type and frames are sent.
         val scrubber = Scrubber("/h").also { it.rememberSerial("R5CX12GDWPZ") }
         val p = exceptionProperties(AdbException("device 'R5CX12GDWPZ' not found"), handled = true, scrubber)
         val value = p.getValue("\$exception_list").jsonArray[0].jsonObject.getValue("value").jsonPrimitive.content
-        assertEquals("device '<device>' not found", value)
+        assertEquals("", value)
     }
 }
