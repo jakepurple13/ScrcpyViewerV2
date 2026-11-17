@@ -49,6 +49,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.files.DEVICE_ROOT
@@ -439,7 +440,7 @@ internal fun DropChip(label: String?, motion: Boolean, modifier: Modifier = Modi
         Surface(shape = styledCorner(16.dp), color = colors.inverseSurface, tonalElevation = 3.dp, shadowElevation = 3.dp) {
             Text(
                 shown[0].orEmpty(), Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                fontSize = 12.sp, color = colors.inverseOnSurface, maxLines = 1,
+                fontSize = 12.sp, color = colors.inverseOnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
     }

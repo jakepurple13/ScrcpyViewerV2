@@ -1,6 +1,17 @@
 package com.programmersbox.scrcpyviewer.ui.mirror.files
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.unit.Constraints
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.MutableTransitionState
@@ -109,15 +120,15 @@ internal fun FilesDialogHost(browser: FilesBrowser, motion: Boolean) {
             },
         ) {
             when (shown) {
-                is FilesDialog.Delete -> DeleteDialog(browser, shown)
-                is FilesDialog.Clash -> ClashDialog(browser, shown)
+                is FilesDialog.Delete -> DeleteDialog(browser, shown, motion)
+                is FilesDialog.Clash -> ClashDialog(browser, shown, motion)
             }
         }
     }
 }
 
 @Composable
-private fun DeleteDialog(browser: FilesBrowser, dialog: FilesDialog.Delete) {
+private fun DeleteDialog(browser: FilesBrowser, dialog: FilesDialog.Delete, motion: Boolean) {
     val colors = MaterialTheme.colorScheme
     val names = dialog.names
     // From the whole listing, not the visible rows: a selected folder the filter now hides keeps its "/".
@@ -131,6 +142,7 @@ private fun DeleteDialog(browser: FilesBrowser, dialog: FilesDialog.Delete) {
             DialogButton("Cancel") { browser.dismissDialog() },
             DialogButton("Delete", danger = true, initialFocus = true) { browser.confirmDelete() },
         ),
+        motion = motion,
     ) {
         Names(listedNames(names) { it in dirs })
         if (dialog.hasFolder) Text("Folders are deleted with everything inside.", fontSize = 13.sp, color = colors.onSurfaceVariant)
@@ -139,7 +151,7 @@ private fun DeleteDialog(browser: FilesBrowser, dialog: FilesDialog.Delete) {
 }
 
 @Composable
-private fun ClashDialog(browser: FilesBrowser, dialog: FilesDialog.Clash) {
+private fun ClashDialog(browser: FilesBrowser, dialog: FilesDialog.Clash, motion: Boolean) {
     val clashing = dialog.clashing
     val where = folderLabel(dialog.toDir)
     val title = if (clashing.size == 1) "“${clashing.single()}” is already in $where" else "${clashing.size} files are already in $where"
@@ -150,6 +162,7 @@ private fun ClashDialog(browser: FilesBrowser, dialog: FilesDialog.Clash) {
             DialogButton("Keep both") { dialog.onChoice(ClashChoice.KeepBoth) },
             if (dialog.canReplace) DialogButton("Replace") { dialog.onChoice(ClashChoice.Replace) } else null,
         ),
+        motion = motion,
     ) {
         if (clashing.size > 1) Names(listedNames(clashing) { false })
         if (!dialog.canReplace) {
@@ -172,23 +185,35 @@ private fun Names(lines: List<String>) {
 
 private class DialogButton(val label: String, val danger: Boolean = false, val initialFocus: Boolean = false, val onClick: () -> Unit)
 
-/** A card with [title], [body] and [buttons] at its end; focus starts on the button marked for it and stays inside. */
+/**
+ * A card with [title], [body] and [buttons] at its end; focus starts on the button marked for it and stays inside.
+ * Narrow ([FilesLayout.dialogButtonsStacked]) the buttons stack at full width, the filled one on top, and the card
+ * keeps a smaller margin; both glide with [layoutSpring].
+ */
 @Composable
-private fun DialogCard(title: String, buttons: List<DialogButton>, body: @Composable () -> Unit) {
+private fun DialogCard(title: String, buttons: List<DialogButton>, motion: Boolean, body: @Composable () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val requesters = remember(buttons.size) { List(buttons.size) { FocusRequester() } }
     // Which button has focus, for Tab's cycle. A plain holder.
     val focused = remember { IntArray(1) { -1 } }
     val start = buttons.indexOfFirst { it.initialFocus }.coerceAtLeast(0)
     LaunchedEffect(Unit) { runCatching { requesters[start].requestFocus() } }
+    val stacked = LocalFilesLayout.current.dialogButtonsStacked
+    val glide = motion && !LocalReduceMotion.current
+    val stack = layoutFraction(stacked, glide)
+    val margin by layoutDp(if (stacked) STACKED_MARGIN else 24.dp, glide)
+    // The filled (danger) button goes on top of the stack; the rest keep their order under it.
+    val stackOrder = remember(buttons) { stackOrder(buttons.map { it.danger }) }
+    // Tab follows what the eye sees: the stack's order while stacked, the row's otherwise.
+    val tabOrder = if (stacked) stackOrder else buttons.indices.toList()
     Surface(
-        Modifier.padding(24.dp).widthIn(max = 360.dp)
+        Modifier.padding(margin).widthIn(max = 360.dp)
             .onPreviewKeyEvent { event ->
                 if (event.key != Key.Tab) return@onPreviewKeyEvent false
                 if (event.type == KeyEventType.KeyDown) {
                     val from = if (focused[0] < 0) start else focused[0]
                     val step = if (event.isShiftPressed) -1 else 1
-                    runCatching { requesters[(from + step).mod(buttons.size)].requestFocus() }
+                    runCatching { requesters[nextInOrder(tabOrder, from, step)].requestFocus() }
                 }
                 true
             },
@@ -200,12 +225,8 @@ private fun DialogCard(title: String, buttons: List<DialogButton>, body: @Compos
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             body()
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                buttons.forEachIndexed { i, b ->
+            Layout(
+                content = { buttons.forEachIndexed { i, b ->
                     val m = Modifier.focusRequester(requesters[i]).onFocusChanged {
                         if (it.isFocused) focused[0] = i else if (focused[0] == i) focused[0] = -1
                     }
@@ -217,8 +238,60 @@ private fun DialogCard(title: String, buttons: List<DialogButton>, body: @Compos
                     } else {
                         TextButton(onClick = b.onClick, modifier = m) { Text(b.label) }
                     }
-                }
+                } },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            ) { measurables, constraints ->
+                dialogButtons(measurables, constraints, stack.value.coerceIn(0f, 1f), stackOrder)
             }
+        }
+    }
+}
+
+/** Button indices top to bottom when stacked: the filled ([danger]) ones first, the rest in their order. */
+internal fun stackOrder(danger: List<Boolean>): List<Int> = danger.indices.sortedBy { if (danger[it]) 0 else 1 }
+
+/** The index [step] places after [from] in [order], wrapping around. */
+internal fun nextInOrder(order: List<Int>, from: Int, step: Int): Int {
+    val at = order.indexOf(from).coerceAtLeast(0)
+    return order[(at + step).mod(order.size)]
+}
+
+/** The card's margin in the tab while its buttons are stacked. */
+private val STACKED_MARGIN = 12.dp
+private val BUTTON_GAP = 6.dp
+
+/**
+ * The buttons in a row at the end, 6 dp apart and centred on the row (as a Row), or ([stacked] 1) each at full width
+ * in [stackOrder], 6 dp apart; between, every button part way, so they glide.
+ */
+private fun MeasureScope.dialogButtons(measurables: List<Measurable>, constraints: Constraints, stacked: Float, stackOrder: List<Int>): MeasureResult {
+    val width = constraints.maxWidth
+    val gap = BUTTON_GAP.roundToPx()
+    val natural = measurables.map { it.maxIntrinsicWidth(constraints.maxHeight) }
+    val placeables = measurables.mapIndexed { i, m ->
+        val w = lerpPx(natural[i].coerceAtMost(width), width, stacked)
+        m.measure(Constraints(minWidth = w, maxWidth = w, maxHeight = constraints.maxHeight))
+    }
+    val rowH = placeables.maxOfOrNull { it.height } ?: 0
+    val stackH = placeables.sumOf { it.height } + gap * (placeables.size - 1).coerceAtLeast(0)
+    val height = lerpPx(rowH, stackH, stacked)
+    // Row: from the end, as Arrangement.spacedBy(6.dp, Alignment.End).
+    val rowWidth = placeables.sumOf { it.width } + gap * (placeables.size - 1).coerceAtLeast(0)
+    val rowX = IntArray(placeables.size)
+    var x = width - rowWidth
+    placeables.forEachIndexed { i, p ->
+        rowX[i] = x
+        x += p.width + gap
+    }
+    val stackY = IntArray(placeables.size)
+    var y = 0
+    for (i in stackOrder) {
+        stackY[i] = y
+        y += placeables[i].height + gap
+    }
+    return layout(width, height) {
+        placeables.forEachIndexed { i, p ->
+            p.placeRelative(lerpPx(rowX[i], 0, stacked), lerpPx(Alignment.CenterVertically.align(p.height, rowH), stackY[i], stacked))
         }
     }
 }

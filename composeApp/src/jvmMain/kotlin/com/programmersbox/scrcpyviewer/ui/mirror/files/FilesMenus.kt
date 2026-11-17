@@ -96,14 +96,20 @@ private const val MENU_OUT_MILLIS = 110
 internal sealed interface FilesMenu {
     val at: Offset
 
-    /** The item menu, for [names] (the selection when it opened). */
-    data class Item(override val at: Offset, val names: Set<String>) : FilesMenu
+    /**
+     * The item menu, for [names] (the selection when it opened). [renameDeleteFirst]: opened from a selection bar that
+     * folded its Rename and Delete, which then lead the menu.
+     */
+    data class Item(override val at: Offset, val names: Set<String>, val renameDeleteFirst: Boolean = false) : FilesMenu
 
     /** Right-click on empty space in the list. */
     data class Space(override val at: Offset) : FilesMenu
 
-    /** The toolbar's ⋮: view options. */
-    data class View(override val at: Offset) : FilesMenu
+    /** The toolbar's ⋮: view options, led by the buttons the toolbar folded ([foldRefreshAndNew], [foldPush]). */
+    data class View(override val at: Offset, val foldRefreshAndNew: Boolean = false, val foldPush: Boolean = false) : FilesMenu
+
+    /** The narrow header's sort chip: the sort items. */
+    data class Sort(override val at: Offset) : FilesMenu
 
     /** A search result's menu. */
     data class Hit(override val at: Offset, val hit: SearchHit) : FilesMenu
@@ -185,9 +191,10 @@ internal fun FilesMenuHost(
                 },
             ) {
                 when (shown) {
-                    is FilesMenu.Item -> ItemMenu(browser, shown.names, actions, isMac, onDismiss)
+                    is FilesMenu.Item -> ItemMenu(browser, shown.names, actions, isMac, shown.renameDeleteFirst, onDismiss)
                     is FilesMenu.Space -> SpaceMenu(browser, actions, isMac, onDismiss)
-                    is FilesMenu.View -> ViewMenu(browser, actions, onDismiss)
+                    is FilesMenu.View -> ViewMenu(browser, actions, isMac, shown, onDismiss)
+                    is FilesMenu.Sort -> SortItems(browser, onDismiss)
                     is FilesMenu.Hit -> HitMenu(browser, shown.hit, actions, onDismiss)
                 }
             }
@@ -281,7 +288,14 @@ private fun MenuDivider() = HorizontalDivider(Modifier.padding(vertical = 4.dp),
 
 /** The item menu (the spec's table), or its Move to… list. */
 @Composable
-private fun ItemMenu(browser: FilesBrowser, names: Set<String>, actions: MenuActions, isMac: Boolean, onDismiss: () -> Unit) {
+private fun ItemMenu(
+    browser: FilesBrowser,
+    names: Set<String>,
+    actions: MenuActions,
+    isMac: Boolean,
+    renameDeleteFirst: Boolean,
+    onDismiss: () -> Unit,
+) {
     var moving by remember { mutableStateOf(false) }
     val path = browser.path
     val entries = browser.visible.filter { it.name in names }
@@ -300,6 +314,20 @@ private fun ItemMenu(browser: FilesBrowser, names: Set<String>, actions: MenuAct
         return
     }
     val single = entries.singleOrNull()
+    val rename: @Composable () -> Unit = {
+        MenuItem("Rename", Icons.Filled.DriveFileRenameOutline, enabled = single != null, shortcut = "F2") {
+            run { single?.let { browser.startRename(it.name) } }
+        }
+    }
+    val delete: @Composable () -> Unit = {
+        MenuItem("Delete", Icons.Filled.Delete, shortcut = if (isMac) "⌫" else "Delete", danger = true) { run { browser.askDelete() } }
+    }
+    // The selection bar folded them: they lead the menu, and are not listed again below.
+    if (renameDeleteFirst) {
+        rename()
+        delete()
+        MenuDivider()
+    }
     if (single != null && single.isDir) MenuItem("Open", Icons.Filled.FolderOpen) { run { browser.openEntry(single.name) } }
     if (single != null && !single.isDir) {
         MenuItem("Open on computer", Icons.AutoMirrored.Filled.OpenInNew) { run { browser.openOnComputer(single.name) } }
@@ -309,15 +337,15 @@ private fun ItemMenu(browser: FilesBrowser, names: Set<String>, actions: MenuAct
     MenuItem("Pull to Downloads", Icons.Filled.Download) { run { actions.pullToDownloads(ordered) } }
     MenuItem("Pull to…", Icons.Filled.Download) { run { actions.pullTo(ordered) } }
     MenuDivider()
-    MenuItem("Rename", Icons.Filled.DriveFileRenameOutline, enabled = single != null, shortcut = "F2") {
-        run { single?.let { browser.startRename(it.name) } }
-    }
+    if (!renameDeleteFirst) rename()
     MenuItem("Move to…", Icons.AutoMirrored.Filled.DriveFileMove, trailing = Icons.Filled.ChevronRight) { moving = true }
     MenuItem(if (ordered.size == 1) "Copy path" else "Copy paths", Icons.Filled.ContentCopy) {
         run { actions.copy(ordered.joinToString("\n") { devicePath(path, it) }) }
     }
-    MenuDivider()
-    MenuItem("Delete", Icons.Filled.Delete, shortcut = if (isMac) "⌫" else "Delete", danger = true) { run { browser.askDelete() } }
+    if (!renameDeleteFirst) {
+        MenuDivider()
+        delete()
+    }
 }
 
 /** A search result's menu: Show in folder, open it, pull it, copy its path. */
@@ -359,16 +387,44 @@ private fun SpaceMenu(browser: FilesBrowser, actions: MenuActions, isMac: Boolea
     MenuItem("Copy folder path", Icons.Filled.ContentCopy) { run { actions.copy(browser.path) } }
 }
 
-/** The toolbar's ⋮: Show hidden files, Show real paths, Sort by (the current key shows its direction), Copy folder path. */
+/**
+ * The toolbar's ⋮: the buttons the toolbar folded (Refresh, New folder, Push files here…, as [menu] says), then Show
+ * hidden files, Show real paths, Sort by (the current key shows its direction), Copy folder path.
+ */
 @Composable
-private fun ViewMenu(browser: FilesBrowser, actions: MenuActions, onDismiss: () -> Unit) {
+private fun ViewMenu(browser: FilesBrowser, actions: MenuActions, isMac: Boolean, menu: FilesMenu.View, onDismiss: () -> Unit) {
     fun run(block: () -> Unit) {
         onDismiss()
         block()
     }
+    val readOnly = browser.readOnlyHere
+    if (menu.foldRefreshAndNew) {
+        MenuItem("Refresh", Icons.Filled.Refresh, enabled = browser.connected, shortcut = shortcutLabel("R", isMac)) { run(browser::refresh) }
+        MenuItem(
+            "New folder", Icons.Filled.CreateNewFolder,
+            enabled = browser.connected && browser.listed && browser.pendingNewFolder == null && !readOnly,
+            shortcut = shortcutLabel("N", isMac, shift = true),
+        ) { run(browser::newFolder) }
+    }
+    if (menu.foldPush) {
+        MenuItem("Push files here…", Icons.Filled.FileUpload, enabled = browser.connected && !readOnly) { run(actions.pushFiles) }
+    }
+    if (menu.foldRefreshAndNew || menu.foldPush) MenuDivider()
     MenuItem("Show hidden files", null, checked = browser.showHidden) { run(browser::toggleHidden) }
     MenuItem("Show real paths", null, checked = browser.realPaths) { run(browser::toggleRealPaths) }
     MenuDivider()
+    SortItems(browser, onDismiss)
+    MenuDivider()
+    MenuItem("Copy folder path", Icons.Filled.ContentCopy) { run { actions.copy(browser.path) } }
+}
+
+/** "Sort by" and its three keys; the current one is checked and shows its direction. */
+@Composable
+private fun SortItems(browser: FilesBrowser, onDismiss: () -> Unit) {
+    fun run(block: () -> Unit) {
+        onDismiss()
+        block()
+    }
     Text(
         "Sort by", Modifier.padding(start = 16.dp, top = 2.dp, bottom = 2.dp),
         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -380,7 +436,5 @@ private fun ViewMenu(browser: FilesBrowser, actions: MenuActions, onDismiss: () 
             trailing = if (!current) null else if (browser.descending) Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
         ) { run { browser.setSort(key) } }
     }
-    MenuDivider()
-    MenuItem("Copy folder path", Icons.Filled.ContentCopy) { run { actions.copy(browser.path) } }
 }
 

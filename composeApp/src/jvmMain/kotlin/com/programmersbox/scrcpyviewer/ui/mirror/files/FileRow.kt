@@ -72,7 +72,19 @@ import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.runtime.derivedStateOf
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -113,7 +125,8 @@ private const val MOVING_ALPHA = 0.45f
 private const val DROP_ICON_SCALE = 1.12f
 
 /**
- * One 40 dp entry row. [arriving] rows grow in and then hold a primary-container highlight that fades over
+ * One 40 dp entry row (52 dp with the date on a second line when the tab is narrow, see [FilesLayout]). [arriving]
+ * rows grow in and then hold a primary-container highlight that fades over
  * [ARRIVING_FADE_MILLIS]; a row with a [leavingIndex] collapses out, [LEAVING_STAGGER_MILLIS] after the one before it.
  * [enter] (0 to 1) is the row's share of the folder's stagger-in, read at draw time. [onPress] gets every primary
  * press with whether it completes a double-click; [onSecondaryPress] every right-click. Both are consumed, so a press
@@ -146,6 +159,7 @@ internal fun FileRow(
     locked: Boolean = false,
     flash: Boolean = false,
     match: String? = null,
+    endInset: Dp = 0.dp,
 ) {
     val colors = MaterialTheme.colorScheme
     // A folder adb can't read: dimmed, with a lock badge that pops onto its icon once the row is in.
@@ -191,11 +205,24 @@ internal fun FileRow(
     val currentOnPress by rememberUpdatedState(onPress)
     val currentOnSecondary by rememberUpdatedState(onSecondaryPress)
     val lastPress = remember { LongArray(1) { Long.MIN_VALUE } }
-    Row(
-        modifier.fillMaxWidth()
+    // Narrow (see [FilesLayout]): the date moves to a second line under the name, then the size joins it before the
+    // date. The same cells move there, gliding with the row's height; snapped without motion.
+    val narrow = LocalFilesLayout.current
+    val glide = motion && !LocalReduceMotion.current
+    val dateBelow = layoutFraction(narrow.modifiedBelow, glide)
+    val sizeBelow = layoutFraction(narrow.sizeBelow, glide)
+    // Read in composition only through this, so the row recomposes when the dot comes or goes, not every frame.
+    val sizeLeaving by remember { derivedStateOf { sizeBelow.value > 0f } }
+    // Space kept free at the end of the name's line (an overlay there, such as a search result's Show in folder).
+    val inset by layoutDp(endInset, glide)
+    // A folder whose count has not come yet has no size: nothing of it goes on the second line.
+    val hasSize = !sizeText.isNullOrEmpty()
+    Layout(
+        modifier = modifier.fillMaxWidth()
             .layout { measurable, constraints ->
-                val height = (ROW_HEIGHT.toPx() * grow.value * stay).roundToInt()
-                val placeable = measurable.measure(constraints.copy(minHeight = ROW_HEIGHT.roundToPx(), maxHeight = ROW_HEIGHT.roundToPx()))
+                val full = ROW_HEIGHT.toPx() + (TWO_LINE_ROW_HEIGHT - ROW_HEIGHT).toPx() * dateBelow.value.coerceIn(0f, 1f)
+                val height = (full * grow.value * stay).roundToInt()
+                val placeable = measurable.measure(constraints.copy(minHeight = full.roundToInt(), maxHeight = full.roundToInt()))
                 layout(placeable.width, height) { placeable.placeRelative(0, 0) }
             }
             .graphicsLayer {
@@ -244,62 +271,147 @@ internal fun FileRow(
                 }
             }
             .padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(COLUMN_GAP),
-    ) {
-        val dim = Modifier.graphicsLayer { alpha = (if (hidden) HIDDEN_ALPHA else 1f) * lockedAlpha }
-        Box {
-            KindTile(
-                kind,
-                selected,
-                dim.graphicsLayer {
-                    scaleX = 1f + (DROP_ICON_SCALE - 1f) * lit
-                    scaleY = scaleX
-                },
-            )
-            if (locked || lockBadge.value > 0f) LockBadge({ lockBadge.value }, Modifier.align(Alignment.BottomEnd).offset(3.dp, 3.dp))
-        }
-        if (renaming) {
-            RenameField(name, kind == FileKind.Folder, renameError != null, motion, onRenameCommit, Modifier.weight(1f))
-            if (renameError != null) {
-                Text(
-                    renameError, Modifier.width(SIZE_COLUMN + DATE_COLUMN + COLUMN_GAP),
-                    fontSize = CELL_FONT, color = colors.error, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.End,
+        content = {
+            val dim = Modifier.graphicsLayer { alpha = (if (hidden) HIDDEN_ALPHA else 1f) * lockedAlpha }
+            Box(Modifier.layoutId(RowCell.Icon)) {
+                KindTile(
+                    kind,
+                    selected,
+                    dim.graphicsLayer {
+                        scaleX = 1f + (DROP_ICON_SCALE - 1f) * lit
+                        scaleY = scaleX
+                    },
                 )
-                return@Row
+                if (locked || lockBadge.value > 0f) LockBadge({ lockBadge.value }, Modifier.align(Alignment.BottomEnd).offset(3.dp, 3.dp))
             }
-        } else TooltipArea(
-            tooltip = {
-                Surface(shape = styledCorner(4.dp), color = colors.inverseSurface) {
+            if (renaming) {
+                RenameField(name, kind == FileKind.Folder, renameError != null, motion, onRenameCommit, Modifier.layoutId(RowCell.Name))
+                if (renameError != null) {
                     Text(
-                        name,
-                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.inverseOnSurface,
+                        renameError, Modifier.layoutId(RowCell.Error),
+                        fontSize = CELL_FONT, color = colors.error, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
                     )
+                    return@Layout
                 }
-            },
-            modifier = Modifier.weight(1f).then(dim),
-        ) {
-            val mark = colors.primaryContainer
-            val onMark = colors.onPrimaryContainer
-            val text = remember(name, match, mark, onMark) { highlighted(name, match, SpanStyle(background = mark, color = onMark)) }
-            Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = content)
+            } else TooltipArea(
+                tooltip = {
+                    Surface(shape = styledCorner(4.dp), color = colors.inverseSurface) {
+                        Text(
+                            name,
+                            Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.inverseOnSurface,
+                        )
+                    }
+                },
+                modifier = Modifier.layoutId(RowCell.Name).then(dim),
+            ) {
+                val mark = colors.primaryContainer
+                val onMark = colors.onPrimaryContainer
+                val text = remember(name, match, mark, onMark) { highlighted(name, match, SpanStyle(background = mark, color = onMark)) }
+                Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = content)
+            }
+            // The item count fades in when it arrives after the listing; a count already there just shows.
+            val countAlpha by animateFloatAsState(if (sizeText != null) 1f else 0f, if (motion) tween(OPEN_MILLIS) else snap())
+            Text(
+                sizeText.orEmpty(),
+                Modifier.layoutId(RowCell.Size).graphicsLayer { alpha = countAlpha }.then(dim),
+                fontSize = CELL_FONT, color = muted, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+            )
+            // "4.1 MB · Nov 8, 2:32 PM": the dot between them on the second line fades in as the size arrives there.
+            if (hasSize && (narrow.sizeBelow || sizeLeaving)) {
+                Text(
+                    "·",
+                    Modifier.layoutId(RowCell.Dot).clearAndSetSemantics { }.graphicsLayer { alpha = sizeBelow.value.coerceIn(0f, 1f) * countAlpha }.then(dim),
+                    fontSize = CELL_FONT, color = muted, maxLines = 1, softWrap = false,
+                )
+            }
+            Text(
+                dateText, Modifier.layoutId(RowCell.Date).then(dim),
+                fontSize = CELL_FONT, color = muted, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End,
+            )
+        },
+    ) { measurables, constraints ->
+        rowCells(measurables, constraints, dateBelow.value.coerceIn(0f, 1f), sizeBelow.value.coerceIn(0f, 1f), hasSize, inset.roundToPx().coerceAtLeast(0))
+    }
+}
+
+/** A [FileRow]'s cells, by layout id. */
+private enum class RowCell { Icon, Name, Error, Size, Dot, Date }
+
+/** A two-line row: the name, then the date (and the size before it) under it. */
+internal val TWO_LINE_ROW_HEIGHT = 52.dp
+
+/** Between the name and the second line, and around the dot on it. */
+private val LINE_GAP = 2.dp
+private val DOT_GAP = 4.dp
+
+/**
+ * Lays a row's cells out on one line (icon, name filling the rest, size, date, [COLUMN_GAP] apart, centred: as a Row),
+ * or moves the date ([dateBelow] 1) and then the size ([sizeBelow] 1) under the name, each at its own width. Fractions
+ * between place each cell part way, so the cells glide between the two. Without [hasSize] the second line has only
+ * the date. The name's line ends [endInset] px short of the row's end.
+ */
+private fun MeasureScope.rowCells(
+    measurables: List<Measurable>,
+    constraints: Constraints,
+    dateBelow: Float,
+    sizeBelow: Float,
+    hasSize: Boolean,
+    endInset: Int,
+): MeasureResult {
+    val byId = measurables.associateBy { it.layoutId as RowCell }
+    val width = constraints.maxWidth
+    val height = constraints.maxHeight
+    val gap = COLUMN_GAP.roundToPx()
+    val icon = byId.getValue(RowCell.Icon).measure(Constraints(maxWidth = width, maxHeight = height))
+    val x0 = icon.width + gap
+    val error = byId[RowCell.Error]
+    val size = byId[RowCell.Size]
+    val date = byId[RowCell.Date]
+    val dot = byId[RowCell.Dot]
+    fun fixed(w: Int) = Constraints(minWidth = w.coerceAtLeast(0), maxWidth = w.coerceAtLeast(0), maxHeight = height)
+    val sizeColumn = SIZE_COLUMN.roundToPx()
+    val dateColumn = DATE_COLUMN.roundToPx()
+    val errorColumn = (SIZE_COLUMN + DATE_COLUMN + COLUMN_GAP).roundToPx()
+    // What leaves the name's line as the cells move down.
+    val reserved = if (error != null) {
+        lerpPx(errorColumn + gap, 0, dateBelow)
+    } else {
+        lerpPx(dateColumn + gap, 0, dateBelow) + lerpPx(sizeColumn + gap, 0, sizeBelow)
+    }
+    val line1End = width - endInset
+    val nameW = (line1End - x0 - reserved).coerceAtLeast(0)
+    val name = byId.getValue(RowCell.Name).measure(fixed(nameW))
+    val errorP = error?.measure(fixed(lerpPx(errorColumn, width - x0, dateBelow)))
+    val sizeP = size?.let { it.measure(fixed(lerpPx(sizeColumn, it.maxIntrinsicWidth(height), sizeBelow))) }
+    val dateP = date?.let { it.measure(fixed(lerpPx(dateColumn, it.maxIntrinsicWidth(height), dateBelow))) }
+    val dotP = dot?.measure(Constraints(maxHeight = height))
+    val line2H = maxOf(dateP?.height ?: 0, sizeP?.height ?: 0, errorP?.height ?: 0)
+    val blockTop = Alignment.CenterVertically.align(name.height + LINE_GAP.roundToPx() + line2H, height)
+    val line2Top = blockTop + name.height + LINE_GAP.roundToPx()
+    fun oneLineY(h: Int) = Alignment.CenterVertically.align(h, height)
+    // On the name's line once it has a second line under it.
+    fun line1Y(h: Int) = lerpPx(oneLineY(h), blockTop + Alignment.CenterVertically.align(h, name.height), dateBelow)
+    fun line2Y(h: Int) = line2Top + Alignment.CenterVertically.align(h, line2H)
+    return layout(width, height) {
+        icon.placeRelative(0, oneLineY(icon.height))
+        name.placeRelative(x0, lerpPx(oneLineY(name.height), blockTop, dateBelow))
+        errorP?.placeRelative(lerpPx(width - errorColumn, x0, dateBelow), lerpPx(oneLineY(errorP.height), line2Y(errorP.height), dateBelow))
+        val dotGap = DOT_GAP.roundToPx()
+        // The size's share of the second line, before the date.
+        val sizeShare = if (sizeP == null || !hasSize) 0 else lerpPx(0, sizeP.width + dotGap + (dotP?.width ?: 0) + dotGap, sizeBelow)
+        if (sizeP != null) {
+            val inlineX = line1End - lerpPx(dateColumn + gap, 0, dateBelow) - sizeColumn
+            sizeP.placeRelative(lerpPx(inlineX, x0, sizeBelow), lerpPx(line1Y(sizeP.height), line2Y(sizeP.height), sizeBelow))
+            dotP?.placeRelative(x0 + sizeP.width + dotGap, line2Y(dotP.height))
         }
-        // The item count fades in when it arrives after the listing; a count already there just shows.
-        val countAlpha by animateFloatAsState(if (sizeText != null) 1f else 0f, if (motion) tween(OPEN_MILLIS) else snap())
-        Text(
-            sizeText.orEmpty(),
-            Modifier.width(SIZE_COLUMN).graphicsLayer { alpha = countAlpha }.then(dim),
-            fontSize = CELL_FONT, color = muted, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.End,
-        )
-        Text(
-            dateText, Modifier.width(DATE_COLUMN).then(dim),
-            fontSize = CELL_FONT, color = muted, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.End,
-        )
+        if (dateP != null) {
+            dateP.placeRelative(lerpPx(width - dateColumn, x0 + sizeShare, dateBelow), lerpPx(oneLineY(dateP.height), line2Y(dateP.height), dateBelow))
+        }
     }
 }
 

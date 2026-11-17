@@ -8,7 +8,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.text.style.TextOverflow
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -57,7 +59,8 @@ private val BAR_RISE = 70.dp
 /**
  * Floats over the bottom of the list while anything is selected (inverse surface): Clear, "2 selected", Pull (to the
  * computer's Downloads), Rename (one item only), Delete, and ⋮ ([onMore] with the button's bottom-left corner, in
- * window coordinates). Slides up [BAR_RISE] and fades in with the open timing; out with the close timing.
+ * window coordinates). Narrow, Rename and Delete fold into ⋮. Slides up [BAR_RISE] and fades in with the open
+ * timing; out with the close timing.
  */
 @Composable
 internal fun SelectionBar(
@@ -88,15 +91,20 @@ internal fun SelectionBar(
             ExitTransition.None
         },
     ) {
-        Bar(browser, kept[0], onPull, onMore)
+        Bar(browser, kept[0], motion, onPull, onMore)
     }
 }
 
 @Composable
-private fun Bar(browser: FilesBrowser, count: Int, onPull: () -> Unit, onMore: (Offset) -> Unit) {
+private fun Bar(browser: FilesBrowser, count: Int, motion: Boolean, onPull: () -> Unit, onMore: (Offset) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val enabled = browser.connected
     val more = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    // Narrow, Rename and Delete fold into ⋮ (they lead its menu); F2 and ⌫ still work.
+    val fold = LocalFilesLayout.current.foldRenameDelete
+    val glide = motion && !LocalReduceMotion.current
+    // Each slot after the first carries its own 2 dp gap, so a folding button takes its gap with it.
+    val gap = Modifier.padding(start = 2.dp)
     Surface(
         Modifier.fillMaxWidth().padding(horizontal = BAR_MARGIN, vertical = BAR_MARGIN),
         shape = styledCorner(14.dp),
@@ -107,7 +115,6 @@ private fun Bar(browser: FilesBrowser, count: Int, onPull: () -> Unit, onMore: (
         Row(
             Modifier.height(BAR_ROW_HEIGHT).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             val iconColors = IconButtonDefaults.iconButtonColors(
                 contentColor = colors.inverseOnSurface,
@@ -116,33 +123,48 @@ private fun Bar(browser: FilesBrowser, count: Int, onPull: () -> Unit, onMore: (
             IconButton(onClick = browser::clearSelection, Modifier.size(34.dp), colors = iconColors) {
                 Icon(Icons.Filled.Close, contentDescription = "Clear selection", Modifier.size(18.dp))
             }
-            Text("$count selected", Modifier.weight(1f).padding(start = 4.dp), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-            TextButton(
-                onClick = onPull,
-                enabled = enabled,
-                colors = ButtonDefaults.textButtonColors(contentColor = colors.inversePrimary),
-                contentPadding = ButtonDefaults.TextButtonWithIconContentPadding,
-            ) {
-                Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(16.dp))
-                Spacer(Modifier.size(4.dp))
-                Text("Pull", fontSize = 13.sp)
+            Text(
+                "$count selected", Modifier.weight(1f).padding(start = 2.dp + 4.dp),
+                fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            Box(gap) {
+                TextButton(
+                    onClick = onPull,
+                    enabled = enabled,
+                    colors = ButtonDefaults.textButtonColors(contentColor = colors.inversePrimary),
+                    contentPadding = ButtonDefaults.TextButtonWithIconContentPadding,
+                ) {
+                    Icon(Icons.Filled.Download, contentDescription = null, Modifier.size(16.dp))
+                    Spacer(Modifier.size(4.dp))
+                    Text("Pull", fontSize = 13.sp)
+                }
             }
-            IconButton(
-                onClick = { browser.selection.names.singleOrNull()?.let(browser::startRename) },
-                Modifier.size(34.dp), enabled = enabled && count == 1, colors = iconColors,
-            ) {
-                Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = "Rename", Modifier.size(18.dp))
+            FoldingSlot(!fold, glide) {
+                Box(gap) {
+                    IconButton(
+                        onClick = { browser.selection.names.singleOrNull()?.let(browser::startRename) },
+                        Modifier.size(34.dp), enabled = enabled && count == 1, colors = iconColors,
+                    ) {
+                        Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = "Rename", Modifier.size(18.dp))
+                    }
+                }
             }
-            IconButton(onClick = browser::askDelete, Modifier.size(34.dp), enabled = enabled, colors = iconColors) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete", Modifier.size(18.dp))
+            FoldingSlot(!fold, glide) {
+                Box(gap) {
+                    IconButton(onClick = browser::askDelete, Modifier.size(34.dp), enabled = enabled, colors = iconColors) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Delete", Modifier.size(18.dp))
+                    }
+                }
             }
-            IconButton(
-                onClick = { more[0]?.let { onMore(it.localToWindow(Offset(0f, it.size.height.toFloat()))) } },
-                Modifier.size(34.dp).onGloballyPositioned { more[0] = it },
-                enabled = enabled,
-                colors = iconColors,
-            ) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "More for selection", Modifier.size(18.dp))
+            Box(gap) {
+                IconButton(
+                    onClick = { more[0]?.let { onMore(it.localToWindow(Offset(0f, it.size.height.toFloat()))) } },
+                    Modifier.size(34.dp).onGloballyPositioned { more[0] = it },
+                    enabled = enabled,
+                    colors = iconColors,
+                ) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "More for selection", Modifier.size(18.dp))
+                }
             }
         }
     }
