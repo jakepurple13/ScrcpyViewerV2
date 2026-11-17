@@ -161,7 +161,7 @@ snake_case (`side_by_side`, `keep_both`, `dark_mode`); versions and `error_class
 | `adb_restarted` | `mirrors_open` |
 | `mirror_started` | `connection`, `used_preset`, `advanced_options`, `option_count`, `audio` |
 | `mirror_ended` | `minutes` (bucket), `reason` (closed, disconnected, error) |
-| `mirror_failed` | `stage` (push, server, decode), `error_class` |
+| `mirror_failed` | `stage` (push, server, decode), `error_class` (the cause's class for a stage failure, `none` without one) |
 | `first_frame_time` | `ms` (bucket), `connection` |
 | `windows_arranged` | `layout`, `window_count`, `keep_tiled` |
 | `input_broadcast_started` | `follower_count` |

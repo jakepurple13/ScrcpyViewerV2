@@ -249,10 +249,11 @@ class ScrcpySession(
      */
     fun videoPlaybackFailed(cause: Throwable) {
         if (!videoPlayback) return
-        telemetry.captureException(cause, handled = true)
-        telemetry.track(TelemetryEvent.MirrorFailed("decode", cause.javaClass.simpleName))
         val codec = videoCodec?.let { " (${VideoDecoder.codecName(it)})" }.orEmpty()
-        fail("Video decoding failed$codec: ${cause.message ?: cause}")
+        fail("Video decoding failed$codec: ${cause.message ?: cause}") {
+            telemetry.captureException(cause, handled = true)
+            telemetry.track(TelemetryEvent.MirrorFailed("decode", cause.javaClass.simpleName))
+        }
     }
 
     /** For the video sink: publishes the decoded frame rate. */
@@ -398,11 +399,15 @@ class ScrcpySession(
             log.log(System.Logger.Level.WARNING, "Could not start session $serial", t)
             // An adb failure's message can name the device: scrubbed even if the device list has not listed it yet.
             telemetry.rememberSerial(serial)
-            telemetry.captureException(t, handled = true)
-            // Not a stage of its own (an adb error, a bad option): starting the server failed.
-            val stage = (t as? MirrorStageException)?.stage ?: MirrorStage.Server
-            telemetry.track(TelemetryEvent.MirrorFailed(stage.name.lowercase(), t.javaClass.simpleName))
-            fail((t as? MirrorStageException)?.displayMessage ?: t.message ?: t.toString())
+            fail((t as? MirrorStageException)?.displayMessage ?: t.message ?: t.toString()) {
+                telemetry.captureException(t, handled = true)
+                // Not a stage of its own (an adb error, a bad option): starting the server failed.
+                val stage = (t as? MirrorStageException)?.stage ?: MirrorStage.Server
+                // The stage already says what MirrorStageException would; its cause, if any, says why.
+                val errorClass =
+                    if (t is MirrorStageException) t.cause?.javaClass?.simpleName ?: "none" else t.javaClass.simpleName
+                telemetry.track(TelemetryEvent.MirrorFailed(stage.name.lowercase(), errorClass))
+            }
             return
         }
         connection = conn
@@ -473,8 +478,9 @@ class ScrcpySession(
             // No FFmpeg decoder for the codec, or it would not open: nothing could ever be shown.
             log.log(System.Logger.Level.ERROR, "Could not create the video decoder of $serial", t)
             if (videoPlayback) {
-                telemetry.track(TelemetryEvent.MirrorFailed("decode", t.javaClass.simpleName))
-                fail("Cannot decode ${VideoDecoder.codecName(meta.codecId)} video: ${t.message ?: t}")
+                fail("Cannot decode ${VideoDecoder.codecName(meta.codecId)} video: ${t.message ?: t}") {
+                    telemetry.track(TelemetryEvent.MirrorFailed("decode", t.javaClass.simpleName))
+                }
                 return
             }
             null
@@ -596,8 +602,13 @@ class ScrcpySession(
             t
         }
 
-    private fun fail(message: String) {
+    /**
+     * Fails the session with [message] unless it already ended. [report] (the failure's telemetry) runs only when this
+     * call ends it, before `mirror_ended`, so a late or second failure is never reported.
+     */
+    private fun fail(message: String, report: () -> Unit = {}) {
         if (!tornDown.compareAndSet(false, true)) return // already closed
+        report()
         ended("error")
         _error.value = message
         _status.value = SessionStatus.Failed

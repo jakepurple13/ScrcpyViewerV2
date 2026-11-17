@@ -533,7 +533,7 @@ class ScrcpySessionTest {
     }
 
     @Test
-    fun `a launch failure sends its stage and class, never its message`() = runBlocking {
+    fun `a launch failure sends its stage and its cause's class, never its message`() = runBlocking {
         val telemetry = FakeTelemetry()
         val e = MirrorStageException(MirrorStage.Push, "adb push failed", null, detail = ": device 'SER' not found")
         val s = session(ConnectionStarter { _, _ -> throw e }, telemetry = telemetry)
@@ -543,11 +543,51 @@ class ScrcpySessionTest {
         s.close()
         assertEquals(
             listOf<TelemetryEvent>(
-                TelemetryEvent.MirrorFailed("push", "MirrorStageException"),
+                // A stage failure without a cause: its own class would say nothing the stage does not.
+                TelemetryEvent.MirrorFailed("push", "none"),
                 TelemetryEvent.MirrorEnded(0, "error"),
             ),
             telemetry.mirrorEvents(),
         )
+    }
+
+    @Test
+    fun `a stage failure with a cause sends the cause's class`() = runBlocking {
+        val telemetry = FakeTelemetry()
+        val e = MirrorStageException(MirrorStage.Server, "Could not retrieve device information", java.net.SocketTimeoutException())
+        val s = session(ConnectionStarter { _, _ -> throw e }, telemetry = telemetry)
+        s.await(SessionStatus.Failed)
+        assertEquals(TelemetryEvent.MirrorFailed("server", "SocketTimeoutException"), telemetry.mirrorEvents().first())
+        s.close()
+    }
+
+    @Test
+    fun `a decoder failure after closing sends no mirror_failed and no exception`() = runBlocking {
+        val telemetry = FakeTelemetry()
+        val s = session(LocalPairLauncher(), telemetry = telemetry)
+        s.await(SessionStatus.Running)
+        s.close()
+        s.videoPlaybackFailed(IllegalStateException("late"))
+        assertEquals(listOf<TelemetryEvent>(TelemetryEvent.MirrorEnded(0, "closed")), telemetry.mirrorEvents())
+        assertEquals(emptyList(), telemetry.exceptions.toList())
+    }
+
+    @Test
+    fun `a second decoder failure is reported once`() = runBlocking {
+        val telemetry = FakeTelemetry()
+        val s = session(LocalPairLauncher(), telemetry = telemetry)
+        s.await(SessionStatus.Running)
+        s.videoPlaybackFailed(IllegalStateException("first"))
+        s.videoPlaybackFailed(IllegalStateException("second"))
+        s.close()
+        assertEquals(
+            listOf<TelemetryEvent>(
+                TelemetryEvent.MirrorFailed("decode", "IllegalStateException"),
+                TelemetryEvent.MirrorEnded(0, "error"),
+            ),
+            telemetry.mirrorEvents(),
+        )
+        assertEquals(listOf("first"), telemetry.exceptions.map { it.first.message })
     }
 
     @Test
