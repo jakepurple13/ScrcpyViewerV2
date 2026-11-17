@@ -310,6 +310,9 @@ Devices, Presets and Actions alike:
 - **Removed.** The icon strip (`ListStrip`, `StripItem`), the "Switch item" chip, the list overlay and its
   scrim, "Show list", and the per-screen strips (Devices with its AVD divider, emulators tile and running
   emulator items; Presets initials; Actions icons). Emulators stay in the full Devices list as today.
+- **Two panes from 840 dp (user decision 2026-11-17).** Two panes need a window at least 840 dp wide (Material's
+  expanded width class) as well as room for list + detail. The main window opens at 800 dp, so the first view
+  after onboarding is the list alone.
 - **Kept.** Everything else from earlier tasks: detail tabs → menu, footer and header folding, option rows,
   flag grids, deleting the open item returns to the list, wide layouts unchanged.
 
