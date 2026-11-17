@@ -97,9 +97,11 @@ credentials must never be committed.
 - **`Scrubber`**: replaces the user's home path with `~`, device serials seen this session and IPv4/IPv6 addresses
   with `<device>` / `<ip>`, and caps strings at 500 characters. Applied to every property value and stack frame.
   Serials are kept in memory only, never written to disk.
-- **Exception messages** (decided): `$exception_list[].value` carries the message only for exception types defined
-  in `com.programmersbox.scrcpyviewer` (we write those messages and keep them free of anti-goal data). Every other
-  exception is sent with its type and stack frames and an empty value. A unit test asserts a third-party exception's
+- **Exception messages** (decided): `$exception_list[].value` carries the message only for exception types that
+  opt in by implementing the `SafeMessage` marker interface (`telemetry/SafeMessage.kt`): types whose message is fixed
+  text we wrote, free of anti-goal data (`MirrorStageException`, `UpdateInstallFailed`, `ShellTimeoutException`).
+  Every other exception, the app's own types included (several carry paths, serials or adb output), is sent with its
+  type and stack frames and an empty value. A unit test asserts a third-party exception's
   message never reaches the queue.
 - **Recent events**: the last 50 sent or blocked events kept in memory for Settings › Privacy › "See what was sent
   recently".
@@ -136,9 +138,10 @@ credentials must never be committed.
   names (scrubbed); no other file content is sent. The file is then deleted, whether or not crash reports are on.
 - Handled errors reported with `handled = true`: scrcpy-server fails to start, decoder errors, adb server dies, update
   install fails.
-- `$exception` format: `$exception_list` with type, value (message), and `stacktrace.frames` (`function`, `module`,
-  `filename`, `lineno`, `in_app` = package starts with `com.programmersbox`), per PostHog error tracking's expected
-  shape. `$exception_fingerprint` left to PostHog.
+- `$exception` format: `$exception_list` with type, value (message), `mechanism` `{handled, synthetic: false}`, and
+  `stacktrace` `{type: "raw", frames}`. Each frame follows PostHog's manual capture format: `platform: "custom"`,
+  `lang` (`"java"`, or `"native"` for native crash frames), `function`, `module`, `filename` and `lineno` when known,
+  `resolved: true`, `in_app` = package starts with `com.programmersbox`. `$exception_fingerprint` left to PostHog.
 
 ### Events (23)
 

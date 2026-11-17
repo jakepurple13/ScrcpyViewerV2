@@ -7,7 +7,12 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import com.programmersbox.scrcpyviewer.adb.AdbException
+import com.programmersbox.scrcpyviewer.media.RecordingGoneException
+import com.programmersbox.scrcpyviewer.scrcpy.MirrorStage
+import com.programmersbox.scrcpyviewer.scrcpy.MirrorStageException
 import java.io.IOException
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -30,6 +35,26 @@ class ExceptionPayloadTest {
         assertEquals("decoder stalled", p.list(0).str("value"))
         assertEquals("decoder stalled", p.str("\$exception_message"))
         assertEquals("com.programmersbox.scrcpyviewer.telemetry.TestOwnException", p.str("\$exception_type"))
+    }
+
+    @Test fun ownTypeWithoutSafeMessageSendsNoMessage() {
+        val p = exceptionProperties(RecordingGoneException(Path.of("/Users/jake/Movies/rec.mp4")), true, Scrubber("/h"))
+        assertEquals("", p.list(0).str("value"))
+        assertEquals("", p.str("\$exception_message"))
+        assertEquals("com.programmersbox.scrcpyviewer.media.RecordingGoneException", p.str("\$exception_type"))
+    }
+
+    @Test fun adbExceptionSendsNoMessage() {
+        val p = exceptionProperties(AdbException("FAIL: device 'R5CX12GDWPZ' not found"), true, Scrubber("/h"))
+        assertEquals("", p.list(0).str("value"))
+        assertEquals("", p.str("\$exception_message"))
+    }
+
+    @Test fun mirrorStageExceptionSendsItsFixedMessage() {
+        val e = MirrorStageException(MirrorStage.Push, "adb push failed", null, detail = ": device 'R5CX12' not found")
+        val p = exceptionProperties(e, false, Scrubber("/h"))
+        assertEquals("adb push failed", p.list(0).str("value"))
+        assertEquals("adb push failed", p.str("\$exception_message"))
     }
 
     @Test fun ownMessageIsScrubbed() {

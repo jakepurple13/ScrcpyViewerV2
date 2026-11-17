@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.adb
 
+import com.programmersbox.scrcpyviewer.telemetry.SafeMessage
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -14,7 +15,8 @@ sealed interface ShellEvent {
     data class Exit(val code: Int?, val millis: Long) : ShellEvent
 }
 
-class ShellTimeoutException : IOException("Timed out after 30 s; set Output to Shell tab for long commands")
+/** Fixed text, never the command, so crash reports may send its message. */
+class ShellTimeoutException : IOException("Timed out after 30 s; set Output to Shell tab for long commands"), SafeMessage
 
 /** Runs shell commands on one device and recovers the exit code the legacy shell service drops. */
 open class ShellRunner(

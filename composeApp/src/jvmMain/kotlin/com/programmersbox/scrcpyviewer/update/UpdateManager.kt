@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.update
 
 import com.programmersbox.scrcpyviewer.APP_VERSION
 import com.programmersbox.scrcpyviewer.Os
+import com.programmersbox.scrcpyviewer.telemetry.SafeMessage
 import com.programmersbox.scrcpyviewer.telemetry.Telemetry
 import dev.nucleusframework.updater.UpdateEvent
 import dev.nucleusframework.updater.UpdateInfo
@@ -28,7 +29,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 
 /** An update the last run started did not install. Its message is fixed: no version, no path. */
-class UpdateInstallFailed : Exception("The update did not install.")
+class UpdateInstallFailed : Exception("The update did not install."), SafeMessage
 
 /** How often the running app checks for a new release in the background. */
 val UPDATE_CHECK_INTERVAL: Duration = 6.hours

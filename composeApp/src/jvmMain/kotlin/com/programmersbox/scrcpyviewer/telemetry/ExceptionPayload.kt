@@ -15,8 +15,8 @@ private const val IN_APP_PREFIX = "com.programmersbox"
 
 /**
  * Builds the PostHog `$exception_list` properties for [t]: the outer throwable first, then its causes.
- * The message (`value`) is sent only for our own exception types, since we write those messages; every other type
- * gets an empty value. Every string is run through [scrubber]. Frames are ordered oldest call first, as PostHog
+ * The message (`value`) is sent only for types marked [SafeMessage], whose messages are fixed text; every other type,
+ * our own included, gets an empty value. Every string is run through [scrubber]. Frames are ordered oldest call first, as PostHog
  * expects. `$exception_type` and `$exception_message` mirror the first entry.
  *
  * The shape follows PostHog's manual capture format (posthog.com/docs/error-tracking/installation/manual): each frame
@@ -37,7 +37,7 @@ fun exceptionProperties(t: Throwable, handled: Boolean, scrubber: Scrubber): Jso
 
 private fun entry(t: Throwable, handled: Boolean, scrubber: Scrubber): JsonObject {
     val typeName = t.javaClass.name
-    val value = if (typeName.startsWith(OWN_TYPE_PREFIX)) t.message.orEmpty() else ""
+    val value = if (t is SafeMessage) t.message.orEmpty() else ""
     return buildJsonObject {
         put("type", scrubber.scrub(typeName))
         put("value", scrubber.scrub(value))
