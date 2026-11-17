@@ -163,7 +163,7 @@ class LinksTabTest {
     }
 
     @Test
-    fun `Intent details expands and folds over 400 ms, its chevron turning`() = onEdt {
+    fun `Intent details expands and folds on the layout spring, its chevron turning`() = onEdt {
         for (motion in listOf(true, false)) {
             val l = links()
             l.onEvent(LinksEvent.SetText("https://example.com"))
@@ -177,8 +177,9 @@ class LinksTabTest {
             if (motion) {
                 assertEases(open, "opening details")
                 assertEases(close, "closing details")
-                // 400 ms is about 25 frames: still moving at frame 15.
-                assertTrue(abs(open[15] - open.last()) > 1f, "still opening at 240 ms: $open")
+                // On the layout spring: between closed and open a few frames in, then settled.
+                assertTrue(open[5] > open.first() + 1f && open[5] < open.last() - 1f, "on its way at frame 5: $open")
+                assertTrue(open.takeLast(5).all { abs(it - open.last()) < 0.5f }, "settled open: $open")
             } else {
                 assertInstant(open, "opening details")
                 assertInstant(close, "closing details")

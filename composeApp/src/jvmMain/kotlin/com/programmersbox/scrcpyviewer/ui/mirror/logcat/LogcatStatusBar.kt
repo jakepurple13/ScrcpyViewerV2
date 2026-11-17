@@ -55,7 +55,23 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.stateDescription
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.logcat.LogLevel
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 
@@ -65,34 +81,105 @@ private val IconShape = RoundedCornerShape(8.dp)
  * Under the list: the live dot and state, clear, soft wrap and compact, "X of Y lines" (shown of all) and a bar of
  * the shown lines by level. While an export shows, its [exportStatusText] takes the counts' place: the new text rises
  * 10 dp from below as the old leaves 10 dp up (200 ms fade, 260 ms slide).
+ *
+ * When [compact] (under 420 dp) the level bar becomes a 3 dp strip along the bar's top edge, Wrap and Compact fold
+ * into a ⋮ menu (Clear stays) and the counts read "shown/total". Folds open and close on the layout spring with
+ * [glide]; without it they only fade (150 ms).
  */
 @Composable
-internal fun LogcatStatusBar(controller: LogcatController, motion: Boolean) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        LiveIndicator(controller.run, motion)
-        Spacer(Modifier.size(2.dp))
-        StatusIcon(Icons.Filled.DeleteSweep, "Clear log", checked = null, motion) { controller.clear() }
-        StatusIcon(Icons.AutoMirrored.Filled.WrapText, "Soft wrap", controller.wrap, motion) { controller.wrap = !controller.wrap }
-        StatusIcon(Icons.Filled.ViewHeadline, "Compact view", controller.compact, motion) { controller.compact = !controller.compact }
-        val counts = controller.levelCounts
-        val shown = counts.values.sum()
-        CountsText(controller, shown, motion)
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-            LevelMix(counts, shown, motion, Modifier.widthIn(min = 60.dp, max = 220.dp).fillMaxWidth())
+internal fun LogcatStatusBar(controller: LogcatController, motion: Boolean, compact: Boolean = false, glide: Boolean = motion) {
+    val counts = controller.levelCounts
+    val shown = counts.values.sum()
+    Column(Modifier.fillMaxWidth()) {
+        Fold(compact, vertical = true, glide) {
+            LevelMix(counts, shown, motion, Modifier.fillMaxWidth(), height = 3.dp, rounded = false)
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Gaps are spacers, not the row's arrangement, so each fold takes its gap with it.
+            LiveIndicator(controller.run, motion)
+            Spacer(Modifier.size(18.dp))
+            StatusIcon(Icons.Filled.DeleteSweep, "Clear log", checked = null, motion) { controller.clear() }
+            Fold(!compact, vertical = false, glide) {
+                Row {
+                    Spacer(Modifier.size(8.dp))
+                    StatusIcon(Icons.AutoMirrored.Filled.WrapText, "Soft wrap", controller.wrap, motion) { controller.wrap = !controller.wrap }
+                    Spacer(Modifier.size(8.dp))
+                    StatusIcon(Icons.Filled.ViewHeadline, "Compact view", controller.compact, motion) { controller.compact = !controller.compact }
+                }
+            }
+            Spacer(Modifier.size(8.dp))
+            CountsText(controller, shown, compact, motion)
+            Spacer(Modifier.size(8.dp))
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                Fold(!compact, vertical = false, glide) {
+                    LevelMix(counts, shown, motion, Modifier.widthIn(min = 60.dp, max = 220.dp).fillMaxWidth())
+                }
+            }
+            Fold(compact, vertical = false, glide) {
+                Row {
+                    Spacer(Modifier.size(8.dp))
+                    StatusMenu(controller, motion)
+                }
+            }
         }
     }
 }
 
 /**
- * "[shown] of N lines", or the export's [exportStatusText] while one shows. Its own composable, so export progress
- * recomposes only this. Keyed on the export's stage: progress and new lines update the text in place.
+ * [content] while [shown]: it grows in and out along its width (or with [vertical], its height) on the layout spring
+ * and fades (150 ms) with [glide]; otherwise it only fades.
  */
 @Composable
-private fun CountsText(controller: LogcatController, shown: Int, motion: Boolean) {
+private fun Fold(shown: Boolean, vertical: Boolean, glide: Boolean, content: @Composable () -> Unit) {
+    val size = if (glide) layoutSpring<IntSize>() else snap()
+    AnimatedVisibility(
+        shown,
+        enter = fadeIn(tween(150)) + if (vertical) expandVertically(size) else expandHorizontally(size),
+        exit = fadeOut(tween(150)) + if (vertical) shrinkVertically(size) else shrinkHorizontally(size),
+    ) { content() }
+}
+
+/** ⋮ with Wrap lines and Compact view, each checked while on; it opens under the button, end-aligned. */
+@Composable
+private fun StatusMenu(controller: LogcatController, motion: Boolean) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        StatusIcon(Icons.Filled.MoreVert, "More status options", checked = null, motion) { open = true }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            MenuToggle("Wrap lines", controller.wrap) {
+                open = false
+                controller.wrap = !controller.wrap
+            }
+            MenuToggle("Compact view", controller.compact) {
+                open = false
+                controller.compact = !controller.compact
+            }
+        }
+    }
+}
+
+@Composable
+private fun MenuToggle(label: String, checked: Boolean, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        onClick = onClick,
+        leadingIcon = {
+            Box(Modifier.size(18.dp)) { if (checked) Icon(Icons.Filled.Check, contentDescription = null, Modifier.size(18.dp)) }
+        },
+        modifier = Modifier.semantics { stateDescription = if (checked) "On" else "Off" },
+    )
+}
+
+/**
+ * "[shown] of N lines", or the export's [exportStatusText] while one shows. Its own composable, so export progress
+ * recomposes only this. Keyed on the export's stage: progress and new lines update the text in place. When [compact]
+ * the counts read "[shown]/N".
+ */
+@Composable
+private fun CountsText(controller: LogcatController, shown: Int, compact: Boolean, motion: Boolean) {
     val scheme = MaterialTheme.colorScheme
     val style = MaterialTheme.typography.bodySmall
     val shift = with(LocalDensity.current) { 10.dp.roundToPx() }
@@ -103,7 +190,7 @@ private fun CountsText(controller: LogcatController, shown: Int, motion: Boolean
             if (motion) {
                 (slideInVertically(tween(260, easing = EmphasizedDecelerate)) { shift } + fadeIn(tween(200)))
                     .togetherWith(slideOutVertically(tween(260, easing = EmphasizedDecelerate)) { -shift } + fadeOut(tween(200)))
-                    .using(SizeTransform(clip = false))
+                    .using(SizeTransform(clip = false) { _, _ -> layoutSpring() })
             } else {
                 EnterTransition.None.togetherWith(ExitTransition.None)
             }
@@ -117,9 +204,9 @@ private fun CountsText(controller: LogcatController, shown: Int, motion: Boolean
                 buildAnnotatedString {
                     val num = SpanStyle(color = scheme.onSurface, fontWeight = FontWeight.Medium)
                     withStyle(num) { append("%,d".format(shown)) }
-                    append(" of ")
+                    append(if (compact) "/" else " of ")
                     withStyle(num) { append("%,d".format(controller.totalLines)) }
-                    append(" lines")
+                    if (!compact) append(" lines")
                 }
             },
             style = style.copy(fontFeatureSettings = "tnum"),
@@ -192,11 +279,22 @@ private fun StatusIcon(icon: ImageVector, description: String, checked: Boolean?
     }
 }
 
-/** A 6 dp bar of the shown lines by level, each part's width easing to its share (500 ms). */
+/**
+ * A bar [height] tall (6 dp, ends [rounded]) of the shown lines by level, each part's width easing to its share
+ * (500 ms).
+ */
 @Composable
-private fun LevelMix(counts: Map<LogLevel, Int>, total: Int, motion: Boolean, modifier: Modifier) {
+private fun LevelMix(
+    counts: Map<LogLevel, Int>,
+    total: Int,
+    motion: Boolean,
+    modifier: Modifier,
+    height: Dp = 6.dp,
+    rounded: Boolean = true,
+) {
     Row(
-        modifier.height(6.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)
+        modifier.height(height).then(if (rounded) Modifier.clip(RoundedCornerShape(height / 2)) else Modifier)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .semantics { contentDescription = "Shown lines by level" },
     ) {
         var used = 0f

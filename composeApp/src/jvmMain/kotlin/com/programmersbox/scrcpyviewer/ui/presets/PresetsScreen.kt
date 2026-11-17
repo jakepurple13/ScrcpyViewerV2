@@ -1,5 +1,11 @@
 package com.programmersbox.scrcpyviewer.ui.presets
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +55,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,11 +66,29 @@ import com.programmersbox.scrcpyviewer.options.OptionCatalog
 import com.programmersbox.scrcpyviewer.options.OptionGroup
 import com.programmersbox.scrcpyviewer.options.OptionValues
 import com.programmersbox.scrcpyviewer.presets.Preset
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveListDetail
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveRow
+import com.programmersbox.scrcpyviewer.ui.common.BarItem
+import com.programmersbox.scrcpyviewer.ui.common.BarSpacer
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
-import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.common.ListDetailPanes
-import com.programmersbox.scrcpyviewer.ui.common.ResizableListDetail
+import com.programmersbox.scrcpyviewer.ui.common.BackArrowRow
+import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.PriorityBar
+import com.programmersbox.scrcpyviewer.ui.common.RowHighlight
+import com.programmersbox.scrcpyviewer.ui.common.highlightContainer
+import com.programmersbox.scrcpyviewer.ui.common.RowOrigin
+import com.programmersbox.scrcpyviewer.ui.common.highlightPart
+import com.programmersbox.scrcpyviewer.ui.common.rowOrigin
+import com.programmersbox.scrcpyviewer.ui.common.itemSwitchTransform
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.rememberListDetailPanes
+import com.programmersbox.scrcpyviewer.ui.common.rememberRowHighlight
+import com.programmersbox.scrcpyviewer.ui.common.selectionHighlightTarget
+import com.programmersbox.scrcpyviewer.ui.common.switchDirection
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import com.programmersbox.scrcpyviewer.ui.common.LocalSnackbarHostState
 import com.programmersbox.scrcpyviewer.ui.common.OptionRow
 import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
@@ -72,6 +99,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.nio.file.Files
+import kotlin.math.roundToInt
 
 private val ToolbarPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
 
@@ -160,44 +188,66 @@ fun PresetsContent(
     panes: ListDetailPanes = rememberListDetailPanes(),
 ) {
     var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    val reduceMotion = LocalReduceMotion.current
     Column(modifier.fillMaxSize()) {
         state.persistenceError?.let { ErrorBanner("Presets can't be saved: $it") }
-        ResizableListDetail(
+        AdaptiveListDetail(
             panes = panes,
             listMinWidth = PRESET_LIST_MIN_WIDTH,
             listPreferredWidth = PresetListPreferredWidth,
-            detailMinWidth = PRESET_DETAIL_MIN_WIDTH,
+            hasSelection = state.selected != null,
             list = {
                 PresetList(
-                    state, onSelect = { editingId = null; onSelect(it); panes.navigation.openDetail() },
-                    onNew = { editingId = onNew().id; panes.navigation.openDetail() }, onExportAll = onExportAll,
-                    onImportFile = onImportFile, onImportPaste = onImportPaste,
+                    state,
+                    onSelect = {
+                        editingId = null
+                        onSelect(it)
+                        panes.push()
+                    },
+                    onNew = {
+                        editingId = onNew().id
+                        panes.push()
+                    },
+                    onExportAll = onExportAll, onImportFile = onImportFile, onImportPaste = onImportPaste,
                 )
             },
             detail = { onBack ->
-                val selected = state.selected
-                Box(Modifier.fillMaxSize()) {
-                    when {
-                        selected == null -> {
-                            if (onBack != null) DetailBackButton(onBack, Modifier.padding(start = 6.dp, top = 6.dp))
-                            Text(
-                                "No presets yet. Create one with + New preset, or import a file.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.align(Alignment.Center),
+                // Deleting the open preset moves the selection to another one: return to the list.
+                BackToListWhenGone(state, panes::back)
+                val ids = state.presets.map { it.id }
+                // Keyed by preset, so editing one updates it in place; switching presets slides between them.
+                AnimatedContent(
+                    targetState = state.selected,
+                    contentKey = { it?.id },
+                    transitionSpec = {
+                        itemSwitchTransform(switchDirection(ids.indexOf(initialState?.id), ids.indexOf(targetState?.id)), reduceMotion)
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    label = "presetSwitch",
+                ) { selected ->
+                    Box(Modifier.fillMaxSize()) {
+                        when {
+                            selected == null -> {
+                                onBack?.let { DetailBackButton(it, Modifier.padding(start = 10.dp, top = 12.dp)) }
+                                Text(
+                                    "No presets yet. Create one with + New preset, or import a file.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.align(Alignment.Center),
+                                )
+                            }
+                            editingId == selected.id -> PresetEditor(
+                                selected,
+                                isNameTaken = { n -> state.presets.any { it.id != selected.id && it.name.equals(n.trim(), ignoreCase = true) } },
+                                onSave = { name, description, values -> onEdit(selected.id, name, description, values); editingId = null },
+                                onCancel = { editingId = null },
+                                onBack = onBack,
+                            )
+                            else -> PresetDetail(
+                                selected, state, onEdit = { editingId = selected.id },
+                                onDuplicate = onDuplicate, onDelete = onDelete, onSetDefault = onSetDefault,
+                                onApply = onApply, onExport = onExport, onBack = onBack,
                             )
                         }
-                        editingId == selected.id -> PresetEditor(
-                            selected,
-                            isNameTaken = { n -> state.presets.any { it.id != selected.id && it.name.equals(n.trim(), ignoreCase = true) } },
-                            onSave = { name, description, values -> onEdit(selected.id, name, description, values); editingId = null },
-                            onCancel = { editingId = null },
-                            onBack = onBack,
-                        )
-                        else -> PresetDetail(
-                            selected, state, onEdit = { editingId = selected.id },
-                            onDuplicate = onDuplicate, onDelete = onDelete, onSetDefault = onSetDefault,
-                            onApply = onApply, onExport = onExport, onBack = onBack,
-                        )
                     }
                 }
             },
@@ -206,12 +256,24 @@ fun PresetsContent(
     }
 }
 
+/**
+ * Calls [backToList] when the preset that was open leaves the list (deleted): the pushed detail would otherwise jump
+ * to whichever preset is selected next.
+ */
+@Composable
+private fun BackToListWhenGone(state: PresetsUiState, backToList: () -> Unit) {
+    val open = remember { arrayOf(state.selected?.id) }
+    val ids = state.presets.map { it.id }
+    LaunchedEffect(state.selected?.id, ids) {
+        val was = open[0]
+        open[0] = state.selected?.id
+        if (was != null && was !in ids) backToList()
+    }
+}
+
 /** Narrowest preset list that still shows a preset row (the toolbar wraps below its width). */
 val PRESET_LIST_MIN_WIDTH = 280.dp
 private val PresetListPreferredWidth = 390.dp
-
-/** Narrowest detail that still fits the action row and the two-column flag grid. */
-val PRESET_DETAIL_MIN_WIDTH = 600.dp
 
 /** A full-width error strip above a screen's content, e.g. when its store can't be saved. */
 @Composable
@@ -247,14 +309,22 @@ private fun PresetList(
             }
             OutlinedButton(onExportAll, enabled = state.presets.isNotEmpty(), contentPadding = ToolbarPadding) { Text("Export all", maxLines = 1) }
         }
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Material: the selected row's highlight slides between rows (see RowHighlight). The other styles mark the
+        // selected row themselves (listRow).
+        val highlight = rememberRowHighlight()
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).then(
+                if (currentStyle == ThemeStyle.Material) Modifier.highlightContainer(highlight) else Modifier,
+            ),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             state.presets.forEachIndexed { i, preset ->
                 // Keyed, so a row's entrance stays with its preset when rows are added or removed above it.
                 key(preset.id) {
                     PresetRow(
-                        preset, selected = preset.id == state.selected?.id, isDefault = preset.id == state.defaultId,
+                        preset, selected = preset.id == state.selected?.id, isDefault = preset.id == state.defaultId, highlight = highlight,
                         // The rows fill in one after another when the list appears.
-                        modifier = Modifier.staggeredEntrance(i, trigger = Unit),
+                        entrance = Modifier.staggeredEntrance(i, trigger = Unit),
                     ) { onSelect(preset.id) }
                 }
             }
@@ -263,13 +333,32 @@ private fun PresetList(
 }
 
 @Composable
-private fun PresetRow(preset: Preset, selected: Boolean, isDefault: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun PresetRow(
+    preset: Preset,
+    selected: Boolean,
+    isDefault: Boolean,
+    highlight: RowHighlight,
+    /** The row's entrance; it moves the row in a layer, so the highlight's bounds are read outside it. */
+    entrance: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val shape = styledCorner(12.dp)
     val n = preset.options.entries.size
+    val material = currentStyle == ThemeStyle.Material
+    val origin = remember { RowOrigin() }
     Row(
-        modifier
+        Modifier
             .fillMaxWidth()
-            .listRow(selected, shape)
+            .then(if (material) Modifier.selectionHighlightTarget(highlight.state, selected).rowOrigin(highlight, origin) else Modifier)
+            .then(entrance)
+            .then(
+                // Material: the row's surface with the sliding highlight over it. The other styles keep listRow.
+                if (material) {
+                    Modifier.clip(shape).background(MaterialTheme.colorScheme.surface).highlightPart(highlight, shape, origin)
+                } else {
+                    Modifier.listRow(selected, shape)
+                },
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -304,26 +393,45 @@ private fun PresetDetail(
     onSetDefault: (String?) -> Unit,
     onApply: (String) -> Unit,
     onExport: (Preset) -> Unit,
+    /** Back to the list, while the detail is pushed over it: the arrow starts the header row. */
     onBack: (() -> Unit)?,
 ) {
     var confirmDelete by rememberSaveable(preset.id) { mutableStateOf(false) }
     val isDefault = preset.id == state.defaultId
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (onBack != null) DetailBackButton(onBack, Modifier.offset(x = (-8).dp))
-            // Name and chip take the space the actions leave; the name ellipsizes first.
-            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                Text(preset.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                Box(Modifier.width(10.dp))
-                if (isDefault) FilterChip(true, { onSetDefault(null) }, label = { Text("Default") })
-                else AssistChip({ onSetDefault(preset.id) }, label = { Text("Set as default") })
-            }
-            TextButton(onEdit) { Text("Edit") }
-            TextButton({ onDuplicate(preset.id) }) { Text("Duplicate") }
-            TextButton({ onExport(preset) }) { Text("Export") }
-            TextButton({ confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-            Button({ onApply(preset.id) }, enabled = state.canApply) { Text("Apply") }
-        }
+        // Out of room, Duplicate folds into More first, then Export, Delete, Edit and the default chip; the name
+        // (down to 110 dp) and Apply never fold. The name ellipsizes first; the chip stays right after it.
+        val items = listOf(
+            BarItem("name", priority = 0, menuLabel = preset.name, onMenuClick = null, minWidth = 110.dp, grow = true, growToNatural = true) {
+                Text(preset.name, style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            BarItem(
+                "default", priority = 1,
+                menuLabel = if (isDefault) "Remove as default" else "Set as default",
+                onMenuClick = { onSetDefault(if (isDefault) null else preset.id) },
+            ) {
+                // With the bar's 4 dp gap, 10 dp after the name.
+                Box(Modifier.padding(start = 6.dp)) {
+                    if (isDefault) FilterChip(true, { onSetDefault(null) }, label = { Text("Default") })
+                    else AssistChip({ onSetDefault(preset.id) }, label = { Text("Set as default") })
+                }
+            },
+            BarSpacer,
+            BarItem("edit", priority = 2, menuLabel = "Edit", onMenuClick = onEdit) { TextButton(onEdit) { Text("Edit") } },
+            BarItem("duplicate", priority = 5, menuLabel = "Duplicate", onMenuClick = { onDuplicate(preset.id) }) {
+                TextButton({ onDuplicate(preset.id) }) { Text("Duplicate") }
+            },
+            BarItem("export", priority = 4, menuLabel = "Export", onMenuClick = { onExport(preset) }) {
+                TextButton({ onExport(preset) }) { Text("Export") }
+            },
+            BarItem("delete", priority = 3, menuLabel = "Delete", onMenuClick = { confirmDelete = true }) {
+                TextButton({ confirmDelete = true }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            BarItem("apply", priority = 0, menuLabel = "Apply", onMenuClick = { onApply(preset.id) }.takeIf { state.canApply }) {
+                Button({ onApply(preset.id) }, enabled = state.canApply) { Text("Apply") }
+            },
+        )
+        BackArrowRow(onBack) { PriorityBar(items, it, gap = 4.dp) }
         if (!state.canApply) {
             Text(APPLY_DISABLED_HINT, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.End))
         }
@@ -345,6 +453,7 @@ private fun PresetDetail(
     }
 }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun FlagGrid(values: OptionValues) {
     if (values.entries.isEmpty()) {
@@ -353,56 +462,122 @@ private fun FlagGrid(values: OptionValues) {
     }
     val order = OptionCatalog.all.withIndex().associate { it.value.flag to it.index }
     val rows = values.entries.entries.sortedBy { order[it.key] ?: Int.MAX_VALUE }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        rows.chunked(2).forEach { pair ->
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                pair.forEach { (flag, value) ->
-                    val label = OptionCatalog.byFlag(flag)?.label ?: flag
-                    Row(
-                        Modifier.weight(1f).clip(styledCorner(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 12.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            if (value == null) "--$flag" else "--$flag=$value",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                if (pair.size == 1) Box(Modifier.weight(1f))
+    val reduceMotion = LocalReduceMotion.current
+    LookaheadScope {
+        // Every cell glides to its place when the grid changes between one and two columns.
+        val glide = if (reduceMotion) Modifier else Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
+        FlagCells {
+            rows.forEach { (flag, value) ->
+                key(flag) { FlagCell(flag, value, glide) }
             }
         }
     }
+}
+
+/** Two cells per row when the grid is at least this wide, else one. */
+private val TwoFlagColumnsMinWidth = 520.dp
+private val FlagCellGap = 6.dp
+
+/** Lays [cells] out in rows of two (one under [TwoFlagColumnsMinWidth]), 6 dp apart; a row is as tall as its tallest cell. */
+@Composable
+private fun FlagCells(cells: @Composable () -> Unit) {
+    Layout(cells) { measurables, constraints ->
+        val gap = FlagCellGap.roundToPx()
+        val width = constraints.maxWidth
+        val columns = if (width >= TwoFlagColumnsMinWidth.roundToPx()) 2 else 1
+        // Like two weight(1f) cells in a Row: the first takes the odd pixel.
+        val second = (width - gap * (columns - 1)) / columns
+        val first = width - gap * (columns - 1) - second * (columns - 1)
+        val placeables = measurables.mapIndexed { i, m ->
+            val w = if (i % columns == 0) first else second
+            m.measure(Constraints(minWidth = w, maxWidth = w))
+        }
+        val rowHeights = placeables.chunked(columns).map { row -> row.maxOf { it.height } }
+        val height = rowHeights.sum() + gap * (rowHeights.size - 1).coerceAtLeast(0)
+        layout(width, height) {
+            var y = 0
+            placeables.chunked(columns).forEachIndexed { r, row ->
+                row.forEachIndexed { c, p -> p.place(if (c == 0) 0 else first + gap, y) }
+                y += rowHeights[r] + gap
+            }
+        }
+    }
+}
+
+/** One flag of the grid: its label, then the flag as written on the command line (under the label when narrow). */
+@Composable
+private fun FlagCell(flag: String, value: String?, modifier: Modifier) {
+    val label = OptionCatalog.byFlag(flag)?.label ?: flag
+    AdaptiveRow(
+        text = { Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        control = {
+            Text(
+                if (value == null) "--$flag" else "--$flag=$value",
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        modifier = modifier.clip(styledCorner(10.dp)).background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        textMin = 90.dp,
+        gap = 10.dp,
+    )
 }
 
 @Composable
 private fun JsonPanel(json: String) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = styledCorner(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Box {
-            SelectionContainer {
-                Text(
-                    json,
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
-                )
+        BoxWithConstraints {
+            // Narrow, the JSON wraps under Copy JSON: the text starts below the button instead (0 beside it, 1 under).
+            val under by animateFloatAsState(
+                if (maxWidth < NarrowJsonPanelWidth) 1f else 0f,
+                if (LocalReduceMotion.current) snap() else layoutSpring(),
+                label = "jsonUnderCopy",
+            )
+            Layout(
+                contents = listOf(
+                    {
+                        SelectionContainer {
+                            Text(
+                                json,
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
+                            )
+                        }
+                    },
+                    { CopyButton(text = { json }, label = "Copy JSON", modifier = Modifier.padding(4.dp)) },
+                ),
+            ) { (textMeasurables, copyMeasurables), constraints ->
+                val loose = constraints.copy(minWidth = 0, minHeight = 0)
+                val copy = copyMeasurables.first().measure(loose)
+                val text = textMeasurables.first().measure(loose)
+                val besideTop = 12.dp.roundToPx()
+                val top = besideTop + ((copy.height - besideTop) * under).roundToInt()
+                val width = constraints.maxWidth
+                layout(width, maxOf(top + text.height, copy.height)) {
+                    text.place(0, top)
+                    copy.place(width - copy.width, 0)
+                }
             }
-            CopyButton(text = { json }, label = "Copy JSON", modifier = Modifier.align(Alignment.TopEnd).padding(4.dp))
         }
     }
 }
 
+/** Below this panel width the JSON text starts under the Copy JSON button rather than beside it. */
+private val NarrowJsonPanelWidth = 520.dp
+
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun PresetEditor(
     preset: Preset,
     isNameTaken: (String) -> Boolean,
     onSave: (String, String, OptionValues) -> Unit,
     onCancel: () -> Unit,
+    /** Back to the list, while the editor is pushed over it: the arrow starts the header row. */
     onBack: (() -> Unit)?,
 ) {
     // Saveable so an unsaved draft survives switching rail tabs.
@@ -412,15 +587,25 @@ private fun PresetEditor(
     val errors = values.validate()
     val nameTaken = isNameTaken(name)
     Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (onBack != null) DetailBackButton(onBack, Modifier.offset(x = (-8).dp))
-            Text("Edit preset", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            TextButton(onCancel) { Text("Cancel") }
-            Button({ onSave(name, description, values) }, enabled = name.isNotBlank() && !nameTaken && errors.isEmpty()) { Text("Save") }
+        BackArrowRow(onBack) { rowModifier ->
+            Row(rowModifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Edit preset", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                TextButton(onCancel) { Text("Cancel") }
+                Button({ onSave(name, description, values) }, enabled = name.isNotBlank() && !nameTaken && errors.isEmpty()) { Text("Save") }
+            }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") }, isError = name.isBlank() || nameTaken, supportingText = if (nameTaken) ({ Text("A preset with this name already exists") }) else null, modifier = Modifier.weight(1f))
-            OutlinedTextField(description, { description = it }, singleLine = true, label = { Text("Description") }, modifier = Modifier.weight(2f))
+        val reduceMotion = LocalReduceMotion.current
+        LookaheadScope {
+            // The two fields glide between side by side and stacked.
+            val glide = if (reduceMotion) Modifier else Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() })
+            NameAndDescription(
+                name = {
+                    OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") }, isError = name.isBlank() || nameTaken, supportingText = if (nameTaken) ({ Text("A preset with this name already exists") }) else null, modifier = glide)
+                },
+                description = {
+                    OutlinedTextField(description, { description = it }, singleLine = true, label = { Text("Description") }, modifier = glide)
+                },
+            )
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             OptionGroup.entries.forEach { group ->
@@ -438,6 +623,36 @@ private fun PresetEditor(
                         onValueChange = { v -> if (spec.flag in values.entries) values = values.with(spec.flag, v) },
                     )
                 }
+            }
+        }
+    }
+}
+
+/** Name and description side by side (1 : 2) when the editor is at least this wide, else stacked. */
+private val SideBySideFieldsMinWidth = 480.dp
+private val FieldGap = 10.dp
+
+@Composable
+private fun NameAndDescription(name: @Composable () -> Unit, description: @Composable () -> Unit) {
+    Layout(contents = listOf(name, description)) { (nameMeasurables, descriptionMeasurables), constraints ->
+        val gap = FieldGap.roundToPx()
+        val width = constraints.maxWidth
+        if (width >= SideBySideFieldsMinWidth.roundToPx()) {
+            // Like weight(1f) and weight(2f) in a Row.
+            val nameWidth = ((width - gap) / 3f).roundToInt()
+            val descriptionWidth = width - gap - nameWidth
+            val n = nameMeasurables.first().measure(Constraints.fixedWidth(nameWidth))
+            val d = descriptionMeasurables.first().measure(Constraints.fixedWidth(descriptionWidth))
+            layout(width, maxOf(n.height, d.height)) {
+                n.place(0, 0)
+                d.place(nameWidth + gap, 0)
+            }
+        } else {
+            val n = nameMeasurables.first().measure(Constraints.fixedWidth(width))
+            val d = descriptionMeasurables.first().measure(Constraints.fixedWidth(width))
+            layout(width, n.height + gap + d.height) {
+                n.place(0, 0)
+                d.place(0, n.height + gap)
             }
         }
     }

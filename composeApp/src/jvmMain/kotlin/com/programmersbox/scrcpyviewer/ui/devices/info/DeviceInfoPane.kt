@@ -38,21 +38,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.common.CopyButton
+import com.programmersbox.scrcpyviewer.ui.common.CopyIconButton
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.snap
+import androidx.compose.foundation.layout.BoxWithConstraints
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.common.staggeredEntrance
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import kotlinx.coroutines.delay
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 
 /** Not-ready message in, cards out (and back): fade with the cards shrinking to [NOT_READY_SCALE]. */
 internal const val NOT_READY_MILLIS = 200
@@ -89,9 +94,9 @@ fun DeviceInfoPane(
     state: DeviceInfoUiState,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
-    reduceMotion: Boolean = remember { systemReducesMotion() },
+    reduceMotion: Boolean = LocalReduceMotion.current,
 ) {
-    CompositionLocalProvider(LocalInfoReduceMotion provides reduceMotion) {
+    CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
         val body = bodyOf(state)
         Column(modifier.fillMaxSize()) {
             // The name can change when the quiet static re-read finds the marketing name: cross-fade it.
@@ -218,51 +223,73 @@ private fun CenteredMessage(content: @Composable () -> Unit) {
 /**
  * "Updated N s ago" (or "Last updated …" in the warning color after a failed poll) and "Copy as text".
  *
- * The footer opens and closes its height while it fades (in step with the not-ready change, [NOT_READY_MILLIS]), so
+ * The footer opens and closes its height on the layout spring while it fades ([NOT_READY_MILLIS]), so
  * the cards area above, which takes the rest of the pane, resizes smoothly instead of stepping by the footer's height.
  */
 @Composable
 private fun ColumnScope.Footer(state: DeviceInfoUiState, showing: Boolean) {
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     val millis = if (reduce) REDUCED_FADE_MILLIS else NOT_READY_MILLIS
     AnimatedVisibility(
         visible = showing,
-        enter = expandVertically(tween(millis, easing = SizeEasing), expandFrom = Alignment.Top) +
+        enter = expandVertically(if (reduce) tween(millis, easing = SizeEasing) else layoutSpring(), expandFrom = Alignment.Top) +
             fadeIn(tween(millis, easing = EmphasizedDecelerate)),
-        exit = shrinkVertically(tween(millis, easing = SizeEasing), shrinkTowards = Alignment.Top) +
+        exit = shrinkVertically(if (reduce) tween(millis, easing = SizeEasing) else layoutSpring(), shrinkTowards = Alignment.Top) +
             fadeOut(tween(millis, easing = EmphasizedAccelerate)),
     ) {
         FooterRow(state, millis)
     }
 }
 
+/** Below this content width, the footer's "Copy as text" becomes a copy icon with a tooltip. */
+fun infoFooterIconCopy(contentWidth: Dp): Boolean = contentWidth < 220.dp
+
+/**
+ * "Updated …" takes the width the copy control leaves (ellipsized when short of it). The copy control is the
+ * labelled "Copy as text" button, or a copy icon with that tooltip below [infoFooterIconCopy]'s width; the two
+ * cross-fade while the control's width springs ([layoutSpring]; at once under reduced motion).
+ */
 @Composable
 private fun FooterRow(state: DeviceInfoUiState, millis: Int) {
-    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        val updatedAt = state.liveUpdatedAt
-        // Fade only: it sits in a row whose height the Copy button sets, and the spacer absorbs its width.
-        AnimatedVisibility(
-            visible = updatedAt != null,
-            enter = fadeIn(tween(millis, easing = EmphasizedDecelerate)),
-            exit = fadeOut(tween(millis, easing = EmphasizedAccelerate)),
-        ) {
-            // Holds the last time while fading out.
-            val at = rememberLastNonNull(updatedAt)
-            if (at != null) UpdatedAge(at, state.liveStale)
-        }
-        Spacer(Modifier.weight(1f))
-        Box {
-            CopyButton(
-                text = {
-                    InfoText.report(
-                        title = state.title ?: state.serial.orEmpty(),
-                        serial = state.serial.orEmpty(),
-                        static = (state.static as? Load.Ready)?.value,
-                        live = (state.live as? Load.Ready)?.value,
-                    )
+    val reduce = LocalReduceMotion.current
+    val report = {
+        InfoText.report(
+            title = state.title ?: state.serial.orEmpty(),
+            serial = state.serial.orEmpty(),
+            static = (state.static as? Load.Ready)?.value,
+            live = (state.live as? Load.Ready)?.value,
+        )
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        val iconCopy = infoFooterIconCopy(maxWidth)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            val updatedAt = state.liveUpdatedAt
+            // Fade only: it sits in a row whose height the Copy button sets, and its box keeps the width.
+            Box(Modifier.weight(1f)) {
+                // Not the RowScope overload: this sits in a Box.
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = updatedAt != null,
+                    enter = fadeIn(tween(millis, easing = EmphasizedDecelerate)),
+                    exit = fadeOut(tween(millis, easing = EmphasizedAccelerate)),
+                ) {
+                    // Holds the last time while fading out.
+                    val at = rememberLastNonNull(updatedAt)
+                    if (at != null) UpdatedAge(at, state.liveStale)
+                }
+            }
+            AnimatedContent(
+                targetState = iconCopy,
+                transitionSpec = {
+                    val fade = if (reduce) REDUCED_FADE_MILLIS else CROSSFADE_MILLIS
+                    fadeIn(tween(fade, easing = EmphasizedDecelerate)) togetherWith
+                        fadeOut(tween(fade, easing = EmphasizedAccelerate)) using
+                        SizeTransform(clip = false) { _, _ -> if (reduce) snap() else layoutSpring() }
                 },
-                label = "Copy as text",
-            )
+                contentAlignment = Alignment.CenterEnd,
+                label = "infoCopy",
+            ) { icon ->
+                if (icon) CopyIconButton(text = report, label = "Copy as text") else CopyButton(text = report, label = "Copy as text")
+            }
         }
     }
 }
@@ -284,14 +311,18 @@ private fun UpdatedAge(at: Long, stale: Boolean) {
     val color by animateColorAsState(
         if (stale) warnColor() else MaterialTheme.colorScheme.onSurfaceVariant, tween(CROSSFADE_MILLIS), label = "ageColor",
     )
-    val reduce = LocalInfoReduceMotion.current
+    val reduce = LocalReduceMotion.current
     val style = MaterialTheme.typography.bodySmall
     Row(verticalAlignment = Alignment.CenterVertically) {
         AnimatedContent(if (stale) "Last updated" else "Updated", transitionSpec = { crossFade(reduce) }, label = "agePrefix") {
-            Text(it, style = style, color = color)
+            Text(it, style = style, color = color, maxLines = 1, softWrap = false)
         }
         Text(" ", style = style)
-        TickingText(ageText(now - at), style = style, color = color)
+        // Short of room, the age ends in an ellipsis rather than wrapping under the copy control.
+        TickingText(
+            ageText(now - at), Modifier.weight(1f, fill = false), style = style, color = color,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

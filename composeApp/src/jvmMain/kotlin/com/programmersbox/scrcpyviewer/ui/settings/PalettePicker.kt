@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -32,11 +33,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
 import androidx.compose.material3.Slider
-import com.programmersbox.scrcpyviewer.ui.theme.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,24 +49,32 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.appTheme
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.layoutFraction
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.CustomNeon
 import com.programmersbox.scrcpyviewer.ui.theme.CustomPalette
 import com.programmersbox.scrcpyviewer.ui.theme.LocalThemeRevealOrigin
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.Switch
 import com.programmersbox.scrcpyviewer.ui.theme.ThemePalette
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeRevealOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.colorSchemeFor
 import com.programmersbox.scrcpyviewer.ui.theme.isDark
 import com.programmersbox.scrcpyviewer.ui.theme.oklch
 import kotlin.math.roundToInt
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 private val Emphasized = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
@@ -131,8 +139,8 @@ internal fun PaletteControl(b: SettingsBindings) {
         Tiles(ThemePalette.entries.filter { it.neon })
         AnimatedVisibility(
             visible = theme.palette == ThemePalette.CustomNeon,
-            enter = expandVertically(tween(240, easing = Emphasized), expandFrom = Alignment.Top) + fadeIn(tween(240)),
-            exit = shrinkVertically(tween(200, easing = Emphasized), shrinkTowards = Alignment.Top) + fadeOut(tween(200)),
+            enter = expandVertically(layoutSpring(), expandFrom = Alignment.Top) + fadeIn(tween(240)),
+            exit = shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top) + fadeOut(tween(200)),
         ) {
             CustomNeonEditor(
                 draft = neonDraft,
@@ -148,8 +156,8 @@ internal fun PaletteControl(b: SettingsBindings) {
         }
         AnimatedVisibility(
             visible = theme.palette == ThemePalette.Custom,
-            enter = expandVertically(tween(240, easing = Emphasized), expandFrom = Alignment.Top) + fadeIn(tween(240)),
-            exit = shrinkVertically(tween(200, easing = Emphasized), shrinkTowards = Alignment.Top) + fadeOut(tween(200)),
+            enter = expandVertically(layoutSpring(), expandFrom = Alignment.Top) + fadeIn(tween(240)),
+            exit = shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top) + fadeOut(tween(200)),
         ) {
             CustomPaletteEditor(
                 draft = draft,
@@ -280,7 +288,7 @@ private fun RoleSwatches(scheme: ColorScheme, modifier: Modifier) {
                     Modifier.fillMaxWidth().height(28.dp).clip(RoundedCornerShape(8.dp)).background(color)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
                 )
-                Text(name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(name, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -303,7 +311,7 @@ private fun AnimatedVisibilityScope.CustomNeonEditor(
     with(Stagger(this)) {
         Column(editorPanel, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(Modifier.fillMaxWidth().next(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Custom neon", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                Text("Custom neon", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 OutlinedButton(onClick = onReset) { Text("Reset") }
             }
             GradientSlider(
@@ -363,7 +371,7 @@ private fun AnimatedVisibilityScope.CustomPaletteEditor(
     val seed = draft.seed
     with(Stagger(this)) { Column(editorPanel, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth().next(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Custom palette", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            Text("Custom palette", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             OutlinedButton(onClick = onReset) { Text("Reset") }
         }
         GradientSlider(
@@ -415,28 +423,74 @@ private fun GradientSlider(
     onCommit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(96.dp))
-        Slider(
-            value = value,
-            onValueChange = onChange,
-            onValueChangeFinished = onCommit,
-            valueRange = range,
-            modifier = Modifier.weight(1f),
-            thumb = {
-                Box(
-                    Modifier.size(20.dp).clip(CircleShape).background(Color.White).padding(3.dp)
-                        .clip(CircleShape).background(knob),
-                )
-            },
-            track = {
-                Box(Modifier.fillMaxWidth().height(12.dp).clip(CircleShape).background(track))
-            },
-        )
-        Text(
-            valueText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.End, modifier = Modifier.width(44.dp),
-        )
+    // Beside the slider while the slider keeps SliderMinWidth, else the label goes above it.
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val stacked = maxWidth < SliderLabelWidth + SliderGap + SliderMinWidth + SliderGap + SliderValueWidth
+        val stack = layoutFraction(stacked, glide = !LocalReduceMotion.current)
+        SliderRowLayout(stack) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Slider(
+                value = value,
+                onValueChange = onChange,
+                onValueChangeFinished = onCommit,
+                valueRange = range,
+                thumb = {
+                    Box(
+                        Modifier.size(20.dp).clip(CircleShape).background(Color.White).padding(3.dp)
+                            .clip(CircleShape).background(knob),
+                    )
+                },
+                track = {
+                    Box(Modifier.fillMaxWidth().height(12.dp).clip(CircleShape).background(track))
+                },
+            )
+            Text(
+                valueText, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.End, maxLines = 1,
+            )
+        }
+    }
+}
+
+private val SliderLabelWidth = 96.dp
+private val SliderValueWidth = 44.dp
+private val SliderGap = 12.dp
+
+/** The narrowest a palette slider gets beside its label. */
+private val SliderMinWidth = 120.dp
+
+/** Space between a label stacked above its slider and the slider. */
+private val StackedLabelGap = 2.dp
+
+/**
+ * Label, slider and value text: in one row at [stack] 0; at 1 the label above, the slider and value under it. In
+ * between every slot moves and sizes along the way, so the flip glides; widths always follow the row's own width.
+ */
+@Composable
+private fun SliderRowLayout(stack: State<Float>, content: @Composable () -> Unit) {
+    Layout(content, Modifier.fillMaxWidth()) { measurables, constraints ->
+        val (labelM, sliderM, valueM) = measurables
+        val f = stack.value.coerceIn(0f, 1f)
+        val width = constraints.maxWidth
+        val gap = SliderGap.roundToPx()
+        val labelW = SliderLabelWidth.roundToPx()
+        val valueW = SliderValueWidth.roundToPx()
+        fun lerp(a: Int, b: Int) = (a + (b - a) * f).roundToInt()
+        val sliderX = lerp(labelW + gap, 0)
+        val sliderW = (width - sliderX - gap - valueW).coerceAtLeast(0)
+        val label = labelM.measure(Constraints.fixedWidth(lerp(labelW, (width - gap - valueW).coerceAtLeast(0)).coerceAtLeast(0)))
+        val slider = sliderM.measure(Constraints.fixedWidth(sliderW))
+        val value = valueM.measure(Constraints.fixedWidth(valueW))
+        val lineH = maxOf(slider.height, value.height)
+        val inlineH = maxOf(label.height, lineH)
+        val lineTop = label.height + StackedLabelGap.roundToPx()
+        val center = Alignment.CenterVertically
+        val height = lerp(inlineH, lineTop + lineH)
+        layout(width, height) {
+            label.place(0, lerp(center.align(label.height, inlineH), 0))
+            slider.place(sliderX, lerp(center.align(slider.height, inlineH), lineTop + center.align(slider.height, lineH)))
+            value.place(width - valueW, lerp(center.align(value.height, inlineH), lineTop + center.align(value.height, lineH)))
+        }
     }
 }
 

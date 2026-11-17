@@ -67,6 +67,7 @@ import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import kotlinx.coroutines.flow.first
 import kotlin.math.ceil
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Device arrives and leaves
@@ -189,11 +190,11 @@ internal fun AnimatedDeviceItem(entry: DeviceEntry, onExited: (String) -> Unit, 
         AnimatedVisibility(
             visibleState = visible,
             enter = slideInHorizontally(tween(DEVICE_ARRIVE_MILLIS, easing = EmphasizedDecelerate)) { -slide } +
-                expandVertically(tween(DEVICE_ARRIVE_MILLIS, easing = EmphasizedDecelerate), expandFrom = Alignment.Top) +
+                expandVertically(layoutSpring(), expandFrom = Alignment.Top) +
                 fadeIn(tween(DEVICE_ARRIVE_MILLIS, easing = EmphasizedDecelerate)),
             exit = slideOutHorizontally(tween(DEVICE_LEAVE_MILLIS, easing = EmphasizedAccelerate)) { slide } +
                 fadeOut(tween(DEVICE_LEAVE_MILLIS, easing = EmphasizedAccelerate)) +
-                shrinkVertically(tween(DEVICE_LEAVE_MILLIS, easing = EmphasizedAccelerate), shrinkTowards = Alignment.Top),
+                shrinkVertically(layoutSpring(), shrinkTowards = Alignment.Top),
         ) {
             content(entry.arrived)
         }
@@ -280,7 +281,7 @@ internal fun StatusChip(status: ChipStatus, modifier: Modifier = Modifier) {
         modifier
             .clip(styledCorner(6.dp))
             .background(container)
-            .animateContentSize(tween(CHIP_RESIZE_MILLIS, easing = EmphasizedDecelerate))
+            .animateContentSize(layoutSpring())
             .padding(horizontal = 6.dp, vertical = 1.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),

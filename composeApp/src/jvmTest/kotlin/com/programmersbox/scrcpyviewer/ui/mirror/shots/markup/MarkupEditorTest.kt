@@ -323,15 +323,15 @@ class MarkupEditorTest {
     }
 
     @Test
-    fun `the toolbar's height follows a wrap with a tween`() = onEdt {
+    fun `the toolbar's height follows a wrap on the layout spring`() = onEdt {
         val e = Content(motion = true)
         val d = e.d
         val oneRow = d.canvas().top
         e.w = EDITOR_WINDOW_MIN_SIZE.width.value.toInt()
-        val tops = (1..24).map { d.frame(); d.canvas().top }
+        val tops = (1..60).map { d.frame(); d.canvas().top }
         assertTrue(tops.last() > oneRow + 20f, "a row more: $tops")
         assertTrue(tops.any { it > tops.first() + 2f && it < tops.last() - 2f }, "moves down over frames, not a snap: $tops")
-        assertEquals(tops.last(), tops[18], 0.5f, "done by about 250 ms: $tops")
+        assertTrue(tops.takeLast(10).all { abs(it - tops.last()) < 0.5f }, "settled: $tops")
         e.close()
     }
 
@@ -343,7 +343,7 @@ class MarkupEditorTest {
             d.frames(30)
             val before = assertNotNull(d.tagged(tag), tag).positionInRoot
             e.w = if (widen) width else narrow
-            return listOf(before) + (1..24).map { d.frame(); assertNotNull(d.tagged(tag), tag).positionInRoot }
+            return listOf(before) + (1..60).map { d.frame(); assertNotNull(d.tagged(tag), tag).positionInRoot }
         } finally {
             e.close()
         }
@@ -357,11 +357,11 @@ class MarkupEditorTest {
             val path = groupPath(motion = true, tag = tag, widen = widen)
             val total = path.distance(0, path.size - 1)
             assertTrue(total > 20f, "$tag moves to another row (widen $widen): $path")
-            // In between for several frames, never most of the way in one frame, landed by about 250 ms.
+            // In between for several frames, never most of the way in one frame, then settled.
             val between = path.indices.count { i -> path.distance(0, i) > total * 0.1f && path.distance(i, path.size - 1) > total * 0.1f }
             assertTrue(between >= 4, "$tag glides over several frames (widen $widen): $path")
             assertTrue((1 until path.size).all { path.distance(it - 1, it) < total * 0.6f }, "$tag no jump (widen $widen): $path")
-            assertTrue(path.distance(18, path.size - 1) < 0.5f, "$tag lands by about 250 ms (widen $widen): $path")
+            assertTrue(path.distance(path.size - 11, path.size - 1) < 0.5f, "$tag lands (widen $widen): $path")
         }
     }
 

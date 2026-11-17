@@ -83,3 +83,63 @@ fun tileColumns(width: Dp): Int = when {
     width < FOUR_COLUMNS_FROM -> 3
     else -> 4
 }
+
+/** Where the open quick actions sheet goes in the content row: beside the stage, over it, or over all of it. */
+enum class SheetPlacement {
+    /** Right of the side toolbar, taking its width from the stage (as in a wide window). */
+    Docked,
+
+    /** Over the stage, its right edge at the toolbar's start, the stage keeping the row less the toolbar. */
+    Floating,
+
+    /** Over the whole stage: the row less the toolbar, even under the tab's minimum. */
+    Full,
+}
+
+/**
+ * Where a sheet [sheetWidth] wide (its tab's saved width) goes in a content row [windowWidth] wide that also holds the
+ * side toolbar ([toolbarWidth]): docked while the stage keeps [STAGE_MIN_WIDTH] beside it, full while the row cannot
+ * hold the toolbar and the tab's minimum ([sheetMin]), floating over the stage in between.
+ */
+fun sheetPlacement(windowWidth: Dp, toolbarWidth: Dp, sheetWidth: Dp, sheetMin: Dp): SheetPlacement = when {
+    windowWidth >= toolbarWidth + STAGE_MIN_WIDTH + sheetWidth -> SheetPlacement.Docked
+    windowWidth < toolbarWidth + sheetMin -> SheetPlacement.Full
+    else -> SheetPlacement.Floating
+}
+
+/**
+ * [sheetPlacement] for [tab] at its [saved] width (never under the tab's minimum) in a row [rowWidth] wide; docked
+ * while the row is unknown.
+ */
+fun sheetPlacement(saved: Dp, tab: SheetTab, rowWidth: Dp?, toolbarWidth: Dp): SheetPlacement {
+    val min = SheetWidths.default(tab)
+    return if (rowWidth == null) SheetPlacement.Docked else sheetPlacement(rowWidth, toolbarWidth, saved.coerceAtLeast(min), min)
+}
+
+/**
+ * The sheet width to show for [requested] on [tab] in a row [rowWidth] wide, placed by the tab's [saved] width: docked,
+ * [clampSheetWidth]; floating, between the tab's minimum and the row less the toolbar; full, the row less the toolbar.
+ * An unknown row (null: the window is growing or shrinking for the sheet) applies only the tab's minimum.
+ */
+fun fitSheetWidth(
+    requested: Dp,
+    tab: SheetTab,
+    rowWidth: Dp?,
+    toolbarWidth: Dp,
+    saved: Dp = requested,
+    /** The placement to fit for, when the window keeps it (a drag in progress); null computes it from [saved]. */
+    placement: SheetPlacement? = null,
+): Dp {
+    if (rowWidth == null) return requested.coerceAtLeast(SheetWidths.default(tab))
+    return when (placement ?: sheetPlacement(saved, tab, rowWidth, toolbarWidth)) {
+        SheetPlacement.Docked -> clampSheetWidth(requested, tab, rowWidth, toolbarWidth)
+        SheetPlacement.Floating -> requested.coerceAtMost(rowWidth - toolbarWidth).coerceAtLeast(SheetWidths.default(tab))
+        SheetPlacement.Full -> rowWidth - toolbarWidth
+    }
+}
+
+/** The sheet's tab control turns compact (icons, the selected tab also named) on a sheet narrower than this. */
+private val COMPACT_TABS_UNDER = 340.dp
+
+/** Whether the sheet's tab control is compact on a sheet [width] wide. */
+fun sheetTabsCompact(width: Dp): Boolean = width < COMPACT_TABS_UNDER

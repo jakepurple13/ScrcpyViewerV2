@@ -117,11 +117,12 @@ import com.programmersbox.scrcpyviewer.ui.mirror.shots.Tip
 import kotlinx.coroutines.launch
 import org.jetbrains.skia.Paint
 import kotlin.math.roundToInt
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 
 /** With reduced motion everything only fades, this long. */
 const val EDITOR_FADE_MILLIS = 150
 
-/** The toolbar's height follows a wrap onto another row (or back) over this long. */
+/** A separator fades in or out over this long when the toolbar wraps (the rows themselves glide on the layout spring). */
 const val TOOLBAR_ROWS_MILLIS = 250
 
 /** A tool's selection background crossfades. */
@@ -415,7 +416,7 @@ fun MarkupEditorContent(
  * The top toolbar: the tools, Undo, the swatches, then Save and Copy at the right end of its last row. Nothing is ever
  * hidden: when the window is narrower than the toolbar, it wraps onto a second row (whole groups move: the tools,
  * "| Undo", "| swatches", and Save + Copy, which stay right-aligned), and its height animates to the new rows. Each
- * group glides to its new place over [TOOLBAR_ROWS_MILLIS] (at once under reduced motion), and a separator that would
+ * group glides to its new place on the layout spring (at once under reduced motion), and a separator that would
  * start a row is left out (it fades).
  */
 @Composable
@@ -431,7 +432,7 @@ private fun EditorToolbar(
     Box(
         Modifier
             .fillMaxWidth()
-            .animateContentSize(if (motion) tween(TOOLBAR_ROWS_MILLIS, easing = EmphasizedDecelerate) else snap())
+            .animateContentSize(if (motion) layoutSpring() else snap())
             .padding(horizontal = 10.dp, vertical = 6.dp)
             .semantics { contentDescription = "Markup tools" },
     ) {
@@ -519,7 +520,7 @@ private class ToolbarGlides(val group: Modifier, val actions: Modifier)
 
 /** A group moves only when the toolbar wraps or unwraps: it always glides there. */
 @OptIn(ExperimentalSharedTransitionApi::class)
-private val GroupGlide = BoundsTransform { _, _ -> tween(TOOLBAR_ROWS_MILLIS, easing = EmphasizedDecelerate) }
+private val GroupGlide = BoundsTransform { _, _ -> layoutSpring() }
 
 /**
  * Save + Copy also follow the window's right edge while it is resized: on the same row that keeps up at once, and only
@@ -527,7 +528,7 @@ private val GroupGlide = BoundsTransform { _, _ -> tween(TOOLBAR_ROWS_MILLIS, ea
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 private val ActionsGlide = BoundsTransform { initial, target ->
-    if (initial.top == target.top) snap() else tween(TOOLBAR_ROWS_MILLIS, easing = EmphasizedDecelerate)
+    if (initial.top == target.top) snap() else layoutSpring()
 }
 
 /**

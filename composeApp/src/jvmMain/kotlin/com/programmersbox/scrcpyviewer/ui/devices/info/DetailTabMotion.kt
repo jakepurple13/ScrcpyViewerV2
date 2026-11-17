@@ -7,6 +7,8 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -17,15 +19,13 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -38,11 +38,14 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.programmersbox.scrcpyviewer.ui.common.AdaptiveSegmentedButtons
+import com.programmersbox.scrcpyviewer.ui.common.ControlSize
 import com.programmersbox.scrcpyviewer.ui.common.DetailBackButton
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
-import com.programmersbox.scrcpyviewer.ui.theme.styledSegmentShape
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.common.SegmentOption
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import kotlin.math.roundToInt
 
 /** Options ↔ Info (motion A): the old tab slides [TAB_SLIDE] and fades out, then the new one slides in from the other side. */
@@ -109,7 +112,7 @@ internal fun deviceSwitch(fromIndex: Int, toIndex: Int, reduced: Boolean): AxisS
 }
 
 /** The [AnimatedContent] transform for this switch. Only offset and alpha animate; the size does not. */
-internal fun AxisSwitch.transform(density: Density): ContentTransform {
+internal fun AxisSwitch.transform(density: Density, reduced: Boolean = false): ContentTransform {
     val enterPx = with(density) { enterOffset.toPx() }.roundToInt()
     val exitPx = with(density) { exitOffset.toPx() }.roundToInt()
     val enterSlide = tween<IntOffset>(enterMillis, enterDelayMillis, EmphasizedDecelerate)
@@ -128,15 +131,16 @@ internal fun AxisSwitch.transform(density: Density): ContentTransform {
             AxisSwitch.Axis.Vertical -> slideOutVertically(exitSlide) { exitPx }
         }
     }
-    // Both sides fill the pane, so there is no size to animate; clipping keeps the 36 dp slide inside the pane.
-    return ContentTransform(enter, exit, sizeTransform = SizeTransform(clip = true))
+    // Both sides fill the pane, so the size seldom changes (it rides the layout spring when it does); clipping keeps
+    // the 36 dp slide inside the pane.
+    return ContentTransform(enter, exit, sizeTransform = SizeTransform(clip = true) { _, _ -> if (reduced) snap() else layoutSpring() })
 }
 
 fun detailTabTransform(from: DetailTab, to: DetailTab, reduced: Boolean, density: Density): ContentTransform =
-    detailTabSwitch(from, to, reduced).transform(density)
+    detailTabSwitch(from, to, reduced).transform(density, reduced)
 
 fun deviceSwitchTransform(fromIndex: Int, toIndex: Int, reduced: Boolean, density: Density): ContentTransform =
-    deviceSwitch(fromIndex, toIndex, reduced).transform(density)
+    deviceSwitch(fromIndex, toIndex, reduced).transform(density, reduced)
 
 /**
  * No device ↔ a device: a fade-through. The old content fades out over [SELECT_OUT_MILLIS] while the new one fades
@@ -146,17 +150,23 @@ fun deviceSwitchTransform(fromIndex: Int, toIndex: Int, reduced: Boolean, densit
 internal fun selectionFade(reduced: Boolean): ContentTransform {
     if (reduced) {
         return ContentTransform(
-            fadeIn(tween(REDUCED_FADE_MILLIS)), fadeOut(tween(REDUCED_FADE_MILLIS)), sizeTransform = SizeTransform(clip = true),
+            fadeIn(tween(REDUCED_FADE_MILLIS)), fadeOut(tween(REDUCED_FADE_MILLIS)), sizeTransform = SizeTransform(clip = true) { _, _ -> snap() },
         )
     }
     return ContentTransform(
         fadeIn(selectInSpec()),
         fadeOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate)),
-        sizeTransform = SizeTransform(clip = true),
+        sizeTransform = SizeTransform(clip = true) { _, _ -> layoutSpring() },
     )
 }
 
 private fun <T> selectInSpec() = tween<T>(SELECT_FADE_MILLIS, SELECT_IN_DELAY_MILLIS, FastOutSlowInEasing)
+
+/** The Options | Info control's size for the width it has: the segments from [DETAIL_TABS_FULL_MIN], else a menu. */
+fun detailTabsSize(paneWidth: Dp): ControlSize = if (paneWidth >= DETAIL_TABS_FULL_MIN) ControlSize.Full else ControlSize.Menu
+
+/** The narrowest width that shows the Options | Info segments; narrower, they fold into one menu button. */
+internal val DETAIL_TABS_FULL_MIN = 344.dp
 
 /** What the segmented control calls each tab. */
 internal fun DetailTab.label(): String = when (this) {
@@ -165,9 +175,11 @@ internal fun DetailTab.label(): String = when (this) {
 }
 
 /**
- * The detail pane's top row: the back button (single-pane layout) and, while a device is [selected], the
- * Options | Info control, which fades and scales in and out. The row keeps [DETAIL_TAB_ROW_HEIGHT] either way, so
- * nothing below it moves.
+ * The detail pane's top row: the back arrow (while the detail is pushed over the list in a narrow window) and, while a
+ * device is [selected], the Options | Info control, which fades and scales in and out. The row keeps
+ * [DETAIL_TAB_ROW_HEIGHT] either way, so nothing below it moves. The tabs are centred in the space after the back
+ * arrow, at [detailTabsSize] of that space: the segments, or one menu button in a narrow pane. When the arrow comes or
+ * goes it fades and the tabs glide to their new centre ([layoutSpring]), or both change at once with [reduceMotion].
  */
 @Composable
 fun DetailTabRow(
@@ -176,33 +188,53 @@ fun DetailTabRow(
     onTab: (DetailTab) -> Unit,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
-    reduceMotion: Boolean = remember { systemReducesMotion() },
+    reduceMotion: Boolean = LocalReduceMotion.current,
 ) {
-    Box(modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
-        if (onBack != null) DetailBackButton(onBack, Modifier.align(Alignment.CenterStart).padding(start = 6.dp))
-        AnimatedVisibility(
-            visible = selected,
-            modifier = Modifier.align(Alignment.Center),
-            // Arrives and leaves with the content below (see selectionFade).
-            enter = if (reduceMotion) fadeIn(tween(REDUCED_FADE_MILLIS)) else
-                fadeIn(selectInSpec()) + scaleIn(selectInSpec(), initialScale = 0.92f),
-            exit = if (reduceMotion) fadeOut(tween(REDUCED_FADE_MILLIS)) else
-                fadeOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate)) +
-                    scaleOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate), targetScale = 0.92f),
-        ) {
-            SingleChoiceSegmentedButtonRow {
-                DetailTab.entries.forEachIndexed { i, entry ->
-                    SegmentedButton(
-                        selected = tab == entry,
-                        onClick = { onTab(entry) },
-                        shape = styledSegmentShape(i, DetailTab.entries.size),
-                        modifier = Modifier.widthIn(min = 120.dp),
-                    ) { Text(entry.label()) }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val backSpace = if (onBack != null) BACK_SPACE else 0.dp
+        val size = detailTabsSize(maxWidth - backSpace)
+        val tabsStart by animateDpAsState(backSpace, if (reduceMotion) snap() else layoutSpring(), label = "tabsStart")
+        // The arrow fading out still needs something to call.
+        val lastBack = remember { arrayOf(onBack) }
+        if (onBack != null) lastBack[0] = onBack
+        val tabs = @Composable {
+            AnimatedVisibility(
+                visible = selected,
+                // Arrives and leaves with the content below (see selectionFade).
+                enter = if (reduceMotion) fadeIn(tween(REDUCED_FADE_MILLIS)) else
+                    fadeIn(selectInSpec()) + scaleIn(selectInSpec(), initialScale = 0.92f),
+                exit = if (reduceMotion) fadeOut(tween(REDUCED_FADE_MILLIS)) else
+                    fadeOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate)) +
+                        scaleOut(tween(SELECT_OUT_MILLIS, easing = EmphasizedAccelerate), targetScale = 0.92f),
+            ) {
+                CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
+                    AdaptiveSegmentedButtons(
+                        options = DetailTab.entries.map { SegmentOption(it, it.label()) },
+                        selected = tab,
+                        onSelect = onTab,
+                        size = size,
+                        segmentMinWidth = 120.dp,
+                    )
                 }
             }
         }
+        Box(Modifier.fillMaxWidth().height(DETAIL_TAB_ROW_HEIGHT)) {
+            AnimatedVisibility(
+                visible = onBack != null,
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp),
+                enter = fadeIn(tween(if (reduceMotion) REDUCED_FADE_MILLIS else 220)),
+                exit = fadeOut(tween(if (reduceMotion) REDUCED_FADE_MILLIS else 120)),
+            ) {
+                DetailBackButton({ lastBack[0]?.invoke() })
+            }
+            // The spring overshoots a little below 0 on its way back.
+            Box(Modifier.fillMaxSize().padding(start = tabsStart.coerceAtLeast(0.dp)), contentAlignment = Alignment.Center) { tabs() }
+        }
     }
 }
+
+/** The back arrow (48 dp after a 6 dp inset): the tabs centre in the space after it. */
+private val BACK_SPACE = 54.dp
 
 /** What one device's detail shows; a leaving device keeps its last one while it animates out. */
 private data class Shown<T>(val page: T, val info: DeviceInfoUiState)
@@ -226,7 +258,7 @@ fun <T> DetailPane(
     onInfoActive: (Boolean) -> Unit,
     onInfoRetry: () -> Unit,
     modifier: Modifier = Modifier,
-    reduceMotion: Boolean = remember { systemReducesMotion() },
+    reduceMotion: Boolean = LocalReduceMotion.current,
     empty: @Composable (Modifier) -> Unit,
     options: @Composable (page: T, modifier: Modifier) -> Unit,
 ) {

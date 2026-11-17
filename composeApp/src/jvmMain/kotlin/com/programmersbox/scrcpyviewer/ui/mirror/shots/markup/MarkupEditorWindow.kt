@@ -396,6 +396,7 @@ private fun EditorWindow(
         theme = theme,
         state = windowState,
         visible = shown,
+        reduceMotion = !motion,
         titleBar = {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

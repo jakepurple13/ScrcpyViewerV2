@@ -9,6 +9,12 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.ui.draw.shadow
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.window.MirrorWindowMinSize
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -55,6 +61,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Android
@@ -229,7 +236,6 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.common.ImageClipboard
 import com.programmersbox.scrcpyviewer.ui.common.openExternally
 import com.programmersbox.scrcpyviewer.ui.common.revealInFolder
@@ -247,6 +253,8 @@ import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishRecording
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportWindows
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.GifExportWindowsState
 import com.programmersbox.scrcpyviewer.ui.mirror.shots.finishScreenshot
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import androidx.compose.animation.core.snap
 
 /** Side toolbar buttons; [keycode] buttons send that Android key down and up. */
 enum class MirrorAction(val label: String, val keycode: Int? = null) {
@@ -616,7 +624,9 @@ fun MirrorWindow(
     val requestedHeight = e["window-height"]?.toIntOrNull()?.takeIf { it > 0 } ?: 900
     // Read once as the window opens: the setting, the OS's reduce motion, and the Mirror button that was pressed.
     // The window starts at the button's bounds and grows to its own (centered unless the options place it).
-    val motionOn = remember { animate && !systemReducesMotion() }
+    // Read once for the whole window: its AppWindow provides it to every screen inside (LocalReduceMotion).
+    val reduceMotion = remember { systemReducesMotion() }
+    val motionOn = remember { animate && !reduceMotion }
     val zoomFrom = remember { if (motionOn && "fullscreen" !in e) MirrorOrigins.take() else null }
     val zoomTo = remember {
         zoomFrom?.let {
@@ -700,7 +710,6 @@ fun MirrorWindow(
     // Send input to other windows: the leader tees its pointer (not with the UHID mouse), toolbar and key messages to
     // its followers; a follower shows the chip, the glowing border and a click ring where each followed tap lands.
     val follow = rememberWindowFollow(serial, following, controller.open)
-    val reduceMotion = remember { systemReducesMotion() }
     val followStrip = rememberFollowStrip(
         serial, following, controller.open, follow,
         devices = devices,
@@ -803,6 +812,9 @@ fun MirrorWindow(
     }
 
     val currentQuickActions by rememberUpdatedState(quickActions)
+    // The quick actions sheet floats over the stage (MirrorContent's onStageCovered): the mouse capture ends and held
+    // keys are released, and no key goes to the device until it docks or closes. Swing thread only.
+    val stageCover = remember(capture) { StageCoverRelease(endCapture = { capture?.focusLost() }) }
     // The device's keys: this window's key events before its content sees them (the sheet's fields get theirs back).
     val keys = remember(session) {
         MirrorKeys(
@@ -822,7 +834,11 @@ fun MirrorWindow(
             legacyPaste = "legacy-paste" in e,
             followerSend = follow::send,
             followerKeyRepeat = "no-key-repeat" !in e,
-        ).also { follow.heldKeyUp = it::followerHeldKeyUp }
+            stageCovered = { stageCover.covered },
+        ).also {
+            follow.heldKeyUp = it::followerHeldKeyUp
+            stageCover.releaseKeys = it::onStageCovered
+        }
     }
 
     LocalNucleusApplicationScope.current.AppWindow(
@@ -831,6 +847,8 @@ fun MirrorWindow(
         title = mirrorTitle(model, serial, values),
         theme = theme,
         state = windowState,
+        minSize = MirrorWindowMinSize,
+        reduceMotion = reduceMotion,
         alwaysOnTop = "always-on-top" in e,
         icon = AppIcon.painter,
         titleBarHeight = 40.dp,
@@ -1174,6 +1192,7 @@ fun MirrorWindow(
                         },
                         onViewSize = { viewSize = it },
                         onStageSize = { stage = it },
+                        onStageCovered = stageCover::update,
                         onQuickAction = quickActions::onEvent,
                         pinnedStageWidth = pinnedStage,
                         wake = readWake,
@@ -1408,6 +1427,8 @@ fun MirrorContent(
      * a button pressed on it will never come.
      */
     onInputDetached: () -> Unit = {},
+    /** True while the quick actions sheet floats over the stage, whose scrim then takes the pointer: no input to send. */
+    onStageCovered: (Boolean) -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -1439,79 +1460,172 @@ fun MirrorContent(
         if (showTopStrip) NoTitleBarScope.TopStrip(state, onZoom = onZoom)
         HorizontalDivider(color = colors.outlineVariant)
         val density = LocalDensity.current
-        var rowWidth by remember { mutableStateOf<Dp?>(null) }
-        Row(Modifier.weight(1f).fillMaxWidth().onSizeChanged { rowWidth = with(density) { it.width.toDp() } }) {
-            Box(
-                (if (pinnedStageWidth != null) Modifier.width(with(density) { pinnedStageWidth.toDp() }) else Modifier.weight(1f))
-                    .fillMaxHeight()
-                    .background(state.background ?: colors.surfaceDim)
-                    .onSizeChanged(onStageSize)
-                    .onGloballyPositioned { onStageBounds(it.boundsInWindow()) },
-            ) {
-                val disconnected = state.disconnected
-                if (wake == null) {
-                    Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator, onInputDetached)
-                } else {
-                    WakeStage(wake, standby = !disconnected) {
-                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator, onInputDetached)
-                    }
-                }
-                // While the screen is still asleep its standby line stands in for the skeleton.
-                val awake by remember(wake) { derivedStateOf { wake == null || wake() >= 1f } }
-                // Fully qualified: the enclosing Row's RowScope.AnimatedVisibility would otherwise win.
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = awake && !disconnected && (state.status == SessionStatus.Connecting || state.frameSize == null),
-                    enter = fadeIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)),
-                    // Quick: the frame is already fading in underneath, and the skeleton is not its shape.
-                    exit = fadeOut(tween(SKELETON_OUT_MILLIS, easing = EmphasizedAccelerate)),
-                ) {
-                    StageSkeleton(state.frameSize?.let(state.orientation::orientedSize))
-                }
-                // The card keeps what it said while it leaves (a reconnect is already Connecting). A plain holder.
-                val lastDown = remember { arrayOfNulls<MirrorUiState>(1) }
-                if (disconnected) lastDown[0] = state
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = disconnected,
-                    enter = fadeIn(tween(SCRIM_IN_MILLIS, easing = EmphasizedDecelerate)),
-                    exit = fadeOut(tween(CLOSE_MILLIS, delayMillis = CARD_DELAY_MILLIS, easing = EmphasizedAccelerate)),
-                ) {
-                    DisconnectedScrim(lastDown[0] ?: state, onReconnect)
-                }
-                // Keep the last hint while fading out, so the overlay doesn't go blank mid-animation.
-                // A plain holder, not snapshot state: writing it during composition invalidates nothing.
-                val lastHint = remember { DropHintHolder() }
-                state.dropHint?.let { lastHint.hint = it }
-                // Fully qualified: the enclosing Row's RowScope.AnimatedVisibility would otherwise win.
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = state.dropHint != null,
-                    enter = fadeIn(tween(150)),
-                    exit = fadeOut(tween(200)),
-                ) {
-                    lastHint.hint?.let { DropOverlay(it) }
-                }
-                stageOverlay()
+        val reduceMotion = LocalReduceMotion.current
+        // The row's width is known in the first composition, so a narrow window starts with the sheet already placed.
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val rowWidth = maxWidth
+            val quick = state.quickActions
+            // Where the sheet goes (SheetPlacement), from the window's width once it has grown or shrunk for the sheet
+            // (the growth runs first). While the window does (pinned), a sheet floating in full view keeps floating; any
+            // other docks, as the growth expects. A closed sheet keeps its last place until it has animated out. A plain
+            // holder, written here and read only here.
+            val memo = remember { SheetPlaceMemo() }
+            // While the sheet's drag bar is held the placement stays put (no relayout under the pointer); it is
+            // recomputed, and glides, once the drag ends.
+            var resizing by remember { mutableStateOf(false) }
+            LaunchedEffect(sheetOpen) { if (!sheetOpen) resizing = false }
+            val computed = sheetPlacement(quick.widths[quick.tab], quick.tab, rowWidth, SIDE_TOOLBAR_WIDTH)
+            val placement = when {
+                sheetOpen && pinnedStageWidth == null -> if (resizing && memo.wasOpen) memo.placement else computed
+                sheetOpen -> if (memo.floatingShown) memo.placement else SheetPlacement.Docked
+                else -> memo.placement
             }
-            SideToolbar(state, onAction, screenshotButton)
+            val floating = placement != SheetPlacement.Docked
+            // The floating sheet animates in and out over the stage. It starts shown when the sheet was already open (the
+            // window narrowed under it) or on a first frame, so a placement change glides instead of entering again.
+            val floatingVisible = remember(floating) { MutableTransitionState(memo.wasOpen || memo.first) }
+            floatingVisible.targetState = sheetOpen
+            memo.floatingShown = floating && floatingVisible.currentState
+            memo.placement = when {
+                sheetOpen -> placement
+                floating && !(floatingVisible.isIdle && !floatingVisible.currentState) -> placement // still animating out
+                else -> SheetPlacement.Docked
+            }
+            // A sheet opening anew starts where it is placed: no glide from where it was in an earlier session.
+            val reopening = sheetOpen && !memo.wasOpen && !memo.first
+            memo.wasOpen = sheetOpen
+            memo.first = false
+            val covered = sheetOpen && floating
+            val currentDetached by rememberUpdatedState(onInputDetached)
+            val currentCovered by rememberUpdatedState(onStageCovered)
+            LaunchedEffect(covered) {
+                // The stage's view no longer gets the pointer: a press on it would never see its release.
+                if (covered) currentDetached()
+                currentCovered(covered)
+            }
+            val toolbarGlide = rememberGlide()
+            val sheetGlide = rememberGlide()
+            if (reopening) SideEffect { sheetGlide.forget() } // runs before this frame's placement
             // While the window grows or shrinks the row is mid-change; the sheet keeps its own width then.
             val panelState = quickActionsPanelState ?: { state.quickActions }
+            val currentOnQuickAction by rememberUpdatedState(onQuickAction)
+            val onPanelEvent: (QuickActionEvent) -> Unit = remember {
+                { event ->
+                    when (event) {
+                        is QuickActionEvent.Resize -> resizing = true
+                        is QuickActionEvent.ResizeDone -> resizing = false
+                        else -> Unit
+                    }
+                    currentOnQuickAction(event)
+                }
+            }
             val panel = rememberQuickActionsPanel(
-                panelState, onQuickAction, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
-                links,
+                panelState, onPanelEvent, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
+                links, placement = placement.takeIf { resizing && pinnedStageWidth == null },
             )
             // Where the sheet is, so the window's file drop leaves it to the sheet (the Files tab takes drops there).
             val currentSheetBounds by rememberUpdatedState(onSheetBounds)
             val sheetBounds = Modifier.onGloballyPositioned { currentSheetBounds(it.boundsInRoot()) }
-            if (pinnedStageWidth != null) {
-                // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
-                // so a tab switch's width change leaves no gap while the window catches up.
-                Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
-                    DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
-                    panel(AtLeastAvailableWidth.then(sheetPresses).then(sheetBounds))
+            val sheetMoves = Modifier.glide(sheetGlide, floating, animate = !reduceMotion)
+            Row(Modifier.fillMaxSize()) {
+                Box(
+                    // Floating, the stage keeps the row less the toolbar even while the window grows or shrinks: the
+                    // sheet covers it, and the toolbar stays at the end edge.
+                    (if (pinnedStageWidth != null && !floating) Modifier.width(with(density) { pinnedStageWidth.toDp() }) else Modifier.weight(1f))
+                        .fillMaxHeight()
+                        .background(state.background ?: colors.surfaceDim)
+                        .onSizeChanged(onStageSize)
+                        .onGloballyPositioned { onStageBounds(it.boundsInWindow()) },
+                ) {
+                    val disconnected = state.disconnected
+                    if (wake == null) {
+                        Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator, onInputDetached)
+                    } else {
+                        WakeStage(wake, standby = !disconnected) {
+                            Stage(state, frame, latestFrame, onPointer, onViewSize, clickIndicator, onViewOrigin, followIndicator, onInputDetached)
+                        }
+                    }
+                    // While the screen is still asleep its standby line stands in for the skeleton.
+                    val awake by remember(wake) { derivedStateOf { wake == null || wake() >= 1f } }
+                    // Fully qualified: the enclosing Row's RowScope.AnimatedVisibility would otherwise win.
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = awake && !disconnected && (state.status == SessionStatus.Connecting || state.frameSize == null),
+                        enter = fadeIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)),
+                        // Quick: the frame is already fading in underneath, and the skeleton is not its shape.
+                        exit = fadeOut(tween(SKELETON_OUT_MILLIS, easing = EmphasizedAccelerate)),
+                    ) {
+                        StageSkeleton(state.frameSize?.let(state.orientation::orientedSize))
+                    }
+                    // The card keeps what it said while it leaves (a reconnect is already Connecting). A plain holder.
+                    val lastDown = remember { arrayOfNulls<MirrorUiState>(1) }
+                    if (disconnected) lastDown[0] = state
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = disconnected,
+                        enter = fadeIn(tween(SCRIM_IN_MILLIS, easing = EmphasizedDecelerate)),
+                        exit = fadeOut(tween(CLOSE_MILLIS, delayMillis = CARD_DELAY_MILLIS, easing = EmphasizedAccelerate)),
+                    ) {
+                        DisconnectedScrim(lastDown[0] ?: state, onReconnect)
+                    }
+                    // Keep the last hint while fading out, so the overlay doesn't go blank mid-animation.
+                    // A plain holder, not snapshot state: writing it during composition invalidates nothing.
+                    val lastHint = remember { DropHintHolder() }
+                    state.dropHint?.let { lastHint.hint = it }
+                    // Fully qualified: the enclosing Row's RowScope.AnimatedVisibility would otherwise win.
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = state.dropHint != null,
+                        enter = fadeIn(tween(150)),
+                        exit = fadeOut(tween(200)),
+                    ) {
+                        lastHint.hint?.let { DropOverlay(it) }
+                    }
+                    stageOverlay()
+                    // Under the floating sheet: dims the stage and keeps its input from the device. Here, in the stage, it
+                    // fades out under the toolbar and sheet as they glide back to docked.
+                    StageScrim(visible = covered)
                 }
-            } else {
-                QuickActionsSheet(state.quickActions.open) {
-                    DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
-                    panel(sheetPresses.then(sheetBounds))
+                // At the row's end edge while the sheet floats; it glides there and back as the placement changes.
+                SideToolbar(state, onAction, screenshotButton, Modifier.glide(toolbarGlide, floating, animate = !reduceMotion))
+                if (floating) {
+                    // Drawn over the stage below.
+                } else if (pinnedStageWidth != null) {
+                    // The panel stays put; the growing window uncovers it. Never narrower than the space it is given,
+                    // so a tab switch's width change leaves no gap while the window catches up.
+                    Box(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
+                        DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
+                        panel(AtLeastAvailableWidth.then(sheetMoves).then(sheetPresses).then(sheetBounds))
+                    }
+                } else {
+                    QuickActionsSheet(state.quickActions.open) {
+                        DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
+                        panel(sheetMoves.then(sheetPresses).then(sheetBounds))
+                    }
+                }
+            }
+            if (floating) {
+                // Over the stage only (the toolbar stays usable), anchored to the toolbar's start.
+                val stageWidth = (rowWidth - SIDE_TOOLBAR_WIDTH).coerceAtLeast(0.dp)
+                Box(Modifier.width(stageWidth).fillMaxHeight()) {
+                    androidx.compose.animation.AnimatedVisibility(
+                        visibleState = floatingVisible,
+                        modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                        enter = if (reduceMotion) {
+                            fadeIn(tween(REDUCED_FADE_MILLIS))
+                        } else {
+                            slideInHorizontally(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) { it / 12 } +
+                                fadeIn(tween(OPEN_MILLIS - 40, delayMillis = 40))
+                        },
+                        exit = if (reduceMotion) {
+                            fadeOut(tween(REDUCED_FADE_MILLIS))
+                        } else {
+                            slideOutHorizontally(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { it / 12 } +
+                                fadeOut(tween(CLOSE_MILLIS))
+                        },
+                    ) {
+                        DisposableEffect(Unit) { onDispose { currentSheetBounds(null) } }
+                        Box(Modifier.fillMaxHeight().then(sheetMoves).shadow(FLOATING_SHEET_ELEVATION)) {
+                            panel(sheetPresses.then(sheetBounds))
+                        }
+                    }
                 }
             }
         }
@@ -1686,6 +1800,7 @@ private fun AppTitleBarScope.ZoomControls(state: MirrorUiState, onZoom: (ZoomCom
  */
 @Composable
 private fun ZoomReadout(reading: ZoomReading) {
+    val reduceMotion = LocalReduceMotion.current
     AnimatedContent(
         targetState = reading,
         transitionSpec = {
@@ -1696,7 +1811,7 @@ private fun ZoomReadout(reading: ZoomReading) {
                 0 -> EnterTransition.None togetherWith ExitTransition.None
                 else -> (slideInVertically(spec) { it * roll } + fadeIn(fade)) togetherWith
                     (slideOutVertically(spec) { -it * roll } + fadeOut(fade))
-            }.using(SizeTransform(clip = true))
+            }.using(SizeTransform(clip = true) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
         },
         contentAlignment = Alignment.Center,
         contentKey = { Zoom.label(it.scale) },
@@ -1987,7 +2102,8 @@ private fun AnimatedVisibilityScope.DisconnectedScrim(state: MirrorUiState, onRe
             shape = styledCorner(16.dp),
             color = colors.surfaceContainerHigh,
             tonalElevation = 3.dp,
-            modifier = Modifier.animateEnterExit(
+            // A margin from the stage's edges when the stage is narrower than the card.
+            modifier = Modifier.padding(horizontal = 16.dp).animateEnterExit(
                 enter = slideInVertically(tween(CARD_IN_MILLIS, CARD_DELAY_MILLIS, EmphasizedDecelerate)) { rise } +
                     fadeIn(tween(CARD_IN_MILLIS, CARD_DELAY_MILLIS, EmphasizedDecelerate)),
                 exit = slideOutVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { rise } +
@@ -1995,7 +2111,8 @@ private fun AnimatedVisibilityScope.DisconnectedScrim(state: MirrorUiState, onRe
             ),
         ) {
             Column(
-                Modifier.padding(horizontal = 24.dp, vertical = 20.dp).width(260.dp),
+                // 260 dp, or narrower on a narrow stage.
+                Modifier.padding(horizontal = 24.dp, vertical = 20.dp).widthIn(max = 260.dp).fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -2032,10 +2149,15 @@ private val toolbarIcons: Map<MirrorAction, ImageVector> = mapOf(
 internal val SIDE_TOOLBAR_WIDTH = 64.dp
 
 @Composable
-private fun SideToolbar(state: MirrorUiState, onAction: (MirrorAction) -> Unit, screenshotButton: ScreenBoundsRef? = null) {
+private fun SideToolbar(
+    state: MirrorUiState,
+    onAction: (MirrorAction) -> Unit,
+    screenshotButton: ScreenBoundsRef? = null,
+    modifier: Modifier = Modifier,
+) {
     val colors = MaterialTheme.colorScheme
     Column(
-        Modifier.width(SIDE_TOOLBAR_WIDTH).fillMaxHeight().background(colors.surfaceContainer).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
+        modifier.width(SIDE_TOOLBAR_WIDTH).fillMaxHeight().background(colors.surfaceContainer).verticalScroll(rememberScrollState()).padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {

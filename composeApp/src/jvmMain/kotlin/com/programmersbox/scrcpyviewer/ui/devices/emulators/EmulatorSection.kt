@@ -102,9 +102,14 @@ import com.programmersbox.scrcpyviewer.emulator.AvdState
 import com.programmersbox.scrcpyviewer.emulator.BootStage
 import com.programmersbox.scrcpyviewer.emulator.SdkLookup
 import com.programmersbox.scrcpyviewer.emulator.formatSize
+import com.programmersbox.scrcpyviewer.ui.common.LabelTooltip
 import com.programmersbox.scrcpyviewer.ui.common.OpenPlatform
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
+import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.animateBounds
+import androidx.compose.ui.layout.LookaheadScope
 import com.programmersbox.scrcpyviewer.ui.common.revealLabel
-import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.mirror.mirrorOrigin
 import com.programmersbox.scrcpyviewer.ui.theme.Button
 import com.programmersbox.scrcpyviewer.ui.theme.Checkbox
@@ -117,6 +122,7 @@ import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import com.programmersbox.scrcpyviewer.ui.theme.warnColor
 import java.io.File
 import java.nio.file.Path
+import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
 
 /** Narrower rows than this (inside their padding) put the row's controls on a second line, under the name. */
 internal val EMULATOR_ROW_ONE_LINE_MIN_WIDTH = 300.dp
@@ -131,7 +137,7 @@ internal fun EmulatorSection(
     onEvent: (EmulatorEvent) -> Unit,
     onChooseSdk: () -> Unit,
     modifier: Modifier = Modifier,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     now: () -> Long = System::currentTimeMillis,
 ) {
     val found = state.sdk is SdkLookup.Found
@@ -373,7 +379,7 @@ internal fun EmulatorRowItem(
     row: EmulatorRow,
     onEvent: (EmulatorEvent) -> Unit,
     modifier: Modifier = Modifier,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     now: () -> Long = System::currentTimeMillis,
     menuInitiallyOpen: Boolean = false,
 ) {
@@ -392,7 +398,10 @@ internal fun EmulatorRowItem(
         motion = motion,
     )
     EmulatorRowLayout(
+        motion = motion,
+        // The row's height springs as its controls move between one line and two.
         modifier = modifier.fillMaxWidth()
+            .then(if (motion) Modifier.animateHeight() else Modifier)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surface)
             .mirrorOrigin(row.state.serialOrNull)
@@ -415,16 +424,21 @@ internal fun EmulatorRowItem(
 /**
  * Glyph, text and More on one line, with the controls between text and More when the row is at least
  * [EMULATOR_ROW_ONE_LINE_MIN_WIDTH] wide; narrower, the controls go on a second line at the end, so they never clip.
+ * With [motion] the controls (chip and button) and More glide to their new places ([layoutSpring]).
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun EmulatorRowLayout(
+    motion: Boolean,
     modifier: Modifier,
     glyph: @Composable () -> Unit,
     text: @Composable () -> Unit,
     controls: @Composable () -> Unit,
     more: @Composable () -> Unit,
-) {
-    Layout(contents = listOf(glyph, text, controls, more), modifier = modifier) { (g, t, c, m), constraints ->
+) = LookaheadScope {
+    val glide = if (motion) Modifier.animateBounds(this, boundsTransform = { _, _ -> layoutSpring() }) else Modifier
+    val contents = listOf<@Composable () -> Unit>(glyph, text, { Box(glide) { controls() } }, { Box(glide) { more() } })
+    Layout(contents = contents, modifier = modifier) { (g, t, c, m), constraints ->
         val gap = 8.dp.roundToPx()
         val smallGap = 2.dp.roundToPx()
         val lineGap = 6.dp.roundToPx()
@@ -660,7 +674,7 @@ internal fun EmulatorMenu(
     onEvent: (EmulatorEvent) -> Unit,
     onDismiss: () -> Unit,
     onWipe: () -> Unit = {},
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
     platform: OpenPlatform = OpenPlatform.current(),
 ) {
     val id = row.avd.id
@@ -727,7 +741,7 @@ internal fun WipeDialog(
     name: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    motion: Boolean = remember { !systemReducesMotion() },
+    motion: Boolean = !LocalReduceMotion.current,
 ) {
     val shown = remember { MutableTransitionState(false) }
     shown.targetState = visible
@@ -832,13 +846,6 @@ private fun WipeCard(name: String, onConfirm: () -> Unit, onDismiss: () -> Unit,
 @Composable
 private fun Tooltip(label: String, content: @Composable () -> Unit) {
     TooltipArea(
-        tooltip = {
-            Surface(shape = styledCorner(4.dp), color = MaterialTheme.colorScheme.inverseSurface) {
-                Text(
-                    label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.inverseOnSurface,
-                )
-            }
-        },
+        tooltip = { LabelTooltip(label) },
     ) { content() }
 }

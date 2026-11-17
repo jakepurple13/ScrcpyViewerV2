@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.ui.devices
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -14,57 +15,69 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialogDefaults
-import androidx.compose.material3.LocalContentColor
-import androidx.compose.material3.LocalTextStyle
-import com.programmersbox.scrcpyviewer.ui.theme.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
-import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
-import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LookaheadScope
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.adb.MdnsService
 import com.programmersbox.scrcpyviewer.adb.WirelessParsers
+import com.programmersbox.scrcpyviewer.ui.common.animateHeight
+import com.programmersbox.scrcpyviewer.ui.common.dialogWidth
+import com.programmersbox.scrcpyviewer.ui.common.stackMotion
+import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedButton
+import com.programmersbox.scrcpyviewer.ui.theme.OutlinedTextField
+import com.programmersbox.scrcpyviewer.ui.theme.TextButton
+import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 import io.github.alexzhirkevich.qrose.rememberQrCodePainter
 
 /** The pairing dialog's callbacks, so [WifiPairingDialog] stays stateless (screenshots pass no-ops). */
@@ -156,7 +169,7 @@ private fun DialogCard(
     dismissButton: @Composable () -> Unit,
     text: @Composable () -> Unit,
 ) {
-    Column(Modifier.widthIn(min = 280.dp, max = 560.dp).padding(24.dp)) {
+    Column(Modifier.dialogWidth(560.dp).testTag("pairing-card").padding(24.dp)) {
         Text(
             title,
             style = MaterialTheme.typography.headlineSmall,
@@ -167,7 +180,7 @@ private fun DialogCard(
             LocalContentColor provides AlertDialogDefaults.textContentColor,
             LocalTextStyle provides MaterialTheme.typography.bodyMedium,
         ) {
-            Box(Modifier.weight(1f, fill = false).padding(bottom = 24.dp)) { text() }
+            Box(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) { text() }
         }
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colorScheme.primary,
@@ -183,14 +196,28 @@ private fun DialogCard(
 
 @Composable
 private fun PairingBody(state: WifiPairingState, actions: WifiPairingActions) {
-    Column(Modifier.width(500.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        PrimaryTabRow(selectedTabIndex = state.tab.ordinal, containerColor = Color.Transparent) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        val tabs: @Composable () -> Unit = {
             PairingTab.entries.forEach { tab ->
                 Tab(
                     selected = tab == state.tab,
                     onClick = { actions.selectTab(tab) },
-                    text = { Text(PairingTabLabels.getValue(tab)) },
+                    text = { Text(PairingTabLabels.getValue(tab), maxLines = 1) },
                 )
+            }
+        }
+        // Three equal tabs when they fit; a scrolling row once the body is too narrow for the labels.
+        BoxWithConstraints {
+            AnimatedContent(
+                targetState = maxWidth < 360.dp,
+                transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(150)) },
+                label = "tab row",
+            ) { narrow ->
+                if (narrow) {
+                    PrimaryScrollableTabRow(selectedTabIndex = state.tab.ordinal, containerColor = Color.Transparent, edgePadding = 0.dp, tabs = tabs)
+                } else {
+                    PrimaryTabRow(selectedTabIndex = state.tab.ordinal, containerColor = Color.Transparent, tabs = tabs)
+                }
             }
         }
         AnimatedContent(
@@ -240,20 +267,50 @@ private fun Steps(vararg steps: List<Pair<String, Boolean>>) {
 
 @Composable
 private fun QrTab(state: WifiPairingState) {
-    Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
-        // White behind the code in both themes: phone scanners expect dark modules on a light ground.
-        Box(Modifier.size(176.dp).clip(styledCorner(12.dp)).background(Color.White).padding(10.dp)) {
-            Image(rememberQrCodePainter(state.qrPayload) {}, contentDescription = "Pairing QR code", Modifier.size(156.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // Only the QR and steps block animates its height; the status line just follows below it.
+        Box(Modifier.testTag("qr-steps").animateHeight()) {
+            LookaheadScope {
+                val scope = this
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    // Side by side while the body is wide; the steps drop below a smaller code when it is not.
+                    val stacked = maxWidth < 420.dp
+                    val qrSize = if (stacked) 150.dp else 176.dp
+                    val qr = remember {
+                        movableContentOf { m: Modifier, size: Dp, payload: String ->
+                            // White behind the code in both themes: phone scanners expect dark modules on a light ground.
+                            Box(m.size(size).clip(styledCorner(12.dp)).background(Color.White).padding(10.dp)) {
+                                Image(rememberQrCodePainter(payload) {}, contentDescription = "Pairing QR code", Modifier.fillMaxSize())
+                            }
+                        }
+                    }
+                    val steps = remember {
+                        movableContentOf { m: Modifier ->
+                            Box(m) {
+                                Steps(
+                                    listOf("On the phone, open " to false, "Developer options › Wireless debugging" to true, "." to false),
+                                    listOf("Tap " to false, "Pair device with QR code" to true, "." to false),
+                                    listOf("Scan this code. The phone and this computer must be on the same Wi-Fi network." to false),
+                                )
+                            }
+                        }
+                    }
+                    if (stacked) {
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            qr(Modifier.stackMotion(scope), qrSize, state.qrPayload)
+                            steps(Modifier.fillMaxWidth().stackMotion(scope))
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                            qr(Modifier.stackMotion(scope), qrSize, state.qrPayload)
+                            steps(Modifier.weight(1f).stackMotion(scope))
+                        }
+                    }
+                }
+            }
         }
-        Box(Modifier.weight(1f)) {
-            Steps(
-                listOf("On the phone, open " to false, "Developer options › Wireless debugging" to true, "." to false),
-                listOf("Tap " to false, "Pair device with QR code" to true, "." to false),
-                listOf("Scan this code. The phone and this computer must be on the same Wi-Fi network." to false),
-            )
-        }
+        StatusLine(if (state.busy) "Pairing…" else "Waiting for a phone to scan…", trailing = state.qrName)
     }
-    StatusLine(if (state.busy) "Pairing…" else "Waiting for a phone to scan…", trailing = state.qrName)
 }
 
 @Composable
@@ -291,7 +348,7 @@ private fun CodeTab(state: WifiPairingState, actions: WifiPairingActions) {
         singleLine = true,
         label = { Text("Pairing code") },
         textStyle = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace),
-        modifier = Modifier.width(200.dp),
+        modifier = Modifier.fillMaxWidth().widthIn(max = 200.dp),
     )
 }
 
@@ -337,7 +394,7 @@ private fun IpTab(state: WifiPairingState, actions: WifiPairingActions) {
         OutlinedTextField(
             state.port, actions.setPort, singleLine = true, label = { Text("Port") },
             isError = state.portError != null, supportingText = state.portError?.let { { Text(it) } },
-            modifier = Modifier.width(140.dp),
+            modifier = Modifier.widthIn(max = 140.dp),
         )
     }
     Row(
@@ -350,7 +407,7 @@ private fun IpTab(state: WifiPairingState, actions: WifiPairingActions) {
     if (pairOpen) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(state.pairPort, actions.setPairPort, singleLine = true, label = { Text("Pairing port") }, modifier = Modifier.weight(1f))
-            OutlinedTextField(state.pairCode, actions.setPairCode, singleLine = true, label = { Text("Code") }, modifier = Modifier.width(140.dp))
+            OutlinedTextField(state.pairCode, actions.setPairCode, singleLine = true, label = { Text("Code") }, modifier = Modifier.widthIn(max = 140.dp))
         }
     }
 }

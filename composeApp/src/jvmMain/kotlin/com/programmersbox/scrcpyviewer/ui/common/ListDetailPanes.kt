@@ -1,90 +1,32 @@
 package com.programmersbox.scrcpyviewer.ui.common
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalMinimumInteractiveComponentSize
-import androidx.compose.material3.VerticalDragHandle
-import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
-import androidx.compose.material3.adaptive.layout.AnimatedPane
-import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffold
-import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldDefaults
-import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
-import androidx.compose.material3.adaptive.layout.PaneAdaptedValue
-import androidx.compose.material3.adaptive.layout.PaneExpansionState
-import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
-import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldDestinationItem
-import androidx.compose.material3.adaptive.layout.ThreePaneScaffoldValue
-import androidx.compose.material3.adaptive.layout.calculateThreePaneScaffoldValue
-import androidx.compose.material3.adaptive.layout.rememberPaneExpansionState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.PointerIcon
-import androidx.compose.ui.input.pointer.pointerHoverIcon
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import java.awt.Cursor
 
 /**
- * Which pane of a list-detail screen is the current destination. It only matters when the
- * layout has room for one pane: then the list shows until an item is opened, and back returns to it.
- */
-@Stable
-class ListDetailNavigation {
-    var detailOpen by mutableStateOf(false)
-        private set
-
-    fun openDetail() {
-        detailOpen = true
-    }
-
-    fun backToList() {
-        detailOpen = false
-    }
-
-    @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-    fun scaffoldValue(maxHorizontalPartitions: Int): ThreePaneScaffoldValue =
-        calculateThreePaneScaffoldValue(
-            maxHorizontalPartitions = maxHorizontalPartitions,
-            adaptStrategies = ListDetailPaneScaffoldDefaults.adaptStrategies(),
-            currentDestination = ThreePaneScaffoldDestinationItem<Nothing>(
-                if (detailOpen) ListDetailPaneScaffoldRole.Detail else ListDetailPaneScaffoldRole.List,
-            ),
-        )
-
-    /** The detail pane needs its own way back when the list is hidden. */
-    @OptIn(ExperimentalMaterial3AdaptiveApi::class)
-    fun showsBackButton(maxHorizontalPartitions: Int): Boolean =
-        scaffoldValue(maxHorizontalPartitions)[ListDetailPaneScaffoldRole.List] == PaneAdaptedValue.Hidden
-}
-
-/**
- * Keeps the draggable divider inside [minFirst]..[maxFirst] (list pane width, px). The scaffold
+ * Keeps the draggable divider inside [minFirst]..[maxFirst] (list pane width, px). The layout
  * calls [consume] with each raw drag delta and applies what it returns; [onFirstPaneMeasured]
  * resyncs with the laid-out list width.
  */
@@ -102,7 +44,7 @@ class PaneWidthLimits {
         firstWidth = width.toFloat()
     }
 
-    /** Forgets the laid-out width (the list is not a side pane in the single-pane layout). */
+    /** Forgets the laid-out width (the list is not a side pane in a narrow window). */
     fun reset() {
         firstWidth = Float.NaN
     }
@@ -123,135 +65,85 @@ class PaneWidthLimits {
         firstWidth = target
         return applied
     }
-
-    /** The list width to restore when the laid-out width is out of range (e.g. after a window resize), else null. */
-    fun correction(): Int? {
-        if (firstWidth.isNaN()) return null
-        val clamped = firstWidth.coerceAtMost(maxFirst).coerceAtLeast(minFirst)
-        return if (clamped == firstWidth) null else clamped.toInt()
-    }
 }
 
-/** State of a resizable list-detail screen; hoist it above the navigation so it outlives tab switches. */
+/** State of a list-detail screen; hoist it above the navigation so it outlives tab switches. */
 @Stable
-class ListDetailPanes internal constructor(
-    val expansion: PaneExpansionState,
-    val navigation: ListDetailNavigation,
-    internal val limits: PaneWidthLimits,
-) {
+class ListDetailPanes internal constructor(internal val limits: PaneWidthLimits) {
     /** The list pane's laid-out width in px in the two-pane layout, else null. */
     val listWidthPx: Int? get() = limits.laidOutFirstWidth
-}
 
-@OptIn(ExperimentalMaterial3AdaptiveApi::class)
-@Composable
-fun rememberListDetailPanes(): ListDetailPanes {
-    val limits = remember { PaneWidthLimits() }
-    val navigation = remember { ListDetailNavigation() }
-    val expansion = rememberPaneExpansionState(consumeDragDelta = limits::consume)
-    return remember(expansion) { ListDetailPanes(expansion, navigation, limits) }
-}
+    /**
+     * The list width the user dragged the divider to in [AdaptiveListDetail]'s two-pane layout, or null
+     * for the screen's preferred width.
+     */
+    var listWidth: Dp? by mutableStateOf(null)
 
-/** Space between the panes; the drag handle sits in it. */
-private val DividerWidth = 16.dp
+    /**
+     * The selected item's detail is pushed over the list: a click on an item sets it (at any width), Back clears it,
+     * and it starts clear, so a narrow window opens on the list. Only narrow windows show it (see
+     * [AdaptiveListDetail]); two panes ignore it.
+     */
+    var pushed: Boolean by mutableStateOf(false)
 
-/** How far Left/Right move the focused divider. */
-private val KeyboardStep = 24.dp
+    /** Opens the selected item over the list in a narrow window; call it when the user clicks an item. */
+    fun push() {
+        pushed = true
+    }
 
-/**
- * List-detail layout with a draggable divider. Both panes show side by side when the width fits
- * [listMinWidth] + [detailMinWidth]; otherwise one pane shows at a time and [detail] gets an
- * `onBack` to return to the list (null while the list is visible).
- */
-@OptIn(ExperimentalMaterial3AdaptiveApi::class)
-@Composable
-fun ResizableListDetail(
-    panes: ListDetailPanes,
-    listMinWidth: Dp,
-    listPreferredWidth: Dp,
-    detailMinWidth: Dp,
-    list: @Composable () -> Unit,
-    detail: @Composable (onBack: (() -> Unit)?) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    BoxWithConstraints(modifier.fillMaxSize()) {
-        val partitions = if (maxWidth >= listMinWidth + DividerWidth + detailMinWidth) 2 else 1
-        val density = LocalDensity.current
-        val boxWidth = maxWidth
-        SideEffect {
-            with(density) {
-                panes.limits.update(minFirst = listMinWidth.toPx(), maxFirst = (boxWidth - DividerWidth - detailMinWidth).toPx())
-            }
-        }
-        val directive = remember(partitions, listPreferredWidth) {
-            PaneScaffoldDirective(
-                maxHorizontalPartitions = partitions,
-                horizontalPartitionSpacerSize = DividerWidth,
-                maxVerticalPartitions = 1,
-                verticalPartitionSpacerSize = 0.dp,
-                defaultPanePreferredWidth = listPreferredWidth,
-                defaultPanePreferredHeight = 0.dp,
-                excludedBounds = emptyList(),
-                // Opening a detail must not pull focus out of the field the user is in.
-                shouldAutoFocusCurrentDestination = false,
-            )
-        }
-        val value = panes.navigation.scaffoldValue(partitions)
-        val onBack: (() -> Unit)? =
-            if (panes.navigation.showsBackButton(partitions)) panes.navigation::backToList else null
-        // A window resize can leave a dragged divider outside the limits; pull it back.
-        LaunchedEffect(partitions, maxWidth) {
-            if (partitions == 2) panes.limits.correction()?.let(panes.expansion::setFirstPaneWidth)
-            else panes.limits.reset()
-        }
-        ListDetailPaneScaffold(
-            directive = directive,
-            value = value,
-            listPane = {
-                AnimatedPane(
-                    Modifier.preferredWidth(listPreferredWidth)
-                        .onSizeChanged { if (partitions == 2) panes.limits.onFirstPaneMeasured(it.width) },
-                ) { list() }
-            },
-            detailPane = { AnimatedPane { detail(onBack) } },
-            paneExpansionState = panes.expansion,
-            paneExpansionDragHandle = if (partitions == 2) {
-                { state ->
-                    val interaction = remember { MutableInteractionSource() }
-                    val step = with(density) { KeyboardStep.toPx() }
-                    Box(Modifier.fillMaxHeight(), contentAlignment = Alignment.Center) {
-                        // Hairline so the divider reads in the light theme too.
-                        Box(Modifier.width(1.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant))
-                        VerticalDragHandle(
-                            modifier = Modifier
-                                .paneExpansionDraggable(state, LocalMinimumInteractiveComponentSize.current, interaction)
-                                .pointerHoverIcon(PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR)))
-                                .onKeyEvent { event ->
-                                    val delta = when {
-                                        event.type != KeyEventType.KeyDown -> return@onKeyEvent false
-                                        event.key == Key.DirectionLeft -> -step
-                                        event.key == Key.DirectionRight -> step
-                                        else -> return@onKeyEvent false
-                                    }
-                                    panes.limits.stepped(delta)?.let(state::setFirstPaneWidth)
-                                    true
-                                }
-                                .focusable(interactionSource = interaction),
-                            interactionSource = interaction,
-                        )
-                    }
-                }
-            } else {
-                null
-            },
-        )
+    /** Returns a narrow window to the list; the selection stays. */
+    fun back() {
+        pushed = false
     }
 }
 
-/** Back affordance for a detail pane header in the single-pane layout. */
+@Composable
+fun rememberListDetailPanes(): ListDetailPanes = remember { ListDetailPanes(PaneWidthLimits()) }
+
+/** Space between the panes; the drag handle sits in it. */
+internal val DividerWidth = 16.dp
+
+/** How far Left/Right move the focused divider. */
+internal val KeyboardStep = 24.dp
+
+/** Back affordance for a detail pane header while the detail is pushed over the list. */
 @Composable
 fun DetailBackButton(onBack: () -> Unit, modifier: Modifier = Modifier) {
     IconButton(onClick = onBack, modifier = modifier) {
         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to list")
     }
+}
+
+/**
+ * A detail header row ([content], given the modifier for its width) with a [DetailBackButton] at its start while
+ * [onBack] is set. The arrow fades and the header widens or narrows with [layoutSpring] as it comes and goes; reduced
+ * motion only fades it.
+ */
+@Composable
+fun BackArrowRow(onBack: (() -> Unit)?, content: @Composable (Modifier) -> Unit) {
+    val reduceMotion = LocalReduceMotion.current
+    // The arrow leaving still needs something to call.
+    val lastBack = remember { arrayOf(onBack) }
+    if (onBack != null) lastBack[0] = onBack
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        AnimatedVisibility(
+            visible = onBack != null,
+            enter = if (reduceMotion) fadeIn(tween(150)) else fadeIn(tween(220)) + expandHorizontally(layoutSpring()),
+            exit = if (reduceMotion) fadeOut(tween(150)) else fadeOut(tween(120)) + shrinkHorizontally(layoutSpring()),
+        ) {
+            // Pulled into the header's start padding, so the arrow lines up with the text under it.
+            DetailBackButton({ lastBack[0]?.invoke() }, Modifier.pullStart(ArrowInset).padding(end = 4.dp))
+        }
+        content(Modifier.weight(1f))
+    }
+}
+
+/** The space around the arrow icon inside its 48 dp button. */
+private val ArrowInset = 12.dp
+
+/** Lays the content out [by] further toward the start, taking that much less width. */
+private fun Modifier.pullStart(by: Dp): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val pull = by.roundToPx().coerceAtMost(placeable.width)
+    layout(placeable.width - pull, placeable.height) { placeable.placeRelative(-pull, 0) }
 }
