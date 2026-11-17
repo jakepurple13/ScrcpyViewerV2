@@ -313,6 +313,13 @@ Devices, Presets and Actions alike:
 - **Two panes from 840 dp (user decision 2026-11-17).** Two panes need a window at least 840 dp wide (Material's
   expanded width class) as well as room for list + detail. The main window opens at 800 dp, so the first view
   after onboarding is the list alone.
+- **Settings keeps its sidebar (user decision 2026-11-17, option C of
+  https://claude.ai/artifact/7Az93H2bGEgLnsAAAb4p6w).** Settings never pushes. Its category sidebar is always
+  beside the page: 200 dp from an 840 dp window; between 480 and 840 dp it shrinks with the window from 200 to
+  136 dp (names ellipsize, search stays a field) and follows a drag directly; under 480 dp it becomes a 64 dp
+  column of category icons with name tooltips and a search button that opens the field. The switch between
+  list and icons springs with `layoutSpring` (reduced motion: snap). The selected category keeps its highlight
+  and 3 dp bar; the update badge sits on the Updates icon.
 - **Kept.** Everything else from earlier tasks: detail tabs → menu, footer and header folding, option rows,
   flag grids, deleting the open item returns to the list, wide layouts unchanged.
 

@@ -22,7 +22,7 @@
 **Mockup addendum (mirror sheet tabs, Tasks 13, 16, 17):** https://claude.ai/artifact/6wsGe9iFtdpu4JJPkzcTi7.
 **Mockup addendum 2 (main v1.18–v1.22 screens, Tasks 18–21, spec 6b):** https://claude.ai/artifact/SnenwvS9QBF519Wmg8geoL (version 2).
 
-**Run order (updated 2026-11-17):** 1, 7, 12, 2, 5, 4, 14, 3, 6, 8, 20, 9, 10, 13, 16, 17, 18 (done) → 22 → 19 → 11 → 21 → 15.
+**Run order (updated 2026-11-17):** 1, 7, 12, 2, 5, 4, 14, 3, 6, 8, 20, 9, 10, 13, 16, 17, 18, 22, 19, 11 (done) → 11b → 21 → 15.
 
 All paths below are relative to `composeApp/src/jvmMain/kotlin/com/programmersbox/scrcpyviewer/` (main) or `composeApp/src/jvmTest/kotlin/com/programmersbox/scrcpyviewer/` (test).
 
@@ -925,3 +925,29 @@ Changes:
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run them, the screenshot tests with `-Pscreenshots` (wide renders identical) and the full suite.** Expected: PASS.
 - [ ] **Step 5: Commit.** `feat(panes): list first in narrow windows; detail pushes over the list`
+
+---
+
+### Task 11b: Settings keeps its sidebar (spec 6c, added 2026-11-17)
+
+Runs next, before Task 21.
+
+**Files:**
+- Modify: `ui/settings/SettingsScreen.kt` (`SettingsContent`), `ui/settings/SettingsListPane.kt`, `ui/settings/SettingsDetailPane.kt` (drop the back arrow), `ui/App.kt` (drop `settingsPanes` if nothing else needs it).
+- Test: `ui/settings/SettingsNarrowTest.kt`.
+
+**Interfaces:**
+- `fun settingsSidebarWidth(windowWidth: Dp): Dp` — 200 dp at ≥ 840; linear 136 → 200 dp across 480–840; 64 dp under 480.
+- `fun settingsSidebarIcons(windowWidth: Dp): Boolean = windowWidth < 480.dp`.
+
+Changes:
+- Settings no longer uses `AdaptiveListDetail` / push: a Row of the sidebar, the 1 dp divider and the page at every width. No "Back to list".
+- Sidebar width follows the window directly while dragging inside a form (list or icons); the list ↔ icons switch springs the width with `layoutSpring` and cross-fades the labels (reduced motion: snap + 150 ms fade).
+- Icons form: each category is its icon centred in the 64 dp column with a tooltip of its name and its content description; the selected one keeps the highlight and 3 dp bar; the Updates badge stays on its icon; search becomes an icon button ("Search settings") that opens the search field over the page (Esc closes it; typing filters the categories exactly as the field does today).
+- Wide (≥ 840 dp window) stays pixel-identical to the current branch.
+
+- [ ] **Step 1: Write the failing tests.** `settingsSidebarWidth` at 840/839, 660 (168 dp), 480/479; scene at 600: the sidebar and the Appearance page both show, no "Back to list"; at 400: the sidebar is 64 dp, "Appearance" is not displayed as text but its icon node has content description "Appearance", the tooltip shows on hover, clicking Updates shows the Updates page; search button opens the field and typing "dark" filters; resize 700 → 600 with motion on lands in the same frame; 500 → 460 springs (mid-frame width strictly between); reduced motion snaps.
+- [ ] **Step 2: Run them.** Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run them, the Settings and Styles screenshot tests with `-Pscreenshots` (wide renders identical) and the full suite.** Expected: PASS.
+- [ ] **Step 5: Commit.** `feat(settings): the sidebar stays; it narrows, then turns into icons`
