@@ -243,8 +243,21 @@ class SettingsViewModel(
     /** Reopens the first-run guide; it marks itself seen again when closed. */
     fun showOnboarding() = appSettings.update { it.copy(onboardingSeen = false) }
 
-    /** The first-run guide was closed. */
-    fun finishOnboarding() = appSettings.update { it.copy(onboardingSeen = true) }
+    /** False in a build without an analytics key: no consent page, no privacy prompt. */
+    val telemetryEnabled: Boolean get() = telemetry.enabled
+
+    /**
+     * The first-run guide was closed. With an analytics key its last page is the consent page, so closing it (Done,
+     * Skip or Esc) also marks the privacy prompt seen; a skip leaves the switches as they are.
+     */
+    fun finishOnboarding() = appSettings.update {
+        it.copy(onboardingSeen = true, privacyPromptSeen = it.privacyPromptSeen || telemetry.enabled)
+    }
+
+    /** The standalone privacy prompt was closed (Done or Esc); a build without an analytics key never marks it. */
+    fun finishPrivacyPrompt() {
+        if (telemetry.enabled) appSettings.update { it.copy(privacyPromptSeen = true) }
+    }
 
     /** The Actions intro was finished or closed. */
     fun finishActionsIntro() = appSettings.update { it.copy(actionsIntroSeen = true) }

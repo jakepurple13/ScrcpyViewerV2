@@ -1,8 +1,10 @@
 package com.programmersbox.scrcpyviewer.ui.onboarding
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -24,12 +26,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.DeveloperMode
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.TouchApp
@@ -42,12 +46,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.LookaheadScope
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -60,10 +66,23 @@ import com.programmersbox.scrcpyviewer.ui.common.dialogWidth
 import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.stackMotion
 import com.programmersbox.scrcpyviewer.ui.theme.Button
+import com.programmersbox.scrcpyviewer.ui.theme.Switch
 import com.programmersbox.scrcpyviewer.ui.theme.TextButton
 import com.programmersbox.scrcpyviewer.ui.theme.styledCorner
 
-const val ONBOARDING_PAGE_COUNT = 4
+/**
+ * The consent switches on the last onboarding page and in [PrivacyPromptDialog]: the current values and where a
+ * change goes. Each change is saved at once, so closing the page any way keeps what it shows.
+ */
+data class PrivacyChoices(
+    val usage: Boolean,
+    val crash: Boolean,
+    val onUsage: (Boolean) -> Unit,
+    val onCrash: (Boolean) -> Unit,
+)
+
+/** Pages in [OnboardingDialog]: the consent page is added only in a build with an analytics key ([privacy] not null). */
+fun onboardingPageCount(privacy: PrivacyChoices?): Int = if (privacy == null) 4 else 5
 
 /** A minimum height read at layout time, so the animated value does not recompose the dialog every frame. */
 private fun Modifier.minHeightOf(min: State<Dp>): Modifier = layout { measurable, constraints ->
@@ -72,14 +91,19 @@ private fun Modifier.minHeightOf(min: State<Dp>): Modifier = layout { measurable
     layout(placeable.width, placeable.height) { placeable.place(0, 0) }
 }
 
-/** First-run walkthrough. Stateless: the caller owns [page] (screenshots pass a fixed one). */
+/**
+ * First-run walkthrough. Stateless: the caller owns [page] (screenshots pass a fixed one). [privacy] adds the consent
+ * page last; null (a build without an analytics key) leaves it out.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun OnboardingDialog(
     page: Int,
     onPage: (Int) -> Unit,
     onFinish: () -> Unit,
+    privacy: PrivacyChoices?,
 ) {
+    val pageCount = onboardingPageCount(privacy)
     Dialog(onDismissRequest = onFinish, properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false)) {
         Surface(
             modifier = Modifier.dialogEntrance().dialogWidth(560.dp).testTag("onboarding-card"),
@@ -111,7 +135,8 @@ fun OnboardingDialog(
                             0 -> WelcomePage()
                             1 -> UsbDebuggingPage()
                             2 -> ConnectPage()
-                            else -> MirrorPage()
+                            3 -> MirrorPage()
+                            else -> if (privacy != null) PrivacyPage(privacy) else MirrorPage()
                         }
                     }
                     Spacer(Modifier.height(20.dp))
@@ -126,17 +151,18 @@ fun OnboardingDialog(
                         ) {
                             PageDots(
                                 page,
-                                ONBOARDING_PAGE_COUNT,
+                                pageCount,
                                 (if (narrow) Modifier.fillMaxWidth() else Modifier.weight(1f)).stackMotion(scope).testTag("page-dots"),
                             )
                             Row(Modifier.stackMotion(scope), verticalAlignment = Alignment.CenterVertically) {
-                                if (page < ONBOARDING_PAGE_COUNT - 1) TextButton(onFinish) { Text("Skip") }
+                                if (page < pageCount - 1) TextButton(onFinish) { Text("Skip") }
                                 if (page > 0) TextButton({ onPage(page - 1) }) { Text("Back") }
                                 Spacer(Modifier.width(8.dp))
-                                if (page < ONBOARDING_PAGE_COUNT - 1) {
+                                if (page < pageCount - 1) {
                                     Button({ onPage(page + 1) }) { Text("Next") }
                                 } else {
-                                    Button(onFinish) { Text("Get started") }
+                                    // The consent page ends with Done: the switches above it are the last choice.
+                                    Button(onFinish) { Text(if (privacy != null) "Done" else "Get started") }
                                 }
                             }
                         }
@@ -147,18 +173,26 @@ fun OnboardingDialog(
     }
 }
 
+private const val PIP_FADE_MILLIS = 150
+
 @Composable
 internal fun PageDots(page: Int, count: Int, modifier: Modifier = Modifier) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        val reduce = LocalReduceMotion.current
         repeat(count) { i ->
             val active = i == page
-            Box(
-                Modifier.size(width = if (active) 20.dp else 8.dp, height = 8.dp)
-                    .background(
-                        if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                        CircleShape,
-                    ),
+            // The active pip widens with a spring (snaps under reduce motion); its color fades.
+            val width by animateDpAsState(
+                if (active) 20.dp else 8.dp,
+                if (reduce) snap() else layoutSpring(),
+                label = "pip width",
             )
+            val color by animateColorAsState(
+                if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                tween(PIP_FADE_MILLIS),
+                label = "pip color",
+            )
+            Box(Modifier.size(width = width.coerceAtLeast(0.dp), height = 8.dp).background(color, CircleShape))
         }
     }
 }
@@ -282,5 +316,42 @@ private fun MirrorPage() {
         FeatureRow(Icons.Filled.Cast, "Double-click a device", "Or select it, tune options, and press Mirror.")
         FeatureRow(Icons.Filled.FileUpload, "Drag files onto the mirror", "APKs install; other files go to /sdcard/Download/.")
         FeatureRow(Icons.Filled.PhotoCamera, "Screenshots and recordings", "Saved to the capture folder chosen in Settings.")
+    }
+}
+
+/** The consent page: what is sent, and a switch for each kind. */
+@Composable
+internal fun PrivacyPage(privacy: PrivacyChoices) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        PageHeader(
+            icon = { IconBadge(Icons.Filled.Insights) },
+            title = "Help improve Scrcpy Vwr",
+            subtitle = "Send anonymous statistics and crash reports. No device names, files, apps or commands are ever " +
+                "included. You can change this any time in Settings › Privacy.",
+        )
+        Spacer(Modifier.height(4.dp))
+        Column(
+            Modifier.fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest, styledCorner(16.dp))
+                .padding(vertical = 4.dp),
+        ) {
+            PrivacySwitchRow("Usage statistics", privacy.usage, privacy.onUsage)
+            PrivacySwitchRow("Crash reports", privacy.crash, privacy.onCrash)
+        }
+    }
+}
+
+/** A label and its switch; the whole row toggles. */
+@Composable
+private fun PrivacySwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onChange)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = null)
     }
 }

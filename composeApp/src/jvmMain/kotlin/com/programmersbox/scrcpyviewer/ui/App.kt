@@ -94,6 +94,9 @@ import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavigator
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
 import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
 import com.programmersbox.scrcpyviewer.ui.onboarding.OnboardingDialog
+import com.programmersbox.scrcpyviewer.ui.onboarding.PrivacyChoices
+import com.programmersbox.scrcpyviewer.ui.onboarding.PrivacyPromptDialog
+import com.programmersbox.scrcpyviewer.ui.onboarding.showPrivacyPrompt
 import com.programmersbox.scrcpyviewer.ui.presets.NativePresetFileDialogs
 import com.programmersbox.scrcpyviewer.ui.presets.PresetsScreen
 import com.programmersbox.scrcpyviewer.ui.presets.PresetsViewModel
@@ -407,6 +410,17 @@ fun App(
                         onRestart = updateViewModel::restart,
                     )
                 }
+                // Null in a build without an analytics key: the guide has no consent page and there is no prompt.
+                val privacy = if (settingsViewModel.telemetryEnabled) {
+                    PrivacyChoices(
+                        usage = settings.usageStats,
+                        crash = settings.crashReports,
+                        onUsage = settingsViewModel::setUsageStats,
+                        onCrash = settingsViewModel::setCrashReports,
+                    )
+                } else {
+                    null
+                }
                 if (!settings.onboardingSeen) {
                     // Leaves composition on close, so reopening from Settings starts at the first page.
                     var page by remember { mutableIntStateOf(0) }
@@ -414,7 +428,15 @@ fun App(
                         page = page,
                         onPage = { page = it },
                         onFinish = settingsViewModel::finishOnboarding,
+                        privacy = privacy,
                     )
+                }
+                // Users who saw the guide before it had the consent page get it once on its own, after any other
+                // one-time dialog (the Actions intro, the update popup) has closed.
+                val actionsIntroShowing = navigator.current == TopLevelRoute.Actions && !settings.actionsIntroSeen
+                val otherDialog = actionsIntroShowing || (update.showPopup && settings.onboardingSeen) || inProgress
+                if (privacy != null && showPrivacyPrompt(settings, settingsViewModel.telemetryEnabled, otherDialog)) {
+                    PrivacyPromptDialog(privacy, onDone = settingsViewModel::finishPrivacyPrompt)
                 }
             }
         }
