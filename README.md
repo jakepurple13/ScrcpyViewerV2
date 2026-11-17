@@ -132,8 +132,9 @@ Scrcpy Vwr can send anonymous usage statistics and crash reports to PostHog (US 
 - Durations and sizes, as ranges (for example "1 to 5 minutes"), never exact values.
 - The app version, your OS and your CPU architecture.
 - An anonymous random install ID. It is not linked to you or to any device.
-- For crashes: the crash type and the stack trace, with file paths and device serials removed. For native crashes
-  only the signal and function names are sent.
+- For crashes: the error type and the stack trace. The error message is sent only for the app's own fixed
+  messages (such as "adb push failed"); any other message is left out. For native crashes only the signal and
+  function names are sent.
 
 **What is never sent**
 - Device serials, IP addresses and device model names.
@@ -143,7 +144,9 @@ Scrcpy Vwr can send anonymous usage statistics and crash reports to PostHog (US 
 - Preset names and scrcpy option values.
 - Screenshots and recordings.
 
-**Defaults.** Crash reports are on. Usage statistics are off. The first-run welcome guide asks about both.
+**Defaults.** Crash reports are on from the first launch, before you are asked. Usage statistics are off. In builds
+with an analytics key, the first-run welcome guide asks about both; if you finished the guide before this was added,
+the app asks once.
 
 **Change it.** Open Settings › Privacy. It has a switch for each, shows what was sent recently, and can reset your
 anonymous ID.
