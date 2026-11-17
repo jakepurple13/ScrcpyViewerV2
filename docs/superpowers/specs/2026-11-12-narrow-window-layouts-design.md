@@ -314,7 +314,10 @@ Devices, Presets and Actions alike:
   expanded width class) as well as room for list + detail. The main window opens at 800 dp, so the first view
   after onboarding is the list alone.
 - **Settings keeps its sidebar (user decision 2026-11-17, option C of
-  https://claude.ai/artifact/7Az93H2bGEgLnsAAAb4p6w).** Settings never pushes. Its category sidebar is always
+  https://claude.ai/artifact/7Az93H2bGEgLnsAAAb4p6w).** Why the two patterns differ: Settings is for browsing, so
+  the user should always see what can be changed while changing one thing; Devices, Presets and Actions are
+  task screens, so a small window focuses on the one thing the user is doing. New screens pick the pattern by
+  that test. Settings never pushes. Its category sidebar is always
   beside the page: 200 dp from an 840 dp window; between 480 and 840 dp it shrinks with the window from 200 to
   136 dp (names ellipsize, search stays a field) and follows a drag directly; under 480 dp it becomes a 64 dp
   column of category icons with name tooltips and a search button that opens the field. The switch between
