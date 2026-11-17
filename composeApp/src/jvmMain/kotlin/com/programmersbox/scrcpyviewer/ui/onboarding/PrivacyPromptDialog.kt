@@ -13,6 +13,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -29,6 +34,20 @@ import com.programmersbox.scrcpyviewer.ui.theme.Button
  */
 fun showPrivacyPrompt(settings: Settings, telemetryEnabled: Boolean, otherDialogShowing: Boolean): Boolean =
     telemetryEnabled && settings.onboardingSeen && !settings.privacyPromptSeen && !otherDialogShowing
+
+/**
+ * Whether [PrivacyPromptDialog] is open. [otherDialogShowing] only holds the prompt back before it opens: once open it
+ * stays until Done (which marks it seen), and the other one-time dialogs wait for it instead of replacing it.
+ */
+@Composable
+fun rememberPrivacyPromptOpen(settings: Settings, telemetryEnabled: Boolean, otherDialogShowing: Boolean): Boolean {
+    var opened by rememberSaveable { mutableStateOf(false) }
+    val wanted = showPrivacyPrompt(settings, telemetryEnabled, otherDialogShowing = false)
+    val open = wanted && (opened || !otherDialogShowing)
+    // Latched after the frame that shows it; cleared once Done marks it seen.
+    SideEffect { opened = open }
+    return open
+}
 
 /**
  * The onboarding consent page on its own, shown once to users who saw the guide before it had one. Esc counts as

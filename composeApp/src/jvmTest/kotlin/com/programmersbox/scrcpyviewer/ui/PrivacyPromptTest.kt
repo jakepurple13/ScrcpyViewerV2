@@ -2,6 +2,8 @@ package com.programmersbox.scrcpyviewer.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -23,6 +25,10 @@ import com.programmersbox.scrcpyviewer.ui.onboarding.OnboardingDialog
 import com.programmersbox.scrcpyviewer.ui.onboarding.PrivacyChoices
 import com.programmersbox.scrcpyviewer.ui.onboarding.PrivacyPromptDialog
 import com.programmersbox.scrcpyviewer.ui.onboarding.onboardingPageCount
+import com.programmersbox.scrcpyviewer.ui.onboarding.rememberPrivacyPromptOpen
+import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelNavigator
+import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
+import com.programmersbox.scrcpyviewer.withFakeAppKoin
 import com.programmersbox.scrcpyviewer.ui.onboarding.showPrivacyPrompt
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsAdb
 import com.programmersbox.scrcpyviewer.ui.settings.SettingsViewModel
@@ -145,6 +151,68 @@ class PrivacyPromptTest {
         assertEquals(listOf("usage" to true, "crash" to false), calls)
     }
 
+    @Test
+    fun openPromptStaysWhenAnotherDialogWantsIn() {
+        settings.update { it.copy(onboardingSeen = true, privacyPromptSeen = false) }
+        val vm = vm(KeyedTelemetry)
+        var other by mutableStateOf(true)
+        scene({
+            val s by settings.settings.collectAsState()
+            val open = rememberPrivacyPromptOpen(s, telemetryEnabled = true, otherDialogShowing = other)
+            if (open) PrivacyPromptDialog(choices(s), onDone = vm::finishPrivacyPrompt)
+            if (other && !open) Text("Other dialog")
+        }) {
+            assertTrue(text(TITLE).isEmpty(), "held back while another dialog is up")
+            assertTrue(text("Other dialog").isNotEmpty())
+            other = false
+            frames(60)
+            assertTrue(text(TITLE).isNotEmpty(), "opens once the other dialog closes")
+            // The other dialog wants in again (an update check lands, the Actions tab opens): the prompt stays.
+            other = true
+            frames(60)
+            assertTrue(text(TITLE).isNotEmpty(), "the open prompt stays")
+            assertTrue(text("Other dialog").isEmpty(), "the other dialog waits for Done")
+            click("Done")
+            assertTrue(text(TITLE).isEmpty(), "closed after Done")
+            assertTrue(text("Other dialog").isNotEmpty(), "the other dialog shows after Done")
+        }
+        assertTrue(settings.settings.value.privacyPromptSeen)
+    }
+
+    @Test
+    fun appKeepsThePromptOverTheActionsIntro() = withFakeAppKoin { koin ->
+        val appSettings = koin.get<AppSettings>()
+        appSettings.update { it.copy(onboardingSeen = true, actionsIntroSeen = false, privacyPromptSeen = false) }
+        val navigator = TopLevelNavigator()
+        // Built here, not with koinViewModel(): the test graph has no analytics key, this one does.
+        val settingsVm = SettingsViewModel(appSettings, koin.get(), koin.get(), koin.get(), KeyedTelemetry, scope)
+        lateinit var driver: SceneDriver
+        onEdt {
+            driver = SceneDriver(ImageComposeScene(1280, 800, Density(1f)) {
+                CompositionLocalProvider(LocalReduceMotion provides false) {
+                    App(navigator = navigator, settingsViewModel = settingsVm)
+                }
+            })
+        }
+        try {
+            onEdt {
+                driver.frames(60)
+                assertTrue(driver.text(TITLE).isNotEmpty(), "an existing user gets the prompt")
+                navigator.select(TopLevelRoute.Actions)
+                driver.frames(60)
+                assertTrue(driver.text(TITLE).isNotEmpty(), "the prompt stays when the Actions tab opens")
+                assertTrue(driver.text(INTRO_TITLE).isEmpty(), "the Actions intro waits")
+                driver.click("Done")
+                driver.frames(60)
+                assertTrue(driver.text(TITLE).isEmpty(), "the prompt closed")
+                assertTrue(driver.text(INTRO_TITLE).isNotEmpty(), "the Actions intro shows after Done")
+            }
+            assertTrue(appSettings.settings.value.privacyPromptSeen)
+        } finally {
+            onEdt { driver.scene.close() }
+        }
+    }
+
     // Narrow windows: the onboarding consent page and the standalone prompt from the 360 dp minimum up.
 
     private val widths = listOf(360, 520, 700, 1000)
@@ -224,6 +292,8 @@ class PrivacyPromptTest {
     }
 
     private companion object {
+        const val TITLE = "Help improve Scrcpy Vwr"
+        const val INTRO_TITLE = "Your own quick actions"
         const val BODY = "Send anonymous statistics and crash reports. No device names, files, apps or commands are ever " +
             "included. You can change this any time in Settings › Privacy."
     }
