@@ -68,7 +68,8 @@ internal fun FilesSnackbar(browser: FilesBrowser, motion: Boolean, modifier: Mod
     val rise = with(LocalDensity.current) { SNACK_RISE.roundToPx() }
     AnimatedVisibility(
         snack != null,
-        modifier = modifier.padding(bottom = lift),
+        // The spring dips below 0 as the bar closes, and negative padding throws.
+        modifier = modifier.padding(bottom = lift.coerceAtLeast(0.dp)),
         enter = if (motion) {
             slideInVertically(tween(OPEN_MILLIS, easing = EmphasizedDecelerate)) { rise } + fadeIn(tween(OPEN_MILLIS))
         } else {
