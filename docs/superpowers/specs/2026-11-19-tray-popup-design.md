@@ -167,7 +167,8 @@ the markup editor, the editor window opens and the popup closes, since a window 
   popup, losing Esc is acceptable; clicking outside and clicking the icon must still close it. Activating the app is
   only acceptable once the user picks an action that brings a window forward. Windows: the tray click gives the app the
   right to take the foreground; use it (`SetForegroundWindow` on the popup) so focus-loss closing works.
-- `nucleusApplication(dockIconFollowsWindows = true)` is already the app's setup; the popup must not add a Dock tile.
+- The app keeps its current Dock setup (`nucleusApplication(enableSingleInstance = false)`); the popup must not add a
+  Dock tile or change the Dock icon.
 - Provides `LocalReduceMotion` like every `AppWindow` root (see CLAUDE.md).
 - Theme styles (designer's call): the popup follows the app's palette and its theme style (Material, Glass, Soft,
   Retro) like every other window, using the shared styled controls in `ui/theme` instead of hand-drawn Material ones.
