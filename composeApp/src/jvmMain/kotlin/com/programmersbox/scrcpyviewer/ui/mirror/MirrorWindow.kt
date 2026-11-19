@@ -538,6 +538,10 @@ fun MirrorWindow(
             )
         }
     }
+    // A screenshot asked for from outside (the menu bar popup); the window is not brought forward.
+    LaunchedEffect(serial) {
+        controller.screenshotRequests.filter { it == serial }.collect { takeScreenshot() }
+    }
 
     fun toggleRecording() {
         if (recordStarting) return

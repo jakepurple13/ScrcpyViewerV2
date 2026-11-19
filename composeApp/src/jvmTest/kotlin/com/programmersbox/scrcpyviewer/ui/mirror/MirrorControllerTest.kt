@@ -86,6 +86,26 @@ class MirrorControllerTest {
     }
 
     @Test
+    fun `screenshot request for open mirror is emitted`() = runBlocking<Unit> {
+        controller.open("A")
+        val shot = scope.async { withTimeout(5_000) { controller.screenshotRequests.first() } }
+        delay(50) // let the collector subscribe
+        controller.requestScreenshot("A")
+        assertEquals("A", shot.await())
+    }
+
+    @Test
+    fun `screenshot request for closed serial is dropped`() = runBlocking<Unit> {
+        val shot = scope.async { withTimeout(5_000) { controller.screenshotRequests.first() } }
+        delay(50) // let the collector subscribe
+        controller.requestScreenshot("B")
+        controller.open("A")
+        controller.requestScreenshot("A")
+        assertEquals("A", shot.await())
+        assertTrue("B" !in controller.open.value)
+    }
+
+    @Test
     fun `close removes the session and closes it`() = runBlocking<Unit> {
         controller.open("A")
         controller.open("B")
