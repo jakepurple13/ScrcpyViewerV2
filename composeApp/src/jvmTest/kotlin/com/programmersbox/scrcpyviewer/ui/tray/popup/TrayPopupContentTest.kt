@@ -313,4 +313,50 @@ class TrayPopupContentTest {
             assertTrue(!disabled("Cascade") && disabled("Keep tiled"))
         }
     }
+
+    @Test
+    fun `panel text changes to the new device when the stage changes`() {
+        val choosePix = SendPanel.Choose(listOf(phone2), emptySet(), null)
+        val holder = mutableStateOf(state(pixel, phone2) { copy(sendPanel = choosePix) })
+        scene(holder.value, sendOpen = true, holder = holder) {
+            assertTrue(has("Send Pixel 8 Pro's taps, keys and text to:"))
+            holder.value = state(pixel, phone2, stage = "PH2") { copy(sendPanel = SendPanel.Choose(listOf(pixel), emptySet(), null)) }
+            frames(60)
+            assertTrue(has("Send Second phone's taps, keys and text to:"), "texts ${allTexts()}")
+            assertTrue(!has("Send Pixel 8 Pro's taps, keys and text to:"), "texts ${allTexts()}")
+        }
+    }
+
+    @Test
+    fun `stage moving to a device that cannot send folds the panel without mixing names`() {
+        val holder = mutableStateOf(state(pixel, phone2, tablet) { copy(sendPanel = SendPanel.Choose(listOf(phone2), emptySet(), null)) })
+        scene(holder.value, sendOpen = true, holder = holder) {
+            holder.value = state(pixel, phone2, tablet, stage = "TAB2") { copy(sendPanel = SendPanel.Hidden) }
+            frames(60)
+            assertTrue(allTexts().none { it.startsWith("Send ") && it.endsWith("to:") }, "texts ${allTexts()}")
+        }
+    }
+
+    @Test
+    fun `not movable shows the note and movable hides it`() {
+        val note = "Your desktop doesn't let apps move windows"
+        scene(state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.Grid, movable = false)) }) { assertTrue(has(note), "texts ${allTexts()}") }
+        scene(state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.Grid)) }) { assertTrue(!has(note)) }
+        val holder = mutableStateOf(state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.Grid, movable = false)) })
+        scene(holder.value, holder = holder) {
+            holder.value = state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.Grid)) }
+            frames(60)
+            assertTrue(!has(note), "texts ${allTexts()}")
+        }
+    }
+
+    @Test
+    fun `focus layout is labelled Focus`() {
+        val events = mutableListOf<PopupEvent>()
+        scene(state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.Grid)) }, events) {
+            assertTrue(has("Focus") && !has("Focus this window"), "texts ${allTexts()}")
+            click("Focus")
+        }
+        assertEquals(listOf<PopupEvent>(PopupEvent.Act(TrayAction.Arrange(ArrangeLayout.Focus), null)), events)
+    }
 }

@@ -203,18 +203,32 @@ private fun Stage(state: TrayPopupUiState, sendOpen: Boolean, flash: () -> Float
                 .background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
         ) {
             // A status change under the same serial (a mirror stopping) crossfades; the outer animateContentSize does the height.
-            Crossfade(device, label = "stage status") { shown ->
-                when {
-                    shown == null -> Text(
+            // Keyed on the status branch only, so title or rawState changes do not crossfade to a copy; each branch keeps its last device.
+            val branch = stageBranch(device)
+            val lastByBranch = remember { mutableMapOf<StageBranch, PopupDevice?>() }
+            if (device != null) lastByBranch[branch] = device
+            Crossfade(branch, label = "stage status") { b ->
+                val shown = if (b == branch) device else lastByBranch[b]
+                when (b) {
+                    StageBranch.None -> Text(
                         "No device connected", style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp),
                     )
-                    shown.status == PopupStatus.Mirroring || shown.status == PopupStatus.Ready -> DeviceStage(shown, state, sendOpen, flash, onEvent)
-                    else -> AttentionStage(shown)
+                    StageBranch.Mirroring, StageBranch.Ready -> if (shown != null) DeviceStage(shown, state, sendOpen, flash, onEvent)
+                    StageBranch.Attention -> if (shown != null) AttentionStage(shown)
                 }
             }
         }
     }
+}
+
+private enum class StageBranch { None, Mirroring, Ready, Attention }
+
+private fun stageBranch(device: PopupDevice?) = when (device?.status) {
+    null -> StageBranch.None
+    PopupStatus.Mirroring -> StageBranch.Mirroring
+    PopupStatus.Ready -> StageBranch.Ready
+    else -> StageBranch.Attention
 }
 
 @Composable

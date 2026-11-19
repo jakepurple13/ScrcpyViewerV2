@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -45,6 +47,7 @@ import com.programmersbox.scrcpyviewer.ui.common.selectionHighlightTarget
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeLayout
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeState
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.icon
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.NOT_MOVABLE_NOTE
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.menuLabel
 import com.programmersbox.scrcpyviewer.ui.theme.FilterChip
 import com.programmersbox.scrcpyviewer.ui.theme.Switch
@@ -56,34 +59,43 @@ import com.programmersbox.scrcpyviewer.ui.tray.TrayAction
 
 // The Send input panel and the Arrange section of the popup: both fold open under their trigger.
 
+/** The short layout names under the popup's icons (the spec's list). */
+private val ArrangeLayout.popupLabel: String get() = if (this == ArrangeLayout.Focus) "Focus" else menuLabel
+
 private fun List<PopupDevice>.titleOf(serial: String) = firstOrNull { it.serial == serial }?.title ?: serial
+
+/** What the panel's text says: one frame per stage device and kind of panel. Selection changes do not make a new frame. */
+private data class SendFrame(val serial: String?, val title: String, val leader: String?, val choose: Boolean)
 
 /** The Send input panel under the stage. Folds open while [sendOpen] and the stage can send; keeps its last content while it folds shut. */
 @Composable
 internal fun SendInputPanel(state: TrayPopupUiState, sendOpen: Boolean, onEvent: (PopupEvent) -> Unit) {
     val reduce = LocalReduceMotion.current
     val panel = state.sendPanel
-    // While the panel folds shut its state is already Hidden, so the last real one stays to be drawn.
-    val last = remember { arrayOfNulls<SendPanel>(1) }
-    if (panel !is SendPanel.Hidden) last[0] = panel
-    val shown = last[0]
-    val stageTitle = state.devices.titleOf(state.stage ?: "")
+    // While the panel folds shut its state is already Hidden, so the last real frame (and its chips) stay to be drawn.
+    val lastFrame = remember { arrayOfNulls<SendFrame>(1) }
+    val lastChoose = remember { mutableMapOf<String?, SendPanel.Choose>() }
+    val frame = when (panel) {
+        is SendPanel.Choose -> SendFrame(state.stage, state.devices.titleOf(state.stage ?: ""), null, true)
+        is SendPanel.Following -> SendFrame(state.stage, state.devices.titleOf(state.stage ?: ""), panel.leader, false)
+        SendPanel.Hidden -> lastFrame[0]
+    }
+    if (panel !is SendPanel.Hidden) lastFrame[0] = frame
+    if (panel is SendPanel.Choose) lastChoose[state.stage] = panel
     AnimatedVisibility(
         visible = sendOpen && panel !is SendPanel.Hidden,
         enter = if (reduce) fadeIn(tween(150)) else expandVertically(layoutSpring()) + fadeIn(tween(150)),
         exit = if (reduce) fadeOut(tween(100)) else shrinkVertically(layoutSpring()) + fadeOut(tween(100)),
     ) {
-        // The text crossfades when the stage (or the kind of panel) changes; chips read the live state.
-        val key = when (shown) {
-            is SendPanel.Choose -> "choose" to state.stage
-            is SendPanel.Following -> "following" to state.stage
-            else -> "none" to null
-        }
-        Crossfade(key, label = "send panel", modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp)) {
-            when (shown) {
-                is SendPanel.Choose -> ChoosePanel(stageTitle, shown, state.devices, onEvent)
-                is SendPanel.Following -> FollowingPanel(stageTitle, shown, state.devices, onEvent)
-                else -> Unit
+        if (frame == null) return@AnimatedVisibility
+        // Crossfades when the stage device (or the kind of panel) changes; each frame draws only its own snapshot.
+        Crossfade(frame, label = "send panel", modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp)) { f ->
+            if (f.choose) {
+                val live = (panel as? SendPanel.Choose)?.takeIf { f.serial == state.stage }
+                val choose = live ?: lastChoose[f.serial]
+                if (choose != null) ChoosePanel(f.title, choose, state.devices, onEvent)
+            } else {
+                FollowingPanel(f.title, f.leader ?: "", state.devices, onEvent)
             }
         }
     }
@@ -122,10 +134,10 @@ private fun ChoosePanel(name: String, panel: SendPanel.Choose, devices: List<Pop
 }
 
 @Composable
-private fun FollowingPanel(name: String, panel: SendPanel.Following, devices: List<PopupDevice>, onEvent: (PopupEvent) -> Unit) {
+private fun FollowingPanel(name: String, leader: String, devices: List<PopupDevice>, onEvent: (PopupEvent) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
-            "$name follows ${devices.titleOf(panel.leader)}, so its input comes from there.",
+            "$name follows ${devices.titleOf(leader)}, so its input comes from there.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         TextButton({ onEvent(PopupEvent.StopFollowing) }) { Text("Stop following", maxLines = 1) }
@@ -151,6 +163,17 @@ internal fun ArrangeSection(state: TrayPopupUiState, onEvent: (PopupEvent) -> Un
         Column(Modifier.padding(start = 12.dp, end = 12.dp, top = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("Arrange mirror windows", style = MaterialTheme.typography.labelLarge)
             LayoutRow(shown.layout, shown.movable) { onEvent(PopupEvent.Act(TrayAction.Arrange(it), null)) }
+            AnimatedVisibility(
+                visible = !shown.movable,
+                enter = if (reduce) fadeIn(tween(150)) else expandVertically(layoutSpring()) + fadeIn(tween(150)),
+                exit = if (reduce) fadeOut(tween(100)) else shrinkVertically(layoutSpring()) + fadeOut(tween(100)),
+            ) {
+                Row(Modifier.padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+                    Icon(Icons.Outlined.Info, null, Modifier.size(16.dp), tint = muted)
+                    Text(NOT_MOVABLE_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
+                }
+            }
             val enabled = shown.keepTiledEnabled
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
@@ -198,7 +221,7 @@ private fun LayoutRow(current: ArrangeLayout, movable: Boolean, onPick: (Arrange
                     val tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (movable) 1f else 0.38f)
                     Icon(layout.icon, null, Modifier.size(20.dp), tint = tint)
                     Text(
-                        layout.menuLabel, fontSize = 10.sp, lineHeight = 12.sp, maxLines = 2, textAlign = TextAlign.Center,
+                        layout.popupLabel, fontSize = 10.sp, lineHeight = 12.sp, maxLines = 2, textAlign = TextAlign.Center,
                         color = tint, modifier = Modifier.padding(top = 2.dp),
                     )
                 }
