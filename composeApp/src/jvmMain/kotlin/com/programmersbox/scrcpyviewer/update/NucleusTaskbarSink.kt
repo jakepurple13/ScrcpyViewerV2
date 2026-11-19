@@ -7,6 +7,7 @@ import dev.nucleusframework.taskbarprogress.tao.requestTaskbarAttention
 import dev.nucleusframework.taskbarprogress.tao.showTaskbarError
 import dev.nucleusframework.taskbarprogress.tao.showTaskbarIndeterminate
 import dev.nucleusframework.taskbarprogress.tao.showTaskbarProgress
+import dev.nucleusframework.taskbarprogress.tao.stopTaskbarAttention
 
 /**
  * Draws on [window]'s taskbar button, or on the Dock icon on macOS (the Dock bar is app-wide). A native failure is
@@ -24,6 +25,8 @@ class NucleusTaskbarSink(private val window: NucleusWindow) : TaskbarSink {
     override fun error(fraction: Double) = call("error") { window.showTaskbarError(fraction) }
 
     override fun hide() = call("hide") { window.hideTaskbarProgress() }
+
+    override fun stopAttention() = call("stopAttention") { window.stopTaskbarAttention() }
 
     private inline fun call(what: String, block: () -> Boolean) {
         runCatching(block).onFailure { log.log(System.Logger.Level.WARNING, "Taskbar $what failed", it) }

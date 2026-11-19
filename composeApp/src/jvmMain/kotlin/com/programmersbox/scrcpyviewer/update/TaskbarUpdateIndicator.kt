@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.update
 
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlin.math.floor
@@ -13,6 +14,8 @@ interface TaskbarSink {
     fun indeterminate()
     fun error(fraction: Double)
     fun hide()
+    /** Ends an attention request. Linux keeps its "urgent" flag until this is called. */
+    fun stopAttention()
 }
 
 /**
@@ -25,11 +28,22 @@ class TaskbarUpdateIndicator(private val sink: TaskbarSink) {
     private var lastPercent = NONE
     private var lastFraction = 0.0
     private var downloading = false
+    private var attentionPending = false
 
     /** Asks for attention once per release version; never while "Later" holds. */
     fun onAnnounced(release: Release?, popupDismissed: Boolean) {
         if (release == null || popupDismissed) return
-        if (alerted.add(release.version)) sink.attention()
+        if (alerted.add(release.version)) {
+            sink.attention()
+            attentionPending = true
+        }
+    }
+
+    /** The user looked at the app: end the alert (Linux would otherwise keep the icon urgent all session). */
+    fun onFocused(focused: Boolean) {
+        if (!focused || !attentionPending) return
+        attentionPending = false
+        sink.stopAttention()
     }
 
     fun onState(state: UpdateState) {
@@ -60,7 +74,8 @@ class TaskbarUpdateIndicator(private val sink: TaskbarSink) {
     }
 
     /** Collects until cancelled. It does not hide the bar on exit; the caller's onDispose does. */
-    suspend fun run(manager: UpdateManager): Unit = coroutineScope {
+    suspend fun run(manager: UpdateManager, focused: Flow<Boolean>): Unit = coroutineScope {
+        launch { focused.collect(::onFocused) }
         launch { manager.state.collect(::onState) }
         launch {
             combine(manager.announced, manager.popupDismissed, ::Pair).collect { (release, dismissed) ->

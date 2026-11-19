@@ -252,7 +252,7 @@ fun main() {
             if (remember { NucleusTaskbarProgress.isAvailable() }) {
                 val sink = remember(nucleusWindow) { NucleusTaskbarSink(nucleusWindow) }
                 val indicator = remember(sink) { TaskbarUpdateIndicator(sink) }
-                LaunchedEffect(indicator) { indicator.run(updateManager) }
+                LaunchedEffect(indicator) { indicator.run(updateManager, nucleusWindow.focusFlow) }
                 DisposableEffect(sink) { onDispose { sink.hide() } }
             }
             if (quit.effect == LaunchEffect.Fade) {

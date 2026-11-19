@@ -20,6 +20,7 @@ class TaskbarUpdateIndicatorTest {
         override fun indeterminate() { calls += "indeterminate" }
         override fun error(fraction: Double) { calls += "error:$fraction" }
         override fun hide() { calls += "hide" }
+        override fun stopAttention() { calls += "stopAttention" }
     }
 
     private val sink = FakeSink()
@@ -51,6 +52,21 @@ class TaskbarUpdateIndicatorTest {
         ind.onAnnounced(v160, popupDismissed = false)
         ind.onAnnounced(v160.copy(version = "1.7.0"), popupDismissed = false)
         assertEquals(listOf("attention", "attention"), sink.calls)
+    }
+
+    @Test
+    fun `focusing the window clears a pending alert once`() {
+        ind.onAnnounced(v160, popupDismissed = false)
+        ind.onFocused(true)
+        ind.onFocused(false)
+        ind.onFocused(true)
+        assertEquals(listOf("attention", "stopAttention"), sink.calls)
+    }
+
+    @Test
+    fun `focus without an alert does nothing`() {
+        ind.onFocused(true)
+        assertEquals(emptyList(), sink.calls)
     }
 
     @Test
@@ -110,7 +126,7 @@ class TaskbarUpdateIndicatorTest {
         )
         manager.check(userInitiated = false)
         withTimeout(5_000) { manager.announced.first { it != null } }
-        val job = launch { ind.run(manager) } // one thread, like the UI dispatcher
+        val job = launch { ind.run(manager, focused = kotlinx.coroutines.flow.MutableStateFlow(false)) } // one thread, like the UI dispatcher
         withTimeout(5_000) { while (sink.calls.isEmpty() || "attention" !in sink.calls) delay(10) }
         job.cancel()
         assertEquals(1, sink.calls.count { it == "attention" })
