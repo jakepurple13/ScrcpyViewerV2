@@ -118,7 +118,13 @@ import com.programmersbox.scrcpyviewer.ui.mirror.shots.gif.gifPreviewWidth
 import com.programmersbox.scrcpyviewer.ui.onEdt
 import com.programmersbox.scrcpyviewer.ui.Rail
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
+import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.tray.popup.PopupDevice
+import com.programmersbox.scrcpyviewer.ui.tray.popup.PopupStatus
+import com.programmersbox.scrcpyviewer.ui.tray.popup.TrayPopupContent
+import com.programmersbox.scrcpyviewer.ui.tray.popup.TrayPopupUiState
 import com.programmersbox.scrcpyviewer.ui.theme.ThemeMode
 import com.programmersbox.scrcpyviewer.ui.update.UpdateDialog
 import com.programmersbox.scrcpyviewer.ui.update.UpdatesContent
@@ -672,6 +678,46 @@ class NarrowWidthsTest {
             check(d, "Export", 600, "GIF export")
         } finally {
             d.scene.close()
+        }
+    }
+
+    // The menu bar popup.
+
+    private val popupDevices = listOf(
+        PopupDevice("PIX1", "Pixel 8 Pro", PopupStatus.Mirroring, "device"),
+        PopupDevice("TAB2", "Galaxy Tab", PopupStatus.Ready, "device"),
+        PopupDevice("LOCK3", "Locked phone", PopupStatus.Unauthorized, "unauthorized"),
+    )
+
+    @Test
+    fun `Tray popup - Bring to front at its width`() = onEdt {
+        val d = sheet(360, 900) {
+            TrayPopupContent(TrayPopupUiState(popupDevices, "PIX1"), sendOpen = false, onEvent = {}, modifier = Modifier.width(360.dp))
+        }
+        try {
+            check(d, "Bring to front", 360, "Tray popup")
+        } finally {
+            d.scene.close()
+        }
+    }
+
+    @Test
+    fun `each theme style renders the stage`() {
+        for (style in ThemeStyle.entries) onEdt {
+            val d = SceneDriver(ImageComposeScene(400, 900, Density(1f)) {
+                CompositionLocalProvider(LocalReduceMotion provides true) {
+                    ScrcpyViewerTheme(AppTheme(mode = ThemeMode.Light, style = style)) {
+                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                            TrayPopupContent(TrayPopupUiState(popupDevices, "PIX1"), sendOpen = false, onEvent = {}, modifier = Modifier.width(360.dp))
+                        }
+                    }
+                }
+            }).also { it.frames(40) }
+            try {
+                check(d, "Bring to front", 400, "Tray popup ${style.name}")
+            } finally {
+                d.scene.close()
+            }
         }
     }
 }
