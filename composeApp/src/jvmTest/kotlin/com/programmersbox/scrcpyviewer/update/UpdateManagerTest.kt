@@ -567,4 +567,41 @@ class UpdateManagerTest {
         assertEquals(UpdateState.Available(v160), m.state.value)
         assertTrue(m.popupDismissed.value)
     }
+
+    @Test
+    fun `a background check announces a new release`() {
+        val m = manager()
+        m.checkAndAwaitAvailable()
+        assertEquals("1.6.0", m.announced.value?.version)
+    }
+
+    @Test
+    fun `a check from Settings does not announce`() {
+        val m = manager()
+        m.check(userInitiated = true)
+        m.awaitState { it is UpdateState.Available }
+        assertNull(m.announced.value)
+    }
+
+    @Test
+    fun `the same release found again is not announced again`() {
+        val m = manager()
+        m.check(userInitiated = true)
+        m.awaitState { it is UpdateState.Available }
+        m.checkAndAwaitAvailable() // background, same 1.6.0
+        assertNull(m.announced.value)
+    }
+
+    @Test
+    fun `a newer release after Later is announced with the popup reset`() {
+        var version = "1.6.0"
+        val m = manager(FakeUpdateBackend { FakeUpdateBackend.available(version) })
+        m.checkAndAwaitAvailable()
+        m.dismissPopup()
+        version = "1.7.0"
+        m.check(userInitiated = false)
+        val announced = await { m.announced.first { it?.version == "1.7.0" } }
+        assertNotNull(announced)
+        assertFalse(m.popupDismissed.value)
+    }
 }
