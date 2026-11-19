@@ -40,6 +40,8 @@ nucleus-application = { module = "dev.nucleusframework:nucleus.nucleus-applicati
 # The window backend: Tao (no AWT toolkit, windows or event loop). Ship exactly one backend module (-jbr, -jni or -tao).
 nucleus-window-tao = { module = "dev.nucleusframework:nucleus.decorated-window-tao", version.ref = "nucleus" }
 nucleus-window-material3 = { module = "dev.nucleusframework:nucleus.decorated-window-material3", version.ref = "nucleus" }
+# Dock / taskbar progress and attention for update alerts; the -tao module matches the window backend.
+nucleus-taskbar-progress-tao = { module = "dev.nucleusframework:nucleus.taskbar-progress-tao", version.ref = "nucleus" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 composenativetray = { module = "dev.nucleusframework:composenativetray", version.ref = "composenativetray" }
 aboutlibraries-core = { module = "com.mikepenz:aboutlibraries-core", version.ref = "aboutlibraries" }
