@@ -80,7 +80,7 @@ val ArrangeLayout.menuLabel: String
         ArrangeLayout.Cascade -> "Cascade"
     }
 
-private val ArrangeLayout.icon: ImageVector
+val ArrangeLayout.icon: ImageVector
     get() = when (this) {
         ArrangeLayout.AsPlaced -> Icons.Outlined.WebAsset
         ArrangeLayout.Grid -> Icons.Outlined.GridView

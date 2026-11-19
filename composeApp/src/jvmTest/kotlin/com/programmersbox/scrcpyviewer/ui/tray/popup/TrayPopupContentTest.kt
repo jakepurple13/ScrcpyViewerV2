@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
@@ -20,6 +22,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.ui.SceneDriver
 import com.programmersbox.scrcpyviewer.ui.common.LocalReduceMotion
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeLayout
+import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeState
 import com.programmersbox.scrcpyviewer.ui.mirror.follow.FollowState
 import com.programmersbox.scrcpyviewer.ui.onEdt
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
@@ -40,13 +44,19 @@ class TrayPopupContentTest {
     private fun state(vararg devices: PopupDevice, stage: String? = devices.firstOrNull()?.serial, extra: TrayPopupUiState.() -> TrayPopupUiState = { this }) =
         TrayPopupUiState(devices.toList(), stage).extra()
 
-    private fun scene(ui: TrayPopupUiState, events: MutableList<PopupEvent> = mutableListOf(), block: SceneDriver.() -> Unit) = onEdt {
+    private fun scene(
+        ui: TrayPopupUiState,
+        events: MutableList<PopupEvent> = mutableListOf(),
+        sendOpen: Boolean = false,
+        holder: MutableState<TrayPopupUiState> = mutableStateOf(ui),
+        block: SceneDriver.() -> Unit,
+    ) = onEdt {
         val d = SceneDriver(ImageComposeScene(400, 900, Density(1f)) {
             CompositionLocalProvider(LocalReduceMotion provides true) {
                 ScrcpyViewerTheme(ThemeMode.Light) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
-                            TrayPopupContent(ui, sendOpen = false, onEvent = { events += it }, modifier = Modifier.width(360.dp))
+                            TrayPopupContent(holder.value, sendOpen = sendOpen, onEvent = { events += it }, modifier = Modifier.width(360.dp))
                         }
                     }
                 }
@@ -192,6 +202,115 @@ class TrayPopupContentTest {
             scene(state(pixel, tablet) { copy(thumbnails = mapOf("PIX1" to bitmap)) }) {
                 assertTrue(has("Bring to front"), "texts ${allTexts()}")
             }
+        }
+    }
+
+    private val phone2 = PopupDevice("PH2", "Second phone", PopupStatus.Mirroring, "device")
+
+    private fun SceneDriver.disabled(label: String): Boolean {
+        fun SemanticsNode.holds(): Boolean = label in texts() || children.any { it.holds() }
+        val node = assertNotNull(nodes().lastOrNull { SemanticsActions.OnClick in it.config && it.holds() }, "no $label")
+        return SemanticsProperties.Disabled in node.config
+    }
+
+    @Test
+    fun `send button shows only with two mirrors`() {
+        val one = state(pixel, tablet) { copy(sendPanel = SendPanel.Hidden) }
+        scene(one) { assertTrue(allTexts().none { it.startsWith("Send input to") }, "texts ${allTexts()}") }
+        val two = state(pixel, phone2) { copy(sendPanel = SendPanel.Choose(listOf(phone2), emptySet(), null)) }
+        scene(two) { assertTrue(allTexts().any { it.startsWith("Send input to") }, "texts ${allTexts()}") }
+    }
+
+    @Test
+    fun `open panel lists targets with selection`() {
+        val third = PopupDevice("PH3", "Third phone", PopupStatus.Mirroring, "device")
+        val ui = state(pixel, phone2, third) { copy(sendPanel = SendPanel.Choose(listOf(phone2, third), setOf("PH3"), null)) }
+        scene(ui, sendOpen = true) {
+            assertTrue(has("Send Pixel 8 Pro's taps, keys and text to:"), "texts ${allTexts()}")
+            assertTrue("Third phone" in selectedItems(), "selected ${selectedItems()}")
+            assertTrue("Second phone" !in selectedItems())
+        }
+    }
+
+    @Test
+    fun `chip click emits ToggleFollower`() {
+        val events = mutableListOf<PopupEvent>()
+        val ui = state(pixel, phone2) { copy(sendPanel = SendPanel.Choose(listOf(phone2), emptySet(), null)) }
+        scene(ui, events, sendOpen = true) {
+            fun SemanticsNode.holds(): Boolean = "Second phone" in texts() || children.any { it.holds() }
+            val chip = assertNotNull(nodes().firstOrNull { SemanticsActions.OnClick in it.config && it.holds() }, "no chip")
+            chip.config[SemanticsActions.OnClick].action?.invoke()
+            frames(5)
+        }
+        assertEquals(listOf<PopupEvent>(PopupEvent.ToggleFollower("PH2")), events)
+    }
+
+    @Test
+    fun `other leader note shows`() {
+        val ui = state(pixel, phone2) { copy(sendPanel = SendPanel.Choose(listOf(phone2), emptySet(), "PH2")) }
+        scene(ui, sendOpen = true) {
+            assertTrue(has("Picking a device here stops Second phone sending input."), "texts ${allTexts()}")
+        }
+    }
+
+    @Test
+    fun `following state shows Stop following`() {
+        val events = mutableListOf<PopupEvent>()
+        val ui = state(pixel, phone2) { copy(sendPanel = SendPanel.Following("PH2")) }
+        scene(ui, events, sendOpen = true) {
+            assertTrue(has("Pixel 8 Pro follows Second phone, so its input comes from there."), "texts ${allTexts()}")
+            click("Stop following")
+        }
+        assertEquals(listOf<PopupEvent>(PopupEvent.StopFollowing), events)
+    }
+
+    @Test
+    fun `panel closes when stage device stops mirroring`() {
+        val holder = mutableStateOf(state(pixel, phone2) { copy(sendPanel = SendPanel.Choose(listOf(phone2), emptySet(), null)) })
+        scene(holder.value, sendOpen = true, holder = holder) {
+            assertTrue(has("Send Pixel 8 Pro's taps, keys and text to:"))
+            holder.value = state(pixel.copy(status = PopupStatus.Ready), phone2) { copy(sendPanel = SendPanel.Hidden) }
+            frames(60)
+            assertTrue(allTexts().none { it.startsWith("Send ") }, "texts ${allTexts()}")
+            assertTrue(has("Ready") && has("Mirror"), "stage swapped; texts ${allTexts()}")
+        }
+    }
+
+    @Test
+    fun `arrange shows with two mirrors and emits layouts`() {
+        val events = mutableListOf<PopupEvent>()
+        scene(state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.Grid, keepTiled = false)) }, events) {
+            assertTrue(has("Arrange mirror windows") && has("Keep tiled"), "texts ${allTexts()}")
+            click("Side by side")
+            click("As placed")
+        }
+        assertEquals(
+            listOf<PopupEvent>(
+                PopupEvent.Act(TrayAction.Arrange(ArrangeLayout.SideBySide), null), PopupEvent.Act(TrayAction.Arrange(ArrangeLayout.AsPlaced), null),
+            ),
+            events,
+        )
+        scene(state(pixel, tablet) { copy(arrange = ArrangeState()) }) { assertTrue(!has("Arrange mirror windows")) }
+        scene(state(pixel, phone2)) { assertTrue(!has("Arrange mirror windows")) }
+    }
+
+    @Test
+    fun `keep tiled switch emits KeepTiled true`() {
+        val events = mutableListOf<PopupEvent>()
+        scene(state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.Grid)) }, events) {
+            click("Keep tiled")
+        }
+        assertEquals(listOf<PopupEvent>(PopupEvent.Act(TrayAction.KeepTiled(true), null)), events)
+    }
+
+    @Test
+    fun `arrange buttons disabled when not movable`() {
+        val events = mutableListOf<PopupEvent>()
+        scene(state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.Grid, movable = false)) }, events) {
+            assertTrue(disabled("Cascade") && disabled("Keep tiled"))
+        }
+        scene(state(pixel, phone2) { copy(arrange = ArrangeState(ArrangeLayout.AsPlaced)) }) {
+            assertTrue(!disabled("Cascade") && disabled("Keep tiled"))
         }
     }
 }

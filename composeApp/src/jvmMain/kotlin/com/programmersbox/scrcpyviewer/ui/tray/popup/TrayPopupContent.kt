@@ -149,13 +149,13 @@ fun TrayPopupContent(
         Header(state.devices.size)
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
             Stage(state, sendOpen, { flash.value }, onEvent)
-            // Task 6: the Send input panel folds open here, under the stage.
+            SendInputPanel(state, sendOpen, onEvent)
             AnimatedVisibility(
                 visible = state.devices.isNotEmpty(),
                 enter = if (reduce) fadeIn(tween(150)) else expandVertically(layoutSpring()) + fadeIn(tween(150)),
                 exit = if (reduce) fadeOut(tween(100)) else shrinkVertically(layoutSpring()) + fadeOut(tween(100)),
             ) { Strip(state, onEvent) }
-            // Task 6: the Arrange mirror windows section goes here, under the strip.
+            ArrangeSection(state, onEvent)
         }
         Footer(onEvent)
     }
@@ -202,13 +202,16 @@ private fun Stage(state: TrayPopupUiState, sendOpen: Boolean, flash: () -> Float
             Modifier.fillMaxWidth().stylePane(STAGE_SHAPE).clip(STAGE_SHAPE)
                 .background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
         ) {
-            when {
-                device == null -> Text(
-                    "No device connected", style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp),
-                )
-                device.status == PopupStatus.Mirroring || device.status == PopupStatus.Ready -> DeviceStage(device, state, sendOpen, flash, onEvent)
-                else -> AttentionStage(device)
+            // A status change under the same serial (a mirror stopping) crossfades; the outer animateContentSize does the height.
+            Crossfade(device, label = "stage status") { shown ->
+                when {
+                    shown == null -> Text(
+                        "No device connected", style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp),
+                    )
+                    shown.status == PopupStatus.Mirroring || shown.status == PopupStatus.Ready -> DeviceStage(shown, state, sendOpen, flash, onEvent)
+                    else -> AttentionStage(shown)
+                }
             }
         }
     }
