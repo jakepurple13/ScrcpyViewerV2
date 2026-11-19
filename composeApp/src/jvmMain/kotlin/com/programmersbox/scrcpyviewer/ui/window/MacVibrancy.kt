@@ -115,6 +115,12 @@ internal object ObjC {
         @JvmField var height = 0.0
     }
 
+    @Structure.FieldOrder("x", "y")
+    class CGPoint : Structure(), Structure.ByValue {
+        @JvmField var x = 0.0
+        @JvmField var y = 0.0
+    }
+
     @Structure.FieldOrder("width", "height")
     class NSSize(@JvmField var width: Double = 0.0, @JvmField var height: Double = 0.0) : Structure(), Structure.ByValue
 
@@ -151,6 +157,12 @@ internal object ObjC {
             CGRect().apply { x = buffer.getDouble(0); y = buffer.getDouble(8); width = buffer.getDouble(16); height = buffer.getDouble(24) }
         }
         return doubleArrayOf(r.x, r.y, r.width, r.height)
+    }
+
+    /** A CGPoint-returning getter as [x, y]. Two doubles come back in registers, so plain objc_msgSend on both architectures. */
+    fun msgPoint(receiver: Pointer, selector: String): DoubleArray {
+        val p = msgSend.invoke(CGPoint::class.java, arrayOf(receiver, sel(selector))) as CGPoint
+        return doubleArrayOf(p.x, p.y)
     }
 
     fun nsString(value: String): Pointer = msgPtr(cls("NSString"), "stringWithUTF8String:", value)!!

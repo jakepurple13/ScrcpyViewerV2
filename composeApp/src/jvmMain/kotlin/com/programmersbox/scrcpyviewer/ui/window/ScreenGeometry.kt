@@ -92,7 +92,7 @@ object NativeScreenGeometry : ScreenGeometry {
     private const val MDT_EFFECTIVE_DPI = 0
 
     /** The monitor's DPI scale (1.0 at 96 DPI); 1.0 when shcore (Windows 8.1+) cannot say. */
-    private fun monitorScale(monitor: Pointer): Double = try {
+    internal fun monitorScale(monitor: Pointer): Double = try {
         val x = IntByReference()
         val y = IntByReference()
         val shcore = Native.load("shcore", Shcore::class.java)
