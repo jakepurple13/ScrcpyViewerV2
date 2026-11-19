@@ -17,12 +17,12 @@ fun pointerLocation(): IntArray? = try {
             intArrayOf(p[0].roundToInt(), (mainHeight - p[1]).roundToInt())
         }
         Os.isWindows -> {
-            val user32 = Native.load("user32", CursorUser32::class.java)
             val pt = WinPoint()
-            if (user32.GetCursorPos(pt) == 0) {
+            if (cursorUser32.GetCursorPos(pt) == 0) {
                 null
             } else {
-                val scale = NativeScreenGeometry.monitorScale(user32.MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST))
+                val byValue = WinPointByValue().apply { x = pt.x; y = pt.y }
+                val scale = NativeScreenGeometry.monitorScale(cursorUser32.MonitorFromPoint(byValue, MONITOR_DEFAULTTONEAREST))
                 intArrayOf((pt.x / scale).roundToInt(), (pt.y / scale).roundToInt())
             }
         }
@@ -34,13 +34,19 @@ fun pointerLocation(): IntArray? = try {
 
 private const val MONITOR_DEFAULTTONEAREST = 2
 
+private val cursorUser32: CursorUser32 by lazy { Native.load("user32", CursorUser32::class.java) }
+
+/** POINT, passed by reference (LPPOINT) to GetCursorPos. */
 @Structure.FieldOrder("x", "y")
-class WinPoint : Structure(), Structure.ByValue {
+internal open class WinPoint : Structure() {
     @JvmField var x = 0
     @JvmField var y = 0
 }
 
-interface CursorUser32 : Library {
+/** POINT passed by value, as MonitorFromPoint takes it. */
+internal class WinPointByValue : WinPoint(), Structure.ByValue
+
+internal interface CursorUser32 : Library {
     fun GetCursorPos(pt: WinPoint): Int
-    fun MonitorFromPoint(pt: WinPoint, flags: Int): Pointer
+    fun MonitorFromPoint(pt: WinPointByValue, flags: Int): Pointer
 }
