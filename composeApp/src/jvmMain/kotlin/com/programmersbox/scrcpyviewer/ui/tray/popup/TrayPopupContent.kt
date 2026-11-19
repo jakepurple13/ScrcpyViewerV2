@@ -1,6 +1,11 @@
 package com.programmersbox.scrcpyviewer.ui.tray.popup
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateContentSize
@@ -49,7 +54,20 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import com.programmersbox.scrcpyviewer.ui.common.rememberSelectionHighlight
+import com.programmersbox.scrcpyviewer.ui.common.selectionHighlight
+import com.programmersbox.scrcpyviewer.ui.common.selectionHighlightTarget
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -116,12 +134,27 @@ fun TrayPopupContent(
     modifier: Modifier = Modifier,
 ) {
     val reduce = LocalReduceMotion.current
+    // A new screenshot note flashes the stage screen (a short white fade, also under reduce motion).
+    val flash = remember { Animatable(0f) }
+    val firstNote = remember { booleanArrayOf(true) }
+    LaunchedEffect(state.screenshotNote) {
+        val skip = firstNote[0]
+        firstNote[0] = false
+        if (!skip && state.screenshotNote != null) {
+            flash.snapTo(0.7f)
+            flash.animateTo(0f, tween(350))
+        }
+    }
     Column(modifier.animateContentSize(if (reduce) tween(150) else layoutSpring())) {
         Header(state.devices.size)
         Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-            Stage(state, sendOpen, onEvent)
+            Stage(state, sendOpen, { flash.value }, onEvent)
             // Task 6: the Send input panel folds open here, under the stage.
-            if (state.devices.isNotEmpty()) Strip(state, onEvent)
+            AnimatedVisibility(
+                visible = state.devices.isNotEmpty(),
+                enter = if (reduce) fadeIn(tween(150)) else expandVertically(layoutSpring()) + fadeIn(tween(150)),
+                exit = if (reduce) fadeOut(tween(100)) else shrinkVertically(layoutSpring()) + fadeOut(tween(100)),
+            ) { Strip(state, onEvent) }
             // Task 6: the Arrange mirror windows section goes here, under the strip.
         }
         Footer(onEvent)
@@ -140,16 +173,22 @@ private fun Header(count: Int) {
 }
 
 @Composable
-private fun Stage(state: TrayPopupUiState, sendOpen: Boolean, onEvent: (PopupEvent) -> Unit) {
+private fun Stage(state: TrayPopupUiState, sendOpen: Boolean, flash: () -> Float, onEvent: (PopupEvent) -> Unit) {
     val reduce = LocalReduceMotion.current
+    // Where each serial last sat in the strip, kept for a device that has left, so the slide still has a direction.
+    val order = remember { mutableMapOf<String, Int>() }
+    state.devices.forEachIndexed { i, d -> order[d.serial] = i }
+    val target = state.devices.firstOrNull { it.serial == state.stage }
+    // The exit keeps its own snapshot of the device; the outer animateContentSize animates the height, so the size here snaps.
     AnimatedContent(
-        targetState = state.stage,
+        targetState = target,
         modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth(),
+        contentKey = { it?.serial },
         transitionSpec = {
-            val from = state.devices.indexOfFirst { it.serial == initialState }
-            val to = state.devices.indexOfFirst { it.serial == targetState }
+            val from = initialState?.serial?.let { order[it] } ?: 0
+            val to = targetState?.serial?.let { order[it] } ?: 0
             val dir = if (to >= from) 1 else -1
-            val size = SizeTransform(clip = true) { _, _ -> if (reduce) tween(150) else layoutSpring() }
+            val size = SizeTransform(clip = true) { _, _ -> snap() }
             if (reduce) {
                 (fadeIn(tween(150)) togetherWith fadeOut(tween(100))).using(size)
             } else {
@@ -158,8 +197,7 @@ private fun Stage(state: TrayPopupUiState, sendOpen: Boolean, onEvent: (PopupEve
             }
         },
         label = "stage",
-    ) { serial ->
-        val device = state.devices.firstOrNull { it.serial == serial }
+    ) { device ->
         Box(
             Modifier.fillMaxWidth().stylePane(STAGE_SHAPE).clip(STAGE_SHAPE)
                 .background(MaterialTheme.colorScheme.surfaceContainer).padding(12.dp),
@@ -169,7 +207,7 @@ private fun Stage(state: TrayPopupUiState, sendOpen: Boolean, onEvent: (PopupEve
                     "No device connected", style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 16.dp),
                 )
-                device.status == PopupStatus.Mirroring || device.status == PopupStatus.Ready -> DeviceStage(device, state, sendOpen, onEvent)
+                device.status == PopupStatus.Mirroring || device.status == PopupStatus.Ready -> DeviceStage(device, state, sendOpen, flash, onEvent)
                 else -> AttentionStage(device)
             }
         }
@@ -177,27 +215,39 @@ private fun Stage(state: TrayPopupUiState, sendOpen: Boolean, onEvent: (PopupEve
 }
 
 @Composable
-private fun DeviceStage(device: PopupDevice, state: TrayPopupUiState, sendOpen: Boolean, onEvent: (PopupEvent) -> Unit) {
+private fun DeviceStage(device: PopupDevice, state: TrayPopupUiState, sendOpen: Boolean, flash: () -> Float, onEvent: (PopupEvent) -> Unit) {
     val thumb = state.thumbnails[device.serial]
     val landscape = thumb != null && thumb.width > thumb.height
-    // A landscape screen leaves the details too little room beside it, so they go under it.
-    if (landscape) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            StageScreen(thumb, true)
-            Details(device, state, sendOpen, onEvent)
-        }
-    } else {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StageScreen(thumb, false)
-            Box(Modifier.weight(1f)) { Details(device, state, sendOpen, onEvent) }
+    // A landscape screen leaves the details too little room beside it, so they go under it. The switch fades.
+    AnimatedContent(
+        targetState = landscape,
+        transitionSpec = { (fadeIn(tween(150)) togetherWith fadeOut(tween(100))).using(SizeTransform(clip = false) { _, _ -> snap() }) },
+        label = "stage shape",
+    ) { wide ->
+        if (wide) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                StageScreen(thumb, true, flash)
+                Details(device, state, sendOpen, onEvent)
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                StageScreen(thumb, false, flash)
+                Box(Modifier.weight(1f)) { Details(device, state, sendOpen, onEvent) }
+            }
         }
     }
 }
 
 @Composable
-private fun StageScreen(thumb: ImageBitmap?, landscape: Boolean) {
+private fun StageScreen(thumb: ImageBitmap?, landscape: Boolean, flash: () -> Float) {
     val shape = RoundedCornerShape(14.dp)
-    Crossfade(thumb, label = "stage screen") { bitmap ->
+    Crossfade(
+        thumb, label = "stage screen",
+        modifier = Modifier.clip(shape).drawWithContent {
+            drawContent()
+            drawRect(Color.White, alpha = flash().coerceIn(0f, 1f))
+        },
+    ) { bitmap ->
         if (bitmap != null) {
             val ratio = (bitmap.width.toFloat() / bitmap.height).coerceIn(0.4f, 2.5f)
             Image(
@@ -312,13 +362,22 @@ private fun AttentionStage(device: PopupDevice) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(6.dp))
+            val scheme = MaterialTheme.colorScheme
+            Pill(statusLabel(device), scheme.errorContainer, scheme.onErrorContainer)
+            Spacer(Modifier.height(6.dp))
             Text(attentionText(device), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
+private fun statusLabel(device: PopupDevice): String = when (device.status) {
+    PopupStatus.Unauthorized -> "Unauthorized"
+    PopupStatus.Offline -> "Offline"
+    else -> device.rawState.ifBlank { "Unknown" }
+}
+
 private fun attentionText(device: PopupDevice): String = when (device.status) {
-    PopupStatus.Unauthorized -> "Unlock the phone and tap Allow on the USB debugging prompt"
+    PopupStatus.Unauthorized -> "Unlock the phone and tap Allow on the USB debugging prompt."
     PopupStatus.Offline -> "Reconnect the cable or run adb reconnect"
     else -> device.rawState.ifBlank { "Not ready" }
 }
@@ -327,28 +386,45 @@ private fun attentionText(device: PopupDevice): String = when (device.status) {
 private fun Strip(state: TrayPopupUiState, onEvent: (PopupEvent) -> Unit) {
     val reduce = LocalReduceMotion.current
     val shape = RoundedCornerShape(12.dp)
+    val material = currentStyle == ThemeStyle.Material
+    val highlight = rememberSelectionHighlight()
+    // Devices already listed when the strip appears do not grow in; later arrivals do.
+    val initial = remember { state.devices.mapTo(HashSet()) { it.serial } }
     LazyRow(
-        Modifier.padding(top = 10.dp),
+        Modifier.padding(top = 10.dp).then(
+            if (material) Modifier.selectionHighlight(highlight, MaterialTheme.colorScheme.secondaryContainer, shape) else Modifier,
+        ),
         contentPadding = PaddingValues(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         items(state.devices, key = { it.serial }) { device ->
-            // Under reduce motion items fade in and out and do not glide.
-            val motion = Modifier.animateItem(
+            val selected = device.serial == state.stage
+            var arrived by remember { mutableStateOf(reduce || device.serial in initial) }
+            LaunchedEffect(Unit) { arrived = true }
+            val grow by animateFloatAsState(if (arrived) 1f else 0.6f, if (reduce) tween(150) else layoutSpring(), label = "strip grow")
+            // The highlight target goes first: it reads the item's resting place, not where the entrance has it.
+            val motion = Modifier.selectionHighlightTarget(highlight, selected && material).animateItem(
                 fadeInSpec = tween(150), placementSpec = if (reduce) null else layoutSpring(), fadeOutSpec = tween(100),
-            )
-            Column(
-                motion.width(STRIP_ITEM_WIDTH)
-                    .listRow(device.serial == state.stage, shape)
-                    .clickable(role = Role.Button) { onEvent(PopupEvent.Pick(device.serial)) }
-                    .padding(horizontal = 4.dp, vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                StripScreen(device, state.thumbnails[device.serial])
-                Text(
-                    device.title, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp),
-                )
+            ).graphicsLayer { scaleX = grow.coerceAtLeast(0f); scaleY = grow.coerceAtLeast(0f) }
+            Box(motion.width(STRIP_ITEM_WIDTH)) {
+                if (!material) {
+                    // The other styles keep their own selected look; it fades in and out instead of snapping.
+                    val fade by animateFloatAsState(if (selected) 1f else 0f, tween(150), label = "strip selected")
+                    Box(Modifier.matchParentSize().graphicsLayer { alpha = fade }.listRow(true, shape))
+                }
+                Column(
+                    Modifier.fillMaxWidth().clip(shape)
+                        .clickable(role = Role.Button) { onEvent(PopupEvent.Pick(device.serial)) }
+                        .semantics { this.selected = selected }
+                        .padding(horizontal = 4.dp, vertical = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    StripScreen(device, state.thumbnails[device.serial])
+                    Text(
+                        device.title, fontSize = 11.sp, lineHeight = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
             }
         }
     }

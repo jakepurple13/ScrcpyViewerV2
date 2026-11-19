@@ -111,7 +111,17 @@ class TrayPopupContentTest {
 
     @Test
     fun `unauthorized stage shows the prompt text`() = scene(state(locked)) {
-        assertTrue(has("Unlock the phone and tap Allow on the USB debugging prompt"), "texts ${allTexts()}")
+        assertTrue(has("Unlock the phone and tap Allow on the USB debugging prompt."), "texts ${allTexts()}")
+    }
+
+    @Test
+    fun `offline stage shows the Offline tag and hint`() = scene(state(PopupDevice("OFF4", "Dead phone", PopupStatus.Offline, "offline"))) {
+        assertTrue(has("Offline") && has("Reconnect the cable or run adb reconnect"), "texts ${allTexts()}")
+    }
+
+    private fun SceneDriver.selectedItems(): List<String> {
+        fun SemanticsNode.firstText(): String? = texts().firstOrNull() ?: children.firstNotNullOfOrNull { it.firstText() }
+        return nodes().filter { SemanticsActions.OnClick in it.config && it.config.getOrNull(SemanticsProperties.Selected) == true }.mapNotNull { it.firstText() }
     }
 
     @Test
@@ -120,6 +130,7 @@ class TrayPopupContentTest {
         assertTrue(listOf("Pixel 8 Pro", "Galaxy Tab", "Locked phone").all { it in texts }, "texts $texts")
         // The stage shows the tablet: Mirror, not Bring to front.
         assertTrue(has("Mirror") && !has("Bring to front"))
+        assertEquals(listOf("Galaxy Tab"), selectedItems())
     }
 
     @Test
