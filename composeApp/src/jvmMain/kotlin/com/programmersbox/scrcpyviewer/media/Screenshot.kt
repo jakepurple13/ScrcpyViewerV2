@@ -3,14 +3,19 @@ package com.programmersbox.scrcpyviewer.media
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.EncodedImageFormat
 import org.jetbrains.skia.Image
+import org.jetbrains.skia.Rect
+import org.jetbrains.skia.SamplingMode
+import org.jetbrains.skia.Surface
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.roundToInt
 
 /** Screenshots of the mirrored screen, and the capture file names shared with recordings. */
 object Screenshot {
@@ -30,6 +35,30 @@ object Screenshot {
         }
         copy.setImmutable()
         copy.asComposeImageBitmap()
+    }
+
+    /**
+     * [frame] scaled to fit inside [maxWidth] x [maxHeight] keeping its aspect, never upscaled, drawn inside
+     * [VideoFrame.use]. Null when the frame was already released.
+     */
+    fun thumbnail(frame: VideoFrame, maxWidth: Int, maxHeight: Int): ImageBitmap? = frame.use { src ->
+        val scale = minOf(1f, maxWidth.toFloat() / src.width, maxHeight.toFloat() / src.height)
+        val w = (src.width * scale).roundToInt().coerceAtLeast(1)
+        val h = (src.height * scale).roundToInt().coerceAtLeast(1)
+        Surface.makeRasterN32Premul(w, h).use { surface ->
+            Image.makeFromBitmap(src).use { image ->
+                surface.canvas.drawImageRect(
+                    image,
+                    Rect.makeWH(src.width.toFloat(), src.height.toFloat()),
+                    Rect.makeWH(w.toFloat(), h.toFloat()),
+                    SamplingMode.LINEAR,
+                    null,
+                    true,
+                )
+            }
+            // The snapshot copies the surface pixels; the composed bitmap owns its own memory.
+            surface.makeImageSnapshot().use { it.toComposeImageBitmap() }
+        }
     }
 
     /**
