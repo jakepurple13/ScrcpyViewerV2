@@ -99,6 +99,14 @@ class UpdateManager(
     /** True once "Later" is chosen; for this launch, until a newer release is found. */
     val popupDismissed: StateFlow<Boolean> = _popupDismissed.asStateFlow()
 
+    private val _announced = MutableStateFlow<Release?>(null)
+
+    /**
+     * The last release a background check found that was not already [available]; the Dock / taskbar alert follows
+     * it. A check started from Settings never announces: the user is already looking. Never cleared.
+     */
+    val announced: StateFlow<Release?> = _announced.asStateFlow()
+
     /** Whether this copy can install updates at all; see [canSelfUpdate] for a given release. */
     val canInstall: Boolean = backend.canInstall && !macNotInApplications
 
@@ -176,7 +184,10 @@ class UpdateManager(
                 synchronized(lock) {
                     val release = found?.copy(body = notes)
                     // "Later" covers the release it was chosen for; a newer one found later shows the popup again.
-                    if (release != null && release.version != _available.value?.version) _popupDismissed.value = false
+                    if (release != null && release.version != _available.value?.version) {
+                        _popupDismissed.value = false
+                        if (!userInitiated) _announced.value = release
+                    }
                     pendingInfo = info
                     _available.value = release
                     _lastChecked.value = now()

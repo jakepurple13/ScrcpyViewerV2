@@ -56,6 +56,8 @@ import com.programmersbox.scrcpyviewer.ui.actions.ActionsNavigation
 import com.programmersbox.scrcpyviewer.actions.ActionInbox
 import com.programmersbox.scrcpyviewer.di.AppScope
 import com.programmersbox.scrcpyviewer.di.startAppKoin
+import com.programmersbox.scrcpyviewer.update.NucleusTaskbarSink
+import com.programmersbox.scrcpyviewer.update.TaskbarUpdateIndicator
 import com.programmersbox.scrcpyviewer.update.UpdateManager
 import com.programmersbox.scrcpyviewer.update.UpdateState
 import kotlinx.coroutines.flow.first
@@ -79,6 +81,7 @@ import com.programmersbox.scrcpyviewer.ui.window.launch.launchEffectNow
 import com.programmersbox.scrcpyviewer.ui.window.launch.recordInto
 import dev.nucleusframework.application.NucleusWindowBounds
 import dev.nucleusframework.application.NucleusWindow
+import dev.nucleusframework.taskbarprogress.tao.NucleusTaskbarProgress
 import androidx.compose.runtime.SideEffect
 import com.programmersbox.scrcpyviewer.ui.window.launch.QuitAnimator
 import com.programmersbox.scrcpyviewer.ui.window.launch.LAUNCH_FADE_MILLIS
@@ -244,6 +247,14 @@ fun main() {
             minSize = MainWindowMinSize,
         ) {
             SideEffect { mainWindow = nucleusWindow }
+            // A background check that finds a release bounces the Dock icon / flashes the taskbar button once;
+            // downloads show a bar on it.
+            if (remember { NucleusTaskbarProgress.isAvailable() }) {
+                val sink = remember(nucleusWindow) { NucleusTaskbarSink(nucleusWindow) }
+                val indicator = remember(sink) { TaskbarUpdateIndicator(sink) }
+                LaunchedEffect(indicator) { indicator.run(updateManager, nucleusWindow.focusFlow) }
+                DisposableEffect(sink) { onDispose { sink.hide() } }
+            }
             if (quit.effect == LaunchEffect.Fade) {
                 LaunchedEffect(Unit) {
                     fadeWindow(nucleusWindow, from = 1f, to = 0f)
