@@ -2,6 +2,7 @@ package com.programmersbox.scrcpyviewer.ui.tray.popup
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -49,6 +50,7 @@ class TrayPopupContentTest {
         events: MutableList<PopupEvent> = mutableListOf(),
         sendOpen: Boolean = false,
         holder: MutableState<TrayPopupUiState> = mutableStateOf(ui),
+        modifier: Modifier = Modifier,
         block: SceneDriver.() -> Unit,
     ) = onEdt {
         val d = SceneDriver(ImageComposeScene(400, 900, Density(1f)) {
@@ -56,7 +58,7 @@ class TrayPopupContentTest {
                 ScrcpyViewerTheme(ThemeMode.Light) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
-                            TrayPopupContent(holder.value, sendOpen = sendOpen, onEvent = { events += it }, modifier = Modifier.width(360.dp))
+                            TrayPopupContent(holder.value, sendOpen = sendOpen, onEvent = { events += it }, modifier = Modifier.width(360.dp).then(modifier))
                         }
                     }
                 }
@@ -358,5 +360,40 @@ class TrayPopupContentTest {
             click("Focus")
         }
         assertEquals(listOf<PopupEvent>(PopupEvent.Act(TrayAction.Arrange(ArrangeLayout.Focus), null)), events)
+    }
+
+    private val fiveDevices = arrayOf(
+        pixel,
+        PopupDevice("PH2", "Second phone", PopupStatus.Mirroring, "device"),
+        tablet,
+        locked,
+        PopupDevice("OFF5", "Old phone", PopupStatus.Offline, "offline"),
+    )
+
+    private fun SceneDriver.boundsOf(label: String) =
+        assertNotNull(nodes().firstOrNull { label in it.texts() }, "no $label; texts ${allTexts()}").boundsInRoot
+
+    @Test
+    fun `five devices all show in the strip inside the popup`() = scene(state(*fiveDevices)) {
+        assertTrue(has("5 connected") && has("Open Scrcpy Vwr"), "texts ${allTexts()}")
+        // Five 64 dp items fill the 360 dp strip: every one is placed, none past the popup's edge.
+        for (d in fiveDevices) {
+            val b = boundsOf(d.title)
+            assertTrue(b.left >= 0f && b.right <= 360f, "${d.title} at $b")
+        }
+    }
+
+    @Test
+    fun `short work area scrolls the device part and keeps header and footer in view`() {
+        val maxHeight = 320
+        scene(state(*fiveDevices) { copy(arrange = ArrangeState(ArrangeLayout.Grid)) }, modifier = Modifier.heightIn(max = maxHeight.dp)) {
+            val header = boundsOf("Devices")
+            val footer = boundsOf("Open Scrcpy Vwr")
+            assertTrue(header.top >= 0f, "header $header")
+            assertTrue(footer.bottom <= maxHeight, "footer $footer")
+            val scroller = nodes().firstOrNull { SemanticsProperties.VerticalScrollAxisRange in it.config }
+            val range = assertNotNull(scroller, "no vertical scroll").config[SemanticsProperties.VerticalScrollAxisRange]
+            assertTrue(range.maxValue() > 0f, "device part max scroll ${range.maxValue()}")
+        }
     }
 }

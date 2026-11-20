@@ -1,5 +1,6 @@
 package com.programmersbox.scrcpyviewer.ui.tray.popup
 
+import com.programmersbox.scrcpyviewer.ui.window.PointerPoint
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -8,15 +9,16 @@ import kotlinx.coroutines.flow.asStateFlow
 private const val REOPEN_GUARD_MS = 300L
 
 /**
- * Whether the menu bar popup is open, and the pointer location ([anchor], window units) of the click that opened it.
+ * Whether the menu bar popup is open, and the pointer location ([anchor]) of the click that opened it, as read on the
+ * tray thread (a raw Cocoa point on macOS; the window flips it on the main thread, see [PointerPoint.inWindowUnits]).
  * [iconClicked] runs on the tray thread and [dismissed] on the UI thread; both only write state.
  */
 class TrayPopupController(private val now: () -> Long = System::currentTimeMillis) {
     private val _visible = MutableStateFlow(false)
     val visible: StateFlow<Boolean> = _visible.asStateFlow()
 
-    private val _anchor = MutableStateFlow<IntArray?>(null)
-    val anchor: StateFlow<IntArray?> = _anchor.asStateFlow()
+    private val _anchor = MutableStateFlow<PointerPoint?>(null)
+    val anchor: StateFlow<PointerPoint?> = _anchor.asStateFlow()
 
     private var dismissedAt: Long? = null
 
@@ -25,7 +27,7 @@ class TrayPopupController(private val now: () -> Long = System::currentTimeMilli
      * [dismissed] stays closed: clicking the icon takes focus from the popup first, so that click already closed it.
      */
     @Synchronized
-    fun iconClicked(pointer: IntArray?) {
+    fun iconClicked(pointer: PointerPoint?) {
         if (_visible.value) {
             close()
             return

@@ -64,9 +64,31 @@ class PopupPlacementTest {
     }
 
     @Test
-    fun `click inside the work area falls back to top-right`() {
-        val r = assertNotNull(popupBounds(500, 500, 360, 500, listOf(mac)))
+    fun `overflow flyout click above a bottom taskbar hangs the popup above the click`() {
+        // Windows 11: the tray overflow flyout sits above the taskbar, inside the work area.
+        val s = ScreenArea(Rectangle(0, 0, 1920, 1080), Rectangle(0, 0, 1920, 1032))
+        val r = assertNotNull(popupBounds(1700, 980, 360, 500, listOf(s)))
+        assertEquals(Rectangle(1700 + 18 - 360, 980 - 8 - 500, 360, 500), r)
+    }
+
+    @Test
+    fun `click in the upper half of the work area hangs the popup below the click`() {
+        val r = assertNotNull(popupBounds(500, 200, 360, 500, listOf(mac)))
+        assertEquals(Rectangle(500 + 18 - 360, 208, 360, 500), r)
+    }
+
+    @Test
+    fun `click inside the work area is clamped into it`() {
+        // Lower half, but too near the top for the popup to fit above: clamped to the work area's top.
+        val r = assertNotNull(popupBounds(100, 600, 360, 900, listOf(mac)))
+        assertEquals(Rectangle(8, 33 + 8, 360, 900), r)
+    }
+
+    @Test
+    fun `no click puts the popup top-right of the first work area`() {
+        val r = assertNotNull(popupTopRightBounds(360, 500, listOf(mac)))
         assertEquals(Rectangle(1512 - 8 - 360, 33 + 8, 360, 500), r)
+        assertNull(popupTopRightBounds(360, 500, emptyList()))
     }
 
     @Test

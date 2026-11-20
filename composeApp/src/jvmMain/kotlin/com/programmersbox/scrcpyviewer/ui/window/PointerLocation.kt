@@ -7,14 +7,32 @@ import com.sun.jna.Pointer
 import com.sun.jna.Structure
 import kotlin.math.roundToInt
 
-/** The mouse pointer as [x, y] in window units (top-left origin, like [ScreenArea]); null on Linux or on any failure. No AWT. */
-fun pointerLocation(): IntArray? = try {
+/**
+ * A pointer location as [pointerLocation] reads it. [bottomLeft]: a raw Cocoa point (origin at the bottom-left of the
+ * main screen), read without touching NSScreen so it is safe off the main thread; [inWindowUnits] flips it. Otherwise
+ * it is already in window units (top-left origin, like [ScreenArea]).
+ */
+data class PointerPoint(val x: Int, val y: Int, val bottomLeft: Boolean = false) {
+    /**
+     * [x], [y] in window units. A Cocoa point is flipped by the main screen's height ([screens]' first, as
+     * [NativeScreenGeometry] lists them); null when that is unknown.
+     */
+    fun inWindowUnits(screens: List<ScreenArea>): IntArray? {
+        if (!bottomLeft) return intArrayOf(x, y)
+        val main = screens.firstOrNull() ?: return null
+        return intArrayOf(x, main.bounds.y + main.bounds.height - y)
+    }
+}
+
+/**
+ * The mouse pointer; null on Linux or on any failure. No AWT. Any thread: on macOS it reads only
+ * `NSEvent.mouseLocation` and returns the raw Cocoa point (see [PointerPoint.inWindowUnits]).
+ */
+fun pointerLocation(): PointerPoint? = try {
     when {
         Os.isMac -> {
             val p = ObjC.msgPoint(ObjC.cls("NSEvent"), "mouseLocation")
-            val main = ObjC.msgPtr(ObjC.msgPtr(ObjC.cls("NSScreen"), "screens")!!, "objectAtIndex:", 0L)!!
-            val mainHeight = ObjC.msgRect(main, "frame")[3]
-            intArrayOf(p[0].roundToInt(), (mainHeight - p[1]).roundToInt())
+            PointerPoint(p[0].roundToInt(), p[1].roundToInt(), bottomLeft = true)
         }
         Os.isWindows -> {
             val pt = WinPoint()
@@ -23,7 +41,7 @@ fun pointerLocation(): IntArray? = try {
             } else {
                 val byValue = WinPointByValue().apply { x = pt.x; y = pt.y }
                 val scale = NativeScreenGeometry.monitorScale(cursorUser32.MonitorFromPoint(byValue, MONITOR_DEFAULTTONEAREST))
-                intArrayOf((pt.x / scale).roundToInt(), (pt.y / scale).roundToInt())
+                PointerPoint((pt.x / scale).roundToInt(), (pt.y / scale).roundToInt())
             }
         }
         else -> null

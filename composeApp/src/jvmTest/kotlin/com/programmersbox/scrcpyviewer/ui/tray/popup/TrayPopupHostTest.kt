@@ -27,9 +27,10 @@ class TrayPopupHostTest {
 
     @Test
     fun windowActionsClosePopupTogglesDoNot() {
-        listOf(TrayAction.Focus, TrayAction.Mirror, TrayAction.OpenMain, TrayAction.Settings).forEach {
+        listOf(TrayAction.Focus, TrayAction.Mirror, TrayAction.OpenMain, TrayAction.Settings, TrayAction.Quit).forEach {
             assertTrue(closesPopup(it), "$it")
         }
+        assertFalse(closesPopup(TrayAction.ShowPopup))
         assertFalse(closesPopup(TrayAction.Arrange(ArrangeLayout.Grid)))
         assertFalse(closesPopup(TrayAction.KeepTiled(true)))
     }
@@ -90,6 +91,9 @@ class TrayPopupHostTest {
         assertTrue(popupHangsUpward(intArrayOf(1800, 1050), listOf(win)))
         assertFalse(popupHangsUpward(intArrayOf(1300, 12), listOf(mac)))
         assertFalse(popupHangsUpward(null, listOf(mac)))
+        // Windows 11 tray overflow flyout: a click inside the work area, in its lower half.
+        assertTrue(popupHangsUpward(intArrayOf(1700, 950), listOf(win)))
+        assertFalse(popupHangsUpward(intArrayOf(1700, 200), listOf(win)))
         assertFalse(popupHangsUpward(intArrayOf(1, 1), emptyList()))
     }
 
@@ -99,5 +103,33 @@ class TrayPopupHostTest {
         val second = nextScreenshotNote(first, "Copied")
         assertEquals("Copied", second.text)
         assertTrue(first != second && first.id != second.id)
+    }
+
+    @Test
+    fun overflowFlyoutClickHangsTheWindowAboveTheClick() {
+        val win = ScreenArea(Rectangle(0, 0, 1920, 1080), Rectangle(0, 0, 1920, 1032))
+        val r = assertNotNull(popupWindowBounds(intArrayOf(1700, 950), 400, listOf(win)))
+        assertEquals(950 - 420, r.y)
+        assertEquals(1700 + 18 - (POPUP_WIDTH + 20), r.x)
+    }
+
+    @Test
+    fun outsidePressStartsOnlyOnANewPressOutsideTheBounds() {
+        val bounds = Rectangle(100, 100, 380, 400)
+        assertTrue(outsideClickStarted(wasDown = false, down = true, pointer = intArrayOf(10, 10), bounds = bounds))
+        // Inside the popup, a held button (the click that opened it), or no button.
+        assertFalse(outsideClickStarted(false, true, intArrayOf(200, 200), bounds))
+        assertFalse(outsideClickStarted(true, true, intArrayOf(10, 10), bounds))
+        assertFalse(outsideClickStarted(false, false, intArrayOf(10, 10), bounds))
+        // Unknown pointer or bounds never close it.
+        assertFalse(outsideClickStarted(false, true, null, bounds))
+        assertFalse(outsideClickStarted(false, true, intArrayOf(10, 10), null))
+    }
+
+    @Test
+    fun glassPaneIsSeeThroughOtherStylesAreOpaque() {
+        val scheme = androidx.compose.material3.lightColorScheme()
+        assertEquals(scheme.surfaceContainerHigh, paneColor(com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle.Glass, scheme))
+        assertEquals(scheme.surface, paneColor(com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle.Material, scheme))
     }
 }

@@ -3,6 +3,7 @@ package com.programmersbox.scrcpyviewer.ui.tray.popup
 import androidx.compose.ui.graphics.ImageBitmap
 import com.programmersbox.scrcpyviewer.media.Screenshot
 import com.programmersbox.scrcpyviewer.media.VideoFrame
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,7 +50,11 @@ class ScreenThumbnails(
                     _images.value = withContext(dispatcher) {
                         buildMap {
                             for ((id, latest) in sources) {
-                                thumbnailOf(latest)?.let { put(id, it) }
+                                // One device's failed copy (a Skia error) skips that device this round only.
+                                runCatching { thumbnailOf(latest) }
+                                    .onFailure { if (it is CancellationException) throw it }
+                                    .getOrNull()
+                                    ?.let { put(id, it) }
                             }
                         }
                     }

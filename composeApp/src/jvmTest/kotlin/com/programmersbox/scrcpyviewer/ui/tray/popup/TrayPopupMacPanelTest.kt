@@ -24,4 +24,12 @@ class TrayPopupMacPanelTest {
     fun panelClassIsNamedAfterTheWindowClass() {
         assertEquals("ScrcpyVwrPopupPanel_TaoWindow", MacPanelBits.panelClassName("TaoWindow"))
     }
+
+    @Test
+    fun restoresOnlyWhileTheClassIsStillThePanelClass() {
+        assertEquals(true, MacPanelBits.mayRestore(current = 0x10L, panel = 0x10L))
+        // KVO subclassed the window since the swap: left alone.
+        assertEquals(false, MacPanelBits.mayRestore(current = 0x20L, panel = 0x10L))
+        assertEquals(false, MacPanelBits.mayRestore(current = null, panel = 0x10L))
+    }
 }

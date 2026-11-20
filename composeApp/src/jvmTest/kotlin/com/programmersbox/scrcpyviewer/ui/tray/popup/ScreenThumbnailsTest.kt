@@ -51,6 +51,21 @@ class ScreenThumbnailsTest {
     }
 
     @Test
+    fun `one device failing skips only that device and the loop goes on`() = runTest {
+        var rounds = 0
+        val thumbs = ScreenThumbnails(
+            backgroundScope,
+            frames = { rounds++; mapOf("bad" to { error("skia copy failed") }, "a" to { frame }) },
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        thumbs.setActive(true)
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertTrue(rounds >= 3, "rounds = $rounds")
+        assertEquals(setOf("a"), thumbs.images.value.keys)
+    }
+
+    @Test
     fun `deactivating clears images`() = runTest {
         val thumbs = ScreenThumbnails(
             backgroundScope,

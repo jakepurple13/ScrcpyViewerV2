@@ -8,6 +8,7 @@ import com.programmersbox.scrcpyviewer.ui.mirror.MirrorRequests
 import com.programmersbox.scrcpyviewer.ui.mirror.arrange.ArrangeLayout
 import com.programmersbox.scrcpyviewer.ui.navigation.MainWindowRequests
 import com.programmersbox.scrcpyviewer.ui.navigation.TopLevelRoute
+import com.programmersbox.scrcpyviewer.ui.window.PointerPoint
 import com.programmersbox.scrcpyviewer.ui.window.pointerLocation
 
 /**
@@ -62,7 +63,7 @@ class TrayCommands(
 fun ScrcpyTray(
     icons: TrayIcons,
     onAction: (TrayAction) -> Unit,
-    onIconClick: (pointer: IntArray?) -> Unit,
+    onIconClick: (pointer: PointerPoint?) -> Unit,
 ) {
     // Items keep the lambdas of the last native rebuild, so they read the handlers through these states.
     val currentOnAction by rememberUpdatedState(onAction)
@@ -73,7 +74,7 @@ fun ScrcpyTray(
         windowsIconPath = icons.ico.toString(),
         tooltip = "Scrcpy Vwr",
         key = rows,
-        // The pointer read is a quick native call on the tray thread, right at the click.
+        // The pointer read is a quick native call on the tray thread, right at the click (no AppKit screen reads there).
         primaryAction = { currentOnIconClick(pointerLocation()) },
     ) {
         render(rows) { action ->

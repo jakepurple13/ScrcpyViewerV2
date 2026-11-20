@@ -81,11 +81,13 @@ fun NucleusApplicationScope.TrayPopup(
     val arrange by arranger.state.collectAsState()
     val currentAfterShot by rememberUpdatedState(afterShot)
 
-    // Live screens only while the popup is open. setActive is not thread-safe: called from the UI thread only.
+    // Live screens only while the popup is on screen: they stay through the close animation, so the stage doesn't
+    // fade to its placeholder while it shrinks away. setActive is not thread-safe: called from the UI thread only.
     val thumbnails = remember {
         ScreenThumbnails(scope, frames = { mirrorController.open.value.mapValues { (_, s) -> { s.frames.value } } })
     }
-    LaunchedEffect(visible) { thumbnails.setActive(visible) }
+    var onScreen by remember { mutableStateOf(false) }
+    LaunchedEffect(onScreen) { thumbnails.setActive(onScreen) }
     DisposableEffect(thumbnails) { onDispose { thumbnails.setActive(false) } }
     val images by thumbnails.images.collectAsState()
 
@@ -104,7 +106,8 @@ fun NucleusApplicationScope.TrayPopup(
 
     var note by remember { mutableStateOf<ScreenshotNote?>(null) }
     var noteJob by remember { mutableStateOf<Job?>(null) }
-    LaunchedEffect(openId) {
+    // A note is about the stage's device: it goes with each open and when the stage moves to another device.
+    LaunchedEffect(openId, stage) {
         noteJob?.cancel()
         note = null
     }
@@ -130,7 +133,8 @@ fun NucleusApplicationScope.TrayPopup(
                 trayCommands.dispatch(event.action, event.serial)
                 if (closesPopup(event.action)) controller.dismissed()
             }
-            is PopupEvent.Stop -> mirrorController.close(event.serial)
+            // The mirror window's own close path: unsaved marks prompt, GIF exports cancelled, close animation.
+            is PopupEvent.Stop -> mirrorController.requestClose(event.serial)
             is PopupEvent.Screenshot -> {
                 mirrorController.requestScreenshot(event.serial)
                 val text = screenshotNote(currentAfterShot)
@@ -156,7 +160,7 @@ fun NucleusApplicationScope.TrayPopup(
         }
     }
 
-    TrayPopupWindow(controller, theme) { maxHeight ->
+    TrayPopupWindow(controller, theme, onShownChange = { onScreen = it }) { maxHeight ->
         TrayPopupContent(state, sendOpen, ::onEvent, Modifier.heightIn(max = maxHeight.dp))
     }
 }

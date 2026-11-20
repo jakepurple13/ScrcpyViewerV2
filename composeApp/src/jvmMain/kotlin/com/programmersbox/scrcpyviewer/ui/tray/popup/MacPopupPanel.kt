@@ -35,6 +35,12 @@ internal object MacPanelBits {
 
     const val COLLECTION_BEHAVIOR = CAN_JOIN_ALL_SPACES or FULL_SCREEN_AUXILIARY
 
+    /**
+     * Whether a converted window may get its own class back: only while its class is still the panel class it was
+     * given ([current] and [panel] are class addresses). Anything else (KVO subclassed it since) is left alone.
+     */
+    fun mayRestore(current: Long?, panel: Long): Boolean = current == panel
+
     /** The runtime panel class made for windows of [original]. */
     fun panelClassName(original: String): String = "ScrcpyVwrPopupPanel_$original"
 }
@@ -120,8 +126,8 @@ private object MacPopupPanelNative {
     private val boolEncoding =
         if (System.getProperty("os.arch").let { it == "aarch64" || it == "arm64" }) "B@:" else "c@:"
 
-    /** Converted windows (NSWindow address) to their own class, for [restore]. Main thread only. */
-    private val converted = HashMap<Long, Pointer>()
+    /** Converted windows (NSWindow address) to their own class and the panel class they got, for [restore]. Main thread only. */
+    private val converted = HashMap<Long, Pair<Pointer, Pointer>>()
 
     /** Runtime panel classes, by the original class's address. Main thread only. */
     private val panelClasses = HashMap<Long, Pointer>()
@@ -145,7 +151,7 @@ private object MacPopupPanelNative {
             val panelClass = panelClassFor(original, originalName) ?: return false
             ObjC.msgPtr(window, "retain") // see restore()
             fn("object_setClass").invokePointer(arrayOf(window, panelClass))
-            converted[key] = original
+            converted[key] = original to panelClass
         }
         applyPanelState(window)
         return true
@@ -161,7 +167,17 @@ private object MacPopupPanelNative {
 
     fun restore(handle: Pointer) {
         val window = resolveNsWindow(handle) ?: handle
-        val original = converted.remove(Pointer.nativeValue(window)) ?: return
+        val (original, panelClass) = converted.remove(Pointer.nativeValue(window)) ?: return
+        val now = fn("object_getClass").invokePointer(arrayOf(window))
+        if (!MacPanelBits.mayRestore(now?.let(Pointer::nativeValue), Pointer.nativeValue(panelClass))) {
+            // AppKit subclassed it again after the swap (KVO's NSKVONotifying_ class over the panel class). Putting the
+            // original class back would drop that subclass and crash at dealloc, so the window keeps its class and the
+            // retain from convert(): one window deliberately leaked.
+            System.err.println(
+                "restoreWindowFromPanel: window class is now ${now?.let(::className)}, not the panel class; left as is (leaked)",
+            )
+            return
+        }
         ObjC.msgVoid(window, "setStyleMask:", MacPanelBits.windowStyleMask(ObjC.msgLong(window, "styleMask")))
         fn("object_setClass").invokePointer(arrayOf(window, original))
         ObjC.msgVoid(window, "release")

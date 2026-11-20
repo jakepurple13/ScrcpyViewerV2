@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -23,12 +24,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -50,15 +53,19 @@ import com.programmersbox.scrcpyviewer.ui.common.layoutSpring
 import com.programmersbox.scrcpyviewer.ui.common.systemReducesMotion
 import com.programmersbox.scrcpyviewer.ui.theme.AppTheme
 import com.programmersbox.scrcpyviewer.ui.theme.ScrcpyViewerTheme
+import com.programmersbox.scrcpyviewer.ui.theme.ThemeStyle
+import com.programmersbox.scrcpyviewer.ui.theme.currentStyle
 import com.programmersbox.scrcpyviewer.ui.theme.styleBackdrop
 import com.programmersbox.scrcpyviewer.ui.theme.stylePane
 import com.programmersbox.scrcpyviewer.ui.window.NativeScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.launch.OverlayPlatform
+import com.programmersbox.scrcpyviewer.ui.window.pointerLocation
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
 import com.sun.jna.Pointer
 import dev.nucleusframework.application.DecoratedWindow
 import dev.nucleusframework.application.NucleusApplicationScope
+import dev.nucleusframework.application.NucleusWindow
 import java.awt.Rectangle
 import kotlin.math.ceil
 
@@ -77,19 +84,21 @@ private const val FIRST_HEIGHT = 240
 private val PANE_SHAPE = RoundedCornerShape(14.dp)
 
 /**
- * Where the popup hangs from: the click, or with no click location (Linux, the menu's "Show devices…") the middle of
- * the first screen's work area, which [popupBounds] turns into its top-right corner. Null with no screens.
+ * The point the popup's screen is picked by: the click, or with no click location (Linux, the menu's "Show devices…")
+ * the middle of the first screen's work area. Null with no screens.
  */
 internal fun popupAnchorPoint(anchor: IntArray?, screens: List<ScreenArea>): IntArray? =
     anchor ?: screens.firstOrNull()?.workArea?.let { intArrayOf(it.x + it.width / 2, it.y + it.height / 2) }
 
 /**
- * The window bounds for a pane [paneHeight] dp tall hanging from [anchor] (see [popupAnchorPoint]), shadow margin
- * included; null with no screens. The margin stands in for [popupBounds]' gap, so the pane sits a margin off the bars.
+ * The window bounds for a pane [paneHeight] dp tall hanging from [anchor] (top-right of the first work area with no
+ * click), shadow margin included; null with no screens. The margin stands in for [popupBounds]' gap, so the pane sits a
+ * margin off the bars.
  */
 internal fun popupWindowBounds(anchor: IntArray?, paneHeight: Int, screens: List<ScreenArea>): Rectangle? {
-    val point = popupAnchorPoint(anchor, screens) ?: return null
-    return popupBounds(point[0], point[1], WINDOW_WIDTH, paneHeight + 2 * SHADOW_MARGIN, screens, gap = 0)
+    val height = paneHeight + 2 * SHADOW_MARGIN
+    if (anchor == null) return popupTopRightBounds(WINDOW_WIDTH, height, screens, gap = 0)
+    return popupBounds(anchor[0], anchor[1], WINDOW_WIDTH, height, screens, gap = 0)
 }
 
 /** The tallest the pane may be under [anchor]: its screen's work area less the margins. Null with no screens. */
@@ -101,6 +110,12 @@ internal fun popupMaxPaneHeight(anchor: IntArray?, screens: List<ScreenArea>): I
 
 /** How far past the pane the window grows when the pane starts to grow, so most reflows need one resize. */
 private const val GROW_HEADROOM = 240
+
+/** How long a just-shown popup waits for focus before a press outside it closes it instead. */
+private const val FOCUS_GRACE_MS = 500L
+
+/** How often the mouse buttons are sampled while waiting for that press. */
+private const val OUTSIDE_POLL_MS = 30L
 
 /** How long the pane's height must hold still before the window shrinks to it. */
 private const val SETTLE_MS = 150L
@@ -121,41 +136,71 @@ internal fun popupRoomHeight(room: Int, pane: Int, cap: Int, settled: Boolean): 
 }
 
 /**
- * Whether the popup hangs upward from [anchor] (a click below the work area: a bottom taskbar). The pane then sits at
- * the window's bottom edge, next to the taskbar, with any spare room above it.
+ * Whether the popup hangs upward from [anchor]: a click below the work area (a bottom taskbar), or in the lower half of
+ * it (Windows 11's tray overflow flyout). The pane then sits at the window's bottom edge, next to the click, with any
+ * spare room above it. Never without a click.
  */
 internal fun popupHangsUpward(anchor: IntArray?, screens: List<ScreenArea>): Boolean {
-    val point = popupAnchorPoint(anchor, screens) ?: return false
+    val point = anchor ?: return false
     val work = screenFor(Rectangle(point[0], point[1], 1, 1), screens)?.workArea ?: return false
-    return point[1] >= work.y + work.height
+    return hangsUpFrom(point[0], point[1], work)
 }
 
 /**
  * The menu bar popup's window: see-through, frameless, on top and kept off the taskbar, created once and shown and
  * hidden with [TrayPopupController.visible], so it opens at once. It makes room for [content]'s height (at most the
  * work area, see [popupRoomHeight]; [content] gets that cap in dp as `maxHeight` and should scroll inside it) and hangs from the icon click.
- * It closes on focus loss and Esc. On macOS it is a non-activating panel ([makeNonActivatingPanel]), so opening it
- * doesn't activate the app or move its other windows. Opening scales up from about 0.9 from the corner nearest the
- * icon, with a fade; closing is the reverse, faster.
+ * It closes on focus loss and Esc; if it never gets focus (a foreground lock, some window managers), a mouse press
+ * outside it closes it instead (macOS and Windows). On macOS it is a non-activating panel ([makeNonActivatingPanel]),
+ * converted before it is first shown, so opening it doesn't activate the app or move its other windows. Opening scales
+ * up from about 0.9 from the corner nearest the icon, with a fade; closing is the reverse, faster. [onShownChange]
+ * gets whether the window is on screen: true at open, false once the close animation has finished.
  */
 @Composable
 fun NucleusApplicationScope.TrayPopupWindow(
     controller: TrayPopupController,
     theme: AppTheme,
+    onShownChange: (Boolean) -> Unit = {},
     content: @Composable (maxHeight: Int) -> Unit,
 ) {
     val visible by controller.visible.collectAsState()
-    val anchor by controller.anchor.collectAsState()
+    val rawAnchor by controller.anchor.collectAsState()
     // Read again on each open: screens come and go, and the menu bar can move between them.
     // Kept while it closes, so the window doesn't move or resize under the close animation.
     val lastScreens = remember { arrayOf<List<ScreenArea>>(emptyList()) }
-    val screens = remember(visible, anchor) {
+    val screens = remember(visible, rawAnchor) {
         if (visible) NativeScreenGeometry.screens().also { lastScreens[0] = it } else lastScreens[0]
     }
+    // The click in window units. macOS: the tray thread read a raw Cocoa point; it is flipped here, on the main
+    // thread, by the main screen's height (no AppKit screen reads on the tray thread).
+    val anchor = remember(rawAnchor, screens) { rawAnchor?.inWindowUnits(screens) }
     // Stays shown until the close animation ends.
     val shown = remember { MutableTransitionState(false) }
     shown.targetState = visible
-    val windowVisible = shown.currentState || shown.targetState
+    val onScreen = shown.currentState || shown.targetState
+    val currentOnShownChange by rememberUpdatedState(onShownChange)
+    LaunchedEffect(onScreen) { currentOnShownChange(onScreen) }
+
+    // macOS: the window is converted to a non-activating panel (MacPopupPanel.kt) before it is ever shown, so even the
+    // first open leaves the app the user is in active and the main and mirror windows where they are. Until the
+    // conversion has been tried the window stays hidden; [macPanel] stays null when it failed (it then raises itself).
+    val popupWindow = remember { arrayOfNulls<NucleusWindow>(1) }
+    var macPanel by remember { mutableStateOf<Pointer?>(null) }
+    var macTried by remember { mutableStateOf(!Os.isMac) }
+    LaunchedEffect(visible) {
+        if (!visible || macTried) return@LaunchedEffect
+        // The window is composed (hidden) when it is created, long before the first click; wait briefly if not yet.
+        var handle: Pointer? = null
+        for (attempt in 0 until 30) {
+            handle = popupWindow[0]?.unsafe?.taoWindow?.nsWindowHandle?.takeIf { it != 0L }?.let(::Pointer)
+            if (handle != null) break
+            delay(16)
+        }
+        val ns = handle
+        if (ns != null && onMacMainThread { makeNonActivatingPanel(ns) } == true) macPanel = ns
+        macTried = true
+    }
+    val windowVisible = onScreen && macTried
 
     var paneHeight by remember { mutableIntStateOf(FIRST_HEIGHT) }
     val maxPane = popupMaxPaneHeight(anchor, screens) ?: 640
@@ -172,6 +217,8 @@ fun NucleusApplicationScope.TrayPopupWindow(
     }
     val bounds = popupWindowBounds(anchor, room, screens)
     val upward = popupHangsUpward(anchor, screens)
+    val currentBounds by rememberUpdatedState(bounds)
+    val currentScreens by rememberUpdatedState(screens)
 
     val state = rememberWindowState(
         position = WindowPosition(Alignment.TopEnd),
@@ -216,28 +263,17 @@ fun NucleusApplicationScope.TrayPopupWindow(
             transparent = true,
             forceX11 = OverlayPlatform.current() == OverlayPlatform.LinuxWayland,
         ) {
-            // macOS: once converted to a non-activating panel (MacPopupPanel.kt), opening it leaves the app the user
-            // is in active and the main and mirror windows where they are. Null until then, and on failure.
-            var macPanel by remember { mutableStateOf<Pointer?>(null) }
+            val window = nucleusWindow
+            // Read by the conversion above; the window is composed once, hidden, when it is created.
+            SideEffect { popupWindow[0] = window }
             if (Os.isMac) {
-                val window = nucleusWindow
-                LaunchedEffect(window) {
-                    // The NSWindow may not exist on the first frame.
-                    var handle: Pointer? = null
-                    for (frame in 0 until 30) {
-                        handle = window.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L }?.let(::Pointer)
-                        if (handle != null) break
-                        withFrameNanos { }
-                    }
-                    val ns = handle ?: return@LaunchedEffect
-                    if (onMacMainThread { makeNonActivatingPanel(ns) } == true) macPanel = ns
-                }
                 DisposableEffect(window) {
                     onDispose { macPanel?.let { ns -> onMacMainThread { restoreWindowFromPanel(ns) } } }
                 }
             }
             // Bring it forward on open so losing focus can close it. A macOS panel orders itself in front and takes
-            // key focus without activating the app; elsewhere (or if the conversion failed) the window is raised.
+            // key focus without activating the app. Only when the conversion failed is the window raised (that
+            // activates the app on macOS). Windows: the tray click lets the app take the foreground, so it does.
             LaunchedEffect(visible) {
                 if (visible) {
                     withFrameNanos { }
@@ -245,8 +281,9 @@ fun NucleusApplicationScope.TrayPopupWindow(
                     if (panel != null) {
                         onMacMainThread { showNonActivatingPanel(panel) }
                     } else {
-                        nucleusWindow.toFront()
-                        nucleusWindow.requestFocus()
+                        window.toFront()
+                        window.requestFocus()
+                        if (Os.isWindows) window.unsafe.taoWindow?.nativeHandle?.let(::setForegroundWindow)
                     }
                 }
             }
@@ -259,6 +296,23 @@ fun NucleusApplicationScope.TrayPopupWindow(
                     hadFocus -> {
                         hadFocus = false
                         controller.dismissed()
+                    }
+                    else -> {
+                        // Never focused yet. If focus doesn't come, a press outside the popup closes it instead, so
+                        // an always-on-top popup can't stick. Polled (macOS and Windows; Linux has no fallback).
+                        if (!Os.isMac && !Os.isWindows) return@LaunchedEffect
+                        delay(FOCUS_GRACE_MS)
+                        var wasDown = mouseButtonDown()
+                        while (true) {
+                            delay(OUTSIDE_POLL_MS)
+                            val down = mouseButtonDown()
+                            val pointer = if (down && !wasDown) pointerLocation()?.inWindowUnits(currentScreens) else null
+                            if (outsideClickStarted(wasDown, down, pointer, currentBounds)) {
+                                controller.dismissed()
+                                break
+                            }
+                            wasDown = down
+                        }
                     }
                 }
             }
@@ -300,8 +354,10 @@ fun NucleusApplicationScope.TrayPopupWindow(
                                 }
                                 .shadow(12.dp, PANE_SHAPE, clip = false)
                                 .clip(PANE_SHAPE)
-                                .styleBackdrop()
-                                .background(MaterialTheme.colorScheme.surface)
+                                // Glass: no wallpaper and no blur here, its translucent container (the menus' tone,
+                                // so text over a busy desktop still reads). Other styles: their opaque surface.
+                                .styleBackdrop(transparent = true)
+                                .background(paneColor(currentStyle, MaterialTheme.colorScheme))
                                 .stylePane(PANE_SHAPE),
                         ) {
                             content(maxPane)
@@ -312,6 +368,10 @@ fun NucleusApplicationScope.TrayPopupWindow(
         }
     }
 }
+
+/** The pane's fill in [style]: Glass's see-through high container, every other style's surface. */
+internal fun paneColor(style: ThemeStyle, scheme: ColorScheme): Color =
+    if (style == ThemeStyle.Glass) scheme.surfaceContainerHigh else scheme.surface
 
 /** The pane corner nearest the icon click, so the popup grows out of the icon. Top-right without a click. */
 private fun originToward(anchor: IntArray?, bounds: Rectangle?): TransformOrigin {
