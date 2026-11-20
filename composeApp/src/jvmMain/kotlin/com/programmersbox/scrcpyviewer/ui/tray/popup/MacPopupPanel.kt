@@ -43,6 +43,33 @@ internal object MacPanelBits {
 
     /** The runtime panel class made for windows of [original]. */
     fun panelClassName(original: String): String = "ScrcpyVwrPopupPanel_$original"
+
+    /** One instance variable to re-add on the panel class: [alignLog2] is class_addIvar's log2 of the alignment. */
+    data class IvarSlot(val name: String, val offset: Long, val size: Long, val alignLog2: Int)
+
+    /**
+     * The slots that re-create [ivars] (name to offset, as the window's class and its superclasses lay them out) on
+     * another class, so each lands at the same offset when added in the returned order. An ivar's size is the gap to the
+     * next one (the last runs to [instanceSize]), and its alignment is the largest power of two up to 16 that divides
+     * its offset and is no bigger than that size, so laying the slots end to end never moves one. Null when the table
+     * can't be laid out (an ivar past the end of the instance).
+     */
+    fun ivarSlots(ivars: List<Pair<String, Long>>, instanceSize: Long): List<IvarSlot>? {
+        val sorted = ivars.sortedBy { it.second }
+        return sorted.mapIndexed { i, (name, offset) ->
+            val end = sorted.getOrNull(i + 1)?.second ?: instanceSize
+            if (offset < 0 || end < offset) return null
+            val size = end - offset
+            IvarSlot(name, offset, size, alignLog2(offset, size))
+        }
+    }
+
+    /** log2 of the largest power of two up to 16 that divides [offset] and is at most [size] (at least 1). */
+    fun alignLog2(offset: Long, size: Long): Int {
+        var log = 4
+        while (log > 0 && ((1L shl log) > size || offset % (1L shl log) != 0L)) log--
+        return log
+    }
 }
 
 /**
@@ -54,6 +81,8 @@ internal object MacPanelBits {
  * (`object_setClass`) for a runtime NSPanel subclass that carries copies of every method `TaoWindow` (and any class
  * between it and NSWindow) adds, then overrides canBecomeKeyWindow (YES) and canBecomeMainWindow (NO). NSPanel adds no
  * instance variables to NSWindow, and the object keeps the memory `TaoWindow` allocated, so Tao's own ivars stay put.
+ * Tao (objc2) looks its ivars up by name on the object's current class, so the panel class also declares each of them,
+ * at the same offset; when they can't be made to match, the window isn't converted.
  *
  * Swapping a window's class breaks AppKit's KVO bookkeeping at dealloc ("Cannot remove an observer … for the key path
  * _windowLayerContext"), so the window is retained while converted and [restoreWindowFromPanel] puts its class back
@@ -132,6 +161,9 @@ private object MacPopupPanelNative {
     /** Runtime panel classes, by the original class's address. Main thread only. */
     private val panelClasses = HashMap<Long, Pointer>()
 
+    /** Original classes no panel class could be made for (address), so later windows skip the attempt. Main thread only. */
+    private val unconvertible = HashSet<Long>()
+
     fun convert(handle: Pointer): Boolean {
         if (!ObjC.msgBool(ObjC.cls("NSThread"), "isMainThread")) {
             System.err.println("makeNonActivatingPanel: not on the main thread")
@@ -199,12 +231,57 @@ private object MacPopupPanelNative {
     }
 
     private fun panelClassFor(original: Pointer, originalName: String): Pointer? {
-        panelClasses[Pointer.nativeValue(original)]?.let { return it }
+        val key = Pointer.nativeValue(original)
+        panelClasses[key]?.let { return it }
+        if (key in unconvertible) return null
         val name = MacPanelBits.panelClassName(originalName)
         val existing = fn("objc_getClass").invokePointer(arrayOf(name))
-        val cls = existing ?: build(original, name) ?: return null
-        panelClasses[Pointer.nativeValue(original)] = cls
+        val cls = existing ?: build(original, name)
+        // Built for this very class, or it wouldn't hold the same ivars at the same offsets.
+        if (cls == null || !layoutMatches(original, cls)) {
+            System.err.println("makeNonActivatingPanel: no panel class with $originalName's layout, left as is")
+            if (cls != null && existing == null) fn("objc_disposeClassPair").invokeVoid(arrayOf(cls))
+            unconvertible += key
+            return null
+        }
+        panelClasses[key] = cls
         return cls
+    }
+
+    /** Whether [panel] has every ivar of [original] (and its superclasses) at the same offset, and the same size. */
+    private fun layoutMatches(original: Pointer, panel: Pointer): Boolean {
+        val instanceSize = fn("class_getInstanceSize")
+        if (instanceSize.invokeLong(arrayOf(original)) != instanceSize.invokeLong(arrayOf(panel))) return false
+        var c: Pointer? = original
+        while (c != null) {
+            for ((name, offset) in ivars(c)) {
+                val ivar = fn("class_getInstanceVariable").invokePointer(arrayOf(panel, name)) ?: return false
+                if (fn("ivar_getOffset").invokeLong(arrayOf(ivar)) != offset) return false
+            }
+            c = fn("class_getSuperclass").invokePointer(arrayOf(c))
+        }
+        return true
+    }
+
+    /** [cls]'s own ivars (not its superclasses'), as name to offset. */
+    private fun ivars(cls: Pointer): List<Pair<String, Long>> = ivarList(cls).map { (name, offset, _) -> name to offset }
+
+    /** [cls]'s own ivars as name, offset and type encoding (null when it has none). */
+    private fun ivarList(cls: Pointer): List<Triple<String, Long, String?>> {
+        val count = IntByReference()
+        val list = fn("class_copyIvarList").invokePointer(arrayOf(cls, count)) ?: return emptyList()
+        try {
+            return (0 until count.value).mapNotNull { i ->
+                val ivar = list.getPointer(i.toLong() * pointerSize) ?: return@mapNotNull null
+                val name = fn("ivar_getName").invokePointer(arrayOf(ivar))?.getString(0, "UTF-8")
+                    ?: return@mapNotNull null
+                val offset = fn("ivar_getOffset").invokeLong(arrayOf(ivar))
+                val types = fn("ivar_getTypeEncoding").invokePointer(arrayOf(ivar))?.getString(0, "UTF-8")
+                Triple(name, offset, types)
+            }
+        } finally {
+            system.getFunction("free").invokeVoid(arrayOf(list))
+        }
     }
 
     /**
@@ -229,8 +306,34 @@ private object MacPopupPanelNative {
         addMethod.invokeInt(arrayOf(cls, ObjC.sel("canBecomeMainWindow"), no, boolEncoding))
         // Nearest class first: class_addMethod refuses a selector already added, so the nearest override wins.
         for (k in chain) copyMethods(k, cls)
+        if (!copyIvars(chain, original, cls)) {
+            fn("objc_disposeClassPair").invokeVoid(arrayOf(cls))
+            return null
+        }
         fn("objc_registerClassPair").invokeVoid(arrayOf(cls))
         return cls
+    }
+
+    /**
+     * Declares on [to] every ivar the [chain] classes add over NSWindow, in offset order, sized so each lands at the
+     * offset [original] has it at (checked again by [layoutMatches] once registered). False when one can't be added.
+     */
+    private fun copyIvars(chain: List<Pointer>, original: Pointer, to: Pointer): Boolean {
+        val all = chain.asReversed().flatMap(::ivarList)
+        val types = all.associate { (name, _, type) -> name to type }
+        val instanceSize = fn("class_getInstanceSize").invokeLong(arrayOf(original))
+        val slots = MacPanelBits.ivarSlots(all.map { (name, offset, _) -> name to offset }, instanceSize) ?: return false
+        val addIvar = fn("class_addIvar")
+        for (slot in slots) {
+            val added = addIvar.invokeInt(
+                arrayOf(to, slot.name, slot.size, slot.alignLog2.toByte(), types[slot.name] ?: ""),
+            ) and 0xFF
+            if (added == 0) {
+                System.err.println("makeNonActivatingPanel: couldn't add ivar ${slot.name}")
+                return false
+            }
+        }
+        return true
     }
 
     private fun copyMethods(from: Pointer, to: Pointer) {
