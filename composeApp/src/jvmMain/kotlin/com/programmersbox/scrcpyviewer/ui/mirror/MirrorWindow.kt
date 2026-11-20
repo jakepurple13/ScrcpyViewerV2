@@ -538,6 +538,12 @@ fun MirrorWindow(
             )
         }
     }
+    // A screenshot asked for from outside (the menu bar popup); the window is not brought forward.
+    // Updated state, so a request after a reconnect (new session, same serial) runs against the current session.
+    val currentTakeScreenshot by rememberUpdatedState(::takeScreenshot)
+    LaunchedEffect(serial) {
+        controller.screenshotRequests.filter { it == serial }.collect { currentTakeScreenshot() }
+    }
 
     fun toggleRecording() {
         if (recordStarting) return
@@ -812,6 +818,11 @@ fun MirrorWindow(
             gifWindows.closeAll()
             closeWindow()
         }
+    }
+    // Closes asked from outside the window (the tray popup's Stop mirroring) take the same path as its close button.
+    val currentRequestClose by rememberUpdatedState(requestClose)
+    LaunchedEffect(serial) {
+        controller.closeRequests.filter { it == serial }.collect { currentRequestClose() }
     }
 
     val currentQuickActions by rememberUpdatedState(quickActions)

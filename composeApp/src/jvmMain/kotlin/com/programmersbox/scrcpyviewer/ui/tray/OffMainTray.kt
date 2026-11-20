@@ -3,7 +3,9 @@ package com.programmersbox.scrcpyviewer.ui.tray
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import dev.nucleusframework.composenativetray.menu.api.TrayMenuBuilder
 import dev.nucleusframework.composenativetray.tray.api.NativeTray
 import dev.nucleusframework.composenativetray.utils.MenuContentHash
@@ -35,15 +37,23 @@ fun OffMainTray(
     tooltip: String,
     /** Changes whenever the menu's click targets change, since the library's hash ignores them. */
     key: Any?,
+    /**
+     * Runs on the tray thread on the icon's left-click (macOS, Windows); null lets every click open the menu. Called
+     * through the current value, so a new lambda needs no tray update. It must only post state changes.
+     */
+    primaryAction: (() -> Unit)?,
     menuContent: TrayMenuBuilder.() -> Unit,
 ) {
     val tray = remember { NativeTray() }
     // The library's own change key for menu content: a lambda is new on every recomposition.
     val menuHash = MenuContentHash.calculateMenuHash(menuContent)
+    val currentPrimary by rememberUpdatedState(primaryAction)
+    val hasPrimary = primaryAction != null
 
-    LaunchedEffect(tray, iconPath, windowsIconPath, tooltip, menuHash, key) {
+    LaunchedEffect(tray, iconPath, windowsIconPath, tooltip, menuHash, key, hasPrimary) {
+        val primary: (() -> Unit)? = if (hasPrimary) ({ currentPrimary?.invoke() }) else null
         withContext(trayDispatcher) {
-            tray.update(iconPath, windowsIconPath, tooltip, null, menuContent, null)
+            tray.update(iconPath, windowsIconPath, tooltip, primary, menuContent, null)
             if (Os.isMac) awaitMainQueue()
         }
     }

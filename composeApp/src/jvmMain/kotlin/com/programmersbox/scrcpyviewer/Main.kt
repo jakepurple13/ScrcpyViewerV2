@@ -106,6 +106,9 @@ import java.util.concurrent.atomic.AtomicReference
 import com.programmersbox.scrcpyviewer.ui.tray.ScrcpyTray
 import com.programmersbox.scrcpyviewer.ui.tray.TrayCommands
 import com.programmersbox.scrcpyviewer.ui.tray.trayIconFiles
+import com.programmersbox.scrcpyviewer.ui.tray.popup.TrayPopup
+import com.programmersbox.scrcpyviewer.ui.tray.popup.TrayPopupController
+import com.programmersbox.scrcpyviewer.ui.mirror.follow.InputFollowing
 
 fun main() {
     // First, so a crash anywhere is reported: Telemetry is set below, once Koin has built it.
@@ -126,6 +129,7 @@ fun main() {
     val deviceSelection = koin.get<DeviceSelection>()
     val mirrorWindows = koin.get<MirrorWindows>()
     val arranger = koin.get<WindowArranger>()
+    val inputFollowing = koin.get<InputFollowing>()
     val telemetry = koin.get<Telemetry>().also {
         crashTelemetry.set(it)
         it.start()
@@ -166,10 +170,10 @@ fun main() {
             )
         }
         val shutdownState by shutdown.state.collectAsState()
-        // The tray menu: in the application scope, so it lives as long as the app (closing the main window still quits).
+        // The tray icon, its menu and popup: in the application scope, so they live as long as the app (closing the main
+        // window still quits).
         // It goes once quitting starts, so nothing opens a mirror while the sessions close.
         if (settings.showTrayIcon && trayIcons != null && shutdownState == AppShutdown.State.Running) {
-            val devices by mirrorController.devices.collectAsState()
             val trayCommands = remember {
                 TrayCommands(
                     mirrorRequests = mirrorRequests,
@@ -185,8 +189,13 @@ fun main() {
                     keepTiled = arranger::setKeepTiled,
                 )
             }
-            val arrangeState by arranger.state.collectAsState()
-            ScrcpyTray(trayIcons, devices, mirrors.keys, arrangeState, trayCommands::dispatch)
+            // Left-click opens the popup; the right-click menu is fixed.
+            val popup = remember { TrayPopupController() }
+            ScrcpyTray(trayIcons, onAction = { trayCommands.dispatch(it, null) }, onIconClick = popup::iconClicked)
+            TrayPopup(
+                popup, settings.appTheme, settings.afterShot, mirrorController, mirrorWindows, arranger,
+                inputFollowing, trayCommands,
+            )
         }
         // Cmd+Q, the app menu's Quit and the Dock's go through the shutdown too (MacQuitHook).
         DisposableEffect(Unit) {
