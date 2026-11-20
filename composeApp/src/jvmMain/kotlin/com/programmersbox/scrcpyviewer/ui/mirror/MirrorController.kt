@@ -87,6 +87,13 @@ class MirrorController(
     /** A serial whose window should take a screenshot now, without coming to the front (asked from outside the window). */
     val screenshotRequests: SharedFlow<String> = _screenshotRequests.asSharedFlow()
 
+    private val _closeRequests = MutableSharedFlow<String>(extraBufferCapacity = 16)
+    /**
+     * A serial whose window should close the way its own close button does (unsaved marks prompt, GIF exports
+     * cancelled, close animation), asked from outside the window.
+     */
+    val closeRequests: SharedFlow<String> = _closeRequests.asSharedFlow()
+
     private val _recordingResults = MutableSharedFlow<RecordingEvent>(extraBufferCapacity = 64)
     /** How each recording of every session ended. */
     val recordingResults: SharedFlow<RecordingEvent> = _recordingResults.asSharedFlow()
@@ -121,6 +128,11 @@ class MirrorController(
     /** Asks [serial]'s mirror window to take a screenshot. Does nothing (opens nothing) when it is not open. */
     fun requestScreenshot(serial: String) {
         if (serial in _open.value) _screenshotRequests.tryEmit(serial)
+    }
+
+    /** Asks [serial]'s mirror window to close through its own close path. Does nothing when it is not open. */
+    fun requestClose(serial: String) {
+        if (serial in _open.value) _closeRequests.tryEmit(serial)
     }
 
     /** Closes [serial]'s window and session. */

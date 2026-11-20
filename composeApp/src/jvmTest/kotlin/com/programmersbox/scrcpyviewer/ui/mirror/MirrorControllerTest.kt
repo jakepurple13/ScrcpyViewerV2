@@ -106,6 +106,27 @@ class MirrorControllerTest {
     }
 
     @Test
+    fun `close request for open mirror is emitted and leaves the session to the window`() = runBlocking<Unit> {
+        controller.open("A")
+        val req = scope.async { withTimeout(5_000) { controller.closeRequests.first() } }
+        delay(50) // let the collector subscribe
+        controller.requestClose("A")
+        assertEquals("A", req.await())
+        // The window closes it (prompt, exports, animation); the request alone closes nothing.
+        assertTrue("A" in controller.open.value)
+    }
+
+    @Test
+    fun `close request for closed serial is dropped`() = runBlocking<Unit> {
+        val req = scope.async { withTimeout(5_000) { controller.closeRequests.first() } }
+        delay(50) // let the collector subscribe
+        controller.requestClose("B")
+        controller.open("A")
+        controller.requestClose("A")
+        assertEquals("A", req.await())
+    }
+
+    @Test
     fun `close removes the session and closes it`() = runBlocking<Unit> {
         controller.open("A")
         controller.open("B")

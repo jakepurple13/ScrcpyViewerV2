@@ -819,6 +819,11 @@ fun MirrorWindow(
             closeWindow()
         }
     }
+    // Closes asked from outside the window (the tray popup's Stop mirroring) take the same path as its close button.
+    val currentRequestClose by rememberUpdatedState(requestClose)
+    LaunchedEffect(serial) {
+        controller.closeRequests.filter { it == serial }.collect { currentRequestClose() }
+    }
 
     val currentQuickActions by rememberUpdatedState(quickActions)
     // The quick actions sheet floats over the stage (MirrorContent's onStageCovered): the mouse capture ends and held
