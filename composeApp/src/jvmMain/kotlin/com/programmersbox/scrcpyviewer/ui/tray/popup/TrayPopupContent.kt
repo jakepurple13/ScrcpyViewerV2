@@ -103,9 +103,12 @@ data class TrayPopupUiState(
     val thumbnails: Map<String, ImageBitmap> = emptyMap(),
     val sendPanel: SendPanel = SendPanel.Hidden,
     val arrange: ArrangeState? = null,
-    val screenshotNote: String? = null,
+    val screenshotNote: ScreenshotNote? = null,
     val follow: FollowState = FollowState(),
 )
+
+/** The line under the stage actions after a screenshot. Each screenshot gets a new [id], so a repeat flashes again. */
+data class ScreenshotNote(val text: String, val id: Long)
 
 sealed interface PopupEvent {
     data class Pick(val serial: String) : PopupEvent
@@ -134,10 +137,10 @@ fun TrayPopupContent(
     modifier: Modifier = Modifier,
 ) {
     val reduce = LocalReduceMotion.current
-    // A new screenshot note flashes the stage screen (a short white fade, also under reduce motion).
+    // A new screenshot (a new note id) flashes the stage screen (a short white fade, also under reduce motion).
     val flash = remember { Animatable(0f) }
     val firstNote = remember { booleanArrayOf(true) }
-    LaunchedEffect(state.screenshotNote) {
+    LaunchedEffect(state.screenshotNote?.id) {
         val skip = firstNote[0]
         firstNote[0] = false
         if (!skip && state.screenshotNote != null) {
@@ -306,7 +309,7 @@ private fun Details(device: PopupDevice, state: TrayPopupUiState, sendOpen: Bool
         } else {
             StageAction("Mirror", Icons.Filled.PlayArrow) { onEvent(PopupEvent.Act(TrayAction.Mirror, serial)) }
         }
-        Crossfade(state.screenshotNote, label = "screenshot note") { note ->
+        Crossfade(state.screenshotNote?.text, label = "screenshot note") { note ->
             if (note != null) {
                 Text(
                     note, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

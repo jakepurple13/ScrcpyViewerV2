@@ -189,7 +189,7 @@ class TrayPopupContentTest {
 
     @Test
     fun `follow role tags and the screenshot note show`() {
-        val ui = state(pixel, tablet) { copy(follow = FollowState("TAB2", setOf("PIX1")), screenshotNote = "Saved to Screenshots") }
+        val ui = state(pixel, tablet) { copy(follow = FollowState("TAB2", setOf("PIX1")), screenshotNote = ScreenshotNote("Saved to Screenshots", 1)) }
         scene(ui) {
             assertTrue(has("Follows Galaxy Tab") && has("Saved to Screenshots"), "texts ${allTexts()}")
         }

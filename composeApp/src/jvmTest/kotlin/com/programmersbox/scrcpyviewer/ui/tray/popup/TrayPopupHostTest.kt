@@ -69,4 +69,35 @@ class TrayPopupHostTest {
     fun paneCapIsTheWorkAreaLessMargins() {
         assertEquals(949 - 20, popupMaxPaneHeight(intArrayOf(1300, 12), listOf(mac)))
     }
+
+    @Test
+    fun windowRoomGrowsAheadOfTheAnimationAndShrinksOnlyWhenSettled() {
+        // Growing: jumps ahead once, then holds while the pane animates up to it.
+        assertEquals(400 + 240, popupRoomHeight(room = 300, pane = 400, cap = 900, settled = false))
+        assertEquals(640, popupRoomHeight(room = 640, pane = 500, cap = 900, settled = false))
+        // Never past the cap.
+        assertEquals(900, popupRoomHeight(room = 300, pane = 800, cap = 900, settled = false))
+        assertEquals(900, popupRoomHeight(room = 900, pane = 1200, cap = 900, settled = false))
+        // Shrinking: keeps the old room while the pane animates down, then fits the settled pane.
+        assertEquals(640, popupRoomHeight(room = 640, pane = 350, cap = 900, settled = false))
+        assertEquals(350, popupRoomHeight(room = 640, pane = 350, cap = 900, settled = true))
+        assertEquals(900, popupRoomHeight(room = 640, pane = 1200, cap = 900, settled = true))
+    }
+
+    @Test
+    fun popupHangsUpwardOnlyFromABottomBar() {
+        val win = ScreenArea(Rectangle(0, 0, 1920, 1080), Rectangle(0, 0, 1920, 1032))
+        assertTrue(popupHangsUpward(intArrayOf(1800, 1050), listOf(win)))
+        assertFalse(popupHangsUpward(intArrayOf(1300, 12), listOf(mac)))
+        assertFalse(popupHangsUpward(null, listOf(mac)))
+        assertFalse(popupHangsUpward(intArrayOf(1, 1), emptyList()))
+    }
+
+    @Test
+    fun repeatScreenshotsGetDistinctNotes() {
+        val first = nextScreenshotNote(null, "Copied")
+        val second = nextScreenshotNote(first, "Copied")
+        assertEquals("Copied", second.text)
+        assertTrue(first != second && first.id != second.id)
+    }
 }

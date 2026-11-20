@@ -11,7 +11,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.programmersbox.scrcpyviewer.state.AfterScreenshot
@@ -38,6 +37,10 @@ internal fun screenshotNote(afterShot: AfterScreenshot): String? = when (afterSh
     AfterScreenshot.Copy -> "Copied"
     AfterScreenshot.OpenEditor -> null
 }
+
+/** The note for a new screenshot after [previous]: [text] with the next id, so the stage flashes even for the same text. */
+internal fun nextScreenshotNote(previous: ScreenshotNote?, text: String): ScreenshotNote =
+    ScreenshotNote(text, (previous?.id ?: 0L) + 1)
 
 /** Actions that bring a window forward close the popup; toggles keep it open. */
 internal fun closesPopup(action: TrayAction): Boolean = when (action) {
@@ -99,7 +102,7 @@ fun NucleusApplicationScope.TrayPopup(
     // The user's pick stays while it is listed; devices coming and going may move the stage.
     val stage = stageSerial(current = pick ?: openStage, lastFocused = mirrorWindows.lastFocused.value, devices)
 
-    var note by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf<ScreenshotNote?>(null) }
     var noteJob by remember { mutableStateOf<Job?>(null) }
     LaunchedEffect(openId) {
         noteJob?.cancel()
@@ -135,13 +138,11 @@ fun NucleusApplicationScope.TrayPopup(
                     controller.dismissed()
                 } else {
                     noteJob?.cancel()
+                    note = nextScreenshotNote(note, text)
+                    val shown = note
                     noteJob = scope.launch {
-                        // Through null, so a second screenshot with the same line flashes the stage again.
-                        note = null
-                        withFrameNanos { }
-                        note = text
                         delay(NOTE_MS)
-                        note = null
+                        if (note == shown) note = null
                     }
                 }
             }

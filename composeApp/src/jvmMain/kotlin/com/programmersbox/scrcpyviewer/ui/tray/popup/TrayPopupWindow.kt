@@ -38,6 +38,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.DpSize
+import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
@@ -96,10 +97,41 @@ internal fun popupMaxPaneHeight(anchor: IntArray?, screens: List<ScreenArea>): I
     return (work.height - 2 * SHADOW_MARGIN).coerceAtLeast(0)
 }
 
+/** How far past the pane the window grows when the pane starts to grow, so most reflows need one resize. */
+private const val GROW_HEADROOM = 240
+
+/** How long the pane's height must hold still before the window shrinks to it. */
+private const val SETTLE_MS = 150L
+
+/**
+ * The pane height the window makes room for, given the [room] it has now and the pane's current (possibly animating)
+ * height [pane], both capped at [cap]. When the pane outgrows the room, the room jumps ahead by [GROW_HEADROOM] so the
+ * grow animates inside a window that is already big enough. It shrinks only once the pane has [settled] (or the window
+ * is hidden), so a shrink animates inside the old room; the spare room is see-through.
+ */
+internal fun popupRoomHeight(room: Int, pane: Int, cap: Int, settled: Boolean): Int {
+    val target = minOf(pane, cap)
+    return when {
+        settled -> target
+        target > room -> minOf(target + GROW_HEADROOM, cap)
+        else -> room
+    }
+}
+
+/**
+ * Whether the popup hangs upward from [anchor] (a click below the work area: a bottom taskbar). The pane then sits at
+ * the window's bottom edge, next to the taskbar, with any spare room above it.
+ */
+internal fun popupHangsUpward(anchor: IntArray?, screens: List<ScreenArea>): Boolean {
+    val point = popupAnchorPoint(anchor, screens) ?: return false
+    val work = screenFor(Rectangle(point[0], point[1], 1, 1), screens)?.workArea ?: return false
+    return point[1] >= work.y + work.height
+}
+
 /**
  * The menu bar popup's window: see-through, frameless, on top and kept off the taskbar, created once and shown and
- * hidden with [TrayPopupController.visible], so it opens at once. It sizes itself to [content]'s height (at most the
- * work area; [content] gets that cap in dp as `maxHeight` and should scroll inside it) and hangs from the icon click.
+ * hidden with [TrayPopupController.visible], so it opens at once. It makes room for [content]'s height (at most the
+ * work area, see [popupRoomHeight]; [content] gets that cap in dp as `maxHeight` and should scroll inside it) and hangs from the icon click.
  * It closes on focus loss and Esc. Opening scales up from about 0.9 from the corner nearest the icon, with a fade;
  * closing is the reverse, faster.
  */
@@ -117,28 +149,42 @@ fun NucleusApplicationScope.TrayPopupWindow(
     val screens = remember(visible, anchor) {
         if (visible) NativeScreenGeometry.screens().also { lastScreens[0] = it } else lastScreens[0]
     }
+    // Stays shown until the close animation ends.
+    val shown = remember { MutableTransitionState(false) }
+    shown.targetState = visible
+    val windowVisible = shown.currentState || shown.targetState
+
     var paneHeight by remember { mutableIntStateOf(FIRST_HEIGHT) }
     val maxPane = popupMaxPaneHeight(anchor, screens) ?: 640
-    val bounds = popupWindowBounds(anchor, minOf(paneHeight, maxPane), screens)
+    // The window follows the pane's target, not every frame of its animation (see popupRoomHeight).
+    var room by remember { mutableIntStateOf(FIRST_HEIGHT) }
+    LaunchedEffect(paneHeight, maxPane, windowVisible) {
+        if (!windowVisible) {
+            room = popupRoomHeight(room, paneHeight, maxPane, settled = true)
+            return@LaunchedEffect
+        }
+        room = popupRoomHeight(room, paneHeight, maxPane, settled = false)
+        delay(SETTLE_MS)
+        room = popupRoomHeight(room, paneHeight, maxPane, settled = true)
+    }
+    val bounds = popupWindowBounds(anchor, room, screens)
+    val upward = popupHangsUpward(anchor, screens)
 
     val state = rememberWindowState(
         position = WindowPosition(Alignment.TopEnd),
         size = DpSize(WINDOW_WIDTH.dp, (FIRST_HEIGHT + 2 * SHADOW_MARGIN).dp),
     )
+    // Position and size change in the same apply, so the window moves and resizes together.
     SideEffect {
+        val size = DpSize(WINDOW_WIDTH.dp, (bounds?.height ?: (room + 2 * SHADOW_MARGIN)).dp)
         if (bounds != null) {
-            state.position = WindowPosition(bounds.x.dp, bounds.y.dp)
-            state.size = DpSize(bounds.width.dp, bounds.height.dp)
-        } else {
-            // No screen geometry (some Linux desktops): let the window manager place it, top right.
-            state.size = DpSize(WINDOW_WIDTH.dp, (minOf(paneHeight, maxPane) + 2 * SHADOW_MARGIN).dp)
+            val position = WindowPosition(bounds.x.dp, bounds.y.dp)
+            if (state.position != position) state.position = position
         }
+        // No screen geometry (some Linux desktops): the window manager places it, top right.
+        if (state.size != size) state.size = size
     }
 
-    // Stays shown until the close animation ends.
-    val shown = remember { MutableTransitionState(false) }
-    shown.targetState = visible
-    val windowVisible = shown.currentState || shown.targetState
     // Read once, like every window root (AppWindow).
     val reduceMotion = remember { systemReducesMotion() }
 
@@ -206,12 +252,13 @@ fun NucleusApplicationScope.TrayPopupWindow(
                     ) { if (it) 1f else 0f }
                     val origin = originToward(anchor, bounds)
                     val density = LocalDensity.current
-                    Box(Modifier.fillMaxSize()) {
+                    // The pane keeps to the anchor side; spare room (while the window waits for a shrink) is see-through.
+                    Box(Modifier.fillMaxSize(), contentAlignment = if (upward) Alignment.BottomStart else Alignment.TopStart) {
                         Box(
                             Modifier
                                 .padding(SHADOW_MARGIN.dp)
                                 // Measured at its own height (up to the cap), whatever the window's height is now.
-                                .wrapContentHeight(Alignment.Top, unbounded = true)
+                                .wrapContentHeight(if (upward) Alignment.Bottom else Alignment.Top, unbounded = true)
                                 .width(POPUP_WIDTH.dp)
                                 .onSizeChanged { size ->
                                     paneHeight = ceil(size.height / density.density).toInt()
