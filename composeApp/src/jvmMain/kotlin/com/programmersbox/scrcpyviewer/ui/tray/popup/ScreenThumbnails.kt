@@ -8,23 +8,21 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Small live screen images of each mirroring device for the tray popup. Refreshes every [periodMs] only while
- * active (the popup is open); going inactive cancels the loop and clears [images]. [frames] is read each round, so
- * devices that start or stop mirroring are picked up. Sizes are pixels (2x the stage sizes in dp).
+ * Small screen images of each mirroring device for the tray popup: one downscaled screenshot per device each time the
+ * popup opens ([capture]), kept until the next open, with no live refresh; [clear] drops them once the popup has
+ * closed. Nothing runs between those calls. Sizes are pixels (2x the stage sizes in dp). Call both from the UI thread.
  */
 class ScreenThumbnails(
     private val scope: CoroutineScope,
     private val frames: () -> Map<String, () -> VideoFrame?>,
     private val maxWidth: Int = 380,
     private val maxHeight: Int = 760,
-    private val periodMs: Long = 1_000,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     private val _images = MutableStateFlow<Map<String, ImageBitmap>>(emptyMap())
@@ -41,30 +39,29 @@ class ScreenThumbnails(
         return null
     }
 
-    fun setActive(active: Boolean) {
-        if (active) {
-            if (job?.isActive == true) return
-            job = scope.launch {
-                while (true) {
-                    val sources = frames()
-                    _images.value = withContext(dispatcher) {
-                        buildMap {
-                            for ((id, latest) in sources) {
-                                // One device's failed copy (a Skia error) skips that device this round only.
-                                runCatching { thumbnailOf(latest) }
-                                    .onFailure { if (it is CancellationException) throw it }
-                                    .getOrNull()
-                                    ?.let { put(id, it) }
-                            }
-                        }
+    /** Takes one screenshot of each mirroring device, off the UI thread, replacing the images when done. */
+    fun capture() {
+        job?.cancel()
+        job = scope.launch {
+            val sources = frames()
+            _images.value = withContext(dispatcher) {
+                buildMap {
+                    for ((id, latest) in sources) {
+                        // One device's failed copy (a Skia error) skips only that device.
+                        runCatching { thumbnailOf(latest) }
+                            .onFailure { if (it is CancellationException) throw it }
+                            .getOrNull()
+                            ?.let { put(id, it) }
                     }
-                    delay(periodMs)
                 }
             }
-        } else {
-            job?.cancel()
-            job = null
-            _images.value = emptyMap()
         }
+    }
+
+    /** Stops a capture still running and drops the images. */
+    fun clear() {
+        job?.cancel()
+        job = null
+        _images.value = emptyMap()
     }
 }

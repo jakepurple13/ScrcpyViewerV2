@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -146,21 +147,23 @@ internal fun popupHangsUpward(anchor: IntArray?, screens: List<ScreenArea>): Boo
     return hangsUpFrom(point[0], point[1], work)
 }
 
+/** How many times (16 ms apart) a new popup window waits for its native handle before it shows unconverted. */
+private const val HANDLE_WAIT_TRIES = 30
+
 /**
- * The menu bar popup's window: see-through, frameless, on top and kept off the taskbar, created once and shown and
- * hidden with [TrayPopupController.visible], so it opens at once. It makes room for [content]'s height (at most the
- * work area, see [popupRoomHeight]; [content] gets that cap in dp as `maxHeight` and should scroll inside it) and hangs from the icon click.
+ * The menu bar popup's window: see-through, frameless, on top and kept off the taskbar. It is created when
+ * [TrayPopupController.visible] turns true and disposed once its close animation has finished, so each open gets a
+ * fresh window and composition. It makes room for [content]'s height (at most the work area, see [popupRoomHeight];
+ * [content] gets that cap in dp as `maxHeight` and should scroll inside it) and hangs from the icon click.
  * It closes on focus loss and Esc; if it never gets focus (a foreground lock, some window managers), a mouse press
  * outside it closes it instead (macOS and Windows). On macOS it is a non-activating panel ([makeNonActivatingPanel]),
- * converted before it is first shown, so opening it doesn't activate the app or move its other windows. Opening scales
- * up from about 0.9 from the corner nearest the icon, with a fade; closing is the reverse, faster. [onShownChange]
- * gets whether the window is on screen: true at open, false once the close animation has finished.
+ * converted while the new window is still hidden, so opening it doesn't activate the app or move its other windows.
+ * Opening scales up from about 0.9 from the corner nearest the icon, with a fade; closing is the reverse, faster.
  */
 @Composable
 fun NucleusApplicationScope.TrayPopupWindow(
     controller: TrayPopupController,
     theme: AppTheme,
-    onShownChange: (Boolean) -> Unit = {},
     content: @Composable (maxHeight: Int) -> Unit,
 ) {
     val visible by controller.visible.collectAsState()
@@ -174,40 +177,56 @@ fun NucleusApplicationScope.TrayPopupWindow(
     // The click in window units. macOS: the tray thread read a raw Cocoa point; it is flipped here, on the main
     // thread, by the main screen's height (no AppKit screen reads on the tray thread).
     val anchor = remember(rawAnchor, screens) { rawAnchor?.inWindowUnits(screens) }
-    // Stays shown until the close animation ends.
+    // The window exists while the popup is open or still animating shut (the window sets the target; currentState
+    // turns false once the close animation has finished); then it is disposed, and the next open creates a new one.
     val shown = remember { MutableTransitionState(false) }
-    shown.targetState = visible
-    val onScreen = shown.currentState || shown.targetState
-    val currentOnShownChange by rememberUpdatedState(onShownChange)
-    LaunchedEffect(onScreen) { currentOnShownChange(onScreen) }
-
-    // macOS: the window is converted to a non-activating panel (MacPopupPanel.kt) before it is ever shown, so even the
-    // first open leaves the app the user is in active and the main and mirror windows where they are. Until the
-    // conversion has been tried the window stays hidden; [macPanel] stays null when it failed (it then raises itself).
-    val popupWindow = remember { arrayOfNulls<NucleusWindow>(1) }
-    var macPanel by remember { mutableStateOf<Pointer?>(null) }
-    var macTried by remember { mutableStateOf(!Os.isMac) }
-    LaunchedEffect(visible) {
-        if (!visible || macTried) return@LaunchedEffect
-        // The window is composed (hidden) when it is created, long before the first click; wait briefly if not yet.
-        var handle: Pointer? = null
-        for (attempt in 0 until 30) {
-            handle = popupWindow[0]?.unsafe?.taoWindow?.nsWindowHandle?.takeIf { it != 0L }?.let(::Pointer)
-            if (handle != null) break
-            delay(16)
-        }
-        val ns = handle
-        if (ns != null && onMacMainThread { makeNonActivatingPanel(ns) } == true) macPanel = ns
-        macTried = true
+    if (visible || shown.currentState || shown.targetState) {
+        PopupWindow(controller, theme, visible, shown, anchor, screens, content)
     }
-    val windowVisible = onScreen && macTried
+}
+
+/** One popup window, from its open to the end of its close animation. Its state starts fresh each open. */
+@Composable
+private fun NucleusApplicationScope.PopupWindow(
+    controller: TrayPopupController,
+    theme: AppTheme,
+    visible: Boolean,
+    shown: MutableTransitionState<Boolean>,
+    anchor: IntArray?,
+    screens: List<ScreenArea>,
+    content: @Composable (maxHeight: Int) -> Unit,
+) {
+    // macOS: the new window is created hidden and converted to a non-activating panel (MacPopupPanel.kt) before it is
+    // shown, so opening leaves the app the user is in active and the main and mirror windows where they are. Elsewhere
+    // it shows at once. [macPanel] stays null when the conversion failed (the window then raises itself).
+    var ready by remember { mutableStateOf(!Os.isMac) }
+    var macPanel by remember { mutableStateOf<Pointer?>(null) }
+    val popupWindow = remember { arrayOfNulls<NucleusWindow>(1) }
+    if (Os.isMac) {
+        // Converted while still hidden, synchronously on the main thread (Compose runs there on macOS), and only then
+        // made visible. Run here, in the app's composition, so [ready] is written where it is read. Waits briefly if
+        // the new window has no native handle yet.
+        LaunchedEffect(Unit) {
+            var handle: Pointer? = null
+            for (attempt in 0 until HANDLE_WAIT_TRIES) {
+                handle = popupWindow[0]?.unsafe?.taoWindow?.nsWindowHandle?.takeIf { it != 0L }?.let(::Pointer)
+                if (handle != null) break
+                delay(16)
+            }
+            val ns = handle
+            if (ns != null && onMacMainThread { makeNonActivatingPanel(ns) } == true) macPanel = ns
+            ready = true
+        }
+    }
+    // The open animation starts once the window can show, so none of it plays while the window is still hidden.
+    shown.targetState = visible && ready
 
     var paneHeight by remember { mutableIntStateOf(FIRST_HEIGHT) }
     val maxPane = popupMaxPaneHeight(anchor, screens) ?: 640
     // The window follows the pane's target, not every frame of its animation (see popupRoomHeight).
     var room by remember { mutableIntStateOf(FIRST_HEIGHT) }
-    LaunchedEffect(paneHeight, maxPane, windowVisible) {
-        if (!windowVisible) {
+    LaunchedEffect(paneHeight, maxPane, ready) {
+        if (!ready) {
             room = popupRoomHeight(room, paneHeight, maxPane, settled = true)
             return@LaunchedEffect
         }
@@ -220,9 +239,10 @@ fun NucleusApplicationScope.TrayPopupWindow(
     val currentBounds by rememberUpdatedState(bounds)
     val currentScreens by rememberUpdatedState(screens)
 
+    // Created at its first place, so a new window never shows at the default spot first.
     val state = rememberWindowState(
-        position = WindowPosition(Alignment.TopEnd),
-        size = DpSize(WINDOW_WIDTH.dp, (FIRST_HEIGHT + 2 * SHADOW_MARGIN).dp),
+        position = bounds?.let { WindowPosition(it.x.dp, it.y.dp) } ?: WindowPosition(Alignment.TopEnd),
+        size = DpSize(WINDOW_WIDTH.dp, (bounds?.height ?: (FIRST_HEIGHT + 2 * SHADOW_MARGIN)).dp),
     )
     // Position and size change in the same apply, so the window moves and resizes together.
     SideEffect {
@@ -235,7 +255,7 @@ fun NucleusApplicationScope.TrayPopupWindow(
         if (state.size != size) state.size = size
     }
 
-    // Read once, like every window root (AppWindow).
+    // Read once per window, like every window root (AppWindow).
     val reduceMotion = remember { systemReducesMotion() }
 
     // Its Compose exceptions are reported (CrashCapture).
@@ -243,7 +263,7 @@ fun NucleusApplicationScope.TrayPopupWindow(
         DecoratedWindow(
             onCloseRequest = controller::dismissed,
             state = state,
-            visible = windowVisible,
+            visible = ready,
             title = "Scrcpy Vwr",
             resizable = false,
             focusable = true,
@@ -264,9 +284,10 @@ fun NucleusApplicationScope.TrayPopupWindow(
             forceX11 = OverlayPlatform.current() == OverlayPlatform.LinuxWayland,
         ) {
             val window = nucleusWindow
-            // Read by the conversion above; the window is composed once, hidden, when it is created.
+            // Read by the conversion above.
             SideEffect { popupWindow[0] = window }
             if (Os.isMac) {
+                // The window goes away after each close; its own class goes back first (see restoreWindowFromPanel).
                 DisposableEffect(window) {
                     onDispose { macPanel?.let { ns -> onMacMainThread { restoreWindowFromPanel(ns) } } }
                 }
@@ -274,8 +295,8 @@ fun NucleusApplicationScope.TrayPopupWindow(
             // Bring it forward on open so losing focus can close it. A macOS panel orders itself in front and takes
             // key focus without activating the app. Only when the conversion failed is the window raised (that
             // activates the app on macOS). Windows: the tray click lets the app take the foreground, so it does.
-            LaunchedEffect(visible) {
-                if (visible) {
+            LaunchedEffect(visible, ready) {
+                if (visible && ready) {
                     withFrameNanos { }
                     val panel = macPanel
                     if (panel != null) {
@@ -360,7 +381,10 @@ fun NucleusApplicationScope.TrayPopupWindow(
                                 .background(paneColor(currentStyle, MaterialTheme.colorScheme))
                                 .stylePane(PANE_SHAPE),
                         ) {
-                            content(maxPane)
+                            // The pane is drawn with a background, not a Surface, so text needs its color set here.
+                            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+                                content(maxPane)
+                            }
                         }
                     }
                 }

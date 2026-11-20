@@ -103,10 +103,11 @@ Height follows the content, capped at the screen's work area minus a margin; pas
 
 ### Screen thumbnails
 
-Each open mirror already holds its latest decoded frame (`ScrcpySession.frames`, a `VideoFrame`). While the popup is
-visible, about once a second, copy each mirroring device's latest frame into a small downscaled `ImageBitmap` (reuse
-`Screenshot.copy` / `copyLatest` logic, scaled to the size it is drawn at, not full resolution). Stop the refresh and
-drop the bitmaps when the popup hides. Never hold a `VideoFrame` past the copy (the decoder may release it).
+Each open mirror already holds its latest decoded frame (`ScrcpySession.frames`, a `VideoFrame`). When the popup
+opens, copy each mirroring device's latest frame once into a small downscaled `ImageBitmap` (`Screenshot.thumbnail`,
+off the UI thread, scaled to the size it is drawn at, not full resolution). There is no live refresh (user's
+decision): the images stay as taken until the next open, and they are dropped when the popup window goes away after
+its close animation. Never hold a `VideoFrame` past the copy (the decoder may release it).
 
 ### Actions map to existing code
 
@@ -155,7 +156,9 @@ the markup editor, the editor window opens and the popup closes, since a window 
 ## The popup window
 
 - `DecoratedWindow(undecorated = true, transparent = true, alwaysOnTop = true, hiddenFromDock = true, resizable =
-  false, focusable = true)`, created once and kept (shown and hidden), so opening is instant. Its content is drawn with
+  false, focusable = true)`, created when the popup opens and disposed once its close animation has finished, so each open gets a
+  fresh window and composition (user's decision: a window created once and kept hidden never showed state changes made
+  outside its own animation frames on macOS). Its content is drawn with
   `ScrcpyViewerTheme` and the app's current theme, rounded corners and a shadow inside the transparent window.
 - Closes when it loses focus, on Esc, or when the icon is clicked again. Make sure the click on the icon that closes it
   doesn't also count as a focus loss followed by a reopen.
@@ -191,7 +194,7 @@ Uses the app's motion rules (`layoutSpring()`, `LocalReduceMotion`; under reduce
 - Tags (Mirroring, Ready, Leads, Follows) crossfade when they change.
 - Arrange section folds in and out at the 2-mirror threshold; its selection slides between layouts; the Keep tiled
   switch thumb slides.
-- Thumbnails crossfade to each new frame instead of swapping.
+- Thumbnails crossfade in when the open's screenshot arrives instead of swapping.
 
 ## Tests
 

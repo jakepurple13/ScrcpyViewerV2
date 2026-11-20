@@ -73,33 +73,57 @@ fun NucleusApplicationScope.TrayPopup(
     inputFollowing: InputFollowing,
     trayCommands: TrayCommands,
 ) {
+    val appScope = rememberCoroutineScope()
+    val thumbnails = remember {
+        ScreenThumbnails(appScope, frames = { mirrorController.open.value.mapValues { (_, s) -> { s.frames.value } } })
+    }
+    DisposableEffect(thumbnails) { onDispose { thumbnails.clear() } }
+    val currentAfterShot = rememberUpdatedState(afterShot)
+    // The popup window has its own composition, made fresh on each open. The popup's own state (the picked device,
+    // the send panel) lives there and app state is collected there, like a mirror window does.
+    TrayPopupWindow(controller, theme) { maxHeight ->
+        TrayPopupBody(
+            controller, { currentAfterShot.value }, mirrorController, mirrorWindows, arranger, inputFollowing,
+            trayCommands, thumbnails, maxHeight,
+        )
+    }
+}
+
+@Composable
+private fun TrayPopupBody(
+    controller: TrayPopupController,
+    afterShot: () -> AfterScreenshot,
+    mirrorController: MirrorController,
+    mirrorWindows: MirrorWindows,
+    arranger: WindowArranger,
+    inputFollowing: InputFollowing,
+    trayCommands: TrayCommands,
+    thumbnails: ScreenThumbnails,
+    maxHeight: Int,
+) {
     val scope = rememberCoroutineScope()
     val visible by controller.visible.collectAsState()
     val adbDevices by mirrorController.devices.collectAsState()
     val mirrors by mirrorController.open.collectAsState()
     val follow by inputFollowing.state.collectAsState()
     val arrange by arranger.state.collectAsState()
-    val currentAfterShot by rememberUpdatedState(afterShot)
 
-    // Live screens only while the popup is on screen: they stay through the close animation, so the stage doesn't
-    // fade to its placeholder while it shrinks away. setActive is not thread-safe: called from the UI thread only.
-    val thumbnails = remember {
-        ScreenThumbnails(scope, frames = { mirrorController.open.value.mapValues { (_, s) -> { s.frames.value } } })
-    }
-    var onScreen by remember { mutableStateOf(false) }
-    LaunchedEffect(onScreen) { thumbnails.setActive(onScreen) }
-    DisposableEffect(thumbnails) { onDispose { thumbnails.setActive(false) } }
-    val images by thumbnails.images.collectAsState()
 
     // Map keys keep the order mirrors opened in, so mirrors adb no longer lists keep their place.
     val devices = remember(adbDevices, mirrors) { popupDevices(adbDevices, LinkedHashSet(mirrors.keys), ::deviceTitle) }
 
-    // Counts opens (not closes), so state reset per open stays as it was while the popup animates shut.
+    // Counts opens (not closes), so state reset per open stays as it was while the popup animates shut. The window is
+    // new each open, so this is 1 unless the popup is reopened while it is still animating shut.
     val opens = remember { intArrayOf(0) }
     val openId = remember(visible) { if (visible) ++opens[0] else opens[0] }
     // Each open starts at the mirror window focused last, with the send panel shut.
     val openStage = remember(openId) { stageSerial(current = null, lastFocused = mirrorWindows.lastFocused.value, devices) }
     var pick by remember(openId) { mutableStateOf<String?>(null) }
+    // One screenshot per mirroring device each open, no refresh. They stay through the close animation, so the stage
+    // doesn't fade to its placeholder while it shrinks away, and go with the window.
+    LaunchedEffect(openId) { if (visible) thumbnails.capture() }
+    DisposableEffect(thumbnails) { onDispose { thumbnails.clear() } }
+    val images by thumbnails.images.collectAsState()
     var sendOpen by remember(openId) { mutableStateOf(false) }
     // The user's pick stays while it is listed; devices coming and going may move the stage.
     val stage = stageSerial(current = pick ?: openStage, lastFocused = mirrorWindows.lastFocused.value, devices)
@@ -137,7 +161,7 @@ fun NucleusApplicationScope.TrayPopup(
             is PopupEvent.Stop -> mirrorController.requestClose(event.serial)
             is PopupEvent.Screenshot -> {
                 mirrorController.requestScreenshot(event.serial)
-                val text = screenshotNote(currentAfterShot)
+                val text = screenshotNote(afterShot())
                 if (text == null) {
                     controller.dismissed()
                 } else {
@@ -160,7 +184,5 @@ fun NucleusApplicationScope.TrayPopup(
         }
     }
 
-    TrayPopupWindow(controller, theme, onShownChange = { onScreen = it }) { maxHeight ->
-        TrayPopupContent(state, sendOpen, ::onEvent, Modifier.heightIn(max = maxHeight.dp))
-    }
+    TrayPopupContent(state, sendOpen, ::onEvent, Modifier.heightIn(max = maxHeight.dp))
 }

@@ -22,7 +22,7 @@ class ScreenThumbnailsTest {
     })
 
     @Test
-    fun `inactive refresher copies nothing`() = runTest {
+    fun `nothing is copied without a capture`() = runTest {
         var rounds = 0
         val thumbs = ScreenThumbnails(
             backgroundScope,
@@ -36,47 +36,63 @@ class ScreenThumbnailsTest {
     }
 
     @Test
-    fun `active refresher copies once a second`() = runTest {
+    fun `a capture copies each device once and never refreshes`() = runTest {
         var rounds = 0
         val thumbs = ScreenThumbnails(
             backgroundScope,
             frames = { rounds++; mapOf("a" to { frame }) },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
-        thumbs.setActive(true)
-        advanceTimeBy(3_000)
+        thumbs.capture()
+        advanceTimeBy(10_000)
         runCurrent()
-        assertTrue(rounds in 3..4, "rounds = $rounds")
+        assertEquals(1, rounds)
         assertEquals(setOf("a"), thumbs.images.value.keys)
     }
 
     @Test
-    fun `one device failing skips only that device and the loop goes on`() = runTest {
+    fun `each open captures again`() = runTest {
         var rounds = 0
         val thumbs = ScreenThumbnails(
             backgroundScope,
-            frames = { rounds++; mapOf("bad" to { error("skia copy failed") }, "a" to { frame }) },
+            frames = { rounds++; mapOf("a" to { frame }) },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
-        thumbs.setActive(true)
-        advanceTimeBy(3_000)
+        thumbs.capture()
         runCurrent()
-        assertTrue(rounds >= 3, "rounds = $rounds")
+        thumbs.clear()
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(1, rounds)
+        thumbs.capture()
+        runCurrent()
+        assertEquals(2, rounds)
         assertEquals(setOf("a"), thumbs.images.value.keys)
     }
 
     @Test
-    fun `deactivating clears images`() = runTest {
+    fun `one device failing skips only that device`() = runTest {
+        val thumbs = ScreenThumbnails(
+            backgroundScope,
+            frames = { mapOf("bad" to { error("skia copy failed") }, "a" to { frame }) },
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        thumbs.capture()
+        runCurrent()
+        assertEquals(setOf("a"), thumbs.images.value.keys)
+    }
+
+    @Test
+    fun `clearing drops images`() = runTest {
         val thumbs = ScreenThumbnails(
             backgroundScope,
             frames = { mapOf("a" to { frame }) },
             dispatcher = StandardTestDispatcher(testScheduler),
         )
-        thumbs.setActive(true)
-        advanceTimeBy(1_500)
+        thumbs.capture()
         runCurrent()
         assertTrue(thumbs.images.value.isNotEmpty())
-        thumbs.setActive(false)
+        thumbs.clear()
         runCurrent()
         assertTrue(thumbs.images.value.isEmpty())
     }
