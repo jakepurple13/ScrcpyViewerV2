@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -55,6 +56,7 @@ import com.programmersbox.scrcpyviewer.ui.window.NativeScreenGeometry
 import com.programmersbox.scrcpyviewer.ui.window.ScreenArea
 import com.programmersbox.scrcpyviewer.ui.window.launch.OverlayPlatform
 import com.programmersbox.scrcpyviewer.ui.window.screenFor
+import com.sun.jna.Pointer
 import dev.nucleusframework.application.DecoratedWindow
 import dev.nucleusframework.application.NucleusApplicationScope
 import java.awt.Rectangle
@@ -132,8 +134,9 @@ internal fun popupHangsUpward(anchor: IntArray?, screens: List<ScreenArea>): Boo
  * The menu bar popup's window: see-through, frameless, on top and kept off the taskbar, created once and shown and
  * hidden with [TrayPopupController.visible], so it opens at once. It makes room for [content]'s height (at most the
  * work area, see [popupRoomHeight]; [content] gets that cap in dp as `maxHeight` and should scroll inside it) and hangs from the icon click.
- * It closes on focus loss and Esc. Opening scales up from about 0.9 from the corner nearest the icon, with a fade;
- * closing is the reverse, faster.
+ * It closes on focus loss and Esc. On macOS it is a non-activating panel ([makeNonActivatingPanel]), so opening it
+ * doesn't activate the app or move its other windows. Opening scales up from about 0.9 from the corner nearest the
+ * icon, with a fade; closing is the reverse, faster.
  */
 @Composable
 fun NucleusApplicationScope.TrayPopupWindow(
@@ -213,12 +216,38 @@ fun NucleusApplicationScope.TrayPopupWindow(
             transparent = true,
             forceX11 = OverlayPlatform.current() == OverlayPlatform.LinuxWayland,
         ) {
-            // Bring it forward on open so losing focus can close it. (macOS non-activating behaviour comes later.)
+            // macOS: once converted to a non-activating panel (MacPopupPanel.kt), opening it leaves the app the user
+            // is in active and the main and mirror windows where they are. Null until then, and on failure.
+            var macPanel by remember { mutableStateOf<Pointer?>(null) }
+            if (Os.isMac) {
+                val window = nucleusWindow
+                LaunchedEffect(window) {
+                    // The NSWindow may not exist on the first frame.
+                    var handle: Pointer? = null
+                    for (frame in 0 until 30) {
+                        handle = window.unsafe.taoWindow?.nsWindowHandle?.takeIf { it != 0L }?.let(::Pointer)
+                        if (handle != null) break
+                        withFrameNanos { }
+                    }
+                    val ns = handle ?: return@LaunchedEffect
+                    if (onMacMainThread { makeNonActivatingPanel(ns) } == true) macPanel = ns
+                }
+                DisposableEffect(window) {
+                    onDispose { macPanel?.let { ns -> onMacMainThread { restoreWindowFromPanel(ns) } } }
+                }
+            }
+            // Bring it forward on open so losing focus can close it. A macOS panel orders itself in front and takes
+            // key focus without activating the app; elsewhere (or if the conversion failed) the window is raised.
             LaunchedEffect(visible) {
                 if (visible) {
                     withFrameNanos { }
-                    nucleusWindow.toFront()
-                    nucleusWindow.requestFocus()
+                    val panel = macPanel
+                    if (panel != null) {
+                        onMacMainThread { showNonActivatingPanel(panel) }
+                    } else {
+                        nucleusWindow.toFront()
+                        nucleusWindow.requestFocus()
+                    }
                 }
             }
             val focused = LocalWindowInfo.current.isWindowFocused
