@@ -70,8 +70,10 @@ class SheetTabsTest {
         events: MutableList<QuickActionEvent>,
         motion: Boolean = true,
         rowWidth: androidx.compose.ui.unit.Dp? = null,
+        /** Wide enough for the sheet widths a test asks for (the sheet never passes the scene). */
+        sceneWidth: Int = 600,
     ): SceneDriver =
-        SceneDriver(ImageComposeScene(600, 800, Density(1f)) {
+        SceneDriver(ImageComposeScene(sceneWidth, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 Surface(Modifier.fillMaxSize()) { QuickActionsPanel(state(), { events += it }, console = null, rowWidth = rowWidth, motion = motion) }
             }
@@ -434,7 +436,7 @@ class SheetTabsTest {
     @Test
     fun `a narrow popped Logcat segment cross-fades its label to the icon, and back as the sheet widens`() = onEdt {
         var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true)) // Actions: 280 dp
-        val driver = panel({ state }, mutableListOf())
+        val driver = panel({ state }, mutableListOf(), sceneWidth = 900)
         state = state.copy(logcatPopped = true, logcatLive = true)
         driver.frames(3)
         // Mid-fade, the icon is already the segment's name (decided at once, from the width), the label is going.
@@ -458,7 +460,7 @@ class SheetTabsTest {
     @Test
     fun `segment shows the window icon, and the live dot only while running`() = onEdt {
         var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 800.dp)))
-        val driver = panel({ state }, mutableListOf())
+        val driver = panel({ state }, mutableListOf(), sceneWidth = 900)
         assertNull(driver.described("In its own window"))
         assertNull(driver.described("Logcat running"))
 
@@ -489,7 +491,7 @@ class SheetTabsTest {
     fun `under reduced motion the Logcat segment's icon, live dot and badge snap`() = onEdt {
         // Settled sizes, from a run with motion.
         var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 800.dp)))
-        val moving = panel({ state }, mutableListOf())
+        val moving = panel({ state }, mutableListOf(), sceneWidth = 900)
         state = state.copy(logcatPopped = true, logcatLive = true)
         moving.frames(1)
         val dotMidway = checkNotNull(moving.described("Logcat running")).boundsInRoot.width
@@ -499,7 +501,7 @@ class SheetTabsTest {
         moving.scene.close()
 
         var still by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 800.dp)))
-        val driver = panel({ still }, mutableListOf(), motion = false)
+        val driver = panel({ still }, mutableListOf(), motion = false, sceneWidth = 900)
         still = still.copy(logcatPopped = true, logcatLive = true)
         driver.frames(2)
         assertEquals(14f, checkNotNull(driver.described("In its own window")).boundsInRoot.width)
