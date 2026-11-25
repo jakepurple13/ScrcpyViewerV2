@@ -444,9 +444,9 @@ class SheetTabsTest {
         assertNotNull(driver.described("Logcat running"))
         assertNull(driver.described("In its own window"))
 
-        // To the Logcat tab, widened to 700 dp: from the first frame of the sheet's growth, the label comes back with the marks
+        // To the Logcat tab, widened to 800 dp: from the first frame of the sheet's growth, the label comes back with the marks
         // beside it, rather than snapping when the width gets there.
-        state = state.copy(tab = SheetTab.Logcat, widths = SheetWidths(logcat = 700.dp))
+        state = state.copy(tab = SheetTab.Logcat, widths = SheetWidths(logcat = 800.dp))
         driver.frames(2)
         assertNull(driver.described("Logcat, open in its own window"))
         assertNotNull(driver.described("In its own window"))
@@ -457,7 +457,7 @@ class SheetTabsTest {
 
     @Test
     fun `segment shows the window icon, and the live dot only while running`() = onEdt {
-        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 700.dp)))
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 800.dp)))
         val driver = panel({ state }, mutableListOf())
         assertNull(driver.described("In its own window"))
         assertNull(driver.described("Logcat running"))
@@ -488,7 +488,7 @@ class SheetTabsTest {
     @Test
     fun `under reduced motion the Logcat segment's icon, live dot and badge snap`() = onEdt {
         // Settled sizes, from a run with motion.
-        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 700.dp)))
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 800.dp)))
         val moving = panel({ state }, mutableListOf())
         state = state.copy(logcatPopped = true, logcatLive = true)
         moving.frames(1)
@@ -498,7 +498,7 @@ class SheetTabsTest {
         assertTrue(dotMidway < dotSize, "with motion the dot scales in: $dotMidway then $dotSize")
         moving.scene.close()
 
-        var still by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 700.dp)))
+        var still by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 800.dp)))
         val driver = panel({ still }, mutableListOf(), motion = false)
         still = still.copy(logcatPopped = true, logcatLive = true)
         driver.frames(2)

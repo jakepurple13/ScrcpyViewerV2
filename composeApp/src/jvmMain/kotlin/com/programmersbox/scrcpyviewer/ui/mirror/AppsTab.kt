@@ -35,6 +35,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -367,17 +369,24 @@ internal fun SearchField(query: String, onChange: (String) -> Unit, modifier: Mo
 private fun FilterRow(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) -> Unit, compact: Boolean, modifier: Modifier = Modifier) {
     val reduceMotion = LocalReduceMotion.current
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // The chips take the room left of Reload and scroll sideways if a wider font still overflows it: Reload stays.
         AnimatedContent(
             targetState = compact,
+            modifier = Modifier.weight(1f),
             transitionSpec = {
                 fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
                     .using(SizeTransform(clip = false) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
             },
+            contentAlignment = Alignment.CenterStart,
         ) { folded ->
             if (folded) {
                 CompactFilter(state, onEvent)
             } else {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     AppFilter.entries.forEach { filter ->
                         val selected = filter == state.filter
                         FilterChip(
@@ -390,7 +399,6 @@ private fun FilterRow(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent)
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
         ReloadButton(state.loading, enabled) { onEvent(AppsEvent.Reload) }
     }
 }

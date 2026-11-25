@@ -129,6 +129,14 @@ class DeviceDatabasesTest {
     }
 
     @Test
+    fun localNamesAreSafeOnEveryOs() {
+        val local = DeviceDatabases.localFileName("my \"notes\" <1>:a|b?*\\/'s.db")
+        assertTrue(local.none { it in "<>:\"/\\|?*" }, local)
+        assertTrue(local.endsWith("'s.db"), local)
+        assertEquals("notes.db", DeviceDatabases.localFileName("notes.db"))
+    }
+
+    @Test
     fun aPullCutShortFails() = runBlocking {
         val runner = RecordingRunner { cmd -> if ("stat -c %s" in cmd) ShellResult("10\n", 0, 0) else ShellResult("", 0, 0) }
         val adb = StreamAdb(mapOf(cat("notes.db") to byteArrayOf(1, 2, 3)))

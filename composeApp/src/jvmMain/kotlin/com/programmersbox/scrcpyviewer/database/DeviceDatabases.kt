@@ -42,19 +42,21 @@ open class DeviceDatabases(
     /** Copies [db] and its companions into [into]; returns the copied database file. */
     open suspend fun pull(access: AppDataAccess, db: DeviceDatabase, into: Path): Path = withContext(Dispatchers.IO) {
         Files.createDirectories(into)
-        val names = listOfNotNull(db.name, if (db.walSize != null) "${db.name}-wal" else null, if (db.hasShm) "${db.name}-shm" else null)
-        for (suffix in listOf("-wal", "-shm")) Files.deleteIfExists(into.resolve(db.name + suffix))
-        for (name in names) {
+        val local = localFileName(db.name)
+        val suffixes = listOfNotNull("", if (db.walSize != null) "-wal" else null, if (db.hasShm) "-shm" else null)
+        for (suffix in listOf("-wal", "-shm")) Files.deleteIfExists(into.resolve(local + suffix))
+        for (suffix in suffixes) {
+            val name = db.name + suffix
             // The stream gives no exit status: a size taken just before it catches a copy cut short.
             val expected = runner.run(access.wrap("stat -c %s " + shellQuote("databases/$name"))).output.trim().toLongOrNull()
-            val target = into.resolve(name)
+            val target = into.resolve(local + suffix)
             adb.openExecStream(serial, access.wrap("cat " + shellQuote("databases/$name"))).use { input ->
                 Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
             }
             val got = Files.size(target)
             if (expected != null && got != expected) throw IOException("Copying $name was cut short ($got of $expected bytes). Pull again.")
         }
-        into.resolve(db.name)
+        into.resolve(local)
     }
 
     /** Size and modified time of [db] and its WAL; changes whenever the app writes to it. */
@@ -89,7 +91,11 @@ open class DeviceDatabases(
         if (result.exitCode != 0) throw IOException(result.output.trim().ifEmpty { "Command failed: $cmd" })
     }
 
-    private companion object {
-        val COMPANIONS = listOf("-wal", "-shm", "-journal")
+    companion object {
+        private val COMPANIONS = listOf("-wal", "-shm", "-journal")
+        private val UNSAFE = Regex("""[<>:"/\\|?*\x00-\x1F]""")
+
+        /** [name] as a file name every desktop OS accepts (Windows refuses <>:"/\|?*), for the computer-side copy. */
+        fun localFileName(name: String): String = name.replace(UNSAFE, "_")
     }
 }

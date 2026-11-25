@@ -415,7 +415,7 @@ class DatabaseController(
         db = name
         sync = SyncStatus.Pulling(route.label)
         try {
-            val dir = tempRoot.resolve(target.packageName).resolve(name)
+            val dir = tempRoot.resolve(target.packageName).resolve(DeviceDatabases.localFileName(name))
             // The app may write while the files stream: a copy is kept only when the database looked the same before
             // and after it. Otherwise the copy may be torn, and writing it back would corrupt the app's data.
             var pulled: Path? = null
