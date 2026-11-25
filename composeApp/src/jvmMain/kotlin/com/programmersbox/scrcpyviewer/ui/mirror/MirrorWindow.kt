@@ -77,6 +77,8 @@ import androidx.compose.material.icons.outlined.CropSquare
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesTab
 import com.programmersbox.scrcpyviewer.ui.mirror.files.rememberFilesBrowser
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.database.DatabaseController
+import com.programmersbox.scrcpyviewer.ui.mirror.database.DatabaseWindow
 import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatWindow
 import com.programmersbox.scrcpyviewer.ui.theme.Button
@@ -1214,6 +1216,7 @@ fun MirrorWindow(
                         filesTab = filesTab,
                         logcat = quickActions.logcat,
                         links = quickActions.links,
+                        database = quickActions.database,
                         onStageBounds = { stageBounds = it },
                         onViewOrigin = { viewOrigin[0] = it },
                         clickIndicator = clickIndicator,
@@ -1252,6 +1255,7 @@ fun MirrorWindow(
     }
     // Logcat's own window, while it is out: part of this window's composition, so it closes with it.
     quickActions.logcat?.let { LogcatWindow(it, model, theme) }
+    quickActions.database?.let { DatabaseWindow(it, model, theme) { quickActions.onEvent(QuickActionEvent.ShowDebuggableApps) } }
     // The markup editor's own window, likewise. Its keys are its own window's: none reaches the device.
     MarkupEditorWindow(
         markupEditor, model, theme,
@@ -1428,6 +1432,8 @@ fun MirrorContent(
     logcat: LogcatController? = null,
     /** The quick actions sheet's Links tab; null (no adb) says adb isn't available. */
     links: LinksState? = null,
+    /** The quick actions sheet's Data tab; null (no adb) says adb isn't available. */
+    database: DatabaseController? = null,
     /** The quick actions sheet's bounds in root pixels while it shows, null once it is gone. */
     onSheetBounds: (Rect?) -> Unit = {},
     /** Taps the leading window sent here: the same dot and click ring, at the spot they landed. */
@@ -1535,7 +1541,7 @@ fun MirrorContent(
             }
             val panel = rememberQuickActionsPanel(
                 panelState, onPanelEvent, shellConsole, rowWidth.takeIf { pinnedStageWidth == null }, filesTab, logcat,
-                links, placement = placement.takeIf { resizing && pinnedStageWidth == null },
+                links, placement = placement.takeIf { resizing && pinnedStageWidth == null }, database = database,
             )
             // Where the sheet is, so the window's file drop leaves it to the sheet (the Files tab takes drops there).
             val currentSheetBounds by rememberUpdatedState(onSheetBounds)
