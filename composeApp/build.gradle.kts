@@ -394,6 +394,7 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         systemProperty("scrcpyviewer.bundledDir", layout.projectDirectory.dir("bundled").asFile.absolutePath)
         project.findProperty("deviceSerials")?.let { systemProperty("scrcpyviewer.deviceSerials", it.toString()) }
         project.findProperty("audioSeconds")?.let { systemProperty("scrcpyviewer.audioSeconds", it.toString()) }
+        project.findProperty("debugPackage")?.let { systemProperty("scrcpyviewer.debugPackage", it.toString()) }
         testLogging { showStandardStreams = true }
         outputs.upToDateWhen { false }
     }
