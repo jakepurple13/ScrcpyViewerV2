@@ -103,9 +103,9 @@ class AppsNarrowTest {
     }
 
     @Test
-    fun `the breakpoints are 400 and 360`() {
-        assertTrue(appsFiltersCompact(399.dp))
-        assertFalse(appsFiltersCompact(400.dp))
+    fun `the breakpoints are 480 and 360`() {
+        assertTrue(appsFiltersCompact(479.dp))
+        assertFalse(appsFiltersCompact(480.dp))
         assertTrue(appOptionsCompact(359.dp))
         assertFalse(appOptionsCompact(360.dp))
     }

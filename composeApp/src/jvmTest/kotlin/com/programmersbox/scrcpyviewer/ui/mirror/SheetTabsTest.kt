@@ -111,7 +111,7 @@ class SheetTabsTest {
     }
 
     @Test
-    fun `six tabs, Logcat selects, and the header follows the tab`() = onEdt {
+    fun `seven tabs, Logcat selects, and the header follows the tab`() = onEdt {
         val events = mutableListOf<QuickActionEvent>()
         var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true))
         val driver = panel({ state }, events)
@@ -119,7 +119,7 @@ class SheetTabsTest {
         val tabs = driver.nodes(merged = true).filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
         // At the Actions tab's 280 dp the segments show icons, each named by its icon.
         assertEquals(
-            listOf("Actions", "Apps", "Shell", "Files", "Links", "Logcat"),
+            listOf("Actions", "Apps", "Files", "Data", "Shell", "Links", "Logcat"),
             tabs.map {
                 it.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text
                     ?: it.config.getOrNull(SemanticsProperties.ContentDescription)?.firstOrNull()
@@ -206,13 +206,13 @@ class SheetTabsTest {
     }
 
     @Test
-    fun `segment labels fit at the Shell and Links width, the narrowest with names`() = onEdt {
-        assertSegmentsFit(QUICK_ACTIONS_LINKS_WIDTH.value.toInt(), busy(SheetTab.Links, logcatPopped = false))
+    fun `at the Shell and Links width the seven segments show icons`() = onEdt {
+        assertSegmentsFit(QUICK_ACTIONS_LINKS_WIDTH.value.toInt(), busy(SheetTab.Links, logcatPopped = false), icons = true)
     }
 
     @Test
     fun `icons replace names just under 56 dp a segment, and names come back from 56 dp`() = onEdt {
-        // A segment is (sheet - drag bar - side paddings - track padding) / 6: 56 dp at 374 dp.
+        // A segment is (sheet - drag bar - side paddings - track padding) / 7: 56 dp at 430 dp.
         fun tabNames(width: Int): List<String?> {
             val driver = SceneDriver(ImageComposeScene(width, 400, Density(1f)) {
                 ScrcpyViewerTheme(ThemeMode.Light) {
@@ -226,18 +226,24 @@ class SheetTabsTest {
                 .map { it.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text }
                 .also { driver.scene.close() }
         }
-        assertEquals(List(6) { null }, tabNames(373), "373 dp: icons")
-        assertEquals(SheetTab.entries.map { it.name }, tabNames(374), "374 dp: names")
+        assertEquals(List(7) { null }, tabNames(429), "429 dp: icons")
+        assertEquals(SheetTab.entries.map { it.label() }, tabNames(430), "430 dp: names")
     }
 
     @Test
     fun `at the Shell width a popped Logcat segment shows the window icon with the live badge instead`() = onEdt {
-        assertSegmentsFit(QUICK_ACTIONS_SHELL_WIDTH.value.toInt(), busy(SheetTab.Shell, logcatPopped = true), logcatIconOnly = true)
+        assertSegmentsFit(QUICK_ACTIONS_SHELL_WIDTH.value.toInt(), busy(SheetTab.Shell, logcatPopped = true), logcatIconOnly = true, icons = true)
     }
 
     @Test
-    fun `segment labels fit at the Logcat width, with the Logcat window icon and live dot beside the label`() = onEdt {
-        assertSegmentsFit(QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(), busy(SheetTab.Logcat, logcatPopped = true))
+    fun `segment labels fit at the Logcat width, the popped Logcat segment as its window icon`() = onEdt {
+        assertSegmentsFit(QUICK_ACTIONS_LOGCAT_WIDTH.value.toInt(), busy(SheetTab.Logcat, logcatPopped = true), logcatIconOnly = true)
+    }
+
+    @Test
+    fun `at 700 dp the popped Logcat segment shows its label with the window icon and live dot`() = onEdt {
+        val state = busy(SheetTab.Logcat, logcatPopped = true)
+        assertSegmentsFit(700, state.copy(widths = state.widths.with(SheetTab.Logcat, 700.dp)))
     }
 
     private fun assertSegmentsFit(
@@ -286,40 +292,40 @@ class SheetTabsTest {
                 // the Files badge sit on the icon's top-end corner, inside the segment.
                 val nodes = descendants(tab)
                 val segment = SheetTab.entries[tabs.indexOf(tab)]
-                val label = nodes.firstOrNull { it.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text == segment.name }
+                val label = nodes.firstOrNull { it.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text == segment.label() }
                 // The selected segment's name names it; the others' icons do (16 dp, inside the segment).
-                val icon = nodes.firstOrNull { it.description() == segment.name }
+                val icon = nodes.firstOrNull { it.description() == segment.label() }
                 if (segment == state.tab) {
-                    assertNotNull(label, "the selected ${segment.name} shows its name")
-                    assertTrue(label.boundsInRoot.right <= tab.boundsInRoot.right + 0.5f, "${segment.name} name spills out at $width")
+                    assertNotNull(label, "the selected ${segment.label()} shows its name")
+                    assertTrue(label.boundsInRoot.right <= tab.boundsInRoot.right + 0.5f, "${segment.label()} name spills out at $width")
                 } else {
-                    assertNull(label, "${segment.name} shows no name")
-                    assertNotNull(icon, "the ${segment.name} icon names it")
-                    assertEquals(16f, icon.boundsInRoot.width, "${segment.name} icon width")
-                    assertTrue(icon.boundsInRoot.left >= tab.boundsInRoot.left && icon.boundsInRoot.right <= tab.boundsInRoot.right, "${segment.name} icon spills out at $width")
+                    assertNull(label, "${segment.label()} shows no name")
+                    assertNotNull(icon, "the ${segment.label()} icon names it")
+                    assertEquals(16f, icon.boundsInRoot.width, "${segment.label()} icon width")
+                    assertTrue(icon.boundsInRoot.left >= tab.boundsInRoot.left && icon.boundsInRoot.right <= tab.boundsInRoot.right, "${segment.label()} icon spills out at $width")
                 }
                 val extras = nodes.filter { it.description() == "Command running" || it.description()?.endsWith("transfers running") == true }
                 for (extra in extras) {
                     val b = extra.boundsInRoot
-                    assertTrue(b.left >= tab.boundsInRoot.left && b.right <= tab.boundsInRoot.right && b.top >= tab.boundsInRoot.top, "${extra.description()} spills out of ${segment.name}")
+                    assertTrue(b.left >= tab.boundsInRoot.left && b.right <= tab.boundsInRoot.right && b.top >= tab.boundsInRoot.top, "${extra.description()} spills out of ${segment.label()}")
                     icon?.boundsInRoot?.let { i ->
-                        assertTrue(b.center.x > i.center.x && b.center.y < i.center.y, "${extra.description()} sits on the ${segment.name} icon's top-end corner")
+                        assertTrue(b.center.x > i.center.x && b.center.y < i.center.y, "${extra.description()} sits on the ${segment.label()} icon's top-end corner")
                     }
-                    if (label != null) assertTrue(label.boundsInRoot.left >= b.right - 0.5f, "${extra.description()} overlaps the ${segment.name} name")
+                    if (label != null) assertTrue(label.boundsInRoot.left >= b.right - 0.5f, "${extra.description()} overlaps the ${segment.label()} name")
                 }
                 when (segment) {
                     SheetTab.Shell -> assertEquals(listOf("Command running"), extras.map { it.description() })
                     SheetTab.Files -> assertEquals(1, extras.size, extras.map { it.description() }.toString())
-                    else -> assertEquals(emptyList(), extras.map { it.description() }, segment.name)
+                    else -> assertEquals(emptyList(), extras.map { it.description() }, segment.label())
                 }
                 continue
             }
             if (icons) {
                 // The icon names the segment (its hidden label is not read out); the dot and badge sit after it.
                 val nodes = descendants(tab)
-                val names = SheetTab.entries.map { it.name }
+                val names = SheetTab.entries.map { it.label() }
                 assertTrue(nodes.none { it.config.getOrNull(SemanticsProperties.Text)?.firstOrNull()?.text in names }, "a hidden name is read out")
-                val name = SheetTab.entries[tabs.indexOf(tab)].name
+                val name = SheetTab.entries[tabs.indexOf(tab)].label()
                 val icon = checkNotNull(nodes.firstOrNull { it.description() == name }) { "the $name icon" }
                 val i = icon.boundsInRoot
                 assertEquals(16f, i.width, "$name icon width")
@@ -372,8 +378,8 @@ class SheetTabsTest {
 
     @Test
     fun `segment labels ease to the larger size as the sheet grows, without a snap`() = onEdt {
-        // 380 dp: segments of 57 dp, names in the small size (under 56 dp they would be icons).
-        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, widths = SheetWidths(actions = 380.dp)))
+        // 440 dp: segments of 57 dp, names in the small size (under 56 dp they would be icons).
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, widths = SheetWidths(actions = 440.dp)))
         val driver = SceneDriver(ImageComposeScene(800, 800, Density(1f)) {
             ScrcpyViewerTheme(ThemeMode.Light) {
                 // Motion on explicitly: CI's macOS and Windows runners report the OS's reduce motion as on.
@@ -390,7 +396,7 @@ class SheetTabsTest {
             return layouts.single().layoutInput.style.fontSize.value
         }
         val small = labelSize()
-        state = state.copy(tab = SheetTab.Apps) // 380 dp to 480 dp
+        state = state.copy(tab = SheetTab.Apps) // 440 dp to 480 dp
         driver.frames(6)
         val mid = labelSize()
         driver.frames(60)
@@ -438,9 +444,9 @@ class SheetTabsTest {
         assertNotNull(driver.described("Logcat running"))
         assertNull(driver.described("In its own window"))
 
-        // To the Logcat tab (560 dp): from the first frame of the sheet's growth, the label comes back with the marks
+        // To the Logcat tab, widened to 700 dp: from the first frame of the sheet's growth, the label comes back with the marks
         // beside it, rather than snapping when the width gets there.
-        state = state.copy(tab = SheetTab.Logcat)
+        state = state.copy(tab = SheetTab.Logcat, widths = SheetWidths(logcat = 700.dp))
         driver.frames(2)
         assertNull(driver.described("Logcat, open in its own window"))
         assertNotNull(driver.described("In its own window"))
@@ -451,7 +457,7 @@ class SheetTabsTest {
 
     @Test
     fun `segment shows the window icon, and the live dot only while running`() = onEdt {
-        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat))
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 700.dp)))
         val driver = panel({ state }, mutableListOf())
         assertNull(driver.described("In its own window"))
         assertNull(driver.described("Logcat running"))
@@ -482,7 +488,7 @@ class SheetTabsTest {
     @Test
     fun `under reduced motion the Logcat segment's icon, live dot and badge snap`() = onEdt {
         // Settled sizes, from a run with motion.
-        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat))
+        var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 700.dp)))
         val moving = panel({ state }, mutableListOf())
         state = state.copy(logcatPopped = true, logcatLive = true)
         moving.frames(1)
@@ -492,7 +498,7 @@ class SheetTabsTest {
         assertTrue(dotMidway < dotSize, "with motion the dot scales in: $dotMidway then $dotSize")
         moving.scene.close()
 
-        var still by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat))
+        var still by mutableStateOf(QuickActionsUiState(open = true, enabled = true, tab = SheetTab.Logcat, widths = SheetWidths(logcat = 700.dp)))
         val driver = panel({ still }, mutableListOf(), motion = false)
         still = still.copy(logcatPopped = true, logcatLive = true)
         driver.frames(2)
@@ -531,7 +537,7 @@ class SheetTabsTest {
             val bitmap = driver.scene.render(100_000_000_000L + selected.ordinal * 1_000_000_000L).use { Bitmap.makeFromImage(it) }
             // A point inside each segment, left of its label (or icon, at the Actions width), at the label's height.
             for (segment in SheetTab.entries) {
-                val label = checkNotNull(driver.texts()[segment.name] ?: driver.described(segment.name)).boundsInRoot
+                val label = checkNotNull(driver.texts()[segment.label()] ?: driver.described(segment.label())).boundsInRoot
                 val pixel = bitmap.getColor((label.left - 6f).toInt(), label.center.y.toInt())
                 val expected = if (segment == selected) colors.surface else colors.surfaceContainerHighest
                 assertEquals(expected.toArgb(), pixel, "$segment segment while $selected is selected")
@@ -542,8 +548,8 @@ class SheetTabsTest {
     @Test
     fun `resizing across 56 dp a segment cross-fades icons and names over 200 ms, at once without motion`() = onEdt {
         for (motion in listOf(true, false)) {
-            // 360 dp: icons only (under 340 dp the tabs are compact instead).
-            var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, consoleRunning = true, widths = SheetWidths(actions = 360.dp)))
+            // 400 dp: icons only (names from 430 dp; under 340 dp the tabs are compact instead).
+            var state by mutableStateOf(QuickActionsUiState(open = true, enabled = true, consoleRunning = true, widths = SheetWidths(actions = 400.dp)))
             val driver = panel({ state }, mutableListOf(), motion)
             driver.frames(30)
             // The Shell dot sits after the segment's name, all centered: its distance from the segment's center follows
@@ -552,15 +558,15 @@ class SheetTabsTest {
                 val shell = driver.nodes().filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }[SheetTab.Shell.ordinal]
                 return checkNotNull(driver.described("Command running")).boundsInRoot.left - shell.boundsInRoot.center.x
             }
-            assertNotNull(driver.described("Shell"), "icons at 360 dp")
+            assertNotNull(driver.described("Shell"), "icons at 400 dp")
             val start = dot()
-            state = state.copy(widths = SheetWidths(actions = 400.dp)) // a resize: the sheet follows at once
+            state = state.copy(widths = SheetWidths(actions = 440.dp)) // a resize: the sheet follows at once
             val path = listOf(start) + List(24) {
                 driver.frame()
                 dot()
             }
             val end = path.last()
-            assertNull(driver.described("Shell"), "names at 400 dp")
+            assertNull(driver.described("Shell"), "names at 440 dp")
             // "Shell" in the small size is only a few px wider than the 16 dp icon with Windows' fonts.
             assertTrue(end - start > 4f, "the word is wider than the icon: $start then $end")
             if (motion) {

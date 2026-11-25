@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
 import androidx.compose.runtime.Stable
+import com.programmersbox.scrcpyviewer.database.RootState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +36,8 @@ data class AppsUiState(
     val busy: Set<String> = emptySet(),
     /** The app picked in the Logcat tab (its card shows a "Logcat" badge); null when none is. */
     val logcatPackage: String? = null,
+    /** The device's root access: whether a release app's databases can open (the options sheet's Data access). */
+    val root: RootState = RootState.Unknown,
 ) {
     /** The apps the grid shows: [query] and [filter] applied. Worked out once per state, on first use. */
     val visible: List<DeviceApp> by lazy { apps.orEmpty().matching(query, filter) }
@@ -65,6 +68,9 @@ sealed interface AppsEvent {
 
     /** Pick [app] in the Logcat tab and switch to it; [QuickActions] handles it. */
     data class ShowInLogcat(val app: DeviceApp) : AppsEvent
+
+    /** Open [app]'s databases on the Data tab (or its own window); [QuickActions] handles it. */
+    data class ShowDatabases(val app: DeviceApp) : AppsEvent
 }
 
 /**
@@ -112,7 +118,7 @@ class AppExplorer(
                 apps = apps?.filterNot { it.packageName == app.packageName }
             }
             is AppsEvent.Copied -> notify("Copied ${event.app.packageName}")
-            is AppsEvent.ShowInLogcat -> Unit // the sheet's, not this tab's
+            is AppsEvent.ShowInLogcat, is AppsEvent.ShowDatabases -> Unit // the sheet's, not this tab's
         }
     }
 

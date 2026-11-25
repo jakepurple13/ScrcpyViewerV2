@@ -193,7 +193,7 @@ class MirrorNarrowTest {
         assertShown(c.driver.text("2"), sheet, "the badge")
         // The other segments show their icons only, each named for accessibility.
         val tabs = c.driver.nodes(merged = true).filter { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
-        assertEquals(6, tabs.size)
+        assertEquals(SheetTab.entries.size, tabs.size)
         assertNull(c.driver.text("Actions"), "unselected segments show no label")
         val files = tabs[SheetTab.Files.ordinal].boundsInRoot
         val actions = tabs[SheetTab.Actions.ordinal].boundsInRoot
@@ -205,7 +205,7 @@ class MirrorNarrowTest {
         val c = Content(504, actionsOpen.copy(tab = SheetTab.Files, filesTransfersRunning = 2), reduceMotion = true)
         val sheet = checkNotNull(c.sheet)
         assertEquals(440f, sheet.width, 0.5f)
-        for (tab in SheetTab.entries) assertShown(c.driver.text(tab.name), sheet, "the ${tab.name} label")
+        for (tab in SheetTab.entries) assertShown(c.driver.text(tab.label()), sheet, "the ${tab.label()} label")
     }
 
     /** Streams one line, then waits. */

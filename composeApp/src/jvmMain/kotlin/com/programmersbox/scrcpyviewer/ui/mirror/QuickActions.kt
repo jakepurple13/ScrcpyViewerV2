@@ -1,6 +1,7 @@
 package com.programmersbox.scrcpyviewer.ui.mirror
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -18,9 +19,13 @@ import com.programmersbox.scrcpyviewer.actions.OutputTarget
 import com.programmersbox.scrcpyviewer.actions.RunOnceAction
 import com.programmersbox.scrcpyviewer.actions.ToggleAction
 import com.programmersbox.scrcpyviewer.adb.AdbClient
+import com.programmersbox.scrcpyviewer.apps.AppFilter
 import com.programmersbox.scrcpyviewer.apps.AppIconLoader
 import com.programmersbox.scrcpyviewer.apps.DeviceApp
 import com.programmersbox.scrcpyviewer.apps.DeviceApps
+import com.programmersbox.scrcpyviewer.database.DeviceDatabases
+import com.programmersbox.scrcpyviewer.database.RootProbe
+import com.programmersbox.scrcpyviewer.database.RootState
 import com.programmersbox.scrcpyviewer.di.DataDir
 import com.programmersbox.scrcpyviewer.tools.BundledTools
 import com.programmersbox.scrcpyviewer.adb.ShellRunner
@@ -34,6 +39,7 @@ import com.programmersbox.scrcpyviewer.logcat.LogcatSource
 import com.programmersbox.scrcpyviewer.links.LinkStore
 import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksEvent
 import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState
+import com.programmersbox.scrcpyviewer.ui.mirror.database.DatabaseController
 import com.programmersbox.scrcpyviewer.ui.mirror.files.FilesLocation
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatRun
@@ -178,7 +184,10 @@ open class DeviceQuickActions(
 }
 
 /** The sheet's tabs, in the order the segmented control shows them. */
-enum class SheetTab { Actions, Apps, Shell, Files, Links, Logcat }
+enum class SheetTab { Actions, Apps, Files, Database, Shell, Links, Logcat }
+
+/** The tab's name on its segment: "Data" for [SheetTab.Database] (it fits), the enum name for the rest. */
+fun SheetTab.label(): String = if (this == SheetTab.Database) "Data" else name
 
 /**
  * A run-once action waiting for the user: the variable prompt while [needsValues], then the confirm dialog while
@@ -248,6 +257,10 @@ data class QuickActionsUiState(
     val logcatLive: Boolean = false,
     /** The Apps tab. */
     val apps: AppsUiState = AppsUiState(),
+    /** Databases is in its own window (the Data segment shows a window icon). */
+    val databasePopped: Boolean = false,
+    /** The device's root access, for the header's chip. */
+    val root: RootState = RootState.Unknown,
 )
 
 /** A window following this one's input: its device title (for the result line), shell runner and serial. */
@@ -305,6 +318,12 @@ sealed interface QuickActionEvent {
 
     /** Something done on the Links tab. */
     data class Links(val event: LinksEvent) : QuickActionEvent
+
+    /** The root chip: run `su` now (the phone may prompt). */
+    data object AskRoot : QuickActionEvent
+
+    /** The Data tab's locked state: show the Apps tab filtered to debuggable apps, docking Databases first. */
+    data object ShowDebuggableApps : QuickActionEvent
 }
 
 /**
@@ -342,6 +361,8 @@ class QuickActions internal constructor(
     val logcat: LogcatController? = null,
     /** The Links tab; null without adb. */
     val links: LinksState? = null,
+    /** The Data tab; null without adb. It can also be in its own window. */
+    val database: DatabaseController? = null,
     /** Gets `sheet_tab_opened` and `quick_action_run` (a built-in's name, or `custom`: never a custom action's own). */
     private val telemetry: Telemetry = Telemetry.Noop,
     private val notify: (String) -> Unit,
@@ -382,23 +403,30 @@ class QuickActions internal constructor(
 
     init {
         logcat?.onDock = ::showLogcatTab
+        database?.onDock = ::showDatabaseTab
     }
 
     val uiState: QuickActionsUiState
-        get() = QuickActionsUiState(
-            open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages = packages,
-            widths = widths, apps = (apps?.uiState ?: AppsUiState()).copy(logcatPackage = logcat?.mine),
-            logcatPopped = logcat?.popped == true,
-            logcatLive = logcat?.let { it.popped && it.run == LogcatRun.Running } == true,
-        )
+        get() {
+            val root = database?.root ?: RootState.Unknown
+            return QuickActionsUiState(
+                open, enabled, toggles, pending, tab, custom, customState, customPending, prompt, console?.running == true, packages = packages,
+                widths = widths, apps = (apps?.uiState ?: AppsUiState()).copy(logcatPackage = logcat?.mine, root = root),
+                logcatPopped = logcat?.popped == true,
+                logcatLive = logcat?.let { it.popped && it.run == LogcatRun.Running } == true,
+                databasePopped = database?.popped == true,
+                root = root,
+            )
+        }
 
     fun toggleSheet() {
         if (open) close() else if (enabled) {
             tab = memory.tab
             open = true
             refresh()
-            if (tab == SheetTab.Apps || tab == SheetTab.Links) apps?.ensureLoaded()
+            if (tab == SheetTab.Apps || tab == SheetTab.Links || tab == SheetTab.Database) apps?.ensureLoaded()
             if (tab == SheetTab.Logcat) nudgeIfStopped()
+            database?.ensureRoot()
         }
     }
 
@@ -435,8 +463,8 @@ class QuickActions internal constructor(
         if (from == SheetTab.Logcat && to != SheetTab.Logcat) logcat?.takeUnless { it.popped }?.stopForLeaving()
         tab = to
         memory.tab = to
-        // Links' "Open with" lists the same apps.
-        if (to == SheetTab.Apps || to == SheetTab.Links) apps?.ensureLoaded()
+        // Links' "Open with" and the Data tab's app picker list the same apps.
+        if (to == SheetTab.Apps || to == SheetTab.Links || to == SheetTab.Database) apps?.ensureLoaded()
         if (to == SheetTab.Logcat && from != to) nudgeIfStopped()
     }
 
@@ -459,6 +487,30 @@ class QuickActions internal constructor(
         } else if (!open) {
             logcat?.stopForLeaving()
         }
+    }
+
+    /** Databases came back from its own window: shows the Data tab, opening the sheet when it can. */
+    private fun showDatabaseTab() {
+        tab = SheetTab.Database
+        memory.tab = SheetTab.Database
+        if (!open && enabled) {
+            open = true
+            refresh()
+        }
+    }
+
+    /** Opens [app]'s databases: in the own window when Databases is there, else on the Data tab. */
+    private fun showDatabases(app: DeviceApp) {
+        val d = database ?: return
+        d.pick(app)
+        if (d.popped) d.raise() else select(SheetTab.Database)
+    }
+
+    /** The Data tab's locked state: back to the Apps tab, filtered to debuggable apps. */
+    private fun showDebuggableApps() {
+        database?.dock()
+        apps?.onEvent(AppsEvent.Filter(AppFilter.Debuggable))
+        select(SheetTab.Apps)
     }
 
     /**
@@ -524,12 +576,15 @@ class QuickActions internal constructor(
             }
             is QuickActionEvent.Apps -> when (val e = event.event) {
                 is AppsEvent.ShowInLogcat -> showInLogcat(e.app)
+                is AppsEvent.ShowDatabases -> showDatabases(e.app)
                 else -> apps?.onEvent(e)
             }
             is QuickActionEvent.Links -> when (val e = event.event) {
                 LinksEvent.Save -> links?.saveTemplate()?.let(onNewAction)
                 else -> links?.onEvent(e)
             }
+            QuickActionEvent.AskRoot -> database?.askRoot()
+            QuickActionEvent.ShowDebuggableApps -> showDebuggableApps()
         }
     }
 
@@ -870,7 +925,9 @@ fun rememberQuickActions(
             onManage = { id, new -> currentOnManage(id, new) },
             onNewAction = { currentOnNewAction(it) },
             widths = settings.settings.value.let {
-                SheetWidths.fromSettings(it.quickActionsWidth, it.shellWidth, it.appsWidth, it.filesWidth, it.logcatWidth, it.linksWidth)
+                SheetWidths.fromSettings(
+                    it.quickActionsWidth, it.shellWidth, it.appsWidth, it.filesWidth, it.logcatWidth, it.linksWidth, it.databaseWidth,
+                )
             },
             // Only the tab that changed: another mirror window may have saved the others since this one opened.
             saveWidth = { tab, width ->
@@ -881,6 +938,7 @@ fun rememberQuickActions(
                         SheetTab.Apps -> it.copy(appsWidth = dp)
                         SheetTab.Shell -> it.copy(shellWidth = dp)
                         SheetTab.Files -> it.copy(filesWidth = dp)
+                        SheetTab.Database -> it.copy(databaseWidth = dp)
                         SheetTab.Links -> it.copy(linksWidth = dp)
                         SheetTab.Logcat -> it.copy(logcatWidth = dp)
                     }
@@ -891,9 +949,23 @@ fun rememberQuickActions(
             followers = { currentFollowers() },
             logcat = adb?.let { LogcatController(LogcatSource(it, serial), scope, { msg -> currentNotify(msg) }) },
             links = runner?.let { LinksState(serial, it, linkStore, { apps.listed }, scope) },
+            database = if (adb != null && runner != null) {
+                DatabaseController(
+                    devices = DeviceDatabases(adb, runner, serial),
+                    probe = RootProbe(runner),
+                    apps = { apps.listed },
+                    tempRoot = databaseTempRoot(serial),
+                    scope = scope,
+                    notify = { msg -> currentNotify(msg) },
+                    launch = { app -> apps.onEvent(AppsEvent.Launch(app)) },
+                )
+            } else {
+                null
+            },
             telemetry = telemetry,
         ) { currentNotify(it) }
     }
+    DisposableEffect(actions) { onDispose { actions.database?.close() } }
     LaunchedEffect(actions) { actions.watchActions() }
     LaunchedEffect(actions) { actions.links?.watch() }
     LaunchedEffect(actions, session) {
@@ -901,3 +973,7 @@ fun rememberQuickActions(
     }
     return actions
 }
+
+/** Where the Data tab keeps its pulled copies for [serial]; deleted when the mirror window closes. */
+internal fun databaseTempRoot(serial: String): java.nio.file.Path =
+    java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "scrcpyvwr-databases", serial.replace(Regex("[^A-Za-z0-9._-]"), "_"))

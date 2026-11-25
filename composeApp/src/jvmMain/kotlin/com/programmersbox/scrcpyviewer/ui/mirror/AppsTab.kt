@@ -170,8 +170,8 @@ private const val STAGGER_MAX_MILLIS = 220L
 /** How long the copy button shows "Copied". */
 private const val COPIED_MILLIS = 1_600L
 
-/** Narrower than this, the three filter chips fold into one chip with a menu. */
-fun appsFiltersCompact(width: Dp): Boolean = width < 400.dp
+/** Narrower than this, the four filter chips fold into one chip with a menu. */
+fun appsFiltersCompact(width: Dp): Boolean = width < 480.dp
 
 /** Narrower than this, the options sheet stacks its version boxes and lays its actions out as a 2 x 2 grid. */
 fun appOptionsCompact(width: Dp): Boolean = width < 360.dp
