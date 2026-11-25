@@ -113,6 +113,9 @@ class DatabaseController(
     var edited by mutableStateOf<Set<Pair<RowKey, String>>>(emptySet())
         private set
 
+    /** The Query view's SQL; kept here so it survives moving between the sheet and the own window. */
+    var queryText by mutableStateOf("")
+
     var queryOutcome by mutableStateOf<SqlOutcome?>(null)
         private set
     var structure by mutableStateOf<TableStructure?>(null)
@@ -388,6 +391,7 @@ class DatabaseController(
             val list = withDb { opened.tables() }
             tables = list
             table = list.firstOrNull { !it.system }?.name ?: list.firstOrNull()?.name
+            queryText = table?.let { "SELECT *\nFROM $it\nLIMIT 100;" }.orEmpty()
             where = ""
             queryOutcome = null
             edited = emptySet()
