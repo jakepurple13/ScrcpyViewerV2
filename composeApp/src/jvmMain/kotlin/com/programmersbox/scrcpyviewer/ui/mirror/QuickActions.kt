@@ -955,7 +955,7 @@ fun rememberQuickActions(
                     probe = RootProbe(runner),
                     apps = { apps.listed },
                     tempRoot = databaseTempRoot(serial),
-                    scope = scope,
+                    parentScope = scope,
                     notify = { msg -> currentNotify(msg) },
                     launch = { app -> apps.onEvent(AppsEvent.Launch(app)) },
                 )

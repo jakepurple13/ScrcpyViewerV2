@@ -29,7 +29,7 @@ class QuickActionsDatabaseTest {
         val device = FakeDevice(Files.createTempDirectory(temp, "fx"), "CREATE TABLE t (v TEXT)")
         val db = DatabaseController(
             devices = device, probe = FakeProbe(root), apps = { listOf(NOTES) }, tempRoot = temp.resolve("work"),
-            scope = kotlinx.coroutines.CoroutineScope(dispatcher), notify = {}, launch = {}, io = dispatcher,
+            parentScope = kotlinx.coroutines.CoroutineScope(dispatcher), notify = {}, launch = {}, io = dispatcher,
         )
         val memory = QuickActionsMemory()
         return Fixture(QuickActions(device = null, scope = backgroundScope, memory = memory, database = db) {}, db, memory)

@@ -45,9 +45,14 @@ open class DeviceDatabases(
         val names = listOfNotNull(db.name, if (db.walSize != null) "${db.name}-wal" else null, if (db.hasShm) "${db.name}-shm" else null)
         for (suffix in listOf("-wal", "-shm")) Files.deleteIfExists(into.resolve(db.name + suffix))
         for (name in names) {
+            // The stream gives no exit status: a size taken just before it catches a copy cut short.
+            val expected = runner.run(access.wrap("stat -c %s " + shellQuote("databases/$name"))).output.trim().toLongOrNull()
+            val target = into.resolve(name)
             adb.openExecStream(serial, access.wrap("cat " + shellQuote("databases/$name"))).use { input ->
-                Files.copy(input, into.resolve(name), StandardCopyOption.REPLACE_EXISTING)
+                Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING)
             }
+            val got = Files.size(target)
+            if (expected != null && got != expected) throw IOException("Copying $name was cut short ($got of $expected bytes). Pull again.")
         }
         into.resolve(db.name)
     }
@@ -70,8 +75,10 @@ open class DeviceDatabases(
         val push = adb.exec("-s", serial, "push", local.toString(), remote)
         if (push.exitCode != 0) throw IOException(push.stderr.ifBlank { push.stdout }.trim().ifEmpty { "adb push failed" })
         try {
-            checked(access.wrap("cat ${shellQuote(remote)} > ${shellQuote("databases/$db")}"))
-            checked(access.wrap("rm -f ${shellQuote("databases/$db-wal")} ${shellQuote("databases/$db-shm")}"))
+            // One command, journals first: an old -wal or hot -journal left beside the new file would be replayed into
+            // it on the next open. The pulled copy already holds what the WAL had (the fingerprint check saw to it).
+            val journals = listOf("-wal", "-shm", "-journal").joinToString(" ") { shellQuote("databases/$db$it") }
+            checked(access.wrap("rm -f $journals && cat ${shellQuote(remote)} > ${shellQuote("databases/$db")}"))
         } finally {
             runner.run("rm -f ${shellQuote(remote)}")
         }

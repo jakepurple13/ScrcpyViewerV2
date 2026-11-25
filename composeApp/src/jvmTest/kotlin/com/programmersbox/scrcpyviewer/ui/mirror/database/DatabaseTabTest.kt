@@ -41,7 +41,7 @@ internal fun notesController(running: Boolean = false, root: RootState = RootSta
     ).apply { this.running = running }
     val controller = DatabaseController(
         devices = device, probe = FakeProbe(root), apps = { listOf(DEBUG_APP, RELEASE_APP) }, tempRoot = temp.resolve("work"),
-        scope = CoroutineScope(Dispatchers.Unconfined), notify = {}, launch = {}, io = Dispatchers.Unconfined,
+        parentScope = CoroutineScope(Dispatchers.Unconfined), notify = {}, launch = {}, io = Dispatchers.Unconfined,
     )
     return controller to device
 }

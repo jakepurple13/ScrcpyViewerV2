@@ -40,6 +40,8 @@ internal class FakeDevice(private val fixtureDir: Path, vararg schema: String) :
     var running = false
     var fingerprints = ArrayDeque(listOf("100:1"))
     var writeFails: IOException? = null
+    var fingerprintFails: Throwable? = null
+    var writeGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     private val fixture: Path = fixtureDir.resolve("fixture.db").also { f ->
         DriverManager.getConnection("jdbc:sqlite:$f").use { c -> c.createStatement().use { s -> schema.forEach(s::execute) } }
     }
@@ -55,7 +57,7 @@ internal class FakeDevice(private val fixtureDir: Path, vararg schema: String) :
         return Files.copy(fixture, into.resolve(db.name), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
     }
 
-    override suspend fun fingerprint(access: AppDataAccess, db: String): String =
+    override suspend fun fingerprint(access: AppDataAccess, db: String): String = fingerprintFails?.let { throw it } ?:
         (if (fingerprints.size > 1) fingerprints.removeFirst() else fingerprints.first()).also { calls += "fingerprint" }
 
     override suspend fun isRunning(pkg: String) = running.also { calls += "pidof" }
@@ -66,6 +68,7 @@ internal class FakeDevice(private val fixtureDir: Path, vararg schema: String) :
 
     override suspend fun write(access: AppDataAccess, db: String, local: Path) {
         calls += "write"
+        writeGate?.await()
         writeFails?.let { throw it }
     }
 }
@@ -86,11 +89,15 @@ class DatabaseControllerTest {
     private val toasts = mutableListOf<String>()
     private val launched = mutableListOf<String>()
 
-    private fun TestScope.controller(device: FakeDevice, probe: FakeProbe = FakeProbe(RootState.None)): DatabaseController {
+    private fun TestScope.controller(
+        device: FakeDevice,
+        probe: FakeProbe = FakeProbe(RootState.None),
+        parent: kotlinx.coroutines.Job = kotlinx.coroutines.Job(),
+    ): DatabaseController {
         val dispatcher = StandardTestDispatcher(testScheduler)
         return DatabaseController(
             devices = device, probe = probe, apps = { listOf(NOTES, CHROME) }, tempRoot = temp.resolve("work"),
-            scope = CoroutineScope(dispatcher), notify = { toasts += it }, launch = { launched += it.packageName; device.calls += "launch" },
+            parentScope = CoroutineScope(dispatcher + parent), notify = { toasts += it }, launch = { launched += it.packageName; device.calls += "launch" },
             clock = { LocalTime.of(9, 21) }, io = dispatcher,
         )
     }
@@ -113,7 +120,7 @@ class DatabaseControllerTest {
         assertEquals(SyncStatus.Pulled(LocalTime.of(9, 21)), c.sync)
         assertEquals("notes", c.table)
         assertEquals(2, c.page?.rows?.size)
-        assertEquals(listOf("list run-as", "pull notes.db", "fingerprint"), device.calls)
+        assertEquals(listOf("list run-as", "fingerprint", "pull notes.db", "fingerprint"), device.calls)
     }
 
     @Test
@@ -207,7 +214,7 @@ class DatabaseControllerTest {
 
     @Test
     fun conflictWhenFingerprintChanged() = runTest {
-        val device = notesDevice().apply { fingerprints = ArrayDeque(listOf("100:1", "120:2")) }
+        val device = notesDevice().apply { fingerprints = ArrayDeque(listOf("100:1", "100:1", "120:2")) }
         val c = controller(device)
         c.pick(NOTES)
         advanceUntilIdle()
@@ -227,7 +234,7 @@ class DatabaseControllerTest {
 
     @Test
     fun pullAgainDropsEdits() = runTest {
-        val device = notesDevice().apply { fingerprints = ArrayDeque(listOf("100:1", "120:2")) }
+        val device = notesDevice().apply { fingerprints = ArrayDeque(listOf("100:1", "100:1", "120:2")) }
         val c = controller(device)
         c.pick(NOTES)
         advanceUntilIdle()
@@ -305,5 +312,114 @@ class DatabaseControllerTest {
         c.dock()
         assertFalse(c.popped)
         assertEquals(1, docked)
+    }
+
+    @Test
+    fun pullRetriesWhenTheAppWritesDuringIt() = runTest {
+        val device = notesDevice().apply { fingerprints = ArrayDeque(listOf("1", "2", "2")) }
+        val c = controller(device)
+        c.pick(NOTES)
+        advanceUntilIdle()
+        assertEquals(2, device.calls.count { it == "pull notes.db" })
+        assertIs<SyncStatus.Pulled>(c.sync)
+    }
+
+    @Test
+    fun pullFailsWhenTheAppKeepsWriting() = runTest {
+        val device = notesDevice().apply { fingerprints = ArrayDeque((1..20).map { "$it" }) }
+        val c = controller(device)
+        c.pick(NOTES)
+        advanceUntilIdle()
+        val sync = assertIs<SyncStatus.Failed>(c.sync)
+        assertTrue("is writing" in sync.message, sync.message)
+        assertNull(c.page)
+    }
+
+    @Test
+    fun writeAnywayStopsAnAppThatStartedMeanwhile() = runTest {
+        val device = notesDevice().apply { fingerprints = ArrayDeque(listOf("1", "1", "2")) }
+        val c = controller(device)
+        c.pick(NOTES)
+        advanceUntilIdle()
+        c.setCell(0, 2, SqlValue.Integer(0))
+        advanceUntilIdle()
+        c.requestWrite()
+        advanceUntilIdle()
+        c.confirmWrite(relaunch = false)
+        advanceUntilIdle()
+        assertEquals(WriteDialog.Conflict("Notes"), c.dialog)
+        device.running = true
+        c.writeAnyway()
+        advanceUntilIdle()
+        assertEquals(listOf("pidof", "stop", "write", "fingerprint"), device.calls.takeLast(4))
+    }
+
+    @Test
+    fun closeDeletesAtOnceAndAStaleFolderIsSweptOnStart() = runTest {
+        val stale = Files.createDirectories(temp.resolve("work").resolve("old.app"))
+        val c = controller(notesDevice())
+        assertFalse(stale.exists(), "a previous run's copies are gone")
+        c.pick(NOTES)
+        advanceUntilIdle()
+        assertTrue(temp.resolve("work").exists())
+        c.close()
+        assertFalse(temp.resolve("work").exists(), "deleted without waiting for the scope")
+    }
+
+    @Test
+    fun anUnexpectedErrorFailsTheSyncButNotTheWindowScope() = runTest {
+        val device = notesDevice()
+        val parent = kotlinx.coroutines.Job()
+        val c = controller(device, parent = parent)
+        c.pick(NOTES)
+        advanceUntilIdle()
+        c.setCell(0, 2, SqlValue.Integer(0))
+        advanceUntilIdle()
+        c.requestWrite()
+        advanceUntilIdle()
+        device.fingerprintFails = IllegalStateException("boom")
+        c.confirmWrite(relaunch = false)
+        advanceUntilIdle()
+        assertTrue(parent.isActive, "the mirror window's scope survives")
+        assertIs<SyncStatus.Failed>(c.sync)
+        assertEquals(1, c.staged)
+    }
+
+    @Test
+    fun editsWaitWhileWriting() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val device = notesDevice().apply { writeGate = gate }
+        val c = controller(device)
+        c.pick(NOTES)
+        advanceUntilIdle()
+        c.setCell(0, 2, SqlValue.Integer(0))
+        advanceUntilIdle()
+        c.requestWrite()
+        advanceUntilIdle()
+        c.confirmWrite(relaunch = false)
+        advanceUntilIdle()
+        assertEquals(SyncStatus.Writing, c.sync)
+        c.setCell(1, 1, SqlValue.Text("during"))
+        c.runQuery("UPDATE notes SET title = 'x'")
+        c.discard()
+        advanceUntilIdle()
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertIs<SyncStatus.Written>(c.sync)
+        assertEquals(0, c.staged)
+        assertEquals(SqlValue.Text("Release"), c.page!!.rows[1].values[1])
+    }
+
+    @Test
+    fun anEditKeepsItsTableAndBlocksASwitchUntilItLands() = runTest {
+        val c = controller(notesDevice())
+        c.pick(NOTES)
+        advanceUntilIdle()
+        c.setCell(0, 2, SqlValue.Integer(0))
+        c.selectTable("android_metadata")
+        advanceUntilIdle()
+        assertEquals("notes", c.table)
+        assertEquals(listOf("Write or discard staged changes first"), toasts)
+        assertEquals(SqlValue.Integer(0), c.page!!.rows[0].values[2])
     }
 }

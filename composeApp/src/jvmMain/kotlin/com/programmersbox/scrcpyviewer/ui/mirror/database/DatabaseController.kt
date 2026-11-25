@@ -19,7 +19,11 @@ import com.programmersbox.scrcpyviewer.database.SqlValue
 import com.programmersbox.scrcpyviewer.database.SuStyle
 import com.programmersbox.scrcpyviewer.database.TableInfo
 import com.programmersbox.scrcpyviewer.database.accessFor
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -68,12 +72,29 @@ class DatabaseController(
     /** The device's apps for the app picker; null until the Apps tab has listed them. */
     val apps: () -> List<DeviceApp>?,
     private val tempRoot: Path,
-    private val scope: CoroutineScope,
+    parentScope: CoroutineScope,
     private val notify: (String) -> Unit,
     private val launch: (DeviceApp) -> Unit,
     private val clock: () -> LocalTime = LocalTime::now,
     private val io: CoroutineContext = Dispatchers.IO,
 ) {
+    /**
+     * A child of the window's scope that one failure can't cancel: an unexpected error fails the sync line instead
+     * of taking down the Apps, Logcat and Shell work that shares the window's scope.
+     */
+    private val scope = CoroutineScope(
+        parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]) +
+            CoroutineExceptionHandler { _, e ->
+                local?.reopen()
+                sync = SyncStatus.Failed(e.message ?: e.toString())
+            },
+    )
+
+    init {
+        // A previous run that quit without closing left its copies of apps' private data here.
+        sweep()
+    }
+
     var root by mutableStateOf(RootState.Unknown)
         private set
     private var su: SuStyle? = null
@@ -142,6 +163,9 @@ class DatabaseController(
     private var pulledFingerprint: String? = null
     private var relaunchAfter = false
     private var appRunning = false
+
+    /** Edits launched but not yet run: they count as staged for the guard, so a quick switch can't strand one. */
+    private var pendingEdits = 0
     private val lock = Mutex()
 
     /** Detects root once, silently. */
@@ -202,20 +226,23 @@ class DatabaseController(
         val p = page ?: return
         val key = p.rows.getOrNull(row)?.key ?: return
         val name = p.columns[column].name
-        edit { db ->
-            db.setCell(table!!, key, name, value)
-            edited = edited + (key to name)
-        }
+        val t = table ?: return
+        edit({ db -> db.setCell(t, key, name, value) }) { edited = edited + (key to name) }
     }
 
-    fun insertRow() = edit { db -> db.insertRow(table!!) }
+    fun insertRow() {
+        val t = table ?: return
+        edit({ db -> db.insertRow(t) })
+    }
 
     fun deleteRow(row: Int) {
         val key = page?.rows?.getOrNull(row)?.key ?: return
-        edit { db -> db.deleteRow(table!!, key) }
+        val t = table ?: return
+        edit({ db -> db.deleteRow(t, key) })
     }
 
     fun runQuery(sql: String) {
+        if (busy) return
         scope.launch {
             val db = local ?: return@launch
             val outcome = withDb { db.execute(sql) }
@@ -225,6 +252,7 @@ class DatabaseController(
     }
 
     fun discard() {
+        if (busy) return
         scope.launch {
             val db = local ?: return@launch
             withDb { db.discard() }
@@ -266,11 +294,13 @@ class DatabaseController(
                     dialog = WriteDialog.Conflict(target.label)
                     return@launch
                 }
-            } catch (e: IOException) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 sync = SyncStatus.Failed(e.message ?: "Couldn't reach the device")
                 return@launch
             }
-            write(target, route, name)
+            write(target, route, name, stopped = appRunning)
         }
     }
 
@@ -280,7 +310,7 @@ class DatabaseController(
         val route = access ?: return
         val name = db ?: return
         dialog = null
-        scope.launch { write(target, route, name) }
+        scope.launch { write(target, route, name, stopped = false) }
     }
 
     /** Drops the staged changes and pulls the device's copy again. */
@@ -308,21 +338,24 @@ class DatabaseController(
         raiseRequests++
     }
 
-    /** Closes the copy and deletes this window's temp files. */
-    @OptIn(ExperimentalPathApi::class)
+    /**
+     * Closes the copy and deletes this window's temp files at once: called while the window's scope is being
+     * cancelled, so nothing launched here would run.
+     */
     fun close() {
         val db = local
         local = null
-        scope.launch(io) {
-            lock.withLock {
-                db?.close()
-                runCatching { tempRoot.deleteRecursively() }
-            }
-        }
+        runCatching { db?.close() }
+        sweep()
+    }
+
+    @OptIn(ExperimentalPathApi::class)
+    private fun sweep() {
+        runCatching { tempRoot.deleteRecursively() }
     }
 
     private fun blockedByStaged(): Boolean {
-        if (staged == 0) return false
+        if (staged == 0 && pendingEdits == 0) return false
         notify(STAGED_GUARD)
         return true
     }
@@ -382,11 +415,24 @@ class DatabaseController(
         sync = SyncStatus.Pulling(route.label)
         try {
             val dir = tempRoot.resolve(target.packageName).resolve(name)
-            val opened = withContext(io) {
-                val pulled = devices.pull(route, entry, dir.resolve("pulled"))
-                pulledFingerprint = devices.fingerprint(route, name)
-                LocalDatabase.open(pulled, dir.resolve("work"))
+            // The app may write while the files stream: a copy is kept only when the database looked the same before
+            // and after it. Otherwise the copy may be torn, and writing it back would corrupt the app's data.
+            var pulled: Path? = null
+            for (attempt in 1..PULL_ATTEMPTS) {
+                val before = withContext(io) { devices.fingerprint(route, name) }
+                val file = withContext(io) { devices.pull(route, entry, dir.resolve("pulled")) }
+                val after = withContext(io) { devices.fingerprint(route, name) }
+                if (before == after) {
+                    pulledFingerprint = after
+                    pulled = file
+                    break
+                }
             }
+            if (pulled == null) {
+                sync = SyncStatus.Failed("${target.label} is writing to $name. Stop the app, then pull again.")
+                return
+            }
+            val opened = withContext(io) { LocalDatabase.open(pulled, dir.resolve("work")) }
             local = opened
             val list = withDb { opened.tables() }
             tables = list
@@ -404,10 +450,14 @@ class DatabaseController(
         }
     }
 
-    private suspend fun write(target: DeviceApp, route: AppDataAccess, name: String) {
+    /** Writes the copy back. Unless the app was [stopped] just now, it is checked again: it may have started since. */
+    private suspend fun write(target: DeviceApp, route: AppDataAccess, name: String, stopped: Boolean) {
         val db = local ?: return
         sync = SyncStatus.Writing
         try {
+            if (!stopped && withContext(io) { devices.isRunning(target.packageName) }) {
+                withContext(io) { devices.forceStop(target.packageName) }
+            }
             val file = withDb { db.prepareForWrite() }
             withContext(io) { devices.write(route, name, file) }
             withDb { db.markWritten() }
@@ -416,21 +466,30 @@ class DatabaseController(
             afterChange()
             sync = SyncStatus.Written(clock())
             if (relaunchAfter) launch(target)
-        } catch (e: IOException) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The device copy may be partly written; the local copy and its staged changes are kept for another try.
             withDb { db.reopen() }
             sync = SyncStatus.Failed(e.message ?: "Couldn't write $name")
         }
     }
 
-    private fun edit(change: suspend (LocalDatabase) -> Unit) {
+    /** Runs [change] on the copy (not while pulling or writing), then [after] on [scope] when it worked. */
+    private fun edit(change: (LocalDatabase) -> Unit, after: () -> Unit = {}) {
+        if (busy) return
+        val db = local ?: return
+        pendingEdits++
         scope.launch {
-            val db = local ?: return@launch
             try {
                 withDb { change(db) }
+                after()
             } catch (e: SQLException) {
                 notify(e.message ?: "SQLite refused the change")
             } catch (e: IllegalArgumentException) {
                 notify(e.message ?: "That cell can't be edited")
+            } finally {
+                pendingEdits--
             }
             afterChange()
         }
@@ -439,10 +498,15 @@ class DatabaseController(
     /** Re-reads the staged count, table list, page and structure after anything that may have changed them. */
     private suspend fun afterChange() {
         val db = local ?: return
-        val list = withDb { db.tables() }
-        tables = list
-        log = withDb { db.log }
-        staged = log.size
+        try {
+            val list = withDb { db.tables() }
+            tables = list
+            log = withDb { db.log }
+            staged = log.size
+        } catch (e: SQLException) {
+            notify(e.message ?: "Couldn't read the database")
+            return
+        }
         reloadTable()
     }
 
@@ -456,8 +520,12 @@ class DatabaseController(
             pageError = e.message ?: "Bad filter"
         }
         val route = access
-        structure = withDb {
-            TableStructure(db.ddl(name), db.indexes(name), "/data/data/${app?.packageName}/databases/${this.db}", db.journalMode(), route?.label.orEmpty())
+        structure = try {
+            withDb {
+                TableStructure(db.ddl(name), db.indexes(name), "/data/data/${app?.packageName}/databases/${this.db}", db.journalMode(), route?.label.orEmpty())
+            }
+        } catch (_: SQLException) {
+            null
         }
     }
 
@@ -471,5 +539,6 @@ class DatabaseController(
 
     companion object {
         const val STAGED_GUARD = "Write or discard staged changes first"
+        private const val PULL_ATTEMPTS = 3
     }
 }

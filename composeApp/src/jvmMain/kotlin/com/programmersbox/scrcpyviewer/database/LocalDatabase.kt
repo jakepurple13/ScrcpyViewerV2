@@ -114,6 +114,12 @@ class LocalDatabase private constructor(private val workDir: Path) : AutoCloseab
 
     /** Folds the WAL into `work.db` and closes it; returns the file to copy to the device. Follow with [markWritten] or [reopen]. */
     fun prepareForWrite(): Path {
+        // A BEGIN typed in the Query view would otherwise be rolled back by the close below, losing staged changes.
+        try {
+            connection.createStatement().use { it.execute("COMMIT") }
+        } catch (_: SQLException) {
+            // No transaction was open.
+        }
         query("PRAGMA wal_checkpoint(TRUNCATE)") { }
         connection.close()
         return work

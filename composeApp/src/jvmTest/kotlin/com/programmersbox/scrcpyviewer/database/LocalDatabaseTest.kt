@@ -154,6 +154,29 @@ class LocalDatabaseTest {
     }
 
     @Test
+    fun aTruncatedCopyIsRefused() {
+        val whole = fixture("whole.db") {
+            sql("CREATE TABLE t (v TEXT)")
+            autoCommit = false
+            prepareStatement("INSERT INTO t VALUES (?)").use { p -> repeat(2_000) { p.setString(1, "row $it ".repeat(8)); p.addBatch() }; p.executeBatch() }
+            commit()
+        }
+        val bytes = Files.readAllBytes(whole)
+        val cut = Files.write(root.resolve("pulled").resolve("cut.db"), bytes.copyOf(bytes.size / 2))
+        assertFailsWith<java.sql.SQLException> { open(cut) }
+    }
+
+    @Test
+    fun aRawBeginIsCommittedBeforeWriting() {
+        val db = open(notes())
+        db.execute("BEGIN")
+        db.execute("UPDATE notes SET title = 'kept' WHERE id = 1")
+        db.prepareForWrite()
+        db.markWritten()
+        assertEquals(SqlValue.Text("kept"), db.page("notes", "id = 1").rows.single().values[1])
+    }
+
+    @Test
     fun systemTablesAreMarked() {
         val tables = open(notes()).tables().associateBy { it.name }
         assertTrue(tables.getValue("android_metadata").system)

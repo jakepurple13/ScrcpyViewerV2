@@ -99,8 +99,11 @@ class DeviceDatabasesTest {
         assertEquals(listOf(listOf("-s", "serial", "push", local.toString(), "/data/local/tmp/scrcpyvwr-t.db")), adb.execs)
         assertEquals(
             listOf(
-                access.wrap("cat '/data/local/tmp/scrcpyvwr-t.db' > 'databases/notes.db'"),
-                access.wrap("rm -f 'databases/notes.db-wal' 'databases/notes.db-shm'"),
+                // One command: the stale journals go first, so no old WAL is ever left beside the new file.
+                access.wrap(
+                    "rm -f 'databases/notes.db-wal' 'databases/notes.db-shm' 'databases/notes.db-journal' && " +
+                        "cat '/data/local/tmp/scrcpyvwr-t.db' > 'databases/notes.db'",
+                ),
                 "rm -f '/data/local/tmp/scrcpyvwr-t.db'",
             ),
             runner.commands,
@@ -123,6 +126,16 @@ class DeviceDatabasesTest {
         val e = assertFailsWith<IOException> { DeviceDatabases(adb, runner, "serial") { "t.db" }.write(access, "notes.db", local) }
         assertEquals("device offline", e.message)
         assertTrue(runner.commands.none { "cat" in it })
+    }
+
+    @Test
+    fun aPullCutShortFails() = runBlocking {
+        val runner = RecordingRunner { cmd -> if ("stat -c %s" in cmd) ShellResult("10\n", 0, 0) else ShellResult("", 0, 0) }
+        val adb = StreamAdb(mapOf(cat("notes.db") to byteArrayOf(1, 2, 3)))
+        val e = assertFailsWith<IOException> {
+            DeviceDatabases(adb, runner, "serial").pull(access, DeviceDatabase("notes.db", 10, null, false), tmp)
+        }
+        assertTrue("cut short" in e.message!!, e.message)
     }
 
     @Test
