@@ -129,6 +129,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.apps.AppFilter
 import com.programmersbox.scrcpyviewer.apps.DeviceApp
+import com.programmersbox.scrcpyviewer.database.RootState
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
@@ -211,6 +212,7 @@ fun AppsTabContent(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) ->
             },
             uninstall = { onEvent(AppsEvent.Uninstall(it)) },
             showInLogcat = { onEvent(AppsEvent.ShowInLogcat(it)) },
+            showDatabases = { onEvent(AppsEvent.ShowDatabases(it)) },
         )
     }
 
@@ -260,6 +262,7 @@ fun AppsTabContent(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) ->
             onClose = { selected = null },
             actions = actions,
             compact = optionsCompact,
+            root = state.root,
         )
     }
 }
@@ -275,6 +278,7 @@ private class AppActions(
     val copy: (DeviceApp) -> Unit,
     val uninstall: (DeviceApp) -> Unit,
     val showInLogcat: (DeviceApp) -> Unit,
+    val showDatabases: (DeviceApp) -> Unit,
 )
 
 /**
@@ -593,6 +597,7 @@ private fun AppCard(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             if (app.system) SystemBadge(short = true)
+            if (app.debuggable) DebugBadge()
             AnimatedVisibility(
                 visible = logcat,
                 enter = scaleIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate), initialScale = 0.5f) + fadeIn(tween(150)),
@@ -794,6 +799,7 @@ private fun OptionsOverlay(
     onClose: () -> Unit,
     actions: AppActions,
     compact: Boolean,
+    root: RootState,
 ) {
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(visible, enter = fadeIn(tween(OPEN_MILLIS)), exit = fadeOut(tween(CLOSE_MILLIS))) {
@@ -808,7 +814,7 @@ private fun OptionsOverlay(
             enter = slideInVertically(tween(340, easing = EmphasizedDecelerate)) { it },
             exit = slideOutVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { it },
         ) {
-            if (app != null) OptionsSheet(app, icon, confirm, onConfirmChange, onClose, actions, compact)
+            if (app != null) OptionsSheet(app, icon, confirm, onConfirmChange, onClose, actions, compact, root)
         }
     }
 }
@@ -831,6 +837,7 @@ private fun AnimatedVisibilityScope.OptionsSheet(
     onClose: () -> Unit,
     actions: AppActions,
     compact: Boolean,
+    root: RootState,
 ) {
     val colors = MaterialTheme.colorScheme
     val reduceMotion = LocalReduceMotion.current
@@ -884,6 +891,7 @@ private fun AnimatedVisibilityScope.OptionsSheet(
                 ) {
                     InfoBox("Version name", app.versionName ?: "Unknown", Modifier.weight(1f).then(glide))
                     InfoBox("Version code", app.versionCode?.toString() ?: "Unknown", Modifier.weight(1f).then(glide), mono = true)
+                    DataAccessBox(app, root, motion = !reduceMotion, Modifier.weight(1f).then(glide))
                 }
             }
         }
@@ -900,7 +908,7 @@ private fun AnimatedVisibilityScope.OptionsSheet(
             if (confirming) {
                 ConfirmUninstall(app, onCancel = { onConfirmChange(false) }, onConfirm = { onClose(); actions.uninstall(app) })
             } else {
-                ActionButtons(app, actions, compact, reduceMotion, onClose, onAskUninstall = { onConfirmChange(true) })
+                ActionButtons(app, actions, compact, reduceMotion, onClose, onAskUninstall = { onConfirmChange(true) }, root = root)
             }
         }
     }
@@ -935,6 +943,7 @@ private fun ActionButtons(
     reduceMotion: Boolean,
     onClose: () -> Unit,
     onAskUninstall: () -> Unit,
+    root: RootState,
 ) {
     val colors = MaterialTheme.colorScheme
     var copied by remember { mutableStateOf(false) }
@@ -978,19 +987,18 @@ private fun ActionButtons(
                 }
             }
         }
-        // Under the row: a fifth square would squeeze every label at the Apps tab's default width. The styled button, by
-        // its full name: the confirm step below needs Material's, whose error colors the styled one would override.
-        com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton(
-            onClick = {
+        // Under the row: a fifth and sixth square would squeeze every label at the Apps tab's default width.
+        LogcatAndDatabases(
+            app, root, compact,
+            onLogcat = {
                 onClose()
                 actions.showInLogcat(app)
             },
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        ) {
-            Icon(Icons.AutoMirrored.Filled.ListAlt, contentDescription = null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Show in Logcat")
-        }
+            onDatabases = {
+                onClose()
+                actions.showDatabases(app)
+            },
+        )
     }
 }
 

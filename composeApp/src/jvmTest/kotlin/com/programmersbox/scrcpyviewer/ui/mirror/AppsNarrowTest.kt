@@ -48,13 +48,13 @@ class AppsNarrowTest {
 
     private class Content(widthDp: Int, apps: List<DeviceApp>, reduceMotion: Boolean) {
         var width by mutableStateOf(widthDp)
-        val driver = SceneDriver(ImageComposeScene(480, 600, Density(1f)) {
+        val driver = SceneDriver(ImageComposeScene(480, 800, Density(1f)) {
             CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
                 ScrcpyViewerTheme(ThemeMode.Light) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                         // The outer box frees the inner one from the scene's tight constraints.
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
-                            Box(Modifier.width(width.dp).height(600.dp)) {
+                            Box(Modifier.width(width.dp).height(800.dp)) {
                                 AppsTabContent(AppsUiState(apps = apps), enabled = true, onEvent = {})
                             }
                         }
