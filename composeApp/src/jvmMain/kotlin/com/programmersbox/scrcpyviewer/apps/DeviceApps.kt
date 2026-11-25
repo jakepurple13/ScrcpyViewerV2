@@ -14,6 +14,8 @@ data class DeviceApp(
     /** Null when `dumpsys package` did not report it. */
     val versionName: String?,
     val versionCode: Long?,
+    /** A debug build (`DEBUGGABLE` in `dumpsys package`'s pkgFlags): `run-as` reaches its data. */
+    val debuggable: Boolean = false,
 )
 
 /** Which apps the Apps tab shows. */
