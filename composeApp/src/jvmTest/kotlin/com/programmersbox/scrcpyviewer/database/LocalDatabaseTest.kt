@@ -176,6 +176,31 @@ class LocalDatabaseTest {
         assertEquals(SqlValue.Text("kept"), db.page("notes", "id = 1").rows.single().values[1])
     }
 
+    private fun required(): Path = fixture {
+        sql("CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, folder_id INTEGER, pinned INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)")
+    }
+
+    @Test
+    fun columnsReportDefaultsAndTheRowidAlias() {
+        val cols = open(required()).columns("notes").associateBy { it.name }
+        assertTrue(cols.getValue("id").rowidAlias)
+        assertFalse(cols.getValue("title").rowidAlias)
+        assertEquals("0", cols.getValue("pinned").default)
+        assertEquals(null, cols.getValue("title").default)
+        assertTrue(cols.getValue("updated_at").notNull)
+    }
+
+    @Test
+    fun insertRowWithValuesFillsRequiredColumns() {
+        val db = open(required())
+        assertFailsWith<java.sql.SQLException> { db.insertRow("notes") }
+        val key = db.insertRow("notes", mapOf("title" to SqlValue.Text("Milk"), "updated_at" to SqlValue.Integer(5)))
+        assertEquals(RowKey.Rowid(1), key)
+        val row = db.page("notes").rows.single().values
+        assertEquals(listOf(SqlValue.Integer(1), SqlValue.Text("Milk"), SqlValue.Null, SqlValue.Integer(0), SqlValue.Integer(5)), row)
+        assertEquals("INSERT INTO \"notes\" (\"title\", \"updated_at\") VALUES ('Milk', 5);", db.log.single())
+    }
+
     @Test
     fun systemTablesAreMarked() {
         val tables = open(notes()).tables().associateBy { it.name }

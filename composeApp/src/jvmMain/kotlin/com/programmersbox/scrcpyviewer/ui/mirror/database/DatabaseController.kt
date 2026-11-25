@@ -230,9 +230,10 @@ class DatabaseController(
         edit({ db -> db.setCell(t, key, name, value) }) { edited = edited + (key to name) }
     }
 
-    fun insertRow() {
+    /** Adds a row to the open table with [values]; columns left out take their defaults. */
+    fun insertRow(values: Map<String, SqlValue>) {
         val t = table ?: return
-        edit({ db -> db.insertRow(t) })
+        edit({ db -> db.insertRow(t, values) })
     }
 
     fun deleteRow(row: Int) {

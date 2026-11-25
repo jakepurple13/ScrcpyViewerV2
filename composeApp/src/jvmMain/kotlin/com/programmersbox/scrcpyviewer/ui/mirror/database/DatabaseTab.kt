@@ -433,6 +433,8 @@ private fun BrowseView(controller: DatabaseController, motion: Boolean) {
     val colors = MaterialTheme.colorScheme
     val page = controller.page
     var where by remember(controller.table) { mutableStateOf(controller.where) }
+    var adding by remember(controller.table) { mutableStateOf(false) }
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text("WHERE", style = Mono.copy(fontWeight = FontWeight.SemiBold), color = colors.tertiary)
@@ -450,7 +452,7 @@ private fun BrowseView(controller: DatabaseController, motion: Boolean) {
                 singleLine = true, textStyle = Mono.copy(color = colors.onSurface), cursorBrush = SolidColor(colors.primary),
             )
             if (page?.editable == true) {
-                TextButton(onClick = controller::insertRow) {
+                TextButton(onClick = { adding = true }) {
                     Icon(Icons.Filled.Add, contentDescription = null, Modifier.size(16.dp))
                     Text("Row")
                 }
@@ -486,6 +488,18 @@ private fun BrowseView(controller: DatabaseController, motion: Boolean) {
             // Room for the staged bar over the footer.
             Spacer(Modifier.height(if (controller.staged > 0) 64.dp else 0.dp))
         }
+    }
+        AddRowSheet(
+            visible = adding && page != null,
+            table = controller.table.orEmpty(),
+            columns = page?.columns.orEmpty(),
+            motion = motion,
+            onAdd = {
+                adding = false
+                controller.insertRow(it)
+            },
+            onCancel = { adding = false },
+        )
     }
 }
 

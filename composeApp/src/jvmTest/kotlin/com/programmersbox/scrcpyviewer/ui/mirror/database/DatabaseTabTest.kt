@@ -34,7 +34,7 @@ internal fun notesController(running: Boolean = false, root: RootState = RootSta
     val temp = Files.createTempDirectory("dbtab")
     val device = FakeDevice(
         Files.createTempDirectory(temp, "fx"),
-        "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT, pinned INTEGER)",
+        "CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT NOT NULL, pinned INTEGER NOT NULL DEFAULT 0)",
         "INSERT INTO notes VALUES (1,'Grocery run',1),(2,'Release',0),(3,'Gift ideas',1)",
         "CREATE TABLE trace (id INTEGER PRIMARY KEY, msg TEXT)",
         "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200) INSERT INTO trace SELECT i, 'line ' || i FROM n",
@@ -99,6 +99,42 @@ class DatabaseTabTest {
         assertEquals(1, c.staged)
         assertNotNull(d.node("Released"))
         assertNotNull(d.node("1 change staged in notes.db"))
+        d.scene.close()
+    }
+
+    @Test
+    fun `+ Row opens a form that needs the required columns before it adds`() = onEdt {
+        val (c, _) = notesController()
+        c.pick(DEBUG_APP)
+        val d = dataScene(c)
+        d.click("Row")
+        d.frames(30)
+        assertNotNull(d.node("New row in notes"))
+        assertNotNull(d.nodeContaining("required"), "title is marked required")
+        d.click("Add row")
+        d.frames(5)
+        assertEquals(0, c.staged, "Add waits for title")
+        d.type("Milk") // the first required field has focus
+        d.frames(5)
+        d.click("Add row")
+        d.frames(30)
+        assertNull(d.node("New row in notes"), "the sheet closes")
+        assertEquals(1, c.staged)
+        assertNotNull(d.node("Milk"))
+        d.scene.close()
+    }
+
+    @Test
+    fun `Cancel closes the form without adding`() = onEdt {
+        val (c, _) = notesController()
+        c.pick(DEBUG_APP)
+        val d = dataScene(c)
+        d.click("Row")
+        d.frames(30)
+        d.click("Cancel")
+        d.frames(30)
+        assertNull(d.node("New row in notes"))
+        assertEquals(0, c.staged)
         d.scene.close()
     }
 

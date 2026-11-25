@@ -34,8 +34,16 @@ class LocalDatabase private constructor(private val workDir: Path) : AutoCloseab
         )
     }
 
-    fun columns(table: String): List<ColumnInfo> = query("PRAGMA table_info(${sqlIdentifier(table)})") { rs ->
-        ColumnInfo(rs.getString("name"), rs.getString("type").orEmpty(), rs.getInt("pk"), rs.getInt("notnull") != 0)
+    fun columns(table: String): List<ColumnInfo> {
+        val raw = query("PRAGMA table_info(${sqlIdentifier(table)})") { rs ->
+            ColumnInfo(rs.getString("name"), rs.getString("type").orEmpty(), rs.getInt("pk"), rs.getInt("notnull") != 0, rs.getString("dflt_value"))
+        }
+        val (kind, sql) = query("SELECT type, sql FROM sqlite_master WHERE name = ${sqlLiteral(SqlValue.Text(table))}") {
+            it.getString(1) to it.getString(2).orEmpty()
+        }.firstOrNull() ?: ("table" to "")
+        val hasRowid = kind == "table" && !WITHOUT_ROWID.containsMatchIn(sql)
+        val alias = raw.singleOrNull { it.pk > 0 }?.takeIf { it.type.equals("INTEGER", ignoreCase = true) && hasRowid }
+        return raw.map { if (it === alias) it.copy(rowidAlias = true) else it }
     }
 
     /** Up to [limit] rows of [table] from [offset], filtered by a WHERE clause body; a bad [where] throws [SQLException]. */
@@ -65,9 +73,16 @@ class LocalDatabase private constructor(private val workDir: Path) : AutoCloseab
         run("UPDATE ${sqlIdentifier(table)} SET ${sqlIdentifier(column)} = ${sqlLiteral(value)} WHERE ${keyClause(key)};")
     }
 
-    /** Adds a row of default values and returns its key. */
-    fun insertRow(table: String): RowKey {
-        run("INSERT INTO ${sqlIdentifier(table)} DEFAULT VALUES;")
+    /** Adds a row with [values] (other columns take their defaults or NULL) and returns its key. */
+    fun insertRow(table: String, values: Map<String, SqlValue> = emptyMap()): RowKey {
+        run(
+            if (values.isEmpty()) {
+                "INSERT INTO ${sqlIdentifier(table)} DEFAULT VALUES;"
+            } else {
+                "INSERT INTO ${sqlIdentifier(table)} (${values.keys.joinToString(", ") { sqlIdentifier(it) }}) " +
+                    "VALUES (${values.values.joinToString(", ") { sqlLiteral(it) }});"
+            },
+        )
         return RowKey.Rowid(query("SELECT last_insert_rowid()") { it.getLong(1) }.single())
     }
 

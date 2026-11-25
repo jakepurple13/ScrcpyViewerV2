@@ -30,8 +30,21 @@ sealed interface RowKey {
 /** A table or view in the copy. [system] marks SQLite's and Android's bookkeeping tables. */
 data class TableInfo(val name: String, val rows: Long, val system: Boolean, val view: Boolean, val withoutRowid: Boolean)
 
-/** One column from `PRAGMA table_info`; [pk] is its place in the primary key, 0 when it isn't part of it. */
-data class ColumnInfo(val name: String, val type: String, val pk: Int, val notNull: Boolean)
+/**
+ * One column from `PRAGMA table_info`; [pk] is its place in the primary key, 0 when it isn't part of it. [default] is
+ * its DEFAULT expression as written (null: none). [rowidAlias]: an INTEGER PRIMARY KEY, which SQLite fills in itself.
+ */
+data class ColumnInfo(
+    val name: String,
+    val type: String,
+    val pk: Int,
+    val notNull: Boolean,
+    val default: String? = null,
+    val rowidAlias: Boolean = false,
+) {
+    /** A new row needs a value here: NOT NULL with no default, and not filled in by SQLite. */
+    val required: Boolean get() = notNull && default == null && !rowidAlias
+}
 
 /** One row of a [Page]; [key] is null for a view, which can't be edited. */
 data class Row(val key: RowKey?, val values: List<SqlValue>)
