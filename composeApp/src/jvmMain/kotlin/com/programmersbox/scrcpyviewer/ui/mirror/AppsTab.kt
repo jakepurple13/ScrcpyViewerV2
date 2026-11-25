@@ -35,6 +35,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -129,6 +131,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.programmersbox.scrcpyviewer.apps.AppFilter
 import com.programmersbox.scrcpyviewer.apps.DeviceApp
+import com.programmersbox.scrcpyviewer.database.RootState
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedDecelerate
@@ -170,8 +173,8 @@ private const val STAGGER_MAX_MILLIS = 220L
 /** How long the copy button shows "Copied". */
 private const val COPIED_MILLIS = 1_600L
 
-/** Narrower than this, the three filter chips fold into one chip with a menu. */
-fun appsFiltersCompact(width: Dp): Boolean = width < 400.dp
+/** Narrower than this, the four filter chips fold into one chip with a menu. */
+fun appsFiltersCompact(width: Dp): Boolean = width < 480.dp
 
 /** Narrower than this, the options sheet stacks its version boxes and lays its actions out as a 2 x 2 grid. */
 fun appOptionsCompact(width: Dp): Boolean = width < 360.dp
@@ -211,6 +214,7 @@ fun AppsTabContent(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) ->
             },
             uninstall = { onEvent(AppsEvent.Uninstall(it)) },
             showInLogcat = { onEvent(AppsEvent.ShowInLogcat(it)) },
+            showDatabases = { onEvent(AppsEvent.ShowDatabases(it)) },
         )
     }
 
@@ -260,6 +264,7 @@ fun AppsTabContent(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) ->
             onClose = { selected = null },
             actions = actions,
             compact = optionsCompact,
+            root = state.root,
         )
     }
 }
@@ -275,6 +280,7 @@ private class AppActions(
     val copy: (DeviceApp) -> Unit,
     val uninstall: (DeviceApp) -> Unit,
     val showInLogcat: (DeviceApp) -> Unit,
+    val showDatabases: (DeviceApp) -> Unit,
 )
 
 /**
@@ -363,17 +369,24 @@ internal fun SearchField(query: String, onChange: (String) -> Unit, modifier: Mo
 private fun FilterRow(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent) -> Unit, compact: Boolean, modifier: Modifier = Modifier) {
     val reduceMotion = LocalReduceMotion.current
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // The chips take the room left of Reload and scroll sideways if a wider font still overflows it: Reload stays.
         AnimatedContent(
             targetState = compact,
+            modifier = Modifier.weight(1f),
             transitionSpec = {
                 fadeIn(tween(150)).togetherWith(fadeOut(tween(150)))
                     .using(SizeTransform(clip = false) { _, _ -> if (reduceMotion) snap() else layoutSpring() })
             },
+            contentAlignment = Alignment.CenterStart,
         ) { folded ->
             if (folded) {
                 CompactFilter(state, onEvent)
             } else {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     AppFilter.entries.forEach { filter ->
                         val selected = filter == state.filter
                         FilterChip(
@@ -386,7 +399,6 @@ private fun FilterRow(state: AppsUiState, enabled: Boolean, onEvent: (AppsEvent)
                 }
             }
         }
-        Spacer(Modifier.weight(1f))
         ReloadButton(state.loading, enabled) { onEvent(AppsEvent.Reload) }
     }
 }
@@ -593,6 +605,7 @@ private fun AppCard(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             if (app.system) SystemBadge(short = true)
+            if (app.debuggable) DebugBadge()
             AnimatedVisibility(
                 visible = logcat,
                 enter = scaleIn(tween(OPEN_MILLIS, easing = EmphasizedDecelerate), initialScale = 0.5f) + fadeIn(tween(150)),
@@ -794,6 +807,7 @@ private fun OptionsOverlay(
     onClose: () -> Unit,
     actions: AppActions,
     compact: Boolean,
+    root: RootState,
 ) {
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(visible, enter = fadeIn(tween(OPEN_MILLIS)), exit = fadeOut(tween(CLOSE_MILLIS))) {
@@ -808,7 +822,7 @@ private fun OptionsOverlay(
             enter = slideInVertically(tween(340, easing = EmphasizedDecelerate)) { it },
             exit = slideOutVertically(tween(CLOSE_MILLIS, easing = EmphasizedAccelerate)) { it },
         ) {
-            if (app != null) OptionsSheet(app, icon, confirm, onConfirmChange, onClose, actions, compact)
+            if (app != null) OptionsSheet(app, icon, confirm, onConfirmChange, onClose, actions, compact, root)
         }
     }
 }
@@ -831,6 +845,7 @@ private fun AnimatedVisibilityScope.OptionsSheet(
     onClose: () -> Unit,
     actions: AppActions,
     compact: Boolean,
+    root: RootState,
 ) {
     val colors = MaterialTheme.colorScheme
     val reduceMotion = LocalReduceMotion.current
@@ -884,6 +899,7 @@ private fun AnimatedVisibilityScope.OptionsSheet(
                 ) {
                     InfoBox("Version name", app.versionName ?: "Unknown", Modifier.weight(1f).then(glide))
                     InfoBox("Version code", app.versionCode?.toString() ?: "Unknown", Modifier.weight(1f).then(glide), mono = true)
+                    DataAccessBox(app, root, motion = !reduceMotion, Modifier.weight(1f).then(glide))
                 }
             }
         }
@@ -900,7 +916,7 @@ private fun AnimatedVisibilityScope.OptionsSheet(
             if (confirming) {
                 ConfirmUninstall(app, onCancel = { onConfirmChange(false) }, onConfirm = { onClose(); actions.uninstall(app) })
             } else {
-                ActionButtons(app, actions, compact, reduceMotion, onClose, onAskUninstall = { onConfirmChange(true) })
+                ActionButtons(app, actions, compact, reduceMotion, onClose, onAskUninstall = { onConfirmChange(true) }, root = root)
             }
         }
     }
@@ -935,6 +951,7 @@ private fun ActionButtons(
     reduceMotion: Boolean,
     onClose: () -> Unit,
     onAskUninstall: () -> Unit,
+    root: RootState,
 ) {
     val colors = MaterialTheme.colorScheme
     var copied by remember { mutableStateOf(false) }
@@ -978,19 +995,18 @@ private fun ActionButtons(
                 }
             }
         }
-        // Under the row: a fifth square would squeeze every label at the Apps tab's default width. The styled button, by
-        // its full name: the confirm step below needs Material's, whose error colors the styled one would override.
-        com.programmersbox.scrcpyviewer.ui.theme.FilledTonalButton(
-            onClick = {
+        // Under the row: a fifth and sixth square would squeeze every label at the Apps tab's default width.
+        LogcatAndDatabases(
+            app, root, compact,
+            onLogcat = {
                 onClose()
                 actions.showInLogcat(app)
             },
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        ) {
-            Icon(Icons.AutoMirrored.Filled.ListAlt, contentDescription = null, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Show in Logcat")
-        }
+            onDatabases = {
+                onClose()
+                actions.showDatabases(app)
+            },
+        )
     }
 }
 

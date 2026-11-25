@@ -51,7 +51,7 @@ may change; wide layouts stay as they are.
 
 - Don't use the AWT move cursor (`Cursor.MOVE_CURSOR`). Nucleus Tao maps it to a private macOS selector that
   current macOS no longer has, and hovering it crashes the app. Use `PointerIcon.Hand`.
-- Window minimum sizes are set through `AppWindow(minSize = …)`: main 360×480, mirror 344×360, logcat 360×360.
+- Window minimum sizes are set through `AppWindow(minSize = …)`: main 360×480, mirror 344×360, logcat 360×360, database 360×360.
 
 ### Tests
 

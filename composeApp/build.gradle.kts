@@ -155,6 +155,7 @@ kotlin {
             implementation(libs.jna)
             implementation(libs.aboutlibraries.core)
             implementation(libs.aboutlibraries.compose.core)
+            implementation(libs.sqlite.jdbc)
             // Only icon and resource parsing is used: the signing parts (BouncyCastle) and annotations stay out.
             implementation("net.dongliu:apk-parser:${libs.versions.apk.parser.get()}") {
                 exclude(group = "org.bouncycastle")
@@ -209,7 +210,7 @@ nucleus.application {
         // For example ScrcpyViewer-1.6.0-mac-arm64.dmg; the plugin adds -nsis before .exe. Nucleus' updater picks
         // the file by extension (and that suffix) and by the arch in the name.
         artifactName = "ScrcpyViewer-\${version}-\${os}-\${arch}.\${ext}"
-        modules("java.instrument", "java.management", "jdk.unsupported", "java.net.http")
+        modules("java.instrument", "java.management", "jdk.unsupported", "java.net.http", "java.sql")
         appResourcesRootDir.set(layout.projectDirectory.dir("bundled"))
         // Writes latest-mac.yml / latest.yml / latest-linux.yml next to the installers. Nothing is uploaded from
         // Gradle (publishMode stays Never); the release job in CI publishes them.
@@ -393,6 +394,7 @@ tasks.matching { it.name == "jvmTest" }.configureEach {
         systemProperty("scrcpyviewer.bundledDir", layout.projectDirectory.dir("bundled").asFile.absolutePath)
         project.findProperty("deviceSerials")?.let { systemProperty("scrcpyviewer.deviceSerials", it.toString()) }
         project.findProperty("audioSeconds")?.let { systemProperty("scrcpyviewer.audioSeconds", it.toString()) }
+        project.findProperty("debugPackage")?.let { systemProperty("scrcpyviewer.debugPackage", it.toString()) }
         testLogging { showStandardStreams = true }
         outputs.upToDateWhen { false }
     }

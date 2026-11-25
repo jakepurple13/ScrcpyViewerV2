@@ -112,6 +112,10 @@ import com.programmersbox.scrcpyviewer.ui.mirror.files.AdbUnavailableState
 import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksState
 import com.programmersbox.scrcpyviewer.ui.mirror.links.LinksTabContent
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatController
+import com.programmersbox.scrcpyviewer.ui.mirror.database.DatabaseController
+import com.programmersbox.scrcpyviewer.ui.mirror.database.DatabaseSheetTab
+import com.programmersbox.scrcpyviewer.ui.mirror.database.RootChip
+import androidx.compose.material.icons.filled.Storage
 import com.programmersbox.scrcpyviewer.ui.mirror.logcat.LogcatSheetTab
 import com.programmersbox.scrcpyviewer.ui.common.CLOSE_MILLIS
 import com.programmersbox.scrcpyviewer.ui.common.EmphasizedAccelerate
@@ -139,6 +143,9 @@ val QUICK_ACTIONS_LOGCAT_WIDTH = 560.dp
 
 /** Default and minimum width of the open sheet on the Links tab, its drag bar included. */
 val QUICK_ACTIONS_LINKS_WIDTH = 400.dp
+
+/** Default and minimum width of the open sheet on the Data tab (tables beside rows), its drag bar included. */
+val QUICK_ACTIONS_DATABASE_WIDTH = 620.dp
 
 /** How far tab content slides, how long the incoming tab waits before fading in, how fast the outgoing one fades. */
 private val SLIDE_OFFSET = 40.dp
@@ -220,9 +227,10 @@ fun rememberQuickActionsPanel(
     filesTab: (@Composable () -> Unit)? = null,
     logcat: LogcatController? = null,
     links: LinksState? = null,
+    database: DatabaseController? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
-    return rememberQuickActionsPanel({ currentState }, onEvent, console, rowWidth, filesTab, logcat, links)
+    return rememberQuickActionsPanel({ currentState }, onEvent, console, rowWidth, filesTab, logcat, links, database = database)
 }
 
 /**
@@ -240,6 +248,7 @@ fun rememberQuickActionsPanel(
     links: LinksState? = null,
     /** The window's placement for the sheet while it keeps it fixed (a drag in progress); null: computed here. */
     placement: SheetPlacement? = null,
+    database: DatabaseController? = null,
 ): @Composable (Modifier) -> Unit {
     val currentState by rememberUpdatedState(state)
     val currentOnEvent by rememberUpdatedState(onEvent)
@@ -249,11 +258,12 @@ fun rememberQuickActionsPanel(
     val currentLogcat by rememberUpdatedState(logcat)
     val currentLinks by rememberUpdatedState(links)
     val currentPlacement by rememberUpdatedState(placement)
+    val currentDatabase by rememberUpdatedState(database)
     return remember {
         movableContentOf { modifier: Modifier ->
             QuickActionsPanel(
                 currentState(), currentOnEvent, currentConsole, currentRowWidth, modifier, currentFilesTab, currentLogcat,
-                links = currentLinks, fixedPlacement = currentPlacement,
+                links = currentLinks, fixedPlacement = currentPlacement, database = currentDatabase,
             )
         }
     }
@@ -282,6 +292,8 @@ fun QuickActionsPanel(
     links: LinksState? = null,
     /** The current tab's placement while the window keeps it fixed (a drag in progress); null: from its saved width. */
     fixedPlacement: SheetPlacement? = null,
+    /** The Data tab's controller; null (no adb) says adb isn't available. */
+    database: DatabaseController? = null,
 ) {
     fun fit(width: Dp, tab: SheetTab) = fitSheetWidth(
         width, tab, rowWidth, SIDE_TOOLBAR_WIDTH, saved = state.widths[tab],
@@ -355,7 +367,7 @@ fun QuickActionsPanel(
                 onEvent(QuickActionEvent.ResetWidth)
             },
         )
-        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab, logcat, shown, motion, links)
+        SheetContent(state, onEvent, console, columns = tileColumns(fit(state.widths.actions, SheetTab.Actions)), filesTab, logcat, shown, motion, links, database)
     }
 }
 
@@ -370,6 +382,7 @@ private fun RowScope.SheetContent(
     sheetWidth: Dp,
     motion: Boolean,
     links: LinksState?,
+    database: DatabaseController?,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -377,10 +390,14 @@ private fun RowScope.SheetContent(
     Column(Modifier.weight(1f).fillMaxHeight().background(colors.surfaceContainerHigh).padding(top = 12.dp)) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Quick actions", style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Quick actions", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    if (database != null) RootChip(state.root, motion) { onEvent(QuickActionEvent.AskRoot) }
+                }
                 Text(
                     when (state.tab) {
                         SheetTab.Files -> "Browse and move files on this device"
+                        SheetTab.Database -> "Browse and edit this app's databases"
                         SheetTab.Logcat -> "Live log from this device"
                         SheetTab.Links -> "Open a link or intent on this device"
                         else -> "Runs adb shell on this device"
@@ -406,7 +423,7 @@ private fun RowScope.SheetContent(
             }
         }
         SheetTabs(
-            state.tab, state.consoleRunning, state.filesTransfersRunning, state.logcatPopped, state.logcatLive, sheetWidth,
+            state.tab, state.consoleRunning, state.filesTransfersRunning, state.logcatPopped, state.logcatLive, state.databasePopped, sheetWidth,
             onSelect = { if (it != state.tab) onEvent(QuickActionEvent.SelectTab(it)) },
             Modifier.padding(start = TABS_SIDE_PADDING, end = TABS_SIDE_PADDING, top = 8.dp),
             motion,
@@ -424,6 +441,11 @@ private fun RowScope.SheetContent(
                 SheetTab.Apps -> AppsTabContent(state.apps, state.enabled) { onEvent(QuickActionEvent.Apps(it)) }
                 // No Files tab content means no adb: say so rather than show nothing.
                 SheetTab.Files -> if (filesTab != null) filesTab() else AdbUnavailableState()
+                SheetTab.Database -> if (database != null) {
+                    DatabaseSheetTab(database, sheetWidth, motion) { onEvent(QuickActionEvent.ShowDebuggableApps) }
+                } else {
+                    AdbUnavailableState()
+                }
                 // No Links state means no adb, said the same way.
                 SheetTab.Links -> if (links != null) {
                     LinksTabContent(links, state.apps, state.enabled, { onEvent(QuickActionEvent.Links(it)) }, motion = motion)
@@ -470,6 +492,7 @@ internal fun SheetTab.icon(): ImageVector = when (this) {
     SheetTab.Apps -> Icons.Filled.Apps
     SheetTab.Shell -> Icons.Filled.Terminal
     SheetTab.Files -> Icons.Filled.Folder
+    SheetTab.Database -> Icons.Filled.Storage
     SheetTab.Links -> Icons.Filled.Link
     SheetTab.Logcat -> Icons.AutoMirrored.Filled.List
 }
@@ -490,6 +513,8 @@ private fun SheetTabs(
     logcatPopped: Boolean,
     /** ...and running: a blinking green dot as well. */
     logcatLive: Boolean,
+    /** Databases is in its own window: the Data segment shows a window icon. */
+    databasePopped: Boolean,
     /** The width the sheet is settling on (the selected tab's), not the animating one: the label size follows it. */
     sheetWidth: Dp,
     onSelect: (SheetTab) -> Unit,
@@ -578,7 +603,7 @@ private fun SheetTabs(
             SheetTab.entries.forEach { segment ->
                 val selected = segment == tab
                 val weight = weights[segment.ordinal].value
-                SegmentTooltip(segment.name, show = iconMode || narrow, Modifier.weight(weight).fillMaxHeight()) {
+                SegmentTooltip(segment.label(), show = iconMode || narrow, Modifier.weight(weight).fillMaxHeight()) {
                     Row(
                         Modifier.fillMaxSize().clip(SegmentShape)
                             .selectable(selected, role = Role.Tab) { onSelect(segment) },
@@ -598,10 +623,10 @@ private fun SheetTabs(
                         } else {
                         val label = @Composable { labelModifier: Modifier ->
                             SegmentName(
-                                segment.name, segment.icon(), iconMode, { toIconState.value }, labelModifier, tint,
+                                segment.label(), segment.icon(), iconMode, { toIconState.value }, labelModifier, tint,
                             ) { wordModifier ->
                                 Text(
-                                    segment.name, wordModifier, style = labelStyle, maxLines = 1, softWrap = false,
+                                    segment.label(), wordModifier, style = labelStyle, maxLines = 1, softWrap = false,
                                     color = tint,
                                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                                 )
@@ -643,6 +668,7 @@ private fun SheetTabs(
                         if (segment == SheetTab.Logcat) {
                             LogcatSegmentMarks(logcatPopped && !logcatIconOnly, logcatLive && !logcatIconOnly, gap, motion)
                         }
+                        if (segment == SheetTab.Database) LogcatSegmentMarks(databasePopped && !iconMode, false, gap, motion)
                         }
                        }
                       }
@@ -705,7 +731,7 @@ private fun CompactSegment(
 ) {
     val colors = MaterialTheme.colorScheme
     Box {
-        Icon(tab.icon(), contentDescription = if (selected) null else tab.name, Modifier.size(SEGMENT_ICON_SIZE), tint = tint)
+        Icon(tab.icon(), contentDescription = if (selected) null else tab.label(), Modifier.size(SEGMENT_ICON_SIZE), tint = tint)
         if (dot) {
             Box(
                 Modifier.align(Alignment.TopEnd).offset(x = DOT_OVERLAP, y = -DOT_OVERLAP).size(6.dp)
@@ -747,7 +773,7 @@ private fun CompactSegment(
         exit = shrinkHorizontally(if (motion) layoutSpring() else snap()) + fadeOut(segmentSpec(false, motion)),
     ) {
         Text(
-            tab.name, Modifier.padding(start = start), style = labelStyle, maxLines = 1, softWrap = false,
+            tab.label(), Modifier.padding(start = start), style = labelStyle, maxLines = 1, softWrap = false,
             color = tint, fontWeight = FontWeight.SemiBold,
         )
     }

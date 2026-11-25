@@ -48,13 +48,13 @@ class AppsNarrowTest {
 
     private class Content(widthDp: Int, apps: List<DeviceApp>, reduceMotion: Boolean) {
         var width by mutableStateOf(widthDp)
-        val driver = SceneDriver(ImageComposeScene(480, 600, Density(1f)) {
+        val driver = SceneDriver(ImageComposeScene(480, 800, Density(1f)) {
             CompositionLocalProvider(LocalReduceMotion provides reduceMotion) {
                 ScrcpyViewerTheme(ThemeMode.Light) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                         // The outer box frees the inner one from the scene's tight constraints.
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopStart) {
-                            Box(Modifier.width(width.dp).height(600.dp)) {
+                            Box(Modifier.width(width.dp).height(800.dp)) {
                                 AppsTabContent(AppsUiState(apps = apps), enabled = true, onEvent = {})
                             }
                         }
@@ -103,9 +103,9 @@ class AppsNarrowTest {
     }
 
     @Test
-    fun `the breakpoints are 400 and 360`() {
-        assertTrue(appsFiltersCompact(399.dp))
-        assertFalse(appsFiltersCompact(400.dp))
+    fun `the breakpoints are 480 and 360`() {
+        assertTrue(appsFiltersCompact(479.dp))
+        assertFalse(appsFiltersCompact(480.dp))
         assertTrue(appOptionsCompact(359.dp))
         assertFalse(appOptionsCompact(360.dp))
     }

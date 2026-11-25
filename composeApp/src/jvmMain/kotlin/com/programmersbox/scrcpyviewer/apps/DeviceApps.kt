@@ -14,10 +14,12 @@ data class DeviceApp(
     /** Null when `dumpsys package` did not report it. */
     val versionName: String?,
     val versionCode: Long?,
+    /** A debug build (`DEBUGGABLE` in `dumpsys package`'s pkgFlags): `run-as` reaches its data. */
+    val debuggable: Boolean = false,
 )
 
 /** Which apps the Apps tab shows. */
-enum class AppFilter { All, User, System }
+enum class AppFilter { All, User, System, Debuggable }
 
 /** The apps whose label or package name contains [query] (trimmed, any case) and that [filter] keeps, in order. */
 fun List<DeviceApp>.matching(query: String, filter: AppFilter): List<DeviceApp> {
@@ -27,6 +29,7 @@ fun List<DeviceApp>.matching(query: String, filter: AppFilter): List<DeviceApp> 
             AppFilter.All -> true
             AppFilter.User -> !app.system
             AppFilter.System -> app.system
+            AppFilter.Debuggable -> app.debuggable
         }
         kind && (q.isEmpty() || app.label.contains(q, ignoreCase = true) || app.packageName.contains(q, ignoreCase = true))
     }
@@ -35,7 +38,7 @@ fun List<DeviceApp>.matching(query: String, filter: AppFilter): List<DeviceApp> 
 /** One line of scrcpy's `list_apps` output. */
 data class ListedApp(val packageName: String, val label: String, val system: Boolean)
 
-data class AppVersion(val name: String?, val code: Long?)
+data class AppVersion(val name: String?, val code: Long?, val debuggable: Boolean = false)
 
 object AppListParser {
     // " * Camera      com.gabb.camera": `*` marks a system app, `-` a user one; the label is padded with spaces.
@@ -43,6 +46,7 @@ object AppListParser {
     private val PACKAGE_LINE = Regex("""^\s*Package \[([^\]]+)]""")
     private val VERSION_CODE = Regex("""\bversionCode=(\d+)""")
     private val VERSION_NAME = Regex("""^\s*versionName=(.*)$""")
+    private val PKG_FLAGS = Regex("""^\s*pkgFlags=\[(.*)]""")
 
     /** The apps in the output of the scrcpy server run with `list_apps=true`. */
     fun listApps(output: String): List<ListedApp> = output.lineSequence().mapNotNull { line ->
@@ -58,8 +62,9 @@ object AppListParser {
         var current: String? = null
         var name: String? = null
         var code: Long? = null
+        var debuggable = false
         fun flush() {
-            current?.let { if (it !in result) result[it] = AppVersion(name, code) }
+            current?.let { if (it !in result) result[it] = AppVersion(name, code, debuggable) }
         }
         output.lineSequence().forEach { raw ->
             val line = raw.trimEnd('\r')
@@ -69,10 +74,12 @@ object AppListParser {
                 current = pkg
                 name = null
                 code = null
+                debuggable = false
                 return@forEach
             }
             VERSION_CODE.find(line)?.let { code = it.groupValues[1].toLongOrNull() }
             VERSION_NAME.find(line)?.let { name = it.groupValues[1].trim().ifEmpty { null } }
+            PKG_FLAGS.find(line)?.let { debuggable = "DEBUGGABLE" in it.groupValues[1].split(' ') }
         }
         flush()
         return result
@@ -116,7 +123,7 @@ open class DeviceApps(
         val versions = runCatching { AppListParser.versions(adb.shell(serial, VERSIONS_COMMAND)) }.getOrDefault(emptyMap())
         return listed.map { app ->
             val v = versions[app.packageName]
-            DeviceApp(app.packageName, app.label, app.system, v?.name, v?.code)
+            DeviceApp(app.packageName, app.label, app.system, v?.name, v?.code, v?.debuggable == true)
         }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it: DeviceApp -> it.label }.thenBy { it.packageName })
     }
 
@@ -156,7 +163,7 @@ open class DeviceApps(
         private const val PUSH_TIMEOUT_MS = 30_000L
         private const val EXIT_MARKER = "__scrcpyviewer_exit="
         private const val VERSIONS_COMMAND =
-            "dumpsys package packages | grep -E '^  Package \\[|versionName=|versionCode='"
+            "dumpsys package packages | grep -E '^  Package \\[|versionName=|versionCode=|pkgFlags='"
 
         /** [value] in single quotes for the device shell. */
         fun quote(value: String): String = "'" + value.replace("'", "'\\''") + "'"

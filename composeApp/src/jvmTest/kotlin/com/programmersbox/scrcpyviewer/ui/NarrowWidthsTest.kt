@@ -534,6 +534,24 @@ class NarrowWidthsTest {
 
     // The mirror sheet's tabs.
 
+    @Test
+    fun `Data - Write to device at every sheet width`() {
+        for (width in listOf(360, 520, QUICK_ACTIONS_DATABASE_WIDTH.value.toInt(), 700)) onEdt {
+            val (controller, _) = com.programmersbox.scrcpyviewer.ui.mirror.database.notesController()
+            controller.pick(com.programmersbox.scrcpyviewer.ui.mirror.database.DEBUG_APP)
+            controller.setCell(0, 1, com.programmersbox.scrcpyviewer.database.SqlValue.Text("Groceries"))
+            val d = sheet(width) {
+                com.programmersbox.scrcpyviewer.ui.mirror.database.DatabaseTab(controller, motion = false, onShowDebuggableApps = {})
+            }
+            try {
+                check(d, "Write to device", width, "Data at $width")
+            } finally {
+                d.scene.close()
+                controller.close()
+            }
+        }
+    }
+
     private fun sheet(width: Int, height: Int = 700, content: @Composable () -> Unit): SceneDriver = SceneDriver(
         ImageComposeScene(700, height, Density(1f)) {
             CompositionLocalProvider(LocalReduceMotion provides true, LocalClipboard provides MatrixClipboard()) {

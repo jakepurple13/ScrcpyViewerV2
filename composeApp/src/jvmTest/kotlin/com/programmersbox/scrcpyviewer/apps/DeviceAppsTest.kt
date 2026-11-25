@@ -7,6 +7,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -51,6 +52,7 @@ private const val DUMPSYS = """  Package [com.gabb.camera] (5403cea):
   Package [com.programmersbox.twentyfourgame] (86d1151):
     versionCode=7 minSdk=28 targetSdk=36
     versionName=1.4 beta
+    pkgFlags=[ DEBUGGABLE HAS_CODE ALLOW_CLEAR_USER_DATA ]
   Package [com.gabb.messenger.android.app] (1111111):
     versionCode=120 minSdk=28 targetSdk=34
     versionName=3.8.2
@@ -77,8 +79,35 @@ class DeviceAppsTest {
     fun `parses versions, keeping each package's first entry`() {
         val versions = AppListParser.versions(DUMPSYS)
         assertEquals(AppVersion("2.1.0", 31), versions["com.gabb.camera"])
-        assertEquals(AppVersion("1.4 beta", 7), versions["com.programmersbox.twentyfourgame"])
+        assertEquals(AppVersion("1.4 beta", 7, debuggable = true), versions["com.programmersbox.twentyfourgame"])
         assertEquals(AppVersion("3.8.2", 120), versions["com.gabb.messenger.android.app"])
+    }
+
+    @Test
+    fun `parses debuggable from pkgFlags`() {
+        val versions = AppListParser.versions(DUMPSYS)
+        assertTrue(versions.getValue("com.programmersbox.twentyfourgame").debuggable)
+        assertFalse(versions.getValue("com.gabb.camera").debuggable)
+        // A SYSTEM flag line without DEBUGGABLE.
+        val system = AppListParser.versions("  Package [com.android.chrome] (1):\n    versionCode=1\n    pkgFlags=[ SYSTEM HAS_CODE ]\n")
+        assertFalse(system.getValue("com.android.chrome").debuggable)
+    }
+
+    @Test
+    fun `listed apps carry the debuggable flag`() = runBlocking {
+        val adb = FakeAdb { cmd -> if ("list_apps=true" in cmd) LIST_APPS else DUMPSYS }
+        val apps = DeviceApps(adb, "SER", serverJar = { Path.of("/jar") }, serverVersion = "5.0").list()
+        assertEquals(listOf("24 Game"), apps.filter { it.debuggable }.map { it.label })
+        assertTrue("pkgFlags=" in adb.commands.single { "dumpsys" in it })
+    }
+
+    @Test
+    fun `filters debuggable apps`() {
+        val apps = listOf(
+            DeviceApp("com.example.notes", "Notes", false, "1", 1, debuggable = true),
+            DeviceApp("com.android.chrome", "Chrome", true, "1", 1),
+        )
+        assertEquals(listOf("Notes"), apps.matching("", AppFilter.Debuggable).map { it.label })
     }
 
     @Test
