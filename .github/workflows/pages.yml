@@ -1,0 +1,64 @@
+name: Pages
+
+on:
+  # Site changes on main.
+  push:
+    branches: ["main"]
+    paths: ["site/**", ".github/workflows/pages.yml", "composeApp/src/jvmMain/resources/icon.png"]
+  # Pull requests build the site to catch errors, without deploying.
+  pull_request:
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  # New releases. The Build workflow publishes releases with GITHUB_TOKEN, which does not fire `release` events
+  # for other workflows, so follow the Build run instead. Only tag runs (head_branch v*) are deployed.
+  workflow_run:
+    workflows: ["Build"]
+    types: [completed]
+  # Releases published by hand.
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer one waits instead of cancelling a deploy in progress.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    steps:
+      # workflow_run checks out main's HEAD, which is the site's current source.
+      - uses: actions/checkout@v4
+
+      - name: Fill in the latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: bash site/build.sh _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

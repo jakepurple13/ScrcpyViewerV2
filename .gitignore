@@ -13,3 +13,5 @@ composeApp/bundled/common/*
 !composeApp/bundled/common/GPL-3.0.txt
 .hotswan/
 local.properties
+# GitHub Pages build output (site/build.sh)
+_site/
