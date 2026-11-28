@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scrcpy Vwr: mirror and control Android from your computer</title>
+<meta name="description" content="Scrcpy Vwr shows your Android phone on your Mac, Windows or Linux computer. Mirror, record, test and build, all from one window. Free and open source.">
+<meta property="og:title" content="Scrcpy Vwr">
+<meta property="og:description" content="Mirror and control Android devices from macOS, Windows and Linux.">
+<meta property="og:image" content="icon.png">
+<meta name="theme-color" content="#006A6A">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wdth,wght@8..144,25..151,300..1000&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: M3 top app bar, split hero with a live app mock, then bands: features (chips + grid), pipeline, download tabs, steps. */
+:root {
+  --primary:#006A6A; --on-primary:#FFFFFF; --primary-container:#9CF1F0; --on-primary-container:#002020;
+  --secondary-container:#CCE8E7; --on-secondary-container:#051F1F;
+  --tertiary:#48617D; --tertiary-container:#D3E4FF; --on-tertiary-container:#041C35;
+  --surface:#F4FBFA; --on-surface:#161D1D; --on-surface-variant:#3F4948;
+  --sc-lowest:#FFFFFF; --sc-low:#EFF5F4; --sc:#E9EFEE; --sc-high:#E3E9E8; --sc-highest:#DDE4E3;
+  --outline:#6F7979; --outline-variant:#BEC9C8;
+  --ok:#2E7D32; --warn:#9A5B00; --err:#BA1A1A;
+  --inverse-surface:#2B3231; --inverse-on-surface:#ECF2F1;
+  --font-display:"Roboto Flex", "Roboto", system-ui, sans-serif;
+  --font-body:"Roboto Flex", "Roboto", system-ui, sans-serif;
+  --font-mono:"Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ease-emph:cubic-bezier(.2,0,0,1); --ease-decel:cubic-bezier(.05,.7,.1,1); --ease-accel:cubic-bezier(.3,0,.8,.15);
+  --spring:linear(0, .009, .035 2.1%, .141 4.4%, .723 12.9%, .938 16.7%, 1.017 20.3%, 1.039 24.1%, 1.034 28.2%, 1.009 37.6%, .998 46.3%, 1);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --primary:#4CDADA; --on-primary:#003737; --primary-container:#004F4F; --on-primary-container:#9CF1F0;
+  --secondary-container:#324B4B; --on-secondary-container:#CCE8E7;
+  --tertiary:#B0C9E9; --tertiary-container:#33485F; --on-tertiary-container:#D3E4FF;
+  --surface:#0E1514; --on-surface:#DDE4E3; --on-surface-variant:#BEC9C8;
+  --sc-lowest:#090F0F; --sc-low:#161D1D; --sc:#1A2121; --sc-high:#252B2B; --sc-highest:#2F3636;
+  --outline:#889392; --outline-variant:#3F4948;
+  --ok:#81C784; --warn:#FFB870; --err:#FFB4AB;
+  --inverse-surface:#DDE4E3; --inverse-on-surface:#2B3231; color-scheme:dark;
+}}
+:root[data-theme="dark"] {
+  --primary:#4CDADA; --on-primary:#003737; --primary-container:#004F4F; --on-primary-container:#9CF1F0;
+  --secondary-container:#324B4B; --on-secondary-container:#CCE8E7;
+  --tertiary:#B0C9E9; --tertiary-container:#33485F; --on-tertiary-container:#D3E4FF;
+  --surface:#0E1514; --on-surface:#DDE4E3; --on-surface-variant:#BEC9C8;
+  --sc-lowest:#090F0F; --sc-low:#161D1D; --sc:#1A2121; --sc-high:#252B2B; --sc-highest:#2F3636;
+  --outline:#889392; --outline-variant:#3F4948;
+  --ok:#81C784; --warn:#FFB870; --err:#FFB4AB;
+  --inverse-surface:#DDE4E3; --inverse-on-surface:#2B3231; color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+img{max-width:100%}
+html{scroll-behavior:smooth; scroll-padding-top:80px}
+body{margin:0; background:var(--surface); color:var(--on-surface); font:400 16px/1.6 var(--font-body); -webkit-font-smoothing:antialiased; overflow-x:hidden}
+body::before{content:""; position:fixed; inset:0 0 auto; height:env(safe-area-inset-top,0px); z-index:10; background:var(--surface)}
+a{color:var(--primary)}
+.wrap{max-width:1180px; margin:0 auto; padding-left:max(16px, env(safe-area-inset-left,0px)); padding-right:max(16px, env(safe-area-inset-right,0px))}
+h1,h2,h3{font-family:var(--font-display); text-wrap:balance; margin:0}
+h2{font-size:clamp(1.9rem, 4vw, 2.75rem); font-weight:600; font-variation-settings:"wdth" 112, "opsz" 72; letter-spacing:-.01em; line-height:1.1}
+.eyebrow{font:600 .75rem/1 var(--font-body); letter-spacing:.12em; text-transform:uppercase; color:var(--primary)}
+.lede{color:var(--on-surface-variant); max-width:62ch; font-size:1.075rem}
+code,.mono{font-family:var(--font-mono); font-size:.9em}
+:focus-visible{outline:3px solid var(--primary); outline-offset:3px; border-radius:8px}
+
+
+/* Top app bar */
+.appbar{position:sticky; top:env(safe-area-inset-top,0px); z-index:20; background:color-mix(in srgb, var(--surface) 86%, transparent); backdrop-filter:blur(14px); transition:background .3s var(--ease-emph), box-shadow .3s var(--ease-emph)}
+.appbar.scrolled{background:color-mix(in srgb, var(--sc) 92%, transparent); box-shadow:0 1px 0 var(--outline-variant)}
+.appbar .wrap{display:flex; align-items:center; gap:8px; height:64px}
+.brand{display:flex; align-items:center; gap:10px; text-decoration:none; color:var(--on-surface); font:650 1.15rem/1 var(--font-display); font-variation-settings:"wdth" 115; margin-right:auto}
+.brand img{width:32px; height:32px; border-radius:8px}
+.nav{display:flex; gap:4px}
+.nav a{position:relative; text-decoration:none; color:var(--on-surface-variant); font-weight:500; font-size:.9rem; padding:8px 14px; border-radius:20px; transition:color .2s}
+.nav a.active{color:var(--on-secondary-container)}
+.nav-ind{position:absolute; height:36px; top:14px; border-radius:18px; background:var(--secondary-container); z-index:-1; transition:left .5s var(--spring), width .5s var(--spring), opacity .2s}
+.icon-btn{width:40px; height:40px; border-radius:20px; border:0; background:transparent; color:var(--on-surface-variant); display:grid; place-items:center; cursor:pointer; position:relative; overflow:hidden; text-decoration:none}
+.icon-btn::after,.btn::after,.chip::after,.seg button::after{content:""; position:absolute; inset:0; background:currentColor; opacity:0; transition:opacity .15s}
+.icon-btn:hover::after,.btn:hover::after,.chip:hover::after,.seg button:hover::after{opacity:.08}
+.icon-btn svg{width:22px; height:22px}
+.theme-btn svg{transition:transform .5s var(--spring)}
+.theme-btn:active svg{transform:rotate(40deg) scale(.85)}
+@media (max-width:760px){ .nav{display:none} }
+
+/* Buttons */
+.btn{position:relative; overflow:hidden; display:inline-flex; align-items:center; gap:10px; height:56px; padding:0 28px; border-radius:28px; font:600 1rem/1 var(--font-body); text-decoration:none; border:0; cursor:pointer; transition:border-radius .35s var(--spring), transform .35s var(--spring)}
+.btn:active{border-radius:14px; transform:scale(.98)}
+.btn svg{width:20px; height:20px; flex:none}
+.btn-filled{background:var(--primary); color:var(--on-primary)}
+.btn-tonal{background:var(--secondary-container); color:var(--on-secondary-container)}
+.btn-outline{background:transparent; color:var(--primary); box-shadow:inset 0 0 0 1px var(--outline)}
+.btn small{font-weight:400; opacity:.8; font-size:.8rem}
+
+/* Hero */
+.hero{padding-block:48px 72px}
+.hero .wrap{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.05fr); gap:48px; align-items:center}
+@media (max-width:960px){ .hero .wrap{grid-template-columns:minmax(0,1fr)} }
+.hero h1{font-size:clamp(2.6rem, 6.4vw, 4.8rem); line-height:.98; font-weight:700; font-variation-settings:"wdth" 125, "opsz" 144; letter-spacing:-.025em}
+.hero h1 em{font-style:normal; color:var(--primary); font-variation-settings:"wdth" 151, "opsz" 144; font-weight:800}
+.hero-copy{display:flex; flex-direction:column; gap:24px; min-width:0}
+.hero-ctas{display:flex; flex-wrap:wrap; gap:12px}
+.ver{display:inline-flex; align-items:center; gap:8px; align-self:flex-start; padding:6px 12px 6px 6px; border-radius:8px; background:var(--sc-high); font-size:.85rem; color:var(--on-surface-variant)}
+.ver b{background:var(--primary-container); color:var(--on-primary-container); border-radius:6px; padding:3px 8px; font-weight:600}
+.hero-in > *{animation:rise .8s var(--ease-decel) both}
+.hero-in > :nth-child(2){animation-delay:.06s} .hero-in > :nth-child(3){animation-delay:.12s} .hero-in > :nth-child(4){animation-delay:.18s}
+@keyframes rise{from{transform:translateY(18px); opacity:.001}}
+
+/* Hero stage: main window + mirror window */
+.stage{position:relative; aspect-ratio:1.18; max-width:100%; min-width:0}
+.win{position:absolute; background:var(--sc-low); border-radius:16px; box-shadow:0 1px 3px rgb(0 0 0/.12), 0 12px 40px -8px rgb(0 40 40/.28); overflow:hidden; border:1px solid var(--outline-variant)}
+.win-main{left:0; top:6%; width:74%; height:78%; display:flex; flex-direction:column; animation:rise .9s var(--ease-decel) .1s both}
+.titlebar{height:34px; display:flex; align-items:center; gap:6px; padding:0 12px; background:var(--sc); font-size:.72rem; color:var(--on-surface-variant); flex:none}
+.titlebar i{width:10px; height:10px; border-radius:50%; background:var(--outline-variant)}
+.titlebar i:nth-child(1){background:#FF5F57} .titlebar i:nth-child(2){background:#FEBC2E} .titlebar i:nth-child(3){background:#28C840}
+.titlebar span{margin-left:8px}
+.win-body{display:flex; flex:1; min-height:0}
+.rail{width:52px; background:var(--sc); display:flex; flex-direction:column; align-items:center; gap:10px; padding-top:12px; flex:none}
+.rail b{width:28px; height:20px; border-radius:10px; background:var(--outline-variant); opacity:.6}
+.rail b.on{background:var(--secondary-container); opacity:1; width:36px}
+.devlist{flex:1; padding:12px; display:flex; flex-direction:column; gap:8px; min-width:0}
+.devlist .lbl{font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--on-surface-variant); padding:2px 6px}
+.dev{position:relative; display:flex; align-items:center; gap:10px; padding:10px; border-radius:14px; background:var(--sc-lowest); font-size:.78rem; min-width:0}
+.dev.sel{background:var(--secondary-container); color:var(--on-secondary-container)}
+.dev .ph{width:18px; height:30px; border-radius:4px; border:2px solid currentColor; opacity:.7; flex:none}
+.dev div{min-width:0; flex:1} .dev div b{display:block; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis} .dev div small{opacity:.75; font-family:var(--font-mono); font-size:.66rem}
+.pill{font-size:.64rem; font-weight:600; padding:3px 8px; border-radius:8px; white-space:nowrap}
+.pill.ready{background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok)}
+.pill.auth{background:color-mix(in srgb, var(--warn) 18%, transparent); color:var(--warn)}
+.dev-new{animation:devIn .7s var(--spring) 1.1s both}
+@keyframes devIn{from{transform:translateX(-24px) scale(.96); opacity:0}}
+.mirror-btn{margin-top:auto; align-self:flex-end; position:relative; overflow:hidden; background:var(--primary); color:var(--on-primary); border-radius:18px; padding:10px 18px; font-size:.78rem; font-weight:600; display:flex; gap:6px; align-items:center}
+.mirror-btn .rip{position:absolute; width:16px; height:16px; border-radius:50%; background:var(--on-primary); opacity:0; left:50%; top:50%; transform:translate(-50%,-50%)}
+.play .mirror-btn .rip{animation:ripple .6s var(--ease-decel) 1.7s}
+@keyframes ripple{0%{opacity:.3; transform:translate(-50%,-50%) scale(1)}100%{opacity:0; transform:translate(-50%,-50%) scale(9)}}
+.win-mirror{right:2%; top:0; width:36%; height:100%; border-radius:22px; display:flex; flex-direction:column; transform-origin:12% 86%; transform:scale(.12) translate(-120%, 30%); opacity:0}
+.play .win-mirror{animation:grow .9s var(--spring) 1.95s forwards}
+@keyframes grow{0%{opacity:0; transform:scale(.12) translate(-120%, 30%)} 25%{opacity:1} 100%{opacity:1; transform:none}}
+.screen{flex:1; margin:8px; border-radius:16px; overflow:hidden; background:linear-gradient(160deg, var(--primary-container), var(--tertiary-container)); position:relative}
+.screen .clock{position:absolute; top:14%; left:0; right:0; text-align:center; font:300 2.4rem/1 var(--font-display); color:var(--on-primary-container); font-variation-settings:"wdth" 80}
+.screen .date{position:absolute; top:28%; left:0; right:0; text-align:center; font-size:.7rem; color:var(--on-primary-container); opacity:.8}
+.apps{position:absolute; left:10%; right:10%; bottom:12%; display:grid; grid-template-columns:repeat(4,1fr); gap:10%}
+.apps i{aspect-ratio:1; border-radius:30%; background:var(--sc-lowest); opacity:.85}
+.apps i:nth-child(3n){background:var(--primary)} .apps i:nth-child(4n+1){background:var(--tertiary)}
+.tap{position:absolute; width:26px; height:26px; margin:-13px; border-radius:50%; border:2px solid var(--on-primary-container); opacity:0}
+.play .tap{animation:tap 3.6s var(--ease-decel) 3.2s infinite}
+@keyframes tap{0%,100%{opacity:0; transform:scale(.4)} 6%{opacity:.9; transform:scale(1)} 16%{opacity:0; transform:scale(1.7)}}
+.navbar{display:flex; justify-content:center; gap:22%; padding:4px 0 10px; color:var(--on-surface-variant)}
+.navbar i{width:12px; height:12px; border:2px solid currentColor; border-radius:3px; opacity:.6} .navbar i:nth-child(2){border-radius:50%}
+.sidebar{position:absolute; right:calc(2% + 36% + 8px); top:12%; display:flex; flex-direction:column; gap:6px; opacity:0}
+.play .sidebar{animation:rise .5s var(--ease-decel) 2.6s forwards}
+.sidebar span{width:30px; height:30px; border-radius:10px; background:var(--sc-high); box-shadow:0 2px 6px rgb(0 0 0/.12)}
+.sidebar span:first-child{background:var(--tertiary-container)}
+
+/* Bands */
+section.band{padding-block:88px}
+.band-alt{background:var(--sc-low)}
+.sec-head{display:flex; flex-direction:column; gap:14px; margin-bottom:40px}
+
+/* What it is */
+.facts{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px}
+@media (max-width:820px){ .facts{grid-template-columns:minmax(0,1fr)} }
+.fact{padding:28px; border-radius:28px; background:var(--sc-lowest); display:flex; flex-direction:column; gap:10px; transition:border-radius .5s var(--spring), transform .5s var(--spring)}
+.fact:hover{border-radius:44px 16px 44px 16px; transform:translateY(-4px)}
+.fact h3{font-size:1.2rem; font-weight:600; font-variation-settings:"wdth" 110}
+.fact p{margin:0; color:var(--on-surface-variant)}
+.fact .badge{width:48px; height:48px; border-radius:16px; display:grid; place-items:center; background:var(--primary-container); color:var(--on-primary-container)}
+.fact:nth-child(2) .badge{background:var(--tertiary-container); color:var(--on-tertiary-container); border-radius:50%}
+.fact:nth-child(3) .badge{background:var(--secondary-container); color:var(--on-secondary-container); border-radius:12px 24px}
+.badge svg{width:24px; height:24px}
+.bundle{display:flex; flex-wrap:wrap; gap:6px; margin-top:4px}
+.bundle span{font:500 .75rem/1 var(--font-mono); padding:6px 10px; border-radius:8px; background:var(--sc-high)}
+
+/* Who it's for */
+.who{display:grid; grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr); gap:24px; align-items:start}
+@media (max-width:900px){ .who{grid-template-columns:minmax(0,1fr)} }
+.aud{position:relative; display:flex; flex-direction:column; gap:4px}
+@media (max-width:900px){ .aud{display:grid; grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width:440px){ .aud{grid-template-columns:minmax(0,1fr)} }
+.aud button{position:relative; z-index:1; display:flex; align-items:center; gap:14px; text-align:left; padding:14px 16px; border:0; border-radius:20px; background:transparent; color:var(--on-surface); font:inherit; cursor:pointer; min-width:0}
+.aud button:hover{background:color-mix(in srgb, var(--on-surface) 5%, transparent)}
+.aud button span:last-child{min-width:0}
+.aud b{display:block; font-weight:600}
+.aud small{display:block; color:var(--on-surface-variant); font-size:.85rem; line-height:1.35}
+.aud .ai{width:44px; height:44px; flex:none; display:grid; place-items:center; border-radius:14px; background:var(--sc-high); color:var(--on-surface-variant); transition:background .35s, color .35s, border-radius .5s var(--spring)}
+.aud .ai svg{width:22px; height:22px}
+.aud button[aria-selected="true"] .ai{background:var(--primary); color:var(--on-primary); border-radius:50%}
+.aud-ind{position:absolute; left:0; top:0; border-radius:20px; background:var(--primary-container); transition:transform .55s var(--spring), width .55s var(--spring), height .55s var(--spring)}
+.aud button[aria-selected="true"] small{color:var(--on-primary-container)}
+.aud button[aria-selected="true"]{color:var(--on-primary-container)}
+.aud-panels{background:var(--sc-low); border-radius:32px; padding:clamp(20px, 4vw, 36px); overflow:hidden}
+.aud-panel{display:flex; flex-direction:column; gap:14px}
+.aud-panel h3{font-size:clamp(1.4rem, 2.6vw, 1.9rem); font-weight:650; font-variation-settings:"wdth" 112; line-height:1.15}
+.aud-panel p{margin:0; color:var(--on-surface-variant); max-width:60ch}
+.aud-panel.in-d{animation:axisInD .45s var(--ease-decel)} .aud-panel.in-u{animation:axisInU .45s var(--ease-decel)}
+@keyframes axisInD{from{opacity:0; transform:translateY(28px)}} @keyframes axisInU{from{opacity:0; transform:translateY(-28px)}}
+.aud-panel.in-d .ticks li,.aud-panel.in-u .ticks li{animation:rise .5s var(--ease-decel) both}
+.ticks li:nth-child(2){animation-delay:.05s!important} .ticks li:nth-child(3){animation-delay:.1s!important} .ticks li:nth-child(4){animation-delay:.15s!important}
+.ticks{list-style:none; margin:6px 0 0; padding:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px}
+@media (max-width:560px){ .ticks{grid-template-columns:minmax(0,1fr)} }
+.ticks li{display:flex; gap:10px; align-items:flex-start; padding:12px 14px; border-radius:16px; background:var(--sc-lowest); font-size:.93rem; min-width:0}
+.ticks li::before{content:""; flex:none; width:18px; height:18px; margin-top:2px; border-radius:50%; background:var(--primary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='white' d='m9.55 18-5.7-5.7 1.425-1.425L9.55 15.15l9.175-9.175L20.15 7.4z'/%3E%3C/svg%3E") center/14px no-repeat}
+
+/* Features */
+.chips{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:28px}
+.chip{position:relative; overflow:hidden; height:36px; padding:0 16px; border-radius:10px; border:1px solid var(--outline-variant); background:transparent; color:var(--on-surface-variant); font:500 .875rem/1 var(--font-body); cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:background .25s var(--ease-emph), color .25s, border-color .25s, padding .35s var(--spring)}
+.chip .ck{width:0; overflow:hidden; display:inline-flex; transition:width .35s var(--spring)}
+.chip .ck svg{width:18px; height:18px; flex:none}
+.chip[aria-pressed="true"]{background:var(--secondary-container); color:var(--on-secondary-container); border-color:transparent; padding-left:10px}
+.chip[aria-pressed="true"] .ck{width:18px}
+.grid{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; position:relative; transition:height .5s var(--spring)}
+@media (max-width:960px){ .grid{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width:600px){ .grid{grid-template-columns:minmax(0,1fr)} }
+.card{padding:24px; border-radius:24px; background:var(--sc); display:flex; flex-direction:column; gap:8px; min-width:0}
+.card .tag{align-self:flex-start; font:600 .68rem/1 var(--font-body); letter-spacing:.08em; text-transform:uppercase; padding:5px 8px; border-radius:6px; background:var(--sc-highest); color:var(--on-surface-variant)}
+.card h3{font-size:1.1rem; font-weight:600; font-variation-settings:"wdth" 108}
+.card p{margin:0; color:var(--on-surface-variant); font-size:.95rem}
+.card.hide{display:none}
+.card.leaving{position:absolute; pointer-events:none}
+
+/* How it works */
+.how{display:grid; grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr); gap:40px; align-items:start}
+@media (max-width:900px){ .how{grid-template-columns:minmax(0,1fr)} }
+.steps{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px}
+.steps button{width:100%; text-align:left; display:grid; grid-template-columns:36px minmax(0,1fr); gap:4px 14px; padding:14px 16px; border-radius:20px; border:0; background:transparent; color:var(--on-surface); font:inherit; cursor:pointer; transition:background .35s var(--ease-emph)}
+.steps button:hover{background:var(--sc)}
+.steps .n{grid-row:span 2; width:36px; height:36px; border-radius:18px; display:grid; place-items:center; background:var(--sc-highest); font:600 .9rem/1 var(--font-display); transition:background .35s, color .35s, border-radius .5s var(--spring)}
+.steps b{font-weight:600}
+.steps .d{display:grid; grid-template-rows:0fr; transition:grid-template-rows .45s var(--spring); color:var(--on-surface-variant); font-size:.93rem}
+.steps .d > span{overflow:hidden}
+.steps .on{background:var(--sc-lowest)}
+.steps .on .n{background:var(--primary); color:var(--on-primary); border-radius:12px}
+.steps .on .d{grid-template-rows:1fr}
+.diagram{background:var(--sc-lowest); border-radius:28px; padding:20px; position:sticky; top:96px; overflow-x:auto}
+.diagram svg{width:100%; height:auto; min-width:440px; display:block}
+.diagram text{font-family:var(--font-body); fill:var(--on-surface)}
+.diagram .sub{fill:var(--on-surface-variant); font-size:11px}
+.diagram .box{fill:var(--sc); stroke:var(--outline-variant); transition:fill .4s, stroke .4s}
+.diagram .lit .box{fill:var(--primary-container); stroke:var(--primary)}
+.diagram .lit text{fill:var(--on-primary-container)}
+.diagram .wire{stroke:var(--outline-variant); stroke-width:2; fill:none; transition:stroke .4s}
+.diagram .wire.lit{stroke:var(--primary); stroke-dasharray:6 8; animation:flow 1s linear infinite}
+.diagram .wire.lit.rev{animation-direction:reverse}
+@keyframes flow{to{stroke-dashoffset:-28}}
+.diagram .cap{font:500 12px var(--font-mono); fill:var(--on-surface-variant)}
+.diagram-note{margin:12px 4px 0; font-size:.9rem; color:var(--on-surface-variant); min-height:3em}
+.swap{animation:swapIn .4s var(--ease-decel)}
+@keyframes swapIn{from{opacity:0; transform:translateY(8px)}}
+
+/* Download */
+.dl{background:var(--sc-lowest); border-radius:32px; padding:clamp(20px, 4vw, 40px); display:flex; flex-direction:column; gap:28px}
+.seg{position:relative; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border:1px solid var(--outline); border-radius:20px; height:48px; max-width:520px; overflow:hidden}
+.seg button{position:relative; overflow:hidden; border:0; background:transparent; color:var(--on-surface); font:500 .9rem/1 var(--font-body); cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; z-index:1}
+.seg button + button{border-left:1px solid var(--outline)}
+.seg button svg{width:18px; height:18px}
+.seg button[aria-selected="true"]{color:var(--on-secondary-container)}
+.seg-ind{position:absolute; top:0; bottom:0; width:33.334%; background:var(--secondary-container); transition:transform .5s var(--spring)}
+.panels{position:relative; overflow:hidden; transition:height .5s var(--spring)}
+.panel{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:32px}
+@media (max-width:820px){ .panel{grid-template-columns:minmax(0,1fr)} }
+.panel[hidden]{display:none!important}
+.panel.in-r{animation:axisInR .45s var(--ease-decel)} .panel.in-l{animation:axisInL .45s var(--ease-decel)}
+@keyframes axisInR{from{opacity:0; transform:translateX(40px)}} @keyframes axisInL{from{opacity:0; transform:translateX(-40px)}}
+.panel h3{font-size:1.6rem; font-weight:650; font-variation-settings:"wdth" 115}
+.panel .col{display:flex; flex-direction:column; gap:16px; min-width:0}
+.file{display:flex; align-items:center; gap:14px; padding:14px 16px; border-radius:16px; background:var(--sc); min-width:0}
+.file .ext{font:600 .8rem/1 var(--font-mono); padding:10px 8px; border-radius:10px; background:var(--primary-container); color:var(--on-primary-container); flex:none}
+.file div{min-width:0} .file b{display:block; font-weight:600} .file small{color:var(--on-surface-variant)}
+.file.muted .ext{background:var(--sc-highest); color:var(--on-surface-variant)}
+.note{padding:14px 16px; border-radius:16px; background:var(--tertiary-container); color:var(--on-tertiary-container); font-size:.92rem}
+.note code{background:color-mix(in srgb, var(--on-tertiary-container) 10%, transparent); padding:1px 5px; border-radius:4px}
+.ol{margin:0; padding-left:1.3em; display:flex; flex-direction:column; gap:8px; color:var(--on-surface-variant)}
+.ol b{color:var(--on-surface)}
+.detected{font-size:.85rem; color:var(--on-surface-variant)}
+
+/* Getting started */
+.start{display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; counter-reset:s}
+@media (max-width:960px){ .start{grid-template-columns:repeat(2,minmax(0,1fr))} }
+@media (max-width:560px){ .start{grid-template-columns:minmax(0,1fr)} }
+.start li{list-style:none; counter-increment:s; padding:24px; border-radius:24px; background:var(--sc); display:flex; flex-direction:column; gap:8px}
+.start li::before{content:counter(s); font:700 2.4rem/1 var(--font-display); font-variation-settings:"wdth" 140; color:var(--primary)}
+.start p{margin:0; color:var(--on-surface-variant); font-size:.95rem}
+.start ol{padding:0; margin:0}
+
+/* Footer */
+footer{padding-block:48px 72px; color:var(--on-surface-variant); font-size:.9rem; border-top:1px solid var(--outline-variant)}
+footer .wrap{display:flex; flex-wrap:wrap; gap:16px 32px; justify-content:space-between; align-items:center}
+footer nav{display:flex; flex-wrap:wrap; gap:20px}
+
+/* Scroll reveal (progressive: content is visible without support) */
+@supports (animation-timeline: view()) {
+  .reveal{animation:rise linear both; animation-timeline:view(); animation-range:entry 0% entry 40%}
+}
+
+/* Theme circle reveal */
+::view-transition-old(root),::view-transition-new(root){animation:none; mix-blend-mode:normal}
+
+@media (prefers-reduced-motion: reduce) {
+  *,*::before,*::after{animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; scroll-behavior:auto!important}
+  .win-mirror,.sidebar{opacity:1; transform:none}
+}
+</style>
+</head>
+<body>
+
+<header class="appbar" id="appbar">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="icon.png" alt="">Scrcpy Vwr</a>
+    <nav class="nav" id="nav" aria-label="Sections">
+      <span class="nav-ind" id="navInd"></span>
+      <a href="#what">What it is</a><a href="#who">Who it's for</a><a href="#features">Features</a><a href="#how">How it works</a><a href="#download">Download</a>
+    </nav>
+    <button class="icon-btn theme-btn" id="themeBtn" aria-label="Switch light or dark theme">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 22q-2.075 0-3.9-.788t-3.175-2.137T2.788 15.9 2 12t.788-3.9 2.137-3.175T8.1 2.788 12 2q.35 0 .688.025t.662.075q-1.025.725-1.638 1.888T11.1 6.5q0 2.25 1.575 3.825T16.5 11.9q1.375 0 2.525-.613T20.9 9.65q.05.325.075.662T21 11q0 2.075-.788 3.9t-2.137 3.175-3.175 2.138T12 22"/></svg>
+    </button>
+    <a class="icon-btn" href="https://github.com/jakepurple13/ScrcpyViewerV2" aria-label="Source on GitHub">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.6 9.6 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2"/></svg>
+    </a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero-copy hero-in">
+        <span class="ver"><b>v__VERSION__</b> scrcpy 5.0 · free and open source</span>
+        <h1>Your Android screen, in a <em>desktop window.</em></h1>
+        <p class="lede">Scrcpy Vwr shows your Android phone on your Mac, Windows or Linux computer, and lets you use it with your mouse and keyboard. Plug it in and press Mirror. Record it, test on it, or build for it, all from one window.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-filled" id="heroDl" href="#download"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 16 7 11l1.4-1.45 2.6 2.6V4h2v8.15l2.6-2.6L17 11zm-6 4q-.825 0-1.412-.587T4 18v-3h2v3h12v-3h2v3q0 .825-.587 1.413T18 20z"/></svg><span id="heroDlText">Download</span></a>
+          <a class="btn btn-outline" href="#how">How it works</a>
+        </div>
+      </div>
+      <div class="stage" id="stage" aria-label="Scrcpy Vwr device list opening a mirror window" role="img">
+        <div class="win win-main">
+          <div class="titlebar"><i></i><i></i><i></i><span>Scrcpy Vwr — Devices</span></div>
+          <div class="win-body">
+            <div class="rail"><b class="on"></b><b></b><b></b><b></b></div>
+            <div class="devlist">
+              <span class="lbl">Connected</span>
+              <div class="dev sel"><span class="ph"></span><div><b>Pixel 9 Pro</b><small>Android 16 · USB</small></div><span class="pill ready">Ready</span></div>
+              <div class="dev dev-new"><span class="ph"></span><div><b>Galaxy A15 5G</b><small>192.168.1.42:5555</small></div><span class="pill auth">Unauthorized</span></div>
+              <span class="lbl">Emulators</span>
+              <div class="dev"><span class="ph"></span><div><b>Medium Phone API 36</b><small>Stopped</small></div></div>
+              <span class="mirror-btn"><span class="rip"></span>▶ Mirror</span>
+            </div>
+          </div>
+        </div>
+        <div class="sidebar"><span></span><span></span><span></span><span></span></div>
+        <div class="win win-mirror">
+          <div class="titlebar"><i></i><i></i><i></i><span>Pixel 9 Pro</span></div>
+          <div class="screen"><div class="clock">9:41</div><div class="date">Friday, November 27</div><div class="apps"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="tap" style="left:32%; top:78%"></span></div>
+          <div class="navbar"><i></i><i></i><i></i></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band-alt" id="what">
+    <div class="wrap">
+      <div class="sec-head reveal"><span class="eyebrow">What it is</span><h2>scrcpy, without the command line</h2>
+        <p class="lede">scrcpy is the open-source tool for mirroring Android over adb. Scrcpy Vwr gives it a home: a live device list, every scrcpy option as a checkbox, and presets you can save and share.</p></div>
+      <div class="facts">
+        <div class="fact reveal"><span class="badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 20q-.825 0-1.412-.587T2 18V6q0-.825.588-1.412T4 4h16q.825 0 1.413.588T22 6v12q0 .825-.587 1.413T20 20zm0-2h16V8H4zm3.5-1-1.4-1.4L8.675 13l-2.6-2.6L7.5 9l4 4zm4.5 0v-2h6v2z"/></svg></span><h3>No terminal</h3><p>Options are checkboxes, grouped and searchable. The app shows the matching <code>scrcpy</code> command if you want to copy it.</p></div>
+        <div class="fact reveal"><span class="badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 23q-.825 0-1.412-.587T5 21V3q0-.825.588-1.412T7 1h10q.825 0 1.413.588T19 3v18q0 .825-.587 1.413T17 23zm0-5v3h10v-3zm0-2h10V6H7zM7 4h10V3H7z"/></svg></span><h3>Its own scrcpy client</h3><p>It talks to <code>scrcpy-server</code> directly and draws video in windows the app owns, with a quick actions sheet beside the screen.</p></div>
+        <div class="fact reveal"><span class="badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 21q-.825 0-1.412-.587T3 19V6.525q0-.35.113-.675t.337-.6L4.7 3.725q.275-.35.687-.538T6.25 3h11.5q.45 0 .863.188t.687.537l1.25 1.525q.225.275.338.6t.112.675V19q0 .825-.587 1.413T19 21zm.4-15h13.2l-.85-1H6.25zM12 18l4-4-1.4-1.4-1.6 1.6V10h-2v4.2l-1.6-1.6L8 14z"/></svg></span><h3>Everything bundled</h3><p>Install one app. The tools it needs ship inside it.</p><div class="bundle"><span>adb</span><span>scrcpy-server 5.0</span><span>FFmpeg 8.1</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="who">
+    <div class="wrap">
+      <div class="sec-head reveal"><span class="eyebrow">Who it's for</span><h2>One app, whoever is holding the phone</h2>
+        <p class="lede">You don't need to know what adb is to use it. If you do, everything you reach for is one click away.</p></div>
+      <div class="who">
+        <div class="aud" role="tablist" id="aud" aria-label="Who it's for">
+          <span class="aud-ind" id="audInd"></span>
+          <button role="tab" aria-selected="true" data-a="0"><span class="ai"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 23q-.825 0-1.412-.587T5 21V3q0-.825.588-1.412T7 1h10q.825 0 1.413.588T19 3v18q0 .825-.587 1.413T17 23zm0-5v3h10v-3zm0-2h10V6H7zM7 4h10V3H7z"/></svg></span><span><b>Everyone</b><small>See your phone on your computer</small></span></button>
+          <button role="tab" aria-selected="false" data-a="1"><span class="ai"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17q2.075 0 3.538-1.463T17 12t-1.463-3.537T12 7 8.463 8.463 7 12t1.463 3.538T12 17m0 5q-2.075 0-3.9-.788t-3.175-2.137T2.788 15.9 2 12t.788-3.9 2.137-3.175T8.1 2.788 12 2t3.9.788 3.175 2.137T21.213 8.1 22 12t-.788 3.9-2.137 3.175-3.175 2.138T12 22"/></svg></span><span><b>Creators</b><small>Record and share your screen</small></span></button>
+          <button role="tab" aria-selected="false" data-a="2"><span class="ai"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 18 2 12l6-6 1.425 1.425-4.6 4.6L9.4 16.6zm8 0-1.425-1.425 4.6-4.6L14.6 7.4 16 6l6 6z"/></svg></span><span><b>Developers</b><small>Logcat, shell and files at hand</small></span></button>
+          <button role="tab" aria-selected="false" data-a="3"><span class="ai"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m10.6 16.6 7.05-7.05-1.4-1.4-5.65 5.65-2.85-2.85-1.4 1.4zM5 21q-.825 0-1.412-.587T3 19V5q0-.825.588-1.412T5 3h14q.825 0 1.413.588T21 5v14q0 .825-.587 1.413T19 21z"/></svg></span><span><b>QA and testers</b><small>Test without Android Studio</small></span></button>
+        </div>
+        <div class="aud-panels" id="audPanels">
+          <div class="aud-panel" data-a="0">
+            <h3>Plug in your phone and see it on your screen</h3>
+            <p>No commands and nothing else to install. Your phone shows up in the list as soon as it's connected, and a welcome guide gets you started. Type with your keyboard, click with your mouse, and hear your phone's sound.</p>
+            <ul class="ticks"><li>Shows up on its own, no refresh</li><li>One big Mirror button</li><li>Connect over Wi-Fi with a QR code</li><li>Drop an APK or a photo onto the window to send it</li></ul>
+          </div>
+          <div class="aud-panel" data-a="1" hidden>
+            <h3>Record your phone with one click</h3>
+            <p>Take screenshots and recordings straight from the mirror window. Mark up a screenshot with arrows, boxes and blur, or turn a recording into a GIF you can drop into a chat, a bug report or a tutorial.</p>
+            <ul class="ticks"><li>Screenshot thumbnail you can drag anywhere</li><li>Markup: pen, arrow, box, circle, pixelate</li><li>Trim and export GIFs at 320 to 640 px</li><li>Saves to the folder you choose</li></ul>
+          </div>
+          <div class="aud-panel" data-a="2" hidden>
+            <h3>The tools you open Android Studio for, beside the screen</h3>
+            <p>The quick actions sheet puts Logcat, a shell, a file browser, an app list and deep links next to the mirrored device. Build your own one-click actions from <code>adb shell</code> commands, or let an AI tool write them.</p>
+            <ul class="ticks"><li>Logcat with <code>tag:</code>, <code>package:</code>, <code>is:crash</code></li><li>Open deep links and time cold starts</li><li>Every scrcpy 5.0 option, with the command shown</li><li>Emulators start inside Scrcpy Vwr</li></ul>
+          </div>
+          <div class="aud-panel" data-a="3" hidden>
+            <h3>Test on real devices, no IDE required</h3>
+            <p>Mirror several phones at once and drive them all from one window: taps, swipes and typing go to every device you pick. Grab crash logs, flip dark mode or Wi-Fi in a click, and copy device details straight into a bug report.</p>
+            <ul class="ticks"><li>Send input to many devices at once</li><li>Toggles for dark mode, Wi-Fi, airplane mode</li><li>Copy device info as text for tickets</li><li>Launch, force stop and uninstall apps</li></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band-alt" id="features">
+    <div class="wrap">
+      <div class="sec-head reveal"><span class="eyebrow">Features</span><h2>Simple when you want it, deep when you need it</h2></div>
+      <div class="chips" role="group" aria-label="Filter features" id="chips">
+        <button class="chip" aria-pressed="true" data-f="all"><span class="ck"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m9.55 18-5.7-5.7 1.425-1.425L9.55 15.15l9.175-9.175L20.15 7.4z"/></svg></span>All</button>
+        <button class="chip" aria-pressed="false" data-f="devices"><span class="ck"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m9.55 18-5.7-5.7 1.425-1.425L9.55 15.15l9.175-9.175L20.15 7.4z"/></svg></span>Devices</button>
+        <button class="chip" aria-pressed="false" data-f="mirror"><span class="ck"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m9.55 18-5.7-5.7 1.425-1.425L9.55 15.15l9.175-9.175L20.15 7.4z"/></svg></span>Mirroring</button>
+        <button class="chip" aria-pressed="false" data-f="sheet"><span class="ck"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m9.55 18-5.7-5.7 1.425-1.425L9.55 15.15l9.175-9.175L20.15 7.4z"/></svg></span>Quick actions</button>
+        <button class="chip" aria-pressed="false" data-f="look"><span class="ck"><svg viewBox="0 0 24 24" fill="currentColor"><path d="m9.55 18-5.7-5.7 1.425-1.425L9.55 15.15l9.175-9.175L20.15 7.4z"/></svg></span>Appearance</button>
+      </div>
+      <div class="grid" id="grid">
+        <article class="card" data-c="devices"><span class="tag">Devices</span><h3>Live device list</h3><p>Devices appear and leave as they connect, marked ready, unauthorized or offline. No refresh button.</p></article>
+        <article class="card" data-c="devices"><span class="tag">Devices</span><h3>Wi-Fi debugging</h3><p>Pair with a QR code, a pairing code or an IP address, or switch a USB device to Wi-Fi in one click.</p></article>
+        <article class="card" data-c="devices"><span class="tag">Devices</span><h3>Emulators</h3><p>Start an AVD with no window of its own, so Scrcpy Vwr is its window. Each boot stage is shown.</p></article>
+        <article class="card" data-c="mirror"><span class="tag">Mirroring</span><h3>Many windows at once</h3><p>One mirror window per device. Arrange them as a grid, side by side or cascaded, and keep them tiled.</p></article>
+        <article class="card" data-c="mirror"><span class="tag">Mirroring</span><h3>Send input to every window</h3><p>One window leads. Its taps, swipes and typing go to the other devices too, mapped by screen percent.</p></article>
+        <article class="card" data-c="mirror"><span class="tag">Mirroring</span><h3>Screenshots, recordings, GIFs</h3><p>Mark up a screenshot with arrows, boxes and pixelate. Trim a recording and export a GIF.</p></article>
+        <article class="card" data-c="sheet"><span class="tag">Quick actions</span><h3>Logcat</h3><p>Android Studio's filter language (<code>tag:</code>, <code>package:</code>, <code>is:crash</code>), folded stack traces, its own window.</p></article>
+        <article class="card" data-c="sheet"><span class="tag">Quick actions</span><h3>Files, apps and shell</h3><p>Browse shared storage and drag files in or out. Launch or force stop apps. Run <code>adb shell</code> with history.</p></article>
+        <article class="card" data-c="sheet"><span class="tag">Quick actions</span><h3>Custom actions</h3><p>Build toggles and run-once commands with variables, or let an AI tool write them for you.</p></article>
+        <article class="card" data-c="look"><span class="tag">Appearance</span><h3>Four styles, eleven palettes</h3><p>Material, Glass, Soft and Retro 95, light or dark, with a custom palette editor.</p></article>
+        <article class="card" data-c="look"><span class="tag">Appearance</span><h3>Motion that follows your OS</h3><p>Mirror windows grow out of the Mirror button. Reduce motion in your OS settings and they fade instead.</p></article>
+        <article class="card" data-c="devices"><span class="tag">Devices</span><h3>Presets</h3><p>Save option sets, pick a default for new devices, and share them as <code>.scrcpypresets.json</code>.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="how">
+    <div class="wrap">
+      <div class="sec-head reveal"><span class="eyebrow">How it works</span><h2>From a click to a live screen</h2>
+        <p class="lede">Each mirror window runs one scrcpy session over adb. Pick a step to see which part of the link it uses.</p></div>
+      <div class="how">
+        <ol class="steps" id="steps">
+          <li><button class="on" data-s="0"><span class="n">1</span><b>Find devices</b><span class="d"><span>The app connects to the adb server on <code>localhost:5037</code> and listens to <code>host:track-devices-l</code>. If no server runs, it starts the bundled adb.</span></span></button></li>
+          <li><button data-s="1"><span class="n">2</span><b>Start a session</b><span class="d"><span>It pushes <code>scrcpy-server</code> to the device, opens an <code>adb reverse</code> tunnel, and launches the server with <code>app_process</code> and your options.</span></span></button></li>
+          <li><button data-s="2"><span class="n">3</span><b>Decode video</b><span class="d"><span>H.264, H.265 or AV1 arrives on the video socket. FFmpeg decodes it, and each frame is drawn in a Compose canvas.</span></span></button></li>
+          <li><button data-s="3"><span class="n">4</span><b>Play audio</b><span class="d"><span>Device audio arrives on its own socket and plays through Java Sound.</span></span></button></li>
+          <li><button data-s="4"><span class="n">5</span><b>Send input</b><span class="d"><span>Mouse, keyboard and scroll become scrcpy control messages, mapped from window to device coordinates.</span></span></button></li>
+        </ol>
+        <div class="diagram">
+          <svg viewBox="0 0 520 300" id="diag" aria-label="Diagram of Scrcpy Vwr, adb and the Android device">
+            <g id="n-app"><rect class="box" x="10" y="20" width="150" height="260" rx="20"/><text x="85" y="50" text-anchor="middle" font-weight="600" font-size="14">Scrcpy Vwr</text><text class="sub" x="85" y="68" text-anchor="middle">your computer</text></g>
+            <g id="n-ff"><rect class="box" x="28" y="92" width="114" height="44" rx="12"/><text x="85" y="119" text-anchor="middle" font-size="12">FFmpeg decoder</text></g>
+            <g id="n-snd"><rect class="box" x="28" y="148" width="114" height="44" rx="12"/><text x="85" y="175" text-anchor="middle" font-size="12">Java Sound</text></g>
+            <g id="n-in"><rect class="box" x="28" y="204" width="114" height="44" rx="12"/><text x="85" y="231" text-anchor="middle" font-size="12">Input mapper</text></g>
+            <g id="n-adb"><rect class="box" x="200" y="20" width="110" height="64" rx="16"/><text x="255" y="48" text-anchor="middle" font-weight="600" font-size="13">adb server</text><text class="sub" x="255" y="66" text-anchor="middle">:5037</text></g>
+            <g id="n-dev"><rect class="box" x="360" y="20" width="150" height="260" rx="28"/><text x="435" y="50" text-anchor="middle" font-weight="600" font-size="14">Android device</text><text class="sub" x="435" y="68" text-anchor="middle">USB or Wi-Fi</text></g>
+            <g id="n-srv"><rect class="box" x="378" y="92" width="114" height="156" rx="14"/><text x="435" y="166" text-anchor="middle" font-size="12">scrcpy-server</text><text class="sub" x="435" y="183" text-anchor="middle">app_process</text></g>
+            <path class="wire" id="w-track" d="M160 52 H200"/>
+            <path class="wire" id="w-push" d="M310 52 H360"/>
+            <path class="wire rev" id="w-video" d="M142 114 H378"/>
+            <path class="wire rev" id="w-audio" d="M142 170 H378"/>
+            <path class="wire" id="w-ctrl" d="M142 226 H378"/>
+            <text class="cap" x="260" y="108" text-anchor="middle">video socket</text>
+            <text class="cap" x="260" y="164" text-anchor="middle">audio socket</text>
+            <text class="cap" x="260" y="220" text-anchor="middle">control socket</text>
+          </svg>
+          <p class="diagram-note" id="diagNote"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band band-alt" id="download">
+    <div class="wrap">
+      <div class="sec-head reveal"><span class="eyebrow">Download</span><h2>Get the app for your computer</h2>
+        <p class="lede">Every release ships an installer for each platform. After that, the app updates itself.</p></div>
+      <div class="dl">
+        <div>
+          <div class="seg" role="tablist" id="seg">
+            <span class="seg-ind" id="segInd"></span>
+            <button role="tab" aria-selected="true" data-os="mac" id="t-mac"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 12.54c-.03-2.6 2.13-3.86 2.22-3.92-1.21-1.77-3.1-2.01-3.77-2.04-1.6-.16-3.13.95-3.94.95-.82 0-2.07-.93-3.4-.9a5.03 5.03 0 0 0-4.26 2.58c-1.82 3.15-.47 7.82 1.3 10.38.87 1.25 1.9 2.66 3.25 2.61 1.3-.05 1.8-.84 3.37-.84s2.02.84 3.4.81c1.4-.02 2.29-1.27 3.15-2.53.99-1.45 1.4-2.86 1.42-2.93-.03-.01-2.72-1.05-2.74-4.17M14.5 4.9c.71-.87 1.2-2.07 1.07-3.27-1.03.04-2.29.69-3.03 1.55-.66.77-1.25 2-1.09 3.18 1.15.09 2.33-.58 3.05-1.46"/></svg>macOS</button>
+            <button role="tab" aria-selected="false" data-os="win" id="t-win"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10.5 4.5V11.5H3zM11.5 4.35 21 3V11.5H11.5zM3 12.5H10.5V19.5L3 18.5zM11.5 12.5H21V21L11.5 19.65z"/></svg>Windows</button>
+            <button role="tab" aria-selected="false" data-os="linux" id="t-linux"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c-2 0-3.3 1.7-3.3 4.2 0 1.3.3 2.2-.4 3.3C7 11.4 5.5 13.6 5.5 16c0 .7.1 1.3.4 1.8-.8.4-1.6 1-1.6 1.8 0 1.3 2.2 1.4 3.5 2.1.8.4 1.5.3 2-.3.6.1 1.4.2 2.2.2s1.6-.1 2.2-.2c.5.6 1.2.7 2 .3 1.3-.7 3.5-.8 3.5-2.1 0-.8-.8-1.4-1.6-1.8.3-.5.4-1.1.4-1.8 0-2.4-1.5-4.6-2.8-6.5-.7-1.1-.4-2-.4-3.3C15.3 3.7 14 2 12 2m-1.5 4c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1m3 0c.4 0 .7.5.7 1.1s-.3 1.1-.7 1.1-.7-.5-.7-1.1.3-1.1.7-1.1M12 9c.9 0 2 .5 2 .9s-1.1 1-2 1-2-.6-2-1 1.1-.9 2-.9"/></svg>Linux</button>
+          </div>
+          <p class="detected" id="detected"></p>
+        </div>
+        <div class="panels" id="panels">
+          <div class="panel" role="tabpanel" data-os="mac">
+            <div class="col">
+              <h3>macOS</h3>
+              <div class="file"><span class="ext">.dmg</span><div><b>Scrcpy Vwr installer</b><small>Apple silicon (arm64) · drag to Applications</small></div></div>
+              <div class="file muted"><span class="ext">.zip</span><div><b>Update package</b><small>Used by the in-app updater. You don't need it.</small></div></div>
+              <div><a class="btn btn-filled" id="dl-mac" href="__MAC_URL__">Download .dmg <small>v__VERSION__</small></a></div>
+            </div>
+            <div class="col">
+              <div class="note">The build is not signed. The first time, right-click the app and choose <b>Open</b>.</div>
+              <ol class="ol"><li><b>Open the .dmg</b> and drag Scrcpy Vwr into Applications.</li><li><b>Right-click, then Open</b> on first launch.</li><li><b>Allow Local Network access</b> when macOS asks. Wi-Fi debugging needs it.</li></ol>
+            </div>
+          </div>
+          <div class="panel" role="tabpanel" data-os="win" hidden>
+            <div class="col">
+              <h3>Windows</h3>
+              <div class="file"><span class="ext">.exe</span><div><b>Scrcpy Vwr setup</b><small>x64 · installs for your user, no admin needed</small></div></div>
+              <div><a class="btn btn-filled" id="dl-win" href="__WIN_URL__">Download .exe <small>v__VERSION__</small></a></div>
+            </div>
+            <div class="col">
+              <div class="note">SmartScreen may warn about an unknown publisher. Choose <b>More info</b>, then <b>Run anyway</b>.</div>
+              <ol class="ol"><li><b>Run the installer.</b> It installs per user.</li><li><b>Open Scrcpy Vwr</b> from the Start menu.</li><li><b>Plug in a device.</b> The bundled adb handles drivers for most phones; some need the maker's USB driver.</li></ol>
+            </div>
+          </div>
+          <div class="panel" role="tabpanel" data-os="linux" hidden>
+            <div class="col">
+              <h3>Linux</h3>
+              <div class="file"><span class="ext">.deb</span><div><b>Debian / Ubuntu package</b><small>x64 · installs its dependencies</small></div></div>
+              <div><a class="btn btn-filled" id="dl-linux" href="__LINUX_URL__">Download .deb <small>v__VERSION__</small></a></div>
+            </div>
+            <div class="col">
+              <div class="note">Running it another way? GIF export needs <code>libasound2t64</code> (or <code>libasound2</code>), <code>libpulse0</code>, <code>libxcb1</code>, <code>libxcb-shm0</code>, <code>libdrm2</code> and <code>libudev1</code>.</div>
+              <ol class="ol"><li><b>Install:</b> <code>sudo apt install ./__DEB_NAME__</code></li><li><b>Add a udev rule</b> for your phone if adb lists it as having no permissions.</li></ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" id="start">
+    <div class="wrap">
+      <div class="sec-head reveal"><span class="eyebrow">Getting started</span><h2>Mirroring in four steps</h2></div>
+      <ol class="start">
+        <li class="reveal"><b>Turn on USB debugging</b><p>On the phone, open Developer options and turn on USB debugging.</p></li>
+        <li class="reveal"><b>Connect</b><p>Plug in a USB cable, or pair over Wi-Fi from the Devices screen.</p></li>
+        <li class="reveal"><b>Allow the computer</b><p>Accept the "Allow USB debugging" prompt on the phone.</p></li>
+        <li class="reveal"><b>Mirror</b><p>Double-click the device. Or select it, change options, and press Mirror.</p></li>
+      </ol>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Scrcpy Vwr is open source. Built on <a href="https://github.com/Genymobile/scrcpy">scrcpy</a> by Genymobile.</span>
+    <nav><a href="https://github.com/jakepurple13/ScrcpyViewerV2">Source</a><a href="https://github.com/jakepurple13/ScrcpyViewerV2/releases">Releases</a><a href="https://github.com/jakepurple13/ScrcpyViewerV2/issues">Report a bug</a></nav>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+
+  // Hero sequence: device list settles, Mirror ripples, mirror window grows out of it.
+  requestAnimationFrame(() => $('#stage').classList.add('play'));
+
+  // App bar elevation on scroll + nav indicator
+  const bar = $('#appbar');
+  const links = $$('#nav a'), ind = $('#navInd');
+  function moveInd(a){ if(!a){ ind.style.opacity = 0; return; } ind.style.opacity = 1; ind.style.left = a.offsetLeft + 'px'; ind.style.width = a.offsetWidth + 'px'; links.forEach(l => l.classList.toggle('active', l === a)); }
+  ind.style.opacity = 0;
+  const secs = links.map(a => document.querySelector(a.getAttribute('href')));
+  function onScroll(){
+    bar.classList.toggle('scrolled', scrollY > 8);
+    let cur = null; secs.forEach((s, i) => { if (s.getBoundingClientRect().top < 140) cur = links[i]; });
+    moveInd(cur);
+  }
+  addEventListener('scroll', onScroll, {passive:true}); onScroll();
+
+  // Theme toggle with circular reveal from the button (like the app's theme switch)
+  const root = document.documentElement;
+  $('#themeBtn').addEventListener('click', e => {
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    const apply = () => { root.dataset.theme = dark ? 'light' : 'dark'; };
+    if (!document.startViewTransition || reduce) { apply(); return; }
+    const r = e.currentTarget.getBoundingClientRect(), x = r.left + r.width/2, y = r.top + r.height/2;
+    const end = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+    document.startViewTransition(apply).ready.then(() => {
+      root.animate({clipPath:[`circle(0 at ${x}px ${y}px)`, `circle(${end}px at ${x}px ${y}px)`]}, {duration:600, easing:'cubic-bezier(.2,0,0,1)', pseudoElement:'::view-transition-new(root)'});
+    });
+  });
+
+  // Feature filter chips with FLIP (cards glide to new spots, leavers shrink out, enterers scale in)
+  const grid = $('#grid'), cards = $$('#grid .card');
+  $$('#chips .chip').forEach(chip => chip.addEventListener('click', () => {
+    $$('#chips .chip').forEach(c => c.setAttribute('aria-pressed', c === chip));
+    const f = chip.dataset.f;
+    const first = new Map(cards.map(c => [c, c.getBoundingClientRect()]));
+    const gridTop = grid.getBoundingClientRect();
+    const h0 = grid.offsetHeight;
+    const show = c => f === 'all' || c.dataset.c === f;
+    const leaving = cards.filter(c => !c.classList.contains('hide') && !show(c));
+    cards.forEach(c => c.classList.toggle('hide', !show(c)));
+    const h1 = grid.offsetHeight;
+    if (reduce) return;
+    grid.animate({height:[h0+'px', h1+'px']}, {duration:500, easing:'cubic-bezier(.2,0,0,1)'});
+    cards.filter(c => !c.classList.contains('hide')).forEach(c => {
+      const a = first.get(c), b = c.getBoundingClientRect();
+      if (a.width) c.animate({transform:[`translate(${a.left-b.left}px, ${a.top-b.top}px)`, 'none']}, {duration:550, easing:'cubic-bezier(.2,0,0,1)'});
+      else c.animate({opacity:[0,1], transform:['scale(.92)', 'none']}, {duration:450, easing:'cubic-bezier(.05,.7,.1,1)'});
+    });
+    leaving.forEach(c => {
+      const a = first.get(c), ghost = c.cloneNode(true);
+      ghost.classList.remove('hide'); ghost.classList.add('leaving');
+      Object.assign(ghost.style, {left:(a.left-gridTop.left)+'px', top:(a.top-gridTop.top)+'px', width:a.width+'px', height:a.height+'px'});
+      grid.appendChild(ghost);
+      ghost.animate({opacity:[1,0], transform:['none','scale(.9)']}, {duration:250, easing:'cubic-bezier(.3,0,.8,.15)'}).onfinish = () => ghost.remove();
+    });
+  }));
+
+  // Who it's for: sliding selection + vertical shared-axis panel swap + height glide
+  const audBtns = $$('#aud button'), audInd = $('#audInd'), audPanels = $('#audPanels');
+  let audCur = 0;
+  function placeAud(){ const b = audBtns[audCur]; audInd.style.width = b.offsetWidth + 'px'; audInd.style.height = b.offsetHeight + 'px'; audInd.style.transform = `translate(${b.offsetLeft}px, ${b.offsetTop}px)`; }
+  function pickAud(i){
+    if (i === audCur) return;
+    const h0 = audPanels.offsetHeight, dir = i > audCur ? 'in-d' : 'in-u';
+    audCur = i;
+    audBtns.forEach((b, j) => b.setAttribute('aria-selected', j === i));
+    placeAud();
+    $$('.aud-panel').forEach(p => { p.hidden = +p.dataset.a !== i; p.classList.remove('in-d','in-u'); });
+    if (reduce) return;
+    const p = $(`.aud-panel[data-a="${i}"]`); void p.offsetWidth; p.classList.add(dir);
+    audPanels.animate({height:[h0+'px', audPanels.offsetHeight+'px']}, {duration:500, easing:'cubic-bezier(.2,0,0,1)'});
+  }
+  audBtns.forEach((b, i) => b.addEventListener('click', () => pickAud(i)));
+  audInd.style.transition = 'none'; placeAud(); requestAnimationFrame(() => audInd.style.transition = '');
+  new ResizeObserver(() => { audInd.style.transition = 'none'; placeAud(); requestAnimationFrame(() => audInd.style.transition = ''); }).observe($('#aud'));
+
+  // How it works: stepper drives the diagram
+  const map = [
+    {n:['n-app','n-adb'], w:['w-track'], t:'adb tells the app the moment a device connects, so the list updates on its own.'},
+    {n:['n-adb','n-dev','n-srv'], w:['w-track','w-push'], t:'scrcpy-server goes to the device through adb. Your options become server arguments.'},
+    {n:['n-ff','n-srv'], w:['w-video'], t:'Frames flow from the device to FFmpeg, scaled to keep the aspect ratio.'},
+    {n:['n-snd','n-srv'], w:['w-audio'], t:'Audio has its own socket, so video and sound stay independent.'},
+    {n:['n-in','n-srv'], w:['w-ctrl'], t:'Closing the window closes the sockets, which stops the server and removes the tunnel.'}
+  ];
+  const note = $('#diagNote');
+  function step(i){
+    $$('#steps button').forEach(b => b.classList.toggle('on', +b.dataset.s === i));
+    $$('#diag g, #diag .wire').forEach(el => el.classList.remove('lit'));
+    map[i].n.forEach(id => document.getElementById(id).classList.add('lit'));
+    map[i].w.forEach(id => document.getElementById(id).classList.add('lit'));
+    note.textContent = map[i].t; note.classList.remove('swap'); void note.offsetWidth; note.classList.add('swap');
+  }
+  $$('#steps button').forEach(b => b.addEventListener('click', () => step(+b.dataset.s)));
+  step(0);
+
+  // Download tabs: sliding segmented indicator + shared-axis X panel swap + height glide
+  const order = ['mac','win','linux'], names = {mac:'macOS', win:'Windows', linux:'Linux'};
+  const panels = $('#panels'); let cur = 'mac';
+  function pick(os, animate = true){
+    const from = order.indexOf(cur), to = order.indexOf(os);
+    $('#segInd').style.transform = `translateX(${to*100}%)`;
+    $$('#seg button').forEach(b => b.setAttribute('aria-selected', b.dataset.os === os));
+    const h0 = panels.offsetHeight;
+    $$('.panel').forEach(p => { p.hidden = p.dataset.os !== os; p.classList.remove('in-r','in-l'); });
+    const p = $(`.panel[data-os="${os}"]`);
+    if (animate && !reduce && os !== cur) {
+      void p.offsetWidth; p.classList.add(to > from ? 'in-r' : 'in-l');
+      panels.animate({height:[h0+'px', panels.offsetHeight+'px']}, {duration:500, easing:'cubic-bezier(.2,0,0,1)'});
+    }
+    cur = os;
+  }
+  $$('#seg button').forEach(b => b.addEventListener('click', () => pick(b.dataset.os)));
+  const ua = navigator.userAgent;
+  const os = /Windows/i.test(ua) ? 'win' : /Linux|X11/i.test(ua) && !/Android/i.test(ua) ? 'linux' : /Mac/i.test(ua) ? 'mac' : null;
+  if (os) { pick(os, false); $('#detected').textContent = `Showing ${names[os]} because that's what you're on.`; $('#heroDlText').textContent = `Download for ${names[os]}`; $('#heroDl').href = $(`#dl-${os}`).href; }
+  else { $('#detected').textContent = 'Pick the computer you will install it on.'; }
+})();
+</script>
+</body>
+</html>

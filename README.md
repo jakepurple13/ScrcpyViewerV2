@@ -156,7 +156,8 @@ anonymous ID.
 
 ## Download
 
-Installers for each release are on the [Releases](https://github.com/jakepurple13/ScrcpyViewerV2/releases) page:
+The [website](https://jakepurple13.github.io/ScrcpyViewerV2/) links the installer for your computer. Installers for
+each release are also on the [Releases](https://github.com/jakepurple13/ScrcpyViewerV2/releases) page:
 
 | Platform | File   |
 |----------|--------|
@@ -276,6 +277,8 @@ follow them in order.
    must have 10 files: `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, the macOS `.dmg` and `.zip`, the Windows
    `-nsis.exe`, the Linux `.deb`, and a `.blockmap` for the `.dmg`, `.zip` and `.exe`. Installed apps find it through
    their update check.
+7. **Check the website.** When the tag's Build run succeeds, the Pages workflow redeploys the site with the new
+   version and download links. Confirm `https://jakepurple13.github.io/ScrcpyViewerV2/` shows `v<version>`.
 
 The `POSTHOG_KEY` and `POSTHOG_HOST` repository secrets must be set for release builds to report usage statistics
 and crash reports.
@@ -283,6 +286,18 @@ and crash reports.
 If a job fails on the tag run, re-run only the failed jobs (`gh run rerun <id> --failed`); some tests are timing
 sensitive. Never move or delete a tag that has a published release. If the code needs a fix, merge it and release
 the next patch version.
+
+## Website
+
+The GitHub Pages site lives in `site/`. `site/index.html` is one self-contained page with placeholders
+(`__VERSION__`, `__MAC_URL__`, `__WIN_URL__`, `__LINUX_URL__`, `__DEB_NAME__`). `site/build.sh` fills them from the
+latest GitHub release and writes the site to `_site/`. A missing installer falls back to the releases page.
+
+`.github/workflows/pages.yml` deploys it when `site/` changes on `main`, after each successful tag Build run, and on
+demand (`gh workflow run pages.yml`). Pull requests that touch `site/` build it without deploying. To preview
+locally, run `site/build.sh` (needs `gh` and `jq`) and open `_site/index.html`.
+
+The repository's Pages source must be set to **GitHub Actions** (Settings › Pages).
 
 ## Project layout
 
